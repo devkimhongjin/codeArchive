@@ -16,9 +16,7 @@ interface BackgroundResponse {
 const backgroundStatus = ref('확인 전')
 
 function openDashboard(): void {
-  const dashboardUrl = chrome.runtime.getURL(
-    'src/dashboard/index.html',
-  )
+  const dashboardUrl = chrome.runtime.getURL('src/dashboard/index.html')
 
   chrome.tabs.create({
     url: dashboardUrl,
@@ -38,14 +36,9 @@ async function checkBackground(): Promise<void> {
       message,
     )) as BackgroundResponse
 
-    backgroundStatus.value = response?.success
-      ? '정상 연결'
-      : '응답 오류'
+    backgroundStatus.value = response?.success ? '정상 연결' : '응답 오류'
   } catch (error: unknown) {
-    console.error(
-      '[CodeArchive] Background connection failed:',
-      error,
-    )
+    console.error('[CodeArchive] Background connection failed:', error)
 
     backgroundStatus.value = '연결 실패'
   }
@@ -62,13 +55,9 @@ async function checkBackground(): Promise<void> {
     </p>
 
     <div class="actions">
-      <button type="button" @click="checkBackground">
-        연결 확인
-      </button>
+      <button type="button" @click="checkBackground">연결 확인</button>
 
-      <button type="button" @click="openDashboard">
-        대시보드 열기
-      </button>
+      <button type="button" @click="openDashboard">대시보드 열기</button>
     </div>
   </main>
 </template>
