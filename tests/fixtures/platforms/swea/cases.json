@@ -1,0 +1,33 @@
+{
+  "synthetic": true,
+  "containsRealSiteContent": false,
+  "purpose": "TASK-0002 SWEA adapter contract verification",
+  "cases": [
+    {
+      "fixture": "normal.html",
+      "url": "https://swexpertacademy.com/main/code/problem/problemDetail.do?problem=SYN-1206#result",
+      "expected": "problem, solution and accepted submission capture"
+    },
+    {
+      "fixture": "optional-missing.html",
+      "url": "https://www.swexpertacademy.com/main/talk/solvingClub/problemView.do?problem=SYN-2001",
+      "expected": "problem capture with optional-field warning and Python solution"
+    },
+    {
+      "fixture": "code-missing.html",
+      "url": "https://swexpertacademy.com/main/code/problem/problemDetail.do?problem=SYN-3001",
+      "expected": "problem success and independent code-unavailable failure"
+    },
+    {
+      "fixture": "dom-changed.html",
+      "url": "https://swexpertacademy.com/main/code/problem/problemDetail.do?problem=SYN-4001",
+      "expected": "dom-contract-changed failure"
+    }
+  ],
+  "unsupportedUrls": [
+    "https://example.invalid/problems/SYN-0000",
+    "https://swexpertacademy.com/unsupported/path",
+    "not-an-absolute-url"
+  ],
+  "updatePolicy": "Update only when the synthetic adapter contract intentionally changes."
+}

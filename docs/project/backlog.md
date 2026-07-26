@@ -18,7 +18,7 @@
 | ID        | GitHub                                                      | 작업                                 | 마일스톤 | 주 역할   | 상태     | 선행                 |
 | --------- | ----------------------------------------------------------- | ------------------------------------ | -------- | --------- | -------- | -------------------- |
 | TASK-0001 | [#1](https://github.com/devkimhongjin/codeArchive/issues/1) | 핵심 데이터 규격과 식별자 정의       | M0       | 기획·구현 | Done     | DEC-0002, ADR-0001   |
-| TASK-0002 | [#2](https://github.com/devkimhongjin/codeArchive/issues/2) | 플랫폼 어댑터 계약과 fixture 전략    | M0       | 구현·검증 | Proposed | DEC-0003             |
+| TASK-0002 | [#2](https://github.com/devkimhongjin/codeArchive/issues/2) | 플랫폼 어댑터 계약과 fixture 전략    | M0       | 구현·검증 | Done     | DEC-0003, ADR-0002   |
 | TASK-0003 | [#3](https://github.com/devkimhongjin/codeArchive/issues/3) | IndexedDB 저장소와 마이그레이션 기반 | M0       | 구현      | Proposed | TASK-0001, DEC-0002  |
 | TASK-0004 | [#4](https://github.com/devkimhongjin/codeArchive/issues/4) | 기존 풀이 수동 등록 최소 흐름        | M1       | 구현      | Proposed | TASK-0001, TASK-0003 |
 | TASK-0005 | [#5](https://github.com/devkimhongjin/codeArchive/issues/5) | 실효성 있는 자동 검증 관문           | M0       | 검증      | Proposed | TASK-0001            |
@@ -52,7 +52,10 @@
 ## TASK-0002. 플랫폼 어댑터 계약과 fixture 전략
 
 - GitHub Issue: [#2](https://github.com/devkimhongjin/codeArchive/issues/2)
-- 상태: `Proposed`
+- 상태: `Done` (2026-07-26)
+- 완료 근거: [최종 검증 PASS](../verification/2026-07-26-TASK-0002.md),
+  [기록 → 기획 핸드오프](../../.agents/handoffs/TASK-0002-records-to-planning.md),
+  [ADR-0002](../adr/ADR-0002-platform-adapter-fixtures.md)
 - 목표: SWEA부터 시작해 다른 플랫폼으로 확장 가능한 어댑터 계약과 재현 가능한 테스트 입력을 만든다.
 - 범위:
   - 문제 페이지 감지, 문제 정보·코드·언어 수집, 제출 관찰 계약
@@ -68,7 +71,13 @@
 - 검증:
   - fixture 기반 계약 테스트
   - 비지원 URL과 누락 요소 테스트
-- 미결정: 실제 DOM fixture 수집 승인과 갱신 주기
+- 결정: 실제 사이트 원본 대신 최소 합성·비식별 fixture를 저장한다. 정상, 부분 누락,
+  DOM 변경, 비지원 URL을 독립 fixture로 관리하고 selector 계약이 바뀔 때만 갱신한다.
+  실제 DOM 캡처와 원문 보관은 별도 사용자 승인과 보안·저작권 검토 전까지 금지한다.
+- 종료 판정: AC-0002-01~09와 AC-0002-10의 자동 품질·권한 게이트가 PASS했다. Chrome
+  unpacked extension smoke는 `Not Run`이며 실제 SWEA DOM·로그인·편집기·제출 UI와 제품
+  KPI는 미검증이다. 이번 완료는 M0 계약·합성 fixture 범위에 한정하며 해당 수동·실사이트
+  검증은 M2 착수 시 필수 게이트로 수행한다.
 
 ## TASK-0003. IndexedDB 저장소와 마이그레이션 기반
 
@@ -156,8 +165,9 @@
 스프린트 날짜와 투입 가능 시간이 확인되지 않았으므로 아래는 확정 계획이 아니다.
 
 - 우선 후보: TASK-0001, TASK-0005, TASK-0006
-- 조사 후보: TASK-0002의 fixture 정책
-- 착수 조건: DEC-0002와 DEC-0003의 최소 방향, 각 작업 담당, 수용 기준 검토
+- 완료: TASK-0001 핵심 데이터 계약, TASK-0002 플랫폼 계약과 합성 fixture
+- 착수 조건: DEC-0002의 저장 전략은 TASK-0003에서 해소하고, DEC-0003은 TASK-0002
+  기획에서 최소 합성·비식별 fixture 전략으로 해소했다.
 
 TASK-0003과 TASK-0004는 데이터 규격과 저장 전략이 준비된 뒤 배치한다. 스프린트 용량이 확인되기 전에는 세 후보를 모두 완료 대상으로 약속하지 않는다.
 
