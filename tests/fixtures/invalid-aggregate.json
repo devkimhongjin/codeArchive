@@ -1,0 +1,31 @@
+{
+  "problems": [
+    {
+      "schemaVersion": 2,
+      "id": "problem:not-a-uuid",
+      "platform": "unsupported",
+      "title": "",
+      "tags": [],
+      "source": "manual",
+      "createdAt": "2026-07-25T10:00:00Z",
+      "updatedAt": "2026-07-24T10:00:00.000Z",
+      "unknownField": true
+    }
+  ],
+  "solutionSessions": [
+    {
+      "schemaVersion": 1,
+      "id": "solution-session:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "problemId": "problem:ffffffff-ffff-4fff-8fff-ffffffffffff",
+      "language": "java",
+      "result": "accepted",
+      "mistakes": [],
+      "reviewRequired": false,
+      "source": "manual",
+      "createdAt": "2026-07-25T10:00:00.000Z",
+      "updatedAt": "2026-07-25T10:00:00.000Z"
+    }
+  ],
+  "submissions": [],
+  "aiUsageRecords": []
+}

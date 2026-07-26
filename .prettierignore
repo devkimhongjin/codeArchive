@@ -1,6 +1,7 @@
 coverage/
 dist/
 node_modules/
+.agents/
 package-lock.json
 docs/proposal/
 src/assets/
