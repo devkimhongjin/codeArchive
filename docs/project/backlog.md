@@ -1,7 +1,7 @@
 # CodeArchive 초기 백로그
 
 > 상태: 초안(Draft)  
-> 현재 마일스톤: M0 — 기반 정렬  
+> 현재 마일스톤: M0 — 기반 정렬 (수동 등록 프로토타입 사용 가능)  
 > 일정과 담당자: 미확정
 
 이 백로그는 제안서의 MVP, 12단계 개발 순서와 성공 기준을 구현 가능한 초기 작업으로 나눈 것이다. 아래 작업은 모두 아직 완료 근거가 없으므로 `Proposed` 상태다.
@@ -15,14 +15,14 @@
 
 ## 초기 작업 요약
 
-| ID        | GitHub                                                      | 작업                                 | 마일스톤 | 주 역할   | 상태     | 선행                 |
-| --------- | ----------------------------------------------------------- | ------------------------------------ | -------- | --------- | -------- | -------------------- |
-| TASK-0001 | [#1](https://github.com/devkimhongjin/codeArchive/issues/1) | 핵심 데이터 규격과 식별자 정의       | M0       | 기획·구현 | Done     | DEC-0002, ADR-0001   |
-| TASK-0002 | [#2](https://github.com/devkimhongjin/codeArchive/issues/2) | 플랫폼 어댑터 계약과 fixture 전략    | M0       | 구현·검증 | Done     | DEC-0003, ADR-0002   |
-| TASK-0003 | [#3](https://github.com/devkimhongjin/codeArchive/issues/3) | IndexedDB 저장소와 마이그레이션 기반 | M0       | 구현      | Proposed | TASK-0001, DEC-0002  |
-| TASK-0004 | [#4](https://github.com/devkimhongjin/codeArchive/issues/4) | 기존 풀이 수동 등록 최소 흐름        | M1       | 구현      | Proposed | TASK-0001, TASK-0003 |
-| TASK-0005 | [#5](https://github.com/devkimhongjin/codeArchive/issues/5) | 실효성 있는 자동 검증 관문           | M0       | 검증      | Proposed | TASK-0001            |
-| TASK-0006 | [#6](https://github.com/devkimhongjin/codeArchive/issues/6) | KPI·ADR·트러블슈팅 기록 기반         | M0       | 기록·기획 | Proposed | 없음                 |
+| ID        | GitHub                                                      | 작업                                 | 마일스톤 | 주 역할   | 상태            | 선행                 |
+| --------- | ----------------------------------------------------------- | ------------------------------------ | -------- | --------- | --------------- | -------------------- |
+| TASK-0001 | [#1](https://github.com/devkimhongjin/codeArchive/issues/1) | 핵심 데이터 규격과 식별자 정의       | M0       | 기획·구현 | Done            | DEC-0002, ADR-0001   |
+| TASK-0002 | [#2](https://github.com/devkimhongjin/codeArchive/issues/2) | 플랫폼 어댑터 계약과 fixture 전략    | M0       | 구현·검증 | Done            | DEC-0003, ADR-0002   |
+| TASK-0003 | [#3](https://github.com/devkimhongjin/codeArchive/issues/3) | IndexedDB 저장소와 마이그레이션 기반 | M0       | 구현      | In Verification | TASK-0001, DEC-0002  |
+| TASK-0004 | [#4](https://github.com/devkimhongjin/codeArchive/issues/4) | 기존 풀이 수동 등록 최소 흐름        | M1       | 구현      | In Verification | TASK-0001, TASK-0003 |
+| TASK-0005 | [#5](https://github.com/devkimhongjin/codeArchive/issues/5) | 실효성 있는 자동 검증 관문           | M0       | 검증      | Proposed        | TASK-0001            |
+| TASK-0006 | [#6](https://github.com/devkimhongjin/codeArchive/issues/6) | KPI·ADR·트러블슈팅 기록 기반         | M0       | 기록·기획 | Proposed        | 없음                 |
 
 ## TASK-0001. 핵심 데이터 규격과 식별자 정의
 
@@ -82,42 +82,92 @@
 ## TASK-0003. IndexedDB 저장소와 마이그레이션 기반
 
 - GitHub Issue: [#3](https://github.com/devkimhongjin/codeArchive/issues/3)
-- 상태: `Proposed`
-- 목표: 핵심 데이터를 로컬 우선으로 안전하게 저장하고 스키마 변경을 추적할 기반을 만든다.
+- 상태: `In Verification` (2026-07-27, 구현 완료·프로토타입 범위 PASS)
+- 기획 근거: [TASK-0003 기획 → 구현 핸드오프](../../.agents/handoffs/TASK-0003-planning-to-implementation.md)
+- 목표: TASK-0004 수동 등록에 필요한 핵심 데이터를 native IndexedDB v1에 로컬 우선으로
+  저장하고, 이후 스키마 변경을 수용할 최소 업그레이드 경계를 만든다.
 - 범위:
-  - DB 열기, 버전 관리, 트랜잭션과 repository 경계
-  - 핵심 엔터티 생성·조회·수정·삭제
-  - 중복 키와 실패 시 롤백
-  - 테스트용 DB 초기화와 마이그레이션 fixture
-- 제외: 서버 동기화, 클라우드 백업
+  - native IndexedDB v1 열기와 명시적 닫기
+  - `onupgradeneeded` 기반 schema upgrade hook
+  - Problem, SolutionSession, AIUsageRecord object store와 repository 경계
+  - 엔터티별 저장, ID 조회, 전체 목록 조회, 수정
+  - Problem·SolutionSession·AIUsageRecord를 하나의 트랜잭션으로 저장
+  - 동일 ID 생성 시 구조화된 중복 오류 반환
+- 제외:
+  - Submission 저장
+  - 삭제 및 cascade
+  - 서버 동기화, 클라우드 백업, 외부 네트워크
+  - 외부 IndexedDB wrapper dependency
+  - 복잡한 migration/rollback fixture와 전체 테스트 매트릭스
 - 수용 기준:
-  - 브라우저 재실행에 해당하는 DB 재오픈 후 데이터가 유지된다.
-  - 실패한 트랜잭션이 부분 데이터를 남기지 않는다.
-  - 스키마 버전 변경의 업그레이드 테스트가 있다.
-  - 민감 정보 저장 범위와 삭제 동작이 문서화된다.
+  - DB를 닫고 다시 열어 저장한 Problem, SolutionSession, AIUsageRecord를 ID로 조회할 수 있다.
+  - 대시보드 재조회용으로 각 엔터티의 전체 목록을 조회할 수 있다.
+  - 각 엔터티를 수정하면 같은 ID의 최신 값이 조회된다.
+  - 생성 API에 이미 존재하는 ID를 전달하면 기존 값을 덮어쓰지 않고 중복 ID 오류를 반환한다.
+  - 세 엔터티의 묶음 저장은 단일 readwrite transaction으로 처리되고 실패 시 부분 저장을 남기지 않는다.
+  - v1 object store 생성은 schema upgrade hook 안에서 수행되어 후속 버전 확장 지점이 보인다.
+  - 새 dependency, Chrome/host permission, 외부 통신을 추가하지 않는다.
 - 검증:
-  - CRUD, 중복, 트랜잭션 롤백, 업그레이드 테스트
-- 미결정: 직접 IndexedDB 사용 또는 래퍼 도입
+  - `npm ci`와 전체 `npm run validate` PASS
+  - [등록·상세·수정·reload·중복·기존 문제 Session 추가 smoke PASS](../verification/2026-07-27-PROTOTYPE.md#브라우저-기능-smoke-test)
+  - [프로토타입 검증 → 기획 핸드오프](../../.agents/handoffs/PROTOTYPE-verification-to-planning.md)
+- 정식 `Done` 차단:
+  - storage CRUD·중복·transaction rollback·upgrade와 Dashboard UI 흐름 자동 테스트
+  - Chrome 확장 관리 화면에서 `dist` 실제 unpacked extension 로드
+- 결정: 프로토타입에는 native IndexedDB를 사용한다. DB 버전은 1로 시작하며 store 생성은
+  upgrade hook에서만 수행한다.
+- 후속: Submission, 삭제/cascade, 실제 v1→v2 migration/rollback 시험은 프로토타입 이후
+  별도 작업으로 분리한다. 조건 검색과 인덱스 최적화도 후속 범위다.
 
 ## TASK-0004. 기존 풀이 수동 등록 최소 흐름
 
 - GitHub Issue: [#4](https://github.com/devkimhongjin/codeArchive/issues/4)
-- 상태: `Proposed`
+- 상태: `In Verification` (2026-07-27, 구현 완료·프로토타입 범위 PASS)
+- 기획 근거: [TASK-0004 기획 → 구현 핸드오프](../../.agents/handoffs/TASK-0004-planning-to-implementation.md)
 - 목표: 자동 수집 전에 사용자가 기존 풀이 하나를 직접 등록하고 다시 확인할 수 있게 한다.
 - 범위:
-  - 플랫폼, 문제 번호, 제목, 언어, 코드, 풀이 날짜 입력
-  - AI 활용 수준과 미기록 상태 입력
-  - 중복 후보 안내
-  - 저장 후 상세 조회와 수정
-- 제외: 파일/ZIP 일괄 가져오기, URL 자동 분석, 완성형 대시보드
+  - 기존 Popup의 `대시보드 열기` 진입점 유지
+  - Dashboard 단일 페이지의 목록, 추가, 상세, 수정 흐름
+  - 플랫폼, 제목 또는 문제 번호, 언어 필수 입력
+  - 코드와 풀이 날짜 선택 입력
+  - AI 활용 수준 입력, 기본값 `unrecorded`
+  - 수동 등록 세션의 `result: unknown`, `source: manual`
+  - Problem + SolutionSession + AIUsageRecord 원자 저장
+  - `platform + problemNumber` 또는 `platform + 정규화 title` 중복 후보 안내
+  - 기존 Problem을 선택해 새 SolutionSession + AIUsageRecord 추가
+  - 중복 후보와 별개 기록으로 저장하는 명시적 선택
+  - 생성된 세 엔터티의 상세 조회와 수정
+- 제외:
+  - 파일/ZIP 일괄 가져오기
+  - URL 분석과 자동 수집
+  - Submission 생성
+  - 완성형 디자인, 검색·필터·정렬·통계 대시보드
 - 수용 기준:
-  - 필수 필드 오류를 입력 위치에서 설명한다.
-  - 저장 후 재실행 시 기록을 조회하고 수정할 수 있다.
-  - 중복 후보가 있을 때 자동 덮어쓰지 않는다.
+  - Popup에서 기존 버튼으로 Dashboard를 열 수 있고, Dashboard 한 페이지에서 목록·추가·상세·수정을 전환한다.
+  - 플랫폼, 언어와 제목·문제 번호 중 하나가 없으면 입력 위치에서 오류를 설명하고 저장하지 않는다.
+  - 신규 저장은 `result: unknown`, `source: manual`, AI 수준 `unrecorded`를 사용한다.
+  - 신규 문제 저장 시 Problem, SolutionSession, AIUsageRecord를 한 트랜잭션으로 저장하고 일부만 남기지 않는다.
+  - 중복 후보가 있을 때 자동으로 덮어쓰거나 병합하지 않고 기존 Problem 선택 또는 별도 저장을 요구한다.
+  - 기존 Problem 선택 시 새 SolutionSession과 AIUsageRecord만 추가한다.
+  - 수정 후에도 생성된 Problem, SolutionSession, AIUsageRecord의 ID와 `createdAt`이 유지된다.
+  - 저장 후 목록과 상세에서 다시 확인하고 Dashboard 재실행 뒤에도 조회·수정할 수 있다.
   - 수동 등록 1분 이내 KPI를 측정할 시나리오가 정의된다.
 - 검증:
-  - 정상 등록, 필수값 누락, 중복, 저장 실패 시나리오
-- 미결정: 최초 UI 진입점과 필수 입력의 최소 범위
+  - `npm ci`와 전체 `npm run validate` PASS
+  - [신규 등록·상세·수정·reload·중복 후보·기존 Problem 세션 추가 smoke PASS](../verification/2026-07-27-PROTOTYPE.md#브라우저-기능-smoke-test)
+  - [프로토타입 검증 → 기획 핸드오프](../../.agents/handoffs/PROTOTYPE-verification-to-planning.md)
+  - [프로토타입 기록 → 기획 핸드오프](../../.agents/handoffs/PROTOTYPE-records-to-planning.md)
+- 정식 `Done` 차단:
+  - storage와 Dashboard UI 주요 흐름 자동 테스트
+  - Chrome 확장 관리 화면에서 `dist` 실제 unpacked extension 로드
+- 기록:
+  - README에 Dashboard 수동 등록 사용 흐름과 현재 제한을 갱신한다.
+  - `docs/project/tech-stack.md`에 Vue 단일 페이지와 native IndexedDB 직접 연결 선택 과정, 대안을 기록한다.
+  - 실제 구현 중 발생한 문제만 troubleshooting에 기록한다.
+- 결정:
+  - 최초 진입점은 기존 Popup의 `대시보드 열기`를 유지한다.
+  - Dashboard는 프로토타입 동안 목록·추가·상세·수정을 한 페이지에서 제공한다.
+  - 중복은 후보 안내만 하며 사용자의 명시적 선택 없이 병합 또는 덮어쓰기하지 않는다.
 
 ## TASK-0005. 실효성 있는 자동 검증 관문
 

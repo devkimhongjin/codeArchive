@@ -13,11 +13,13 @@
 
 ## 색인
 
-| ID            | 날짜       | 증상                                                        | 영역          | 상태       | 관련 작업/ADR |
-| ------------- | ---------- | ----------------------------------------------------------- | ------------- | ---------- | ------------- |
-| `TS-YYYY-NNN` |            |                                                             |               | `open      | mitigated     | resolved` |     |
-| `TS-2026-001` | 2026-07-26 | 작업 이력이 서로 다른 로컬 저장소에 분리됨                  | 개발 환경/Git | `resolved` | TASK-0001     |
-| `TS-2026-002` | 2026-07-26 | Windows checkout 파일이 Prettier LF 검사에서 실패할 수 있음 | Git/포맷      | `resolved` | TASK-0001     |
+| ID            | 날짜       | 증상                                                        | 영역          | 상태        | 관련 작업/ADR |
+| ------------- | ---------- | ----------------------------------------------------------- | ------------- | ----------- | ------------- |
+| `TS-YYYY-NNN` |            |                                                             |               | `open       | mitigated     | resolved` |     |
+| `TS-2026-001` | 2026-07-26 | 작업 이력이 서로 다른 로컬 저장소에 분리됨                  | 개발 환경/Git | `resolved`  | TASK-0001     |
+| `TS-2026-002` | 2026-07-26 | Windows checkout 파일이 Prettier LF 검사에서 실패할 수 있음 | Git/포맷      | `resolved`  | TASK-0001     |
+| `TS-2026-003` | 2026-07-27 | constructor parameter property에서 TS1294 발생              | TypeScript    | `resolved`  | TASK-0003     |
+| `TS-2026-004` | 2026-07-27 | Codex 환경에서 `npx`·Husky hook 실행 경로를 찾지 못함       | 개발 환경     | `mitigated` | 프로토타입    |
 
 ## 템플릿
 
@@ -258,3 +260,75 @@ Prettier가 기대하는 LF와 working tree의 CRLF가 다르면 format check가
 
 - 추가한 테스트/알림: CI와 로컬 전체 검증에서 Prettier check를 유지한다.
 - 문서/ADR 변경: `.gitattributes`를 저장소 줄바꿈 정책의 기준으로 사용한다.
+
+### TS-2026-003: `erasableSyntaxOnly`에서 constructor parameter property 사용 불가
+
+- 발견일: 2026-07-27
+- 해결일: 2026-07-27
+- 상태: `resolved`
+- 영향: IndexedDB repository 구현의 typecheck가 `TS1294`로 실패했다.
+- 관련 작업/커밋: TASK-0003
+- 환경: TypeScript 6, `erasableSyntaxOnly`
+
+#### 증상
+
+constructor 매개변수에 `private readonly database: IDBDatabase`처럼 접근 제어자와 필드
+선언을 함께 사용했을 때, 현재 TypeScript 설정에서 해당 문법을 지울 수 없다는 `TS1294`
+오류가 발생했다.
+
+#### 확인된 원인
+
+`erasableSyntaxOnly`는 JavaScript로 단순 삭제할 수 없는 TypeScript 문법을 허용하지 않는다.
+parameter property는 constructor 매개변수뿐 아니라 런타임 필드 초기화 코드를 생성하므로
+이 설정과 맞지 않았다.
+
+#### 해결 또는 완화
+
+- 클래스 본문에 일반 필드를 선언했다.
+- constructor에서는 전달받은 값을 명시적으로 필드에 할당했다.
+- 저장소의 TypeScript 설정을 완화하거나 예외 처리하지 않았다.
+
+#### 검증
+
+- 명령: `npm run typecheck`
+- 결과: PASS
+- 상세 동작 검증은 프로토타입 통합 검증 시점으로 유예했다.
+
+#### 예방
+
+- `erasableSyntaxOnly`가 켜진 코드에서는 enum, namespace, parameter property 등 런타임
+  변환이 필요한 문법을 새로 사용하지 않는다.
+
+### TS-2026-004: Codex 환경의 `npx`·Husky hook 실행 경로 부재
+
+- 발견일: 2026-07-27
+- 상태: `mitigated`
+- 영향: Codex의 제한된 실행 환경에서 hook이 기대한 `npx` 실행 파일을 찾지 못해 자동
+  커밋 전 검사를 그대로 실행할 수 없었다.
+- 관련 작업/커밋: 프로토타입 작업
+- 환경: Windows, Codex bundled Node/npm, Husky
+
+#### 확인된 원인
+
+프로젝트 의존성 문제가 아니라 Codex 실행 환경의 PATH와 Git hook 프로세스 환경이 일반
+개발자 셸과 달랐다. 따라서 저장소에 설치된 패키지가 있어도 hook이 전제한 `npx` 명령을
+해석하지 못했다.
+
+#### 해결 또는 완화
+
+- hook 자체를 성공한 것으로 기록하지 않았다.
+- 동일 목적의 `npm run lint`, `npm run typecheck`, `npm run build`를 명시적으로 실행했다.
+- 프로토타입 통합 전에는 전체 `npm run validate`와 정상 개발 환경의 Husky 동작을 다시
+  확인해야 한다.
+- 제품 코드, package script와 hook 설정은 환경 문제를 우회하기 위해 변경하지 않았다.
+
+#### 검증
+
+- 결과: 최소 게이트인 lint, typecheck, production build는 PASS로 전달받았다.
+- 상태가 `mitigated`인 이유: Codex 환경의 hook 실행 자체는 복구하지 않았고 수동 명령으로
+  대체했기 때문이다.
+
+#### 예방
+
+- 자동 hook 결과와 수동 대체 검사를 구분해 handoff에 기록한다.
+- CI Validate check를 원격 병합의 최종 품질 게이트로 유지한다.

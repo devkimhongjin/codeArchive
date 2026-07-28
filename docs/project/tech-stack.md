@@ -14,6 +14,9 @@
 | 플랫폼          | Chrome Extension Manifest V3                    | `public/manifest.json`                             | popup, service worker, storage 기반 제품 요구       | content script 등록 및 최소 권한 검토 필요                         |
 | 단위 테스트     | Vitest 4                                        | `package.json`, `tests/unit/data-contract.test.ts` | Vite/TypeScript와 통합된 빠른 테스트                | TASK-0001 데이터 계약 13개 테스트가 있으며 coverage는 미측정       |
 | 데이터 검증     | 순수 TypeScript 런타임 파서                     | `src/common/validators/index.ts`, ADR-0001         | 의존성 추가 없이 외부·저장 경계의 unknown 입력 검증 | 타입과 수동 파서의 동기화를 회귀 테스트로 유지                     |
+| 로컬 영속 저장  | 브라우저 native IndexedDB                       | `src/storage/**`                                   | 추가 의존성 없이 local-first 프로토타입 영속화      | v1 schema만 구현, migration·rollback 상세 검증 유예                |
+| 저장소 경계     | `CodeArchiveRepository` facade                  | `src/storage/repository.ts`                        | UI와 IndexedDB 이벤트·transaction 세부사항 분리     | Submission·삭제·검색 계약은 아직 없음                              |
+| Dashboard 상태  | Vue Composition API 로컬 상태                   | `src/dashboard/DashboardApp.vue`                   | router 없이 목록·추가·상세·수정 프로토타입 구성     | URL 상태·새로고침 복원·복잡한 전역 상태에는 부적합                 |
 | 정적 분석       | ESLint 10, typescript-eslint, eslint-plugin-vue | `eslint.config.js`                                 | TS/Vue 오류와 컨벤션 검사                           | 현재 type-aware 규칙이 아니어서 floating Promise 등을 놓칠 수 있음 |
 | 포맷            | Prettier 3                                      | `prettier.config.js`                               | 일관된 포맷과 리뷰 노이즈 감소                      | 생성물/문서 제외 범위 관리                                         |
 | Git 품질 게이트 | Husky, lint-staged, commitlint                  | `.husky`, `commitlint.config.js`                   | 커밋 전 변경 파일과 메시지 검사                     | Hook 우회 가능하므로 CI가 최종 게이트                              |
@@ -31,6 +34,35 @@
 | Playwright                    | MV3 확장 E2E 및 설치 smoke test    | 안정적인 Chromium extension fixture 확보 | ADR 권장                |
 | artifact 검증 Node 스크립트   | manifest 경로, 버전, ZIP 구조 검증 | 패키징 단계 도입 전 필수                 | 구현 작업               |
 | dependency review/secret scan | 공급망·비밀정보 점검               | GitHub 보안 정책 승인                    | CI/보안 ADR             |
+
+## 프로토타입 기술 선택 기록
+
+### Native IndexedDB와 repository 경계
+
+- 선택: wrapper 라이브러리를 추가하지 않고 브라우저 native IndexedDB를 사용한다.
+- 절차: local-first 영속성, 관계 데이터의 부분 저장 방지, 프로토타입 의존성 최소화 요구를
+  먼저 확인하고 native API와 IndexedDB wrapper 도입을 비교했다.
+- 구현: `CodeArchiveRepository`가 Promise 기반 CRUD를 제공하고 Dashboard는 이 facade만
+  사용한다. Problem, SolutionSession, AIUsageRecord 묶음은 하나의 `readwrite`
+  transaction에서 저장하는 atomic bundle로 처리한다.
+- 검토 대안: Dexie 같은 wrapper는 migration·query·테스트 편의성이 높지만, 현재 세 store의
+  최소 CRUD를 위해 새 dependency와 별도 추상화 학습 비용을 추가하지 않았다.
+- trade-off: 이벤트 기반 native API와 오류 변환 코드를 직접 유지해야 하며 실제 migration,
+  rollback과 transaction 실패 자동 테스트는 프로토타입 통합 검증 이후에 보강한다.
+
+### Vue 단일 페이지 상태 전환
+
+- 선택: Vue Composition API의 컴포넌트 로컬 상태로 목록, 추가, 상세, 수정 화면을 전환한다.
+- 절차: 현재 Dashboard가 한 진입점이고 프로토타입 화면 수가 네 개라는 점을 기준으로
+  router·Pinia·background messaging 도입 필요성을 비교했다.
+- 검토 대안:
+  - Vue Router는 URL 및 새로고침 상태 복원에 유리하지만 현재 흐름에는 라우팅 의존성과
+    route 설계가 더 큰 비용이다.
+  - Pinia는 여러 컴포넌트의 공유 상태에 유리하지만 단일 컴포넌트 프로토타입에는 과하다.
+  - background/service-worker messaging은 수명주기와 다중 화면 조정에 유리하지만,
+    local-first Dashboard의 직접 repository 호출에 메시지 계약과 실패 지점을 추가한다.
+- trade-off: 빠르게 사용자 흐름을 확인할 수 있지만 컴포넌트가 커지고 URL 기반 탐색이
+  없다. 화면과 소비자가 늘면 router, store 또는 background 경계를 다시 평가한다.
 
 ## 스택 변경 규칙
 

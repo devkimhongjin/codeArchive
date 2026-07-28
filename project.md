@@ -1,7 +1,7 @@
 # CodeArchive 프로젝트 제어 문서
 
 > 상태: 초안(Draft)  
-> 현재 마일스톤: M0 — 기반 정렬  
+> 현재 마일스톤: M0 — 기반 정렬 (수동 등록 프로토타입 사용 가능)  
 > 일정 기준: 1주 스프린트, 시작일과 출시일은 미확정
 
 이 문서는 CodeArchive 개발의 범위, 운영 규칙, 의사결정 상태를 한곳에서 확인하기 위한 프로젝트 제어 문서다. 기능의 상세 근거는 `docs/proposal/codearchive-proposal.md`, 실행 순서는 `docs/project/roadmap.md`, 작업 단위는 `docs/project/backlog.md`를 기준으로 한다.
@@ -23,10 +23,13 @@ SWEA, 프로그래머스, 정올, LeetCode의 코딩테스트 풀이를 수집�
 
 ## 2. 현재 상태
 
-현재 상태는 **M0 — 기반 정렬**이다.
+현재 상태는 **M0 — 기반 정렬**이며, **수동 등록 프로토타입을 사용할 수 있다**.
 
 - Vue 3, TypeScript, Vite 기반 Chrome Extension 골격과 기본 검증 명령은 존재한다.
-- 핵심 데이터 모델, 플랫폼 어댑터, 저장소 계층, 실제 기능 테스트는 아직 완료로 판정하지 않는다.
+- 핵심 데이터 모델과 플랫폼 어댑터가 준비됐고, native IndexedDB 저장소와 Dashboard 수동
+  등록 프로토타입은 통합 검증 범위에서 PASS했다.
+- 저장소·UI 자동 테스트와 실제 unpacked extension 로드가 남아 있어 TASK-0003과
+  TASK-0004는 정식 완료로 판정하지 않는다.
 - 아키텍처와 데이터 모델 문서에는 작성 예정 항목이 남아 있다.
 - 진행률 백분율은 사용하지 않는다. 근거가 확인된 완료 작업만 `Done`으로 표시한다.
 - 특정 스프린트의 시작일, 종료일, 출시일은 담당자가 확정하기 전까지 기록하지 않는다.
@@ -87,13 +90,26 @@ SWEA, 프로그래머스, 정올, LeetCode의 코딩테스트 풀이를 수집�
 
 현재 작업:
 
-| 작업      | GitHub Issue                                                | 상태 | 변경일     | 근거                                                                                                                        |
-| --------- | ----------------------------------------------------------- | ---- | ---------- | --------------------------------------------------------------------------------------------------------------------------- |
-| TASK-0001 | [#1](https://github.com/devkimhongjin/codeArchive/issues/1) | Done | 2026-07-25 | [최종 검증 PASS](docs/verification/2026-07-25-TASK-0001-recheck-2.md)                                                       |
-| TASK-0002 | [#2](https://github.com/devkimhongjin/codeArchive/issues/2) | Done | 2026-07-26 | [최종 검증 PASS](docs/verification/2026-07-26-TASK-0002.md), [기록 완료](.agents/handoffs/TASK-0002-records-to-planning.md) |
+| 작업      | GitHub Issue                                                | 상태            | 변경일     | 근거                                                                                                                                                                      |
+| --------- | ----------------------------------------------------------- | --------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TASK-0001 | [#1](https://github.com/devkimhongjin/codeArchive/issues/1) | Done            | 2026-07-25 | [최종 검증 PASS](docs/verification/2026-07-25-TASK-0001-recheck-2.md)                                                                                                     |
+| TASK-0002 | [#2](https://github.com/devkimhongjin/codeArchive/issues/2) | Done            | 2026-07-26 | [최종 검증 PASS](docs/verification/2026-07-26-TASK-0002.md), [기록 완료](.agents/handoffs/TASK-0002-records-to-planning.md)                                               |
+| TASK-0003 | [#3](https://github.com/devkimhongjin/codeArchive/issues/3) | In Verification | 2026-07-27 | 구현 완료, [프로토타입 PASS](docs/verification/2026-07-27-PROTOTYPE.md), [검증 핸드오프](.agents/handoffs/PROTOTYPE-verification-to-planning.md)                          |
+| TASK-0004 | [#4](https://github.com/devkimhongjin/codeArchive/issues/4) | In Verification | 2026-07-27 | 구현 완료, [수동 등록 smoke PASS](docs/verification/2026-07-27-PROTOTYPE.md#브라우저-기능-smoke-test), [기록 핸드오프](.agents/handoffs/PROTOTYPE-records-to-planning.md) |
 
 GitHub Issue를 작업 상태와 토론의 원격 기준으로 사용하고, 상세 수용 기준과 의존성은
 `docs/project/backlog.md`에서 관리한다. 두 위치가 충돌하면 기획 역할이 먼저 동기화한다.
+
+TASK-0003·TASK-0004의 프로토타입 smoke는 신규 등록, 상세 조회, 수정, reload 영속성,
+중복 후보의 명시적 선택, 기존 Problem에 새 Session 추가까지 PASS했다. 정식 `Done` 전환은
+다음 두 게이트가 모두 충족될 때까지 차단한다.
+
+1. storage CRUD·중복·transaction rollback·upgrade와 Dashboard UI 흐름 자동 테스트
+2. Chrome 확장 관리 화면에서 `dist`를 실제 unpacked extension으로 로드하는 수동 검증
+
+상세 근거는 [프로토타입 통합 검증 보고서](docs/verification/2026-07-27-PROTOTYPE.md),
+[검증 → 기획 핸드오프](.agents/handoffs/PROTOTYPE-verification-to-planning.md),
+[기록 → 기획 핸드오프](.agents/handoffs/PROTOTYPE-records-to-planning.md)를 따른다.
 
 TASK-0002의 `Done`은 M0 플랫폼 어댑터 계약과 합성 fixture 범위에 한정한다. Chrome
 unpacked extension smoke는 `Not Run`이고 실제 SWEA DOM·로그인·편집기·제출 UI 및 제품
@@ -105,7 +121,6 @@ KPI는 검증하지 않았다. 이 항목들은 실제 플랫폼 연결과 권�
 | ID       | 결정 항목                                  | 필요한 근거                                        | 영향                      |
 | -------- | ------------------------------------------ | -------------------------------------------------- | ------------------------- |
 | DEC-0001 | MVP의 정확한 1차 배포 경계                 | Must Have 목록의 사용자 가치, 구현 비용, 보안 검토 | 마일스톤 범위와 출시 판단 |
-| DEC-0002 | IndexedDB 접근 계층과 스키마 버전 전략     | 데이터 모델, 마이그레이션/롤백 시험                | 데이터 호환성과 복구      |
 | DEC-0004 | AI 제공자와 API Key 저장·호출 방식         | 비용, Chrome 보안 제약, 전송 고지                  | AI 리뷰 범위와 보안       |
 | DEC-0005 | GitHub 인증과 수동 업로드 방식             | 최소 권한, 토큰 저장 정책, UX                      | manifest 권한과 보안      |
 | DEC-0006 | Notion MVP를 Markdown 복사로 제한할지 여부 | 제안서 MVP 제외 범위와 사용자 검증                 | 일정과 외부 연동 범위     |
@@ -114,9 +129,10 @@ KPI는 검증하지 않았다. 이 항목들은 실제 플랫폼 연결과 권�
 
 ### 해소된 결정
 
-| ID       | 결정일     | 결정                                                                                                     | 근거                                                                                             | 후속 기록                                                           |
-| -------- | ---------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
-| DEC-0003 | 2026-07-26 | 실제 사이트 원본 대신 최소 합성·비식별 DOM fixture를 사용하고 실제 DOM 캡처는 별도 승인 전까지 제외한다. | 재현성 확보, 개인정보·문제 원문·비공개 테스트 데이터의 저장 방지, selector 변경 실패의 독립 재현 | [ADR-0002 Accepted](docs/adr/ADR-0002-platform-adapter-fixtures.md) |
+| ID       | 결정일     | 결정                                                                                                                                                                                                                                                                        | 근거                                                                                                                            | 후속 기록                                                                           |
+| -------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| DEC-0003 | 2026-07-26 | 실제 사이트 원본 대신 최소 합성·비식별 DOM fixture를 사용하고 실제 DOM 캡처는 별도 승인 전까지 제외한다.                                                                                                                                                                    | 재현성 확보, 개인정보·문제 원문·비공개 테스트 데이터의 저장 방지, selector 변경 실패의 독립 재현                                | [ADR-0002 Accepted](docs/adr/ADR-0002-platform-adapter-fixtures.md)                 |
+| DEC-0002 | 2026-07-27 | 프로토타입은 외부 dependency 없는 native IndexedDB v1과 단일 트랜잭션 repository 경계를 사용한다. v1은 Problem, SolutionSession, AIUsageRecord의 저장·ID 조회·수정·전체 목록 조회를 제공하며 Submission, 삭제/cascade와 복잡한 migration 검증은 프로토타입 이후로 유예한다. | TASK-0004 수동 등록과 대시보드 재조회에 필요한 최소 영속성 확보, 권한·네트워크 영향 없음, 향후 `onupgradeneeded` 확장 지점 보존 | [TASK-0003 기획 핸드오프](.agents/handoffs/TASK-0003-planning-to-implementation.md) |
 
 ## 7. 변경 관리
 
