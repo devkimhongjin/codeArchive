@@ -1,1 +1,0 @@
-console.info('[CodeArchive] Content script loaded')
