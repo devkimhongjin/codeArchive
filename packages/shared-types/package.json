@@ -17,11 +17,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "clean": "rimraf dist",
-    "infra:up": "docker compose --env-file infra/.env -f infra/compose.yaml up -d",
-    "infra:down": "docker compose --env-file infra/.env -f infra/compose.yaml down",
-    "infra:logs": "docker compose --env-file infra/.env -f infra/compose.yaml logs -f",
-    "infra:ps": "docker compose --env-file infra/.env -f infra/compose.yaml ps"
+    "clean": "rimraf dist"
   },
   "devDependencies": {
     "rimraf": "^6.0.0",
