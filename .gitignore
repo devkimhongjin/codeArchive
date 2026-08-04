@@ -46,4 +46,12 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
+# Python
+**/__pycache__/
+*.py[cod]
+**/.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
 # End of https://www.toptal.com/developers/gitignore/api/vue,vuejs,windows
