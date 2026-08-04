@@ -54,4 +54,10 @@ $RECYCLE.BIN/
 .mypy_cache/
 .ruff_cache/
 
+# Environment variables
+.env
+**/.env
+!.env.example
+!**/.env.example
+
 # End of https://www.toptal.com/developers/gitignore/api/vue,vuejs,windows
