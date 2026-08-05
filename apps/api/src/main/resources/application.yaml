@@ -12,7 +12,6 @@ spring:
     open-in-view: false
     hibernate:
       ddl-auto: validate
-
     properties:
       hibernate:
         format_sql: true
@@ -20,6 +19,12 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2s
 
 server:
   port: 8080
