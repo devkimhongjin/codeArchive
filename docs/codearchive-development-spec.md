@@ -150,8 +150,8 @@ Main API Server
 
 | 서비스 | 역할 | 권장 기술 |
 |---|---|---|
-| Browser Extension | 플랫폼 감지, 코드·결과 수집, 빠른 저장 | Manifest V3, TypeScript, Vue 3, Vite |
-| Web Dashboard | 기록 조회, 통계, 설정, 외부 연동 관리 | Vue 3, TypeScript, Pinia, Vue Router |
+| Browser Extension | 플랫폼 감지, 코드·결과 수집, 빠른 저장 | Manifest V3, TypeScript, React, Vite |
+| Web Dashboard | 기록 조회, 통계, 설정, 외부 연동 관리 | React, TypeScript, React Router, Zustand, TanStack Query |
 | Main API | 인증, CRUD, 연동, 파일 생성 요청 | Java 21, Spring Boot 3 |
 | Analysis API | AI 리뷰, 통계 분석, 문제 추천 | Python, FastAPI |
 | Worker | 장시간 작업과 재시도 | Celery 또는 RQ |
@@ -166,7 +166,7 @@ Main API Server
 
 - **Java/Spring Boot**: 도메인 모델, 인증, 트랜잭션, 외부 연동, API 설계 경험
 - **Python/FastAPI**: AI 연동, 데이터 분석, 추천 로직, 비동기 작업 경험
-- **TypeScript/Vue**: 확장 프로그램과 웹 UI의 타입 안정성 및 공통 모델 활용
+- **TypeScript/React**: 확장 프로그램과 웹 UI의 타입 안정성, 컴포넌트 재사용 및 공통 모델 활용
 - **PostgreSQL**: 관계형 모델, 인덱스, 집계 쿼리, 마이그레이션 경험
 - **Redis**: 캐시, 요청 제한, 분산 락, 작업 상태 저장 경험
 - **Docker/CI/CD**: 로컬 환경 통일, 테스트 자동화, 배포 경험
@@ -179,7 +179,7 @@ Main API Server
 
 - Chrome Extension Manifest V3
 - TypeScript
-- Vue 3
+- React
 - Vite
 - Chrome Storage API
 - IndexedDB
@@ -212,6 +212,8 @@ extension/src/
 ├── common/
 └── tests/
 ```
+
+팝업과 옵션 화면은 React 컴포넌트(`.tsx`)로 구현하며, Content Script와 Background Service Worker는 프레임워크에 의존하지 않는 TypeScript 모듈로 유지한다.
 
 ### 4.3 플랫폼 어댑터 인터페이스
 
@@ -741,11 +743,11 @@ recommendationScore =
 
 ### 13.1 기술
 
-- Vue 3
+- React
 - TypeScript
-- Pinia
-- Vue Router
-- Axios 또는 TanStack Query
+- React Router
+- Zustand
+- TanStack Query
 - Tailwind CSS
 - ECharts
 - Vitest
@@ -1460,6 +1462,27 @@ Semantic Versioning을 적용한다.
 
 ## 23. 단계별 구현 계획
 
+### 23.0 현재 구현 우선순위
+
+초기 기반 구성 이후에는 API와 외부 연동보다 사용자가 직접 확인할 수 있는 로컬 프로토타입 완성을 우선한다.
+
+현재 실행 순서:
+
+1. React 기반 Chrome Extension 기본 실행
+2. 수동 풀이 등록
+3. Chrome Storage 또는 IndexedDB 로컬 저장
+4. 팝업에서 저장 기록 조회
+5. Source·Markdown·JSON 내보내기
+6. SWEA 문제 페이지 감지 및 문제 정보 수집
+7. 제출 코드와 결과 감지
+8. 자동 수집 기록을 로컬 저장소에 통합
+9. Web Dashboard 프로토타입
+10. Main API·PostgreSQL 동기화
+11. 인증 및 외부 서비스 연동
+12. AI 리뷰·통계·추천
+
+프로토타입 단계에서는 서버 연결 실패나 서버 미실행 상태에서도 핵심 기록·조회·내보내기 기능이 동작해야 한다. API, 데이터베이스, 인증은 로컬 사용자 흐름이 검증된 이후 연결한다.
+
 ### Phase 1. 공통 모델 및 개발 환경
 
 - Monorepo 구성
@@ -1478,18 +1501,20 @@ Semantic Versioning을 적용한다.
 - 공통 모델 빌드
 - 기본 테스트 통과
 
-### Phase 2. 수동 기록 및 로컬 내보내기
+### Phase 2. React 기반 로컬 프로토타입
 
+- Chrome Extension React 팝업 실행
 - 문제 직접 등록
 - 코드 붙여넣기
 - 파일 가져오기
 - 문제 목록·상세
 - Source·Markdown·JSON 다운로드
-- IndexedDB 저장
+- Chrome Storage 또는 IndexedDB 저장
+- 최근 저장 기록 팝업 조회
 
 완료 기준:
 
-- 플랫폼 자동 수집 없이 하나의 풀이를 등록하고 파일로 다운로드 가능
+- API 서버 없이 하나의 풀이를 등록·조회하고 Source·Markdown·JSON 파일로 다운로드 가능
 
 ### Phase 3. SWEA Chrome Extension
 
