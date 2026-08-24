@@ -11,6 +11,7 @@ export interface SolutionRecord {
   aiUsage: AiUsage;
   createdAt: string;
   updatedAt: string;
+  autoCapture?: { source: "SWEA_AUTO"; result: "ACCEPTED"; observedAt: string };
 }
 
 export interface NewSolutionInput {

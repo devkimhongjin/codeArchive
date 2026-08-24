@@ -57,6 +57,7 @@ export const sweaAdapter: PlatformAdapter = {
         metadata: detectSweaSolvingProblemMeta(document, url),
         editor: detectSweaEditor(document, url),
         submissionResult: { status: "none" },
+        autoSave: { status: "idle" },
       };
     }
 
