@@ -96,7 +96,8 @@ jobs:
           )"
           echo "$EXTENSION_ID" | tee extension-id.log
 
-          "$CHROME_BIN" \
+          set +e
+          timeout 20s "$CHROME_BIN" \
             --headless=new \
             --no-sandbox \
             --user-data-dir="$PROFILE" \
@@ -104,6 +105,13 @@ jobs:
             --load-extension="$EXT_DIR" \
             --dump-dom "chrome-extension://$EXTENSION_ID/popup.html" \
             >popup-dom.log 2>chrome-popup.log
+          CHROME_STATUS=$?
+          set -e
+
+          if [[ "$CHROME_STATUS" -ne 0 && "$CHROME_STATUS" -ne 124 ]]; then
+            cat chrome-popup.log
+            exit "$CHROME_STATUS"
+          fi
 
           grep -q "로컬 우선 기록 준비 완료" popup-dom.log
           grep -q "서버 연결 없음 · 로컬 프로토타입" popup-dom.log
