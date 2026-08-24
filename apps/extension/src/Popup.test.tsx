@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { Popup } from "./Popup";
+import { Popup } from "./PopupView";
 
 describe("Popup", () => {
   it("renders the local-first status without a server connection", () => {
