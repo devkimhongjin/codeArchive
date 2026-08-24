@@ -10,7 +10,9 @@
   "content_scripts": [
     {
       "matches": [
-        "https://swexpertacademy.com/main/code/problem/problemDetail.do*"
+        "https://swexpertacademy.com/main/code/problem/problemDetail.do*",
+        "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do*",
+        "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do*"
       ],
       "js": ["content/swea.js"],
       "run_at": "document_idle"
