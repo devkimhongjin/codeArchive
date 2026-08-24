@@ -1,19 +1,11 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import "./popup.css";
 import type { AiUsage, NewSolutionInput, SolutionRecord } from "./solution";
-import {
-  indexedDbSolutionRepository,
-  type SolutionRepository,
-} from "./solutionRepository";
-import {
-  buildExportFilename,
-  downloadTextFile,
-  toJson,
-  toMarkdown,
-  toSource,
-  type ExportFormat,
-} from "./solutionExport";
+import { indexedDbSolutionRepository, type SolutionRepository } from "./solutionRepository";
+import { buildExportFilename, downloadTextFile, toJson, toMarkdown, toSource, type ExportFormat } from "./solutionExport";
 import { importSourceFile, parseSolutionJson } from "./solutionImport";
+import type { DetectedProblemInfo } from "./adapters/platformAdapter";
+import { SweaDetectionPanel } from "./SweaDetectionPanel";
 
 const EMPTY_FORM: NewSolutionInput = {
   platform: "",
@@ -25,10 +17,9 @@ const EMPTY_FORM: NewSolutionInput = {
   aiUsage: "unknown",
 };
 
-const REQUIRED_FIELDS: Array<keyof Pick<
-  NewSolutionInput,
-  "platform" | "problemNumber" | "title" | "language" | "code"
->> = ["platform", "problemNumber", "title", "language", "code"];
+const REQUIRED_FIELDS: Array<keyof Pick<NewSolutionInput, "platform" | "problemNumber" | "title" | "language" | "code">> = [
+  "platform", "problemNumber", "title", "language", "code",
+];
 
 const AI_USAGE_LABELS: Record<AiUsage, string> = {
   used: "사용함",
@@ -52,9 +43,7 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
   const [importedFrom, setImportedFrom] = useState<string | null>(null);
 
   useEffect(() => {
-    repository.list().then(setRecords).catch(() => {
-      setError("저장된 기록을 불러오지 못했습니다.");
-    });
+    repository.list().then(setRecords).catch(() => setError("저장된 기록을 불러오지 못했습니다."));
   }, [repository]);
 
   function updateField<K extends keyof NewSolutionInput>(key: K, value: NewSolutionInput[K]) {
@@ -65,6 +54,14 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
     setForm(EMPTY_FORM);
     setSelectedRecord(null);
     setImportedFrom(null);
+    setError("");
+    setMode("create");
+  }
+
+  function beginDetectedCreate(problem: DetectedProblemInfo) {
+    setForm({ ...EMPTY_FORM, platform: problem.platform, problemNumber: problem.problemNumber, title: problem.title });
+    setSelectedRecord(null);
+    setImportedFrom("SWEA 현재 페이지");
     setError("");
     setMode("create");
   }
@@ -89,14 +86,10 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-
     setError("");
     try {
       const content = await file.text();
-      const imported = file.name.toLowerCase().endsWith(".json")
-        ? parseSolutionJson(content, file.name)
-        : importSourceFile(file.name, content);
-
+      const imported = file.name.toLowerCase().endsWith(".json") ? parseSolutionJson(content, file.name) : importSourceFile(file.name, content);
       setSelectedRecord(null);
       setForm(imported.input);
       setImportedFrom(imported.sourceName);
@@ -112,10 +105,7 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
     setError("");
     try {
       const record = await repository.getById(id);
-      if (!record) {
-        setError("선택한 풀이를 찾지 못했습니다.");
-        return;
-      }
+      if (!record) return setError("선택한 풀이를 찾지 못했습니다.");
       setSelectedRecord(record);
       setMode("detail");
     } catch {
@@ -125,12 +115,10 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const missing = REQUIRED_FIELDS.some((key) => !form[key].trim());
-    if (missing) {
+    if (REQUIRED_FIELDS.some((key) => !form[key].trim())) {
       setError("필수 입력값을 모두 입력해주세요.");
       return;
     }
-
     setSaving(true);
     setError("");
     try {
@@ -155,18 +143,8 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
 
   function exportRecord(format: ExportFormat) {
     if (!selectedRecord) return;
-
-    const content = format === "source"
-      ? toSource(selectedRecord)
-      : format === "markdown"
-        ? toMarkdown(selectedRecord)
-        : toJson(selectedRecord);
-    const mimeType = format === "json"
-      ? "application/json;charset=utf-8"
-      : format === "markdown"
-        ? "text/markdown;charset=utf-8"
-        : "text/plain;charset=utf-8";
-
+    const content = format === "source" ? toSource(selectedRecord) : format === "markdown" ? toMarkdown(selectedRecord) : toJson(selectedRecord);
+    const mimeType = format === "json" ? "application/json;charset=utf-8" : format === "markdown" ? "text/markdown;charset=utf-8" : "text/plain;charset=utf-8";
     downloadTextFile(buildExportFilename(selectedRecord, format), content, mimeType);
   }
 
@@ -183,147 +161,54 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
   return (
     <main className="popup" aria-labelledby="popup-title">
       <header className="popup-header">
-        <div>
-          <p className="eyebrow">CodeArchive</p>
-          <h1 id="popup-title">내 풀이 기록</h1>
-        </div>
+        <div><p className="eyebrow">CodeArchive</p><h1 id="popup-title">내 풀이 기록</h1></div>
         {mode === "list" && (
           <div className="header-actions">
-            <label className="secondary-button import-button">
-              파일 가져오기
-              <input
-                aria-label="파일 가져오기"
-                type="file"
-                accept=".java,.py,.js,.ts,.cpp,.cc,.cxx,.c,.kt,.cs,.go,.rs,.swift,.json,text/*,application/json"
-                onChange={handleImportFile}
-              />
-            </label>
-            <button className="primary-button" type="button" onClick={beginCreate}>
-              새 풀이 등록
-            </button>
+            <label className="secondary-button import-button">파일 가져오기<input aria-label="파일 가져오기" type="file" accept=".java,.py,.js,.ts,.cpp,.cc,.cxx,.c,.kt,.cs,.go,.rs,.swift,.json,text/*,application/json" onChange={handleImportFile} /></label>
+            <button className="primary-button" type="button" onClick={beginCreate}>새 풀이 등록</button>
           </div>
         )}
       </header>
 
+      {mode === "list" && <SweaDetectionPanel onPrefill={beginDetectedCreate} />}
+
       {showForm && (
         <form className="solution-form" onSubmit={handleSubmit} noValidate>
-          <div className="form-heading">
-            <strong>{mode === "edit" ? "풀이 수정" : "새 풀이 등록"}</strong>
-            <button className="text-button" type="button" onClick={mode === "edit" ? () => setMode("detail") : backToList}>
-              취소
-            </button>
-          </div>
-          {mode === "create" && importedFrom && (
-            <p className="import-notice">{importedFrom}에서 가져왔습니다. 내용을 확인한 뒤 저장해주세요.</p>
-          )}
+          <div className="form-heading"><strong>{mode === "edit" ? "풀이 수정" : "새 풀이 등록"}</strong><button className="text-button" type="button" onClick={mode === "edit" ? () => setMode("detail") : backToList}>취소</button></div>
+          {mode === "create" && importedFrom && <p className="import-notice">{importedFrom}에서 가져왔습니다. 내용을 확인한 뒤 저장해주세요.</p>}
           <div className="field-grid">
-            <label>
-              플랫폼 <span aria-hidden="true">*</span>
-              <input value={form.platform} onChange={(event) => updateField("platform", event.target.value)} />
-            </label>
-            <label>
-              문제 번호 <span aria-hidden="true">*</span>
-              <input value={form.problemNumber} onChange={(event) => updateField("problemNumber", event.target.value)} />
-            </label>
+            <label>플랫폼 <span aria-hidden="true">*</span><input value={form.platform} onChange={(e) => updateField("platform", e.target.value)} /></label>
+            <label>문제 번호 <span aria-hidden="true">*</span><input value={form.problemNumber} onChange={(e) => updateField("problemNumber", e.target.value)} /></label>
           </div>
-          <label>
-            제목 <span aria-hidden="true">*</span>
-            <input value={form.title} onChange={(event) => updateField("title", event.target.value)} />
-          </label>
-          <label>
-            언어 <span aria-hidden="true">*</span>
-            <input value={form.language} onChange={(event) => updateField("language", event.target.value)} />
-          </label>
-          <label>
-            코드 <span aria-hidden="true">*</span>
-            <textarea rows={10} value={form.code} onChange={(event) => updateField("code", event.target.value)} />
-          </label>
+          <label>제목 <span aria-hidden="true">*</span><input value={form.title} onChange={(e) => updateField("title", e.target.value)} /></label>
+          <label>언어 <span aria-hidden="true">*</span><input value={form.language} onChange={(e) => updateField("language", e.target.value)} /></label>
+          <label>코드 <span aria-hidden="true">*</span><textarea rows={10} value={form.code} onChange={(e) => updateField("code", e.target.value)} /></label>
           <div className="field-grid">
-            <label>
-              풀이 날짜
-              <input
-                type="date"
-                value={form.solvedAt ?? ""}
-                onChange={(event) => updateField("solvedAt", event.target.value || null)}
-              />
-            </label>
-            <label>
-              AI 활용
-              <select
-                value={form.aiUsage}
-                onChange={(event) => updateField("aiUsage", event.target.value as AiUsage)}
-              >
-                <option value="unknown">모름</option>
-                <option value="not_used">사용 안 함</option>
-                <option value="used">사용함</option>
-              </select>
-            </label>
+            <label>풀이 날짜<input type="date" value={form.solvedAt ?? ""} onChange={(e) => updateField("solvedAt", e.target.value || null)} /></label>
+            <label>AI 활용<select value={form.aiUsage} onChange={(e) => updateField("aiUsage", e.target.value as AiUsage)}><option value="unknown">모름</option><option value="not_used">사용 안 함</option><option value="used">사용함</option></select></label>
           </div>
           {error && <p className="error" role="alert">{error}</p>}
-          <button className="primary-button save-button" type="submit" disabled={saving}>
-            {saving ? "저장 중..." : mode === "edit" ? "수정 저장" : "저장"}
-          </button>
+          <button className="primary-button save-button" type="submit" disabled={saving}>{saving ? "저장 중..." : mode === "edit" ? "수정 저장" : "저장"}</button>
         </form>
       )}
 
       {mode === "detail" && selectedRecord && (
         <section className="detail-card" aria-labelledby="detail-title">
-          <div className="detail-heading">
-            <div>
-              <p className="eyebrow">{selectedRecord.platform} · {selectedRecord.problemNumber}</p>
-              <h2 id="detail-title">{selectedRecord.title}</h2>
-            </div>
-            <button className="text-button" type="button" onClick={backToList}>목록으로</button>
-          </div>
-
-          <dl className="detail-meta">
-            <div><dt>언어</dt><dd>{selectedRecord.language}</dd></div>
-            <div><dt>풀이 날짜</dt><dd>{selectedRecord.solvedAt ?? "미입력"}</dd></div>
-            <div><dt>AI 활용</dt><dd>{AI_USAGE_LABELS[selectedRecord.aiUsage]}</dd></div>
-            <div><dt>수정 시각</dt><dd>{selectedRecord.updatedAt}</dd></div>
-          </dl>
-
+          <div className="detail-heading"><div><p className="eyebrow">{selectedRecord.platform} · {selectedRecord.problemNumber}</p><h2 id="detail-title">{selectedRecord.title}</h2></div><button className="text-button" type="button" onClick={backToList}>목록으로</button></div>
+          <dl className="detail-meta"><div><dt>언어</dt><dd>{selectedRecord.language}</dd></div><div><dt>풀이 날짜</dt><dd>{selectedRecord.solvedAt ?? "미입력"}</dd></div><div><dt>AI 활용</dt><dd>{AI_USAGE_LABELS[selectedRecord.aiUsage]}</dd></div><div><dt>수정 시각</dt><dd>{selectedRecord.updatedAt}</dd></div></dl>
           <pre className="code-view"><code>{selectedRecord.code}</code></pre>
-
           {error && <p className="error" role="alert">{error}</p>}
-
-          <div className="detail-actions">
-            <button className="primary-button" type="button" onClick={beginEdit}>수정</button>
-            <div className="export-actions" aria-label="내보내기">
-              <button type="button" onClick={() => exportRecord("source")}>Source</button>
-              <button type="button" onClick={() => exportRecord("markdown")}>Markdown</button>
-              <button type="button" onClick={() => exportRecord("json")}>JSON</button>
-            </div>
-          </div>
+          <div className="detail-actions"><button className="primary-button" type="button" onClick={beginEdit}>수정</button><div className="export-actions" aria-label="내보내기"><button type="button" onClick={() => exportRecord("source")}>Source</button><button type="button" onClick={() => exportRecord("markdown")}>Markdown</button><button type="button" onClick={() => exportRecord("json")}>JSON</button></div></div>
         </section>
       )}
 
       {mode === "list" && error && <p className="error list-error" role="alert">{error}</p>}
-
       {mode === "list" && (
         <section className="record-section" aria-labelledby="record-list-title">
-          <div className="section-heading">
-            <h2 id="record-list-title">저장된 풀이</h2>
-            <span>{records.length}건</span>
-          </div>
-          {records.length === 0 ? (
-            <p className="empty-state">아직 저장된 풀이가 없습니다.</p>
-          ) : (
-            <ul className="record-list">
-              {records.map((record) => (
-                <li key={record.id}>
-                  <button className="record-card" type="button" onClick={() => openDetail(record.id)}>
-                    <strong>{record.title}</strong>
-                    <span>{record.platform} · {record.problemNumber}</span>
-                    <span>{record.language}{record.solvedAt ? ` · ${record.solvedAt}` : ""}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <div className="section-heading"><h2 id="record-list-title">저장된 풀이</h2><span>{records.length}건</span></div>
+          {records.length === 0 ? <p className="empty-state">아직 저장된 풀이가 없습니다.</p> : <ul className="record-list">{records.map((record) => <li key={record.id}><button className="record-card" type="button" onClick={() => openDetail(record.id)}><strong>{record.title}</strong><span>{record.platform} · {record.problemNumber}</span><span>{record.language}{record.solvedAt ? ` · ${record.solvedAt}` : ""}</span></button></li>)}</ul>}
         </section>
       )}
-
       <p className="status" role="status">서버 연결 없음 · IndexedDB 로컬 저장</p>
     </main>
   );
