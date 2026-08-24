@@ -56,6 +56,85 @@ jobs:
           test -n "$(find apps/extension/dist -type f -name '*.css' -print -quit)"
           find apps/extension/dist -maxdepth 3 -type f | sort | tee dist-files.log
           cat apps/extension/dist/manifest.json | tee dist-manifest.log
+          python3 - <<'PY'
+          import json
+          with open("apps/extension/dist/manifest.json", encoding="utf-8") as f:
+              manifest = json.load(f)
+          assert manifest["manifest_version"] == 3
+          for key in ("permissions", "host_permissions", "content_scripts", "background"):
+              assert key not in manifest, f"unexpected manifest key: {key}"
+          PY
+
+      - name: Verify unpacked popup in stable Chrome for Testing
+        run: |
+          EXT_DIR="$PWD/apps/extension/dist"
+          CFT_DIR="$RUNNER_TEMP/chrome-for-testing"
+          PROFILE="$RUNNER_TEMP/codearchive-chrome-profile"
+          PROFILE_DUMP="$RUNNER_TEMP/codearchive-chrome-dump-profile"
+          mkdir -p "$CFT_DIR"
+
+          CFT_URL="$(python3 - <<'PY'
+          import json, urllib.request
+          url = "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json"
+          with urllib.request.urlopen(url) as response:
+              data = json.load(response)
+          stable = data["channels"]["Stable"]
+          print(next(item["url"] for item in stable["downloads"]["chrome"] if item["platform"] == "linux64"))
+          PY
+          )"
+
+          curl --fail --location --silent --show-error "$CFT_URL" --output "$RUNNER_TEMP/chrome-for-testing.zip"
+          unzip -q "$RUNNER_TEMP/chrome-for-testing.zip" -d "$CFT_DIR"
+          CHROME_BIN="$CFT_DIR/chrome-linux64/chrome"
+          "$CHROME_BIN" --version | tee chrome-version.log
+
+          set +e
+          timeout 8s xvfb-run -a "$CHROME_BIN" \
+            --no-sandbox \
+            --user-data-dir="$PROFILE" \
+            --disable-extensions-except="$EXT_DIR" \
+            --load-extension="$EXT_DIR" \
+            about:blank >chrome-load.log 2>&1
+          LOAD_STATUS=$?
+          set -e
+          if [[ "$LOAD_STATUS" -ne 0 && "$LOAD_STATUS" -ne 124 ]]; then
+            cat chrome-load.log
+            exit "$LOAD_STATUS"
+          fi
+
+          EXTENSION_ID="$(python3 - "$PROFILE/Default/Preferences" "$EXT_DIR" <<'PY'
+          import json, os, sys
+          preferences_path, extension_path = sys.argv[1], os.path.realpath(sys.argv[2])
+          with open(preferences_path, encoding="utf-8") as f:
+              preferences = json.load(f)
+          for extension_id, settings in preferences.get("extensions", {}).get("settings", {}).items():
+              path = settings.get("path")
+              manifest = settings.get("manifest", {})
+              if (path and os.path.realpath(path) == extension_path) or manifest.get("name") == "CodeArchive":
+                  print(extension_id)
+                  break
+          else:
+              raise SystemExit("CodeArchive unpacked extension was not registered")
+          PY
+          )"
+          echo "$EXTENSION_ID" | tee extension-id.log
+
+          "$CHROME_BIN" \
+            --headless=new \
+            --no-sandbox \
+            --user-data-dir="$PROFILE_DUMP" \
+            --disable-extensions-except="$EXT_DIR" \
+            --load-extension="$EXT_DIR" \
+            --dump-dom "chrome-extension://$EXTENSION_ID/popup.html" \
+            >popup-dom.log 2>chrome-popup.log
+
+          grep -q "로컬 우선 기록 준비 완료" popup-dom.log
+          grep -q "서버 연결 없음 · 로컬 프로토타입" popup-dom.log
+          if grep -qi "Failed to load extension" chrome-load.log chrome-popup.log; then
+            cat chrome-load.log
+            cat chrome-popup.log
+            exit 1
+          fi
 
       - name: Upload verification artifact
         if: always()
@@ -72,4 +151,9 @@ jobs:
             build.log
             dist-files.log
             dist-manifest.log
+            chrome-version.log
+            chrome-load.log
+            chrome-popup.log
+            extension-id.log
+            popup-dom.log
             apps/extension/dist
