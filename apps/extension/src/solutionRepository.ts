@@ -7,6 +7,8 @@ const STORE_NAME = "solutions";
 export interface SolutionRepository {
   create(input: NewSolutionInput): Promise<SolutionRecord>;
   list(): Promise<SolutionRecord[]>;
+  getById(id: string): Promise<SolutionRecord | undefined>;
+  update(id: string, input: NewSolutionInput): Promise<SolutionRecord>;
 }
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
@@ -66,10 +68,66 @@ export const indexedDbSolutionRepository: SolutionRepository = {
     const db = await openDatabase();
     try {
       const transaction = db.transaction(STORE_NAME, "readonly");
+      const done = transactionDone(transaction);
       const request = transaction.objectStore(STORE_NAME).getAll();
       const records = await requestToPromise(request);
-      await transactionDone(transaction);
+      await done;
       return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    } finally {
+      db.close();
+    }
+  },
+
+  async getById(id) {
+    const db = await openDatabase();
+    try {
+      const transaction = db.transaction(STORE_NAME, "readonly");
+      const done = transactionDone(transaction);
+      const record = await requestToPromise(
+        transaction.objectStore(STORE_NAME).get(id) as IDBRequest<SolutionRecord | undefined>,
+      );
+      await done;
+      return record;
+    } finally {
+      db.close();
+    }
+  },
+
+  async update(id, input) {
+    const db = await openDatabase();
+    try {
+      const transaction = db.transaction(STORE_NAME, "readwrite");
+      const done = transactionDone(transaction);
+      const store = transaction.objectStore(STORE_NAME);
+      const updated = await new Promise<SolutionRecord | undefined>((resolve, reject) => {
+        const request = store.get(id) as IDBRequest<SolutionRecord | undefined>;
+
+        request.onsuccess = () => {
+          const existing = request.result;
+          if (!existing) {
+            resolve(undefined);
+            return;
+          }
+
+          const record: SolutionRecord = {
+            ...existing,
+            ...input,
+            id: existing.id,
+            createdAt: existing.createdAt,
+            updatedAt: new Date().toISOString(),
+          };
+
+          store.put(record);
+          resolve(record);
+        };
+        request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed."));
+      });
+
+      await done;
+      if (!updated) {
+        throw new Error("Solution record not found.");
+      }
+      return updated;
     } finally {
       db.close();
     }

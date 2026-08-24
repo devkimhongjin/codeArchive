@@ -17,14 +17,28 @@ const savedRecord: SolutionRecord = {
   updatedAt: "2026-08-24T06:00:00.000Z",
 };
 
-function createRepository(): SolutionRepository {
-  let records: SolutionRecord[] = [];
+function createRepository(initialRecords: SolutionRecord[] = []): SolutionRepository {
+  let records = [...initialRecords];
   return {
     create: vi.fn(async (input) => {
-      records = [{ ...savedRecord, ...input }];
-      return records[0];
+      const record = { ...savedRecord, ...input };
+      records = [record, ...records];
+      return record;
     }),
     list: vi.fn(async () => records),
+    getById: vi.fn(async (id) => records.find((record) => record.id === id)),
+    update: vi.fn(async (id, input) => {
+      const current = records.find((record) => record.id === id);
+      if (!current) throw new Error("not found");
+      const updated = {
+        ...current,
+        ...input,
+        createdAt: current.createdAt,
+        updatedAt: "2026-08-24T07:00:00.000Z",
+      };
+      records = records.map((record) => record.id === id ? updated : record);
+      return updated;
+    }),
   };
 }
 
@@ -56,5 +70,27 @@ describe("Popup", () => {
     expect(await screen.findByText("A+B")).toBeInTheDocument();
     expect(screen.getByText("BOJ · 1000")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("IndexedDB 로컬 저장");
+  });
+
+  it("opens a saved solution detail and updates it", async () => {
+    const repository = createRepository([savedRecord]);
+    render(<Popup repository={repository} />);
+
+    const recordButton = await screen.findByRole("button", { name: /A\+B/ });
+    fireEvent.click(recordButton);
+
+    expect(await screen.findByRole("heading", { name: "A+B" })).toBeInTheDocument();
+    expect(screen.getByText("class Main {}", { selector: "code" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "수정" }));
+    fireEvent.change(screen.getByLabelText(/제목/), { target: { value: "A+B 수정" } });
+    fireEvent.click(screen.getByRole("button", { name: "수정 저장" }));
+
+    await waitFor(() => expect(repository.update).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("heading", { name: "A+B 수정" })).toBeInTheDocument();
+    expect(repository.update).toHaveBeenCalledWith(
+      savedRecord.id,
+      expect.objectContaining({ title: "A+B 수정" }),
+    );
   });
 });
