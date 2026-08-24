@@ -36,10 +36,8 @@ function detectLanguage(document: Document, url: URL): string | null {
     const optionText = select.selectedOptions?.[0]?.textContent?.trim();
     return normalizeSweaLanguage(optionText || select.value);
   }
-
   const input = firstElement<HTMLInputElement>(document, SWEA_EDITOR_SELECTORS.languageValue);
   if (input?.value) return normalizeSweaLanguage(input.value);
-
   return normalizeSweaLanguage(url.searchParams.get("selectCodeLang"));
 }
 
@@ -48,20 +46,15 @@ export function detectSweaEditor(document: Document, url: URL): SweaEditorDetect
   const language = detectLanguage(document, url);
   const codeElement = firstElement<HTMLTextAreaElement>(document, SWEA_EDITOR_SELECTORS.code);
   const code = codeElement ? codeElement.value : null;
-  const missing: Array<"language" | "code"> = [];
 
-  if (!language) missing.push("language");
-  if (code === null) missing.push("code");
-
-  if (missing.length > 0) {
+  if (!language || code === null) {
+    const missing: Array<"language" | "code"> = [];
+    if (!language) missing.push("language");
+    if (code === null) missing.push("code");
     if (code === null) warnings.push("SWEA 소스 저장 필드(#textSource)를 찾지 못했습니다.");
     if (!language) warnings.push("현재 선택 언어를 확인하지 못했습니다.");
     return { status: "incomplete", language, code, missing, warnings };
   }
 
-  return {
-    status: "detected",
-    editor: { language, code },
-    warnings,
-  };
+  return { status: "detected", editor: { language, code }, warnings };
 }
