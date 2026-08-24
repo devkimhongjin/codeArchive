@@ -69,7 +69,7 @@ jobs:
         run: |
           EXT_DIR="$PWD/apps/extension/dist"
           CFT_DIR="$RUNNER_TEMP/chrome-for-testing"
-          PROFILE="$RUNNER_TEMP/codearchive-chrome-profile"
+          VENV="$RUNNER_TEMP/chrome-smoke-venv"
           mkdir -p "$CFT_DIR"
 
           CFT_URL="$(python3 - <<'PY'
@@ -87,38 +87,44 @@ jobs:
           CHROME_BIN="$CFT_DIR/chrome-linux64/chrome"
           "$CHROME_BIN" --version | tee chrome-version.log
 
-          EXTENSION_ID="$(python3 - "$EXT_DIR" <<'PY'
-          import hashlib, os, sys
-          path = os.path.realpath(sys.argv[1]).encode("utf-8")
-          digest = hashlib.sha256(path).hexdigest()[:32]
-          print("".join(chr(ord("a") + int(ch, 16)) for ch in digest))
+          python3 -m venv "$VENV"
+          "$VENV/bin/pip" install --quiet playwright
+
+          cat >"$RUNNER_TEMP/verify_extension.py" <<'PY'
+          import json
+          import pathlib
+          import sys
+          from playwright.sync_api import sync_playwright
+
+          chrome_bin = sys.argv[1]
+          extension_dir = str(pathlib.Path(sys.argv[2]).resolve())
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(
+                  executable_path=chrome_bin,
+                  headless=False,
+                  args=["--enable-unsafe-extension-debugging", "--no-sandbox"],
+              )
+              cdp = browser.new_browser_cdp_session()
+              result = cdp.send("Extensions.loadUnpacked", {"path": extension_dir})
+              extension_id = result["id"]
+              pathlib.Path("extension-id.log").write_text(extension_id + "\n", encoding="utf-8")
+
+              page = browser.new_page()
+              page.goto(f"chrome-extension://{extension_id}/popup.html", wait_until="networkidle")
+              heading = page.get_by_role("heading", name="로컬 우선 기록 준비 완료")
+              status = page.get_by_role("status")
+              assert heading.count() == 1
+              assert status.inner_text() == "서버 연결 없음 · 로컬 프로토타입"
+
+              body_text = " ".join(page.locator("body").inner_text().split())
+              pathlib.Path("popup-dom.log").write_text(body_text + "\n", encoding="utf-8")
+              page.screenshot(path="popup.png")
+              print(json.dumps({"extension_id": extension_id, "body_text": body_text}, ensure_ascii=False))
+              browser.close()
           PY
-          )"
-          echo "$EXTENSION_ID" | tee extension-id.log
 
-          set +e
-          timeout 20s "$CHROME_BIN" \
-            --headless=new \
-            --no-sandbox \
-            --user-data-dir="$PROFILE" \
-            --disable-extensions-except="$EXT_DIR" \
-            --load-extension="$EXT_DIR" \
-            --dump-dom "chrome-extension://$EXTENSION_ID/popup.html" \
-            >popup-dom.log 2>chrome-popup.log
-          CHROME_STATUS=$?
-          set -e
-
-          if [[ "$CHROME_STATUS" -ne 0 && "$CHROME_STATUS" -ne 124 ]]; then
-            cat chrome-popup.log
-            exit "$CHROME_STATUS"
-          fi
-
-          grep -q "로컬 우선 기록 준비 완료" popup-dom.log
-          grep -q "서버 연결 없음 · 로컬 프로토타입" popup-dom.log
-          if grep -qiE "Failed to load extension|Manifest file is missing|Cannot load extension" chrome-popup.log; then
-            cat chrome-popup.log
-            exit 1
-          fi
+          timeout 60s xvfb-run -a "$VENV/bin/python" "$RUNNER_TEMP/verify_extension.py" "$CHROME_BIN" "$EXT_DIR" 2>&1 | tee chrome-smoke.log
 
       - name: Upload verification artifact
         if: always()
@@ -136,7 +142,8 @@ jobs:
             dist-files.log
             dist-manifest.log
             chrome-version.log
-            chrome-popup.log
+            chrome-smoke.log
             extension-id.log
             popup-dom.log
+            popup.png
             apps/extension/dist
