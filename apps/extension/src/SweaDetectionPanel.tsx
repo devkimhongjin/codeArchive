@@ -18,6 +18,7 @@ function DetectionContent({ result, onProblemPrefill, onEditorPrefill }: {
 
   if (result.status === "connected_page") {
     const editor = result.editor;
+    const syncFailed = editor.status === "incomplete" && editor.warnings.some((warning) => warning.includes("최신 코드 동기화"));
     return (
       <div className="detection-result">
         <div>
@@ -30,7 +31,7 @@ function DetectionContent({ result, onProblemPrefill, onEditorPrefill }: {
           ) : (
             <>
               <p>언어: {editor.language ?? "미확인"}</p>
-              <span>코드 편집기 감지 실패 · 누락: {editor.missing.join(", ")}</span>
+              <span>{syncFailed ? "최신 코드 동기화 실패" : `코드 편집기 감지 실패 · 누락: ${editor.missing.join(", ")}`}</span>
             </>
           )}
         </div>
