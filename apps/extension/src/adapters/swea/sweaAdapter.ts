@@ -33,14 +33,14 @@ export const sweaAdapter: PlatformAdapter = {
     const warnings: string[] = [];
     const headingText = firstText(document, SWEA_SELECTORS.heading);
     const parsedHeading = headingText ? parseHeading(headingText) : null;
-    const missing: string[] = [];
 
-    if (!parsedHeading?.problemNumber) missing.push("problemNumber");
-    if (!parsedHeading?.title) missing.push("title");
-
-    if (missing.length > 0) {
+    if (!parsedHeading) {
       warnings.push("SWEA 문제 제목 영역 구조가 예상과 다릅니다.");
-      return { status: "incomplete", missing, warnings };
+      return {
+        status: "incomplete",
+        missing: ["problemNumber", "title"],
+        warnings,
+      };
     }
 
     const difficultyText = firstText(document, SWEA_SELECTORS.difficulty);
