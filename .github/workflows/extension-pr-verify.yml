@@ -95,6 +95,16 @@ jobs:
           XVFB_PID=$!
           export DISPLAY=:99
 
+          X_READY=0
+          for _ in $(seq 1 30); do
+            if [[ -S /tmp/.X11-unix/X99 ]]; then
+              X_READY=1
+              break
+            fi
+            sleep 1
+          done
+          test "$X_READY" -eq 1
+
           "$CHROME_BIN" \
             --no-sandbox \
             --enable-unsafe-extension-debugging \
