@@ -70,6 +70,7 @@ jobs:
           EXT_DIR="$PWD/apps/extension/dist"
           CFT_DIR="$RUNNER_TEMP/chrome-for-testing"
           VENV="$RUNNER_TEMP/chrome-smoke-venv"
+          PROFILE="$RUNNER_TEMP/codearchive-chrome-profile"
           mkdir -p "$CFT_DIR"
 
           CFT_URL="$(python3 - <<'PY'
@@ -90,28 +91,55 @@ jobs:
           python3 -m venv "$VENV"
           "$VENV/bin/pip" install --quiet playwright
 
+          Xvfb :99 -screen 0 1280x720x24 >xvfb.log 2>&1 &
+          XVFB_PID=$!
+          export DISPLAY=:99
+
+          "$CHROME_BIN" \
+            --no-sandbox \
+            --enable-unsafe-extension-debugging \
+            --user-data-dir="$PROFILE" \
+            --remote-debugging-port=9222 \
+            --no-first-run \
+            --no-default-browser-check \
+            about:blank >chrome-load.log 2>&1 &
+          CHROME_PID=$!
+
+          cleanup() {
+            kill "$CHROME_PID" 2>/dev/null || true
+            kill "$XVFB_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          READY=0
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9222/json/version >/dev/null; then
+              READY=1
+              break
+            fi
+            sleep 1
+          done
+          test "$READY" -eq 1
+
           cat >"$RUNNER_TEMP/verify_extension.py" <<'PY'
           import json
           import pathlib
           import sys
           from playwright.sync_api import sync_playwright
 
-          chrome_bin = sys.argv[1]
-          extension_dir = str(pathlib.Path(sys.argv[2]).resolve())
+          extension_dir = str(pathlib.Path(sys.argv[1]).resolve())
 
           with sync_playwright() as p:
-              browser = p.chromium.launch(
-                  executable_path=chrome_bin,
-                  headless=False,
-                  ignore_default_args=["--disable-extensions"],
-                  args=["--enable-unsafe-extension-debugging", "--no-sandbox"],
-              )
+              browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+              if not browser.contexts:
+                  raise RuntimeError("Chrome default browser context not found")
+              context = browser.contexts[0]
               cdp = browser.new_browser_cdp_session()
               result = cdp.send("Extensions.loadUnpacked", {"path": extension_dir})
               extension_id = result["id"]
               pathlib.Path("extension-id.log").write_text(extension_id + "\n", encoding="utf-8")
 
-              page = browser.new_page()
+              page = context.new_page()
               page.goto(f"chrome-extension://{extension_id}/popup.html", wait_until="networkidle")
               heading = page.get_by_role("heading", name="로컬 우선 기록 준비 완료")
               status = page.get_by_role("status")
@@ -125,7 +153,12 @@ jobs:
               browser.close()
           PY
 
-          timeout 60s xvfb-run -a "$VENV/bin/python" "$RUNNER_TEMP/verify_extension.py" "$CHROME_BIN" "$EXT_DIR" 2>&1 | tee chrome-smoke.log
+          timeout 60s "$VENV/bin/python" "$RUNNER_TEMP/verify_extension.py" "$EXT_DIR" 2>&1 | tee chrome-smoke.log
+
+          if grep -qiE "Failed to load extension|Manifest file is missing|Cannot load extension" chrome-load.log; then
+            cat chrome-load.log
+            exit 1
+          fi
 
       - name: Upload verification artifact
         if: always()
@@ -143,7 +176,9 @@ jobs:
             dist-files.log
             dist-manifest.log
             chrome-version.log
+            chrome-load.log
             chrome-smoke.log
+            xvfb.log
             extension-id.log
             popup-dom.log
             popup.png
