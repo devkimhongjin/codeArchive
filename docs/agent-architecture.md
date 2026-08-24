@@ -113,3 +113,7 @@ This structure spends strategic-model cost on planning and integration, balanced
 
 Main failure modes are integrator bottleneck, stale shared contracts, false parallelism, and specification drift. Countermeasures are explicit path ownership, contract-first handoffs, short review budgets, phase-specific activation, and recorded drift decisions.
 
+
+## 9. ChatGPT Work execution
+
+The Work surface uses the same role contracts as explicit Skills bundled in `plugins/codearchive-workflows`. Each chat selects one model and one Skill. GitHub issues and pull requests replace conversational handoffs; see `docs/work-skill-workflow.md`. Automatic Skill invocation is disabled for these roles so a chat cannot silently switch ownership.

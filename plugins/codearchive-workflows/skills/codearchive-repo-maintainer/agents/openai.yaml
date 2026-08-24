@@ -1,0 +1,6 @@
+interface:
+  display_name: "CodeArchive Repo Maintainer"
+  short_description: "Handle explicit low-risk mechanical repository work"
+  default_prompt: "Use $codearchive-repo-maintainer for the assigned mechanical repository task."
+policy:
+  allow_implicit_invocation: false

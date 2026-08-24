@@ -9,6 +9,7 @@ The current implementation priority is the Chrome Extension prototype: manual ca
 - [Development specification](docs/codearchive-development-spec.md)
 - [Agent architecture](docs/agent-architecture.md)
 - [Repository agent instructions](AGENTS.md)
+- [ChatGPT Work Skill workflow](docs/work-skill-workflow.md)
 
 ## Agent workflow
 
@@ -25,3 +26,7 @@ Agent profiles live in `.github/agents/`; repository-wide rules live in `AGENTS.
 - `packages/shared-types`: shared TypeScript contracts
 - `infra`: PostgreSQL and Redis development infrastructure
 
+
+## ChatGPT Work skills
+
+Install the repo-scoped `codearchive-workflows` plugin, select the recommended model, and invoke exactly one role Skill per chat. Skills pass work between chats through a GitHub issue and pull request; see the workflow document above.

@@ -1,0 +1,26 @@
+{
+  "name": "codearchive-workflows",
+  "version": "0.1.0",
+  "description": "Role-based development workflows for the CodeArchive project",
+  "author": {
+    "name": "devkimhongjin",
+    "url": "https://github.com/devkimhongjin"
+  },
+  "homepage": "https://github.com/devkimhongjin/codeArchive/blob/develop/docs/work-skill-workflow.md",
+  "repository": "https://github.com/devkimhongjin/codeArchive",
+  "keywords": ["codearchive", "development", "workflow", "review"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "CodeArchive Workflows",
+    "shortDescription": "One-role-per-chat development workflows",
+    "longDescription": "Plan, implement, review, and maintain CodeArchive through explicit role skills with durable GitHub handoffs.",
+    "developerName": "devkimhongjin",
+    "category": "Productivity",
+    "capabilities": ["Write"],
+    "defaultPrompt": [
+      "Plan the next CodeArchive task and record a durable handoff.",
+      "Implement the assigned CodeArchive task from its GitHub issue.",
+      "Review the specified CodeArchive pull request independently."
+    ]
+  }
+}
