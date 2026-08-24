@@ -21,7 +21,7 @@ function createRepository(initialRecords: SolutionRecord[] = []): SolutionReposi
   let records = [...initialRecords];
   return {
     create: vi.fn(async (input) => {
-      const record = { ...savedRecord, ...input };
+      const record = { ...savedRecord, id: `solution-${records.length + 1}`, ...input };
       records = [record, ...records];
       return record;
     }),
@@ -92,5 +92,26 @@ describe("Popup", () => {
       savedRecord.id,
       expect.objectContaining({ title: "A+B 수정" }),
     );
+  });
+
+  it("loads a source file into the create form without saving automatically", async () => {
+    const repository = createRepository();
+    render(<Popup repository={repository} />);
+
+    const sourceFile = {
+      name: "Main.java",
+      text: vi.fn(async () => "class Main { public static void main(String[] args) {} }"),
+    };
+    fireEvent.change(screen.getByLabelText("파일 가져오기"), {
+      target: { files: [sourceFile] },
+    });
+
+    expect(await screen.findByText(/Main.java에서 가져왔습니다/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/제목/)).toHaveValue("Main");
+    expect(screen.getByLabelText(/언어/)).toHaveValue("Java");
+    expect(screen.getByLabelText(/코드/)).toHaveValue(
+      "class Main { public static void main(String[] args) {} }",
+    );
+    expect(repository.create).not.toHaveBeenCalled();
   });
 });
