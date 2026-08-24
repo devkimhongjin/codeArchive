@@ -9,14 +9,23 @@ interface SweaDetectionPanelProps {
 
 function DetectionContent({ result, onPrefill }: { result: ProblemDetectionResult; onPrefill(problem: DetectedProblemInfo): void }) {
   if (result.status === "unsupported_page") {
-    return <p className="detection-muted">지원되는 SWEA 문제 상세 페이지가 아닙니다.</p>;
+    return <p className="detection-muted">지원되는 SWEA 페이지가 아닙니다.</p>;
+  }
+
+  if (result.status === "connected_page") {
+    return (
+      <div>
+        <strong>SWEA 풀이 페이지 연결됨</strong>
+        <p className="detection-muted">문제 메타데이터는 아직 수집하지 않습니다.</p>
+      </div>
+    );
   }
 
   if (result.status === "incomplete") {
     return (
       <div>
-        <strong>문제 페이지 일부 정보 수집 실패</strong>
-        <p className="detection-muted">누락: {result.missing.join(", ")}</p>
+        <strong>SWEA 문제 상세 페이지 연결됨</strong>
+        <p className="detection-muted">문제 정보 일부 수집 실패 · 누락: {result.missing.join(", ")}</p>
       </div>
     );
   }

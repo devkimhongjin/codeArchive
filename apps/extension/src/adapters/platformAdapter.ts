@@ -10,6 +10,7 @@ export interface DetectedProblemInfo {
 
 export type ProblemDetectionResult =
   | { status: "detected"; problem: DetectedProblemInfo; warnings: string[] }
+  | { status: "connected_page"; platform: "SWEA"; pageKind: "solving"; url: string }
   | { status: "unsupported_page" }
   | { status: "incomplete"; missing: string[]; warnings: string[] };
 
