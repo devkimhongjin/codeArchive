@@ -1,5 +1,20 @@
 import type { PlatformAdapter, ProblemDetectionResult } from "../platformAdapter";
-import { SWEA_PROBLEM_DETAIL_PATH, SWEA_SELECTORS } from "./sweaSelectors";
+import {
+  SWEA_PROBLEM_DETAIL_PATH,
+  SWEA_SELECTORS,
+  SWEA_SOLVING_PATH,
+  SWEA_USER_PROBLEM_DETAIL_PATH,
+} from "./sweaSelectors";
+
+export type SweaPageKind = "problem_detail" | "user_problem_detail" | "solving";
+
+export function getSweaPageKind(url: URL): SweaPageKind | null {
+  if (url.origin !== "https://swexpertacademy.com") return null;
+  if (url.pathname === SWEA_PROBLEM_DETAIL_PATH) return "problem_detail";
+  if (url.pathname === SWEA_USER_PROBLEM_DETAIL_PATH) return "user_problem_detail";
+  if (url.pathname === SWEA_SOLVING_PATH) return "solving";
+  return null;
+}
 
 function firstText(document: Document, selectors: readonly string[]): string | null {
   for (const selector of selectors) {
@@ -24,11 +39,21 @@ export const sweaAdapter: PlatformAdapter = {
   platform: "SWEA",
 
   matches(url) {
-    return url.origin === "https://swexpertacademy.com" && url.pathname === SWEA_PROBLEM_DETAIL_PATH;
+    return getSweaPageKind(url) !== null;
   },
 
   detect(document, url): ProblemDetectionResult {
-    if (!this.matches(url)) return { status: "unsupported_page" };
+    const pageKind = getSweaPageKind(url);
+    if (!pageKind) return { status: "unsupported_page" };
+
+    if (pageKind === "solving") {
+      return {
+        status: "connected_page",
+        platform: "SWEA",
+        pageKind,
+        url: url.href,
+      };
+    }
 
     const warnings: string[] = [];
     const headingText = firstText(document, SWEA_SELECTORS.heading);
