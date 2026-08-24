@@ -1,6 +1,5 @@
-import { sweaAdapter, getSweaPageKind } from "../adapters/swea/sweaAdapter";
-import { detectSweaEditor } from "../adapters/swea/sweaEditor";
-import { syncSweaEditor } from "../adapters/swea/sweaEditorSync";
+import { createSweaSubmissionResultStore } from "./sweaSubmissionResultStore";
+import { getSweaPageContext } from "./sweaPageContext";
 import { GET_PAGE_CONTEXT, PAGE_CONTEXT, type GetPageContextMessage, type PageContextMessage } from "./messages";
 
 declare const chrome: {
@@ -11,19 +10,14 @@ declare const chrome: {
   };
 };
 
+const initialUrl = new URL(window.location.href);
+const submissionResultStore = createSweaSubmissionResultStore(document, initialUrl);
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if ((message as GetPageContextMessage | undefined)?.type !== GET_PAGE_CONTEXT) return;
 
   const url = new URL(window.location.href);
-  const syncResult = getSweaPageKind(url) === "solving" ? syncSweaEditor(document) : null;
-  let result = sweaAdapter.detect(document, url);
-
-  if (result.status === "connected_page" && syncResult?.status === "failed") {
-    result = {
-      ...result,
-      editor: detectSweaEditor(document, url, false),
-    };
-  }
+  const result = getSweaPageContext(document, url, submissionResultStore.getState());
 
   sendResponse({ type: PAGE_CONTEXT, result });
 });
