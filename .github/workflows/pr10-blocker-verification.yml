@@ -1,0 +1,58 @@
+name: PR10 blocker verification
+
+on:
+  push:
+    branches:
+      - feature/extension-react-scaffold
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Enable pnpm 10.15.0
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+          node --version | tee node-version.txt
+          pnpm --version | tee pnpm-version.txt
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Typecheck
+        run: pnpm --filter @codearchive/extension typecheck 2>&1 | tee typecheck.log
+
+      - name: Test
+        run: pnpm --filter @codearchive/extension test 2>&1 | tee test.log
+
+      - name: Build
+        run: pnpm --filter @codearchive/extension build 2>&1 | tee build.log
+
+      - name: Inspect production output
+        run: |
+          test -f apps/extension/dist/manifest.json
+          test -f apps/extension/dist/popup.html
+          grep -q '"manifest_version": 3' apps/extension/dist/manifest.json
+          find apps/extension/dist -maxdepth 3 -type f | sort | tee dist-files.txt
+          cat apps/extension/dist/manifest.json | tee dist-manifest.json
+
+      - name: Upload verification artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr10-blocker-verification
+          path: |
+            pnpm-lock.yaml
+            node-version.txt
+            pnpm-version.txt
+            typecheck.log
+            test.log
+            build.log
+            dist-files.txt
+            dist-manifest.json
+            apps/extension/dist
