@@ -52,6 +52,7 @@ jobs:
           test -f apps/extension/dist/manifest.json
           test -f apps/extension/dist/popup.html
           test -f apps/extension/dist/content/swea.js
+          test -f apps/extension/dist/background.js
           grep -q '"manifest_version": 3' apps/extension/dist/manifest.json
           test -n "$(find apps/extension/dist -type f -name '*.js' -print -quit)"
           test -n "$(find apps/extension/dist -type f -name '*.css' -print -quit)"
@@ -62,8 +63,12 @@ jobs:
           with open("apps/extension/dist/manifest.json", encoding="utf-8") as f:
               manifest = json.load(f)
           assert manifest["manifest_version"] == 3
-          for key in ("permissions", "host_permissions", "background"):
+          for key in ("permissions", "host_permissions"):
               assert key not in manifest, f"unexpected manifest key: {key}"
+          assert manifest.get("background") == {
+              "service_worker": "background.js",
+              "type": "module",
+          }
           scripts = manifest.get("content_scripts")
           assert isinstance(scripts, list) and len(scripts) == 1
           script = scripts[0]
