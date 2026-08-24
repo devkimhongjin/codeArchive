@@ -56,6 +56,7 @@ export const sweaAdapter: PlatformAdapter = {
         url: url.href,
         metadata: detectSweaSolvingProblemMeta(document, url),
         editor: detectSweaEditor(document, url),
+        submissionResult: { status: "none" },
       };
     }
 

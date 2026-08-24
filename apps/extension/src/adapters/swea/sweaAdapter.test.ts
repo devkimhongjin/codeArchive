@@ -35,6 +35,7 @@ describe("sweaAdapter", () => {
     if (result.status === "connected_page") {
       expect(result.editor).toEqual({ status: "detected", editor: { language: "Java", code: "public class Main {}" }, warnings: [] });
       expect(result.metadata).toEqual({ status: "detected", problem: { problemNumber: "1234", title: "Synthetic title", contestProbId: "ABC" }, warnings: [] });
+      expect(result.submissionResult).toEqual({ status: "none" });
     }
   });
 

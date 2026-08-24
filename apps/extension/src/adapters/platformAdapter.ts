@@ -1,5 +1,6 @@
 import type { SweaEditorDetectionResult } from "./swea/sweaEditor";
 import type { SweaSolvingProblemMetaResult } from "./swea/sweaSolvingProblemMeta";
+import type { SweaSubmissionResultState } from "./swea/sweaSubmissionResult";
 
 export type PlatformCode = "SWEA";
 
@@ -20,6 +21,7 @@ export type ProblemDetectionResult =
       url: string;
       metadata: SweaSolvingProblemMetaResult;
       editor: SweaEditorDetectionResult;
+      submissionResult: SweaSubmissionResultState;
     }
   | { status: "unsupported_page" }
   | { status: "incomplete"; missing: string[]; warnings: string[] };

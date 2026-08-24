@@ -126,6 +126,7 @@ describe("Popup", () => {
         url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do?contestProbId=current",
         metadata: { status: "detected", problem: { problemNumber: "1234", title: "Synthetic title", contestProbId: "current" }, warnings: [] },
         editor: { status: "detected", editor: { language: "Java", code: "class Main {}" }, warnings: [] },
+        submissionResult: { status: "observed", submission: { result: "ACCEPTED", observedAt: "2026-08-24T12:00:00.000Z" }, warnings: [] },
       },
     })} />);
 
