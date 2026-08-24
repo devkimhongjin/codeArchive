@@ -97,26 +97,34 @@ export const indexedDbSolutionRepository: SolutionRepository = {
     const db = await openDatabase();
     try {
       const transaction = db.transaction(STORE_NAME, "readwrite");
+      const done = transactionDone(transaction);
       const store = transaction.objectStore(STORE_NAME);
-      const existing = await requestToPromise(
-        store.get(id) as IDBRequest<SolutionRecord | undefined>,
-      );
+      const updated = await new Promise<SolutionRecord>((resolve, reject) => {
+        const request = store.get(id) as IDBRequest<SolutionRecord | undefined>;
 
-      if (!existing) {
-        transaction.abort();
-        throw new Error("Solution record not found.");
-      }
+        request.onsuccess = () => {
+          const existing = request.result;
+          if (!existing) {
+            transaction.abort();
+            reject(new Error("Solution record not found."));
+            return;
+          }
 
-      const updated: SolutionRecord = {
-        ...existing,
-        ...input,
-        id: existing.id,
-        createdAt: existing.createdAt,
-        updatedAt: new Date().toISOString(),
-      };
+          const record: SolutionRecord = {
+            ...existing,
+            ...input,
+            id: existing.id,
+            createdAt: existing.createdAt,
+            updatedAt: new Date().toISOString(),
+          };
 
-      store.put(updated);
-      await transactionDone(transaction);
+          store.put(record);
+          resolve(record);
+        };
+        request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed."));
+      });
+
+      await done;
       return updated;
     } finally {
       db.close();
