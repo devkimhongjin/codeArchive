@@ -67,7 +67,11 @@ jobs:
           scripts = manifest.get("content_scripts")
           assert isinstance(scripts, list) and len(scripts) == 1
           script = scripts[0]
-          assert script.get("matches") == ["https://swexpertacademy.com/main/code/problem/problemDetail.do*"]
+          assert script.get("matches") == [
+              "https://swexpertacademy.com/main/code/problem/problemDetail.do*",
+              "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do*",
+              "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do*",
+          ]
           assert script.get("js") == ["content/swea.js"]
           assert script.get("run_at") == "document_idle"
           PY
