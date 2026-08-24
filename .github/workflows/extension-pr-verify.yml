@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   verify-extension:
     runs-on: ubuntu-latest
@@ -57,6 +61,7 @@ jobs:
           cat apps/extension/dist/manifest.json | tee dist-manifest.log
 
       - name: Upload verification artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: extension-pr-verification
