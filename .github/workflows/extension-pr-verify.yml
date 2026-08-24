@@ -1,0 +1,74 @@
+name: Extension PR Verify
+
+on:
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - "apps/extension/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/extension-pr-verify.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm 10.15.0
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+          node --version | tee node-version.log
+          pnpm --version | tee pnpm-version.log
+
+      - name: Bootstrap lockfile
+        run: pnpm install --no-frozen-lockfile 2>&1 | tee install-bootstrap.log
+
+      - name: Verify generated lockfile is frozen-installable
+        run: pnpm install --frozen-lockfile 2>&1 | tee install-frozen.log
+
+      - name: Typecheck extension
+        run: pnpm --filter @codearchive/extension typecheck 2>&1 | tee typecheck.log
+
+      - name: Test extension
+        run: pnpm --filter @codearchive/extension test 2>&1 | tee test.log
+
+      - name: Build extension
+        run: pnpm --filter @codearchive/extension build 2>&1 | tee build.log
+
+      - name: Inspect production output
+        run: |
+          test -f apps/extension/dist/manifest.json
+          test -f apps/extension/dist/popup.html
+          grep -q '"manifest_version": 3' apps/extension/dist/manifest.json
+          test -n "$(find apps/extension/dist -type f -name '*.js' -print -quit)"
+          test -n "$(find apps/extension/dist -type f -name '*.css' -print -quit)"
+          find apps/extension/dist -maxdepth 3 -type f | sort | tee dist-files.log
+          cat apps/extension/dist/manifest.json | tee dist-manifest.log
+
+      - name: Upload verification artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-pr-verification
+          path: |
+            pnpm-lock.yaml
+            node-version.log
+            pnpm-version.log
+            install-bootstrap.log
+            install-frozen.log
+            typecheck.log
+            test.log
+            build.log
+            dist-files.log
+            dist-manifest.log
+            apps/extension/dist
