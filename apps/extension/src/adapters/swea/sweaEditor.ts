@@ -53,7 +53,7 @@ export function detectSweaEditor(document: Document, url: URL, sourceSynced = tr
   if (!language) missing.push("language");
   if (code === null) missing.push("code");
 
-  if (missing.length > 0) {
+  if (language === null || code === null) {
     if (!sourceSynced) warnings.push("SWEA 편집기 최신 코드 동기화에 실패했습니다.");
     else if (!codeElement) warnings.push("SWEA 소스 저장 필드(#textSource)를 찾지 못했습니다.");
     if (!language) warnings.push("현재 선택 언어를 확인하지 못했습니다.");
