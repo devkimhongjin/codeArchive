@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import "./popup.css";
 import type { AiUsage, NewSolutionInput, SolutionRecord } from "./solution";
 import {
@@ -13,6 +13,7 @@ import {
   toSource,
   type ExportFormat,
 } from "./solutionExport";
+import { importSourceFile, parseSolutionJson } from "./solutionImport";
 
 const EMPTY_FORM: NewSolutionInput = {
   platform: "",
@@ -48,6 +49,7 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
   const [mode, setMode] = useState<ViewMode>("list");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [importedFrom, setImportedFrom] = useState<string | null>(null);
 
   useEffect(() => {
     repository.list().then(setRecords).catch(() => {
@@ -62,6 +64,7 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
   function beginCreate() {
     setForm(EMPTY_FORM);
     setSelectedRecord(null);
+    setImportedFrom(null);
     setError("");
     setMode("create");
   }
@@ -77,8 +80,32 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
       solvedAt: selectedRecord.solvedAt,
       aiUsage: selectedRecord.aiUsage,
     });
+    setImportedFrom(null);
     setError("");
     setMode("edit");
+  }
+
+  async function handleImportFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setError("");
+    try {
+      const content = await file.text();
+      const imported = file.name.toLowerCase().endsWith(".json")
+        ? parseSolutionJson(content, file.name)
+        : importSourceFile(file.name, content);
+
+      setSelectedRecord(null);
+      setForm(imported.input);
+      setImportedFrom(imported.sourceName);
+      setMode("create");
+    } catch (importError) {
+      setImportedFrom(null);
+      setError(importError instanceof Error ? importError.message : "파일을 가져오지 못했습니다.");
+      setMode("list");
+    }
   }
 
   async function openDetail(id: string) {
@@ -116,6 +143,7 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
         await repository.create(form);
         setRecords(await repository.list());
         setForm(EMPTY_FORM);
+        setImportedFrom(null);
         setMode("list");
       }
     } catch {
@@ -145,6 +173,7 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
   function backToList() {
     setSelectedRecord(null);
     setForm(EMPTY_FORM);
+    setImportedFrom(null);
     setError("");
     setMode("list");
   }
@@ -159,9 +188,20 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
           <h1 id="popup-title">내 풀이 기록</h1>
         </div>
         {mode === "list" && (
-          <button className="primary-button" type="button" onClick={beginCreate}>
-            새 풀이 등록
-          </button>
+          <div className="header-actions">
+            <label className="secondary-button import-button">
+              파일 가져오기
+              <input
+                aria-label="파일 가져오기"
+                type="file"
+                accept=".java,.py,.js,.ts,.cpp,.cc,.cxx,.c,.kt,.cs,.go,.rs,.swift,.json,text/*,application/json"
+                onChange={handleImportFile}
+              />
+            </label>
+            <button className="primary-button" type="button" onClick={beginCreate}>
+              새 풀이 등록
+            </button>
+          </div>
         )}
       </header>
 
@@ -173,6 +213,9 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
               취소
             </button>
           </div>
+          {mode === "create" && importedFrom && (
+            <p className="import-notice">{importedFrom}에서 가져왔습니다. 내용을 확인한 뒤 저장해주세요.</p>
+          )}
           <div className="field-grid">
             <label>
               플랫폼 <span aria-hidden="true">*</span>
