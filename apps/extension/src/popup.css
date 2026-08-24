@@ -19,6 +19,10 @@ h2 { margin: 0; font-size: 16px; }
 .secondary-button { border: 1px solid #cbd5e1; border-radius: 8px; background: white; color: #334155; padding: 8px 11px; font-weight: 700; cursor: pointer; }
 .import-button input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .text-button { border: 0; background: transparent; color: #4658c9; padding: 3px 0; font-weight: 700; }
+.detection-card { margin-top: 16px; padding: 12px; border: 1px solid #dce2ef; border-radius: 10px; background: white; }
+.detection-result { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.detection-result p { margin: 4px 0 2px; font-size: 13px; }
+.detection-result span, .detection-muted { margin: 0; color: #64748b; font-size: 12px; }
 .solution-form, .detail-card { display: grid; gap: 12px; margin-top: 18px; padding: 16px; border: 1px solid #dce2ef; border-radius: 12px; background: white; }
 .form-heading { align-items: center; }
 .import-notice { margin: 0; padding: 9px 10px; border-radius: 8px; background: #eef7ff; color: #24557a; font-size: 12px; font-weight: 600; }
