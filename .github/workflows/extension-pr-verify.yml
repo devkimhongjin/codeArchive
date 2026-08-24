@@ -103,6 +103,7 @@ jobs:
               browser = p.chromium.launch(
                   executable_path=chrome_bin,
                   headless=False,
+                  ignore_default_args=["--disable-extensions"],
                   args=["--enable-unsafe-extension-debugging", "--no-sandbox"],
               )
               cdp = browser.new_browser_cdp_session()
