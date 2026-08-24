@@ -8,12 +8,12 @@ export type SweaAutoSaveState = { status: "idle" } | { status: "saving"; observe
 export type SaveResponse = { status: "saved" | "duplicate"; solutionId: string; savedAt: string } | { status: "rejected"; reason: "invalid_capture" | "idempotency_conflict" } | { status: "failed"; reason: "storage_failed" };
 export const SAVE_SWEA_ACCEPTED = "CODEARCHIVE_SAVE_SWEA_ACCEPTED" as const;
 
-export async function captureAccepted(document: Document, url: URL, observation: Extract<SweaSubmissionResultState, { status: "observed" }>, send: (message: unknown) => Promise<SaveResponse>, uuid = () => crypto.randomUUID()): Promise<SweaAutoSaveState> {
+export async function captureAccepted(document: Document, url: URL, observation: Extract<SweaSubmissionResultState, { status: "observed" }>, send: (message: unknown) => Promise<SaveResponse>, uuid: () => string = () => crypto.randomUUID(), sync: typeof syncSweaEditor = syncSweaEditor): Promise<SweaAutoSaveState> {
   const observedAt = observation.submission.observedAt;
   if (observation.submission.result !== "ACCEPTED") return { status: "idle" };
   const metadata = detectSweaSolvingProblemMeta(document, url);
   if (metadata.status !== "detected") return { status: "failed", observedAt, reason: "metadata_untrusted" };
-  if (syncSweaEditor(document).status !== "synced") return { status: "failed", observedAt, reason: "editor_sync_failed" };
+  if (sync(document).status !== "synced") return { status: "failed", observedAt, reason: "editor_sync_failed" };
   const editor = detectSweaEditor(document, url);
   if (editor.status !== "detected") return { status: "failed", observedAt, reason: "editor_incomplete" };
   if (!editor.editor.code.trim()) return { status: "failed", observedAt, reason: "empty_code" };
