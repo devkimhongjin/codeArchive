@@ -1,3 +1,5 @@
+import type { SweaEditorDetectionResult } from "./swea/sweaEditor";
+
 export type PlatformCode = "SWEA";
 
 export interface DetectedProblemInfo {
@@ -10,7 +12,7 @@ export interface DetectedProblemInfo {
 
 export type ProblemDetectionResult =
   | { status: "detected"; problem: DetectedProblemInfo; warnings: string[] }
-  | { status: "connected_page"; platform: "SWEA"; pageKind: "solving"; url: string }
+  | { status: "connected_page"; platform: "SWEA"; pageKind: "solving"; url: string; editor: SweaEditorDetectionResult }
   | { status: "unsupported_page" }
   | { status: "incomplete"; missing: string[]; warnings: string[] };
 
