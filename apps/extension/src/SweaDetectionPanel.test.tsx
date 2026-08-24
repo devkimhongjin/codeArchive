@@ -31,14 +31,22 @@ describe("SweaDetectionPanel", () => {
     expect(onPrefill).toHaveBeenCalledWith(expect.objectContaining({ platform: "SWEA", problemNumber: "1206", title: "View" }));
   });
 
-  it("shows incomplete and unavailable states", async () => {
+  it("shows solving connection separately from unavailable", async () => {
     const { rerender } = render(
       <SweaDetectionPanel
-        requestContext={async () => ({ status: "connected", result: { status: "incomplete", missing: ["title"], warnings: [] } })}
+        requestContext={async () => ({
+          status: "connected",
+          result: {
+            status: "connected_page",
+            platform: "SWEA",
+            pageKind: "solving",
+            url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do",
+          },
+        })}
         onPrefill={() => undefined}
       />,
     );
-    expect(await screen.findByText("문제 페이지 일부 정보 수집 실패")).toBeInTheDocument();
+    expect(await screen.findByText("SWEA 풀이 페이지 연결됨")).toBeInTheDocument();
 
     rerender(
       <SweaDetectionPanel
@@ -47,5 +55,16 @@ describe("SweaDetectionPanel", () => {
       />,
     );
     expect(await screen.findByText("Content Script에 연결할 수 없습니다.")).toBeInTheDocument();
+  });
+
+  it("shows incomplete problem detail state", async () => {
+    render(
+      <SweaDetectionPanel
+        requestContext={async () => ({ status: "connected", result: { status: "incomplete", missing: ["title"], warnings: [] } })}
+        onPrefill={() => undefined}
+      />,
+    );
+    expect(await screen.findByText("SWEA 문제 상세 페이지 연결됨")).toBeInTheDocument();
+    expect(screen.getByText(/누락: title/)).toBeInTheDocument();
   });
 });
