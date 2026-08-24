@@ -29,4 +29,10 @@ describe("SweaDetectionPanel", () => {
     rerender(<SweaDetectionPanel requestContext={async () => ({ status: "unavailable" })} onProblemPrefill={noop} onEditorPrefill={noop} />);
     expect(await screen.findByText("Content Script에 연결할 수 없습니다.")).toBeInTheDocument();
   });
+
+  it("shows latest-code sync failure without a stale prefill button", async () => {
+    render(<SweaDetectionPanel requestContext={async () => ({ status: "connected", result: { status: "connected_page", platform: "SWEA", pageKind: "solving", url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do", editor: { status: "incomplete", language: "Java", code: null, missing: ["code"], warnings: ["SWEA 편집기 최신 코드 동기화에 실패했습니다."] } } })} onProblemPrefill={noop} onEditorPrefill={noop} />);
+    expect(await screen.findByText("최신 코드 동기화 실패")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "등록 폼에 채우기" })).not.toBeInTheDocument();
+  });
 });
