@@ -1,4 +1,5 @@
 import type { NewSolutionInput, SolutionRecord } from "./solution";
+import type { SaveResponse, SweaAcceptedCapture } from "./sweaAutoCapture";
 
 const DB_NAME = "codearchive";
 const DB_VERSION = 1;
@@ -133,3 +134,14 @@ export const indexedDbSolutionRepository: SolutionRepository = {
     }
   },
 };
+
+export async function saveSweaAcceptedCapture(capture: SweaAcceptedCapture): Promise<SaveResponse> {
+  const id = `swea-auto:${capture.captureId}`;
+  const db = await openDatabase();
+  try {
+    const transaction = db.transaction(STORE_NAME, "readwrite"); const store = transaction.objectStore(STORE_NAME);
+    const existing = await requestToPromise(store.get(id) as IDBRequest<SolutionRecord | undefined>);
+    if (existing) { const matches = existing.autoCapture?.source === "SWEA_AUTO" && existing.autoCapture.observedAt === capture.observedAt && existing.platform === capture.platform && existing.problemNumber === capture.problemNumber && existing.title === capture.title && existing.language === capture.language && existing.code === capture.code && existing.solvedAt === capture.solvedAt; await transactionDone(transaction); return matches ? { status: "duplicate", solutionId: id, savedAt: existing.createdAt } : { status: "rejected", reason: "idempotency_conflict" }; }
+    const now = new Date().toISOString(); store.add({ id, platform: "SWEA", problemNumber: capture.problemNumber, title: capture.title, language: capture.language, code: capture.code, solvedAt: capture.solvedAt, aiUsage: "unknown", autoCapture: { source: "SWEA_AUTO", result: "ACCEPTED", observedAt: capture.observedAt }, createdAt: now, updatedAt: now }); await transactionDone(transaction); return { status: "saved", solutionId: id, savedAt: now };
+  } finally { db.close(); }
+}
