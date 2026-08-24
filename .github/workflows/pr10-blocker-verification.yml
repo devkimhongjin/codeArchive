@@ -1,9 +1,10 @@
 name: PR10 blocker verification
 
 on:
-  push:
+  pull_request:
     branches:
-      - feature/extension-react-scaffold
+      - develop
+    types: [opened, synchronize, reopened]
 
 jobs:
   verify:
