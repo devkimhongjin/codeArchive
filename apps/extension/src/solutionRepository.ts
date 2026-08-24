@@ -99,14 +99,13 @@ export const indexedDbSolutionRepository: SolutionRepository = {
       const transaction = db.transaction(STORE_NAME, "readwrite");
       const done = transactionDone(transaction);
       const store = transaction.objectStore(STORE_NAME);
-      const updated = await new Promise<SolutionRecord>((resolve, reject) => {
+      const updated = await new Promise<SolutionRecord | undefined>((resolve, reject) => {
         const request = store.get(id) as IDBRequest<SolutionRecord | undefined>;
 
         request.onsuccess = () => {
           const existing = request.result;
           if (!existing) {
-            transaction.abort();
-            reject(new Error("Solution record not found."));
+            resolve(undefined);
             return;
           }
 
@@ -125,6 +124,9 @@ export const indexedDbSolutionRepository: SolutionRepository = {
       });
 
       await done;
+      if (!updated) {
+        throw new Error("Solution record not found.");
+      }
       return updated;
     } finally {
       db.close();
