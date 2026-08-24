@@ -10,14 +10,18 @@ button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 .popup { padding: 20px; }
 .popup-header, .detail-heading, .form-heading, .detail-actions, .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .eyebrow { margin: 0 0 6px; color: #5469d4; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 h1 { margin: 0; font-size: 21px; line-height: 1.3; }
 h2 { margin: 0; font-size: 16px; }
 .primary-button { border: 0; border-radius: 8px; background: #4658c9; color: white; padding: 9px 12px; font-weight: 700; }
 .primary-button:disabled { opacity: .6; cursor: wait; }
+.secondary-button { border: 1px solid #cbd5e1; border-radius: 8px; background: white; color: #334155; padding: 8px 11px; font-weight: 700; cursor: pointer; }
+.import-button input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .text-button { border: 0; background: transparent; color: #4658c9; padding: 3px 0; font-weight: 700; }
 .solution-form, .detail-card { display: grid; gap: 12px; margin-top: 18px; padding: 16px; border: 1px solid #dce2ef; border-radius: 12px; background: white; }
 .form-heading { align-items: center; }
+.import-notice { margin: 0; padding: 9px 10px; border-radius: 8px; background: #eef7ff; color: #24557a; font-size: 12px; font-weight: 600; }
 .solution-form label { display: grid; gap: 6px; color: #334155; font-size: 13px; font-weight: 650; }
 .solution-form input, .solution-form textarea, .solution-form select { width: 100%; border: 1px solid #cbd5e1; border-radius: 7px; padding: 8px 9px; background: white; color: #172033; }
 .solution-form textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; }
