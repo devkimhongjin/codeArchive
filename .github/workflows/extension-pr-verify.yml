@@ -10,7 +10,7 @@ on:
       - ".github/workflows/extension-pr-verify.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 defaults:
   run:
@@ -20,10 +20,8 @@ jobs:
   verify-extension:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout PR branch
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
@@ -37,22 +35,7 @@ jobs:
           node --version | tee node-version.log
           pnpm --version | tee pnpm-version.log
 
-      - name: Bootstrap lockfile
-        run: pnpm install --no-frozen-lockfile 2>&1 | tee install-bootstrap.log
-
-      - name: Commit bootstrapped lockfile
-        run: |
-          if git diff --quiet -- pnpm-lock.yaml; then
-            echo "pnpm-lock.yaml already current"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pnpm-lock.yaml
-          git commit -m "chore: refresh pnpm lockfile for extension"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
-
-      - name: Verify generated lockfile is frozen-installable
+      - name: Install with frozen lockfile
         run: pnpm install --frozen-lockfile 2>&1 | tee install-frozen.log
 
       - name: Typecheck extension
@@ -83,7 +66,6 @@ jobs:
             pnpm-lock.yaml
             node-version.log
             pnpm-version.log
-            install-bootstrap.log
             install-frozen.log
             typecheck.log
             test.log
