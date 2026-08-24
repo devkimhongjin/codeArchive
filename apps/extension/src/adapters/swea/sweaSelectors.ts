@@ -1,4 +1,6 @@
 export const SWEA_PROBLEM_DETAIL_PATH = "/main/code/problem/problemDetail.do";
+export const SWEA_USER_PROBLEM_DETAIL_PATH = "/main/code/userProblem/userProblemDetail.do";
+export const SWEA_SOLVING_PATH = "/main/solvingProblem/solvingProblem.do";
 
 export const SWEA_SELECTORS = {
   heading: [
