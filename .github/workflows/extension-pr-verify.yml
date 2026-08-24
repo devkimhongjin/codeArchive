@@ -70,7 +70,6 @@ jobs:
           EXT_DIR="$PWD/apps/extension/dist"
           CFT_DIR="$RUNNER_TEMP/chrome-for-testing"
           PROFILE="$RUNNER_TEMP/codearchive-chrome-profile"
-          PROFILE_DUMP="$RUNNER_TEMP/codearchive-chrome-dump-profile"
           mkdir -p "$CFT_DIR"
 
           CFT_URL="$(python3 - <<'PY'
@@ -88,33 +87,11 @@ jobs:
           CHROME_BIN="$CFT_DIR/chrome-linux64/chrome"
           "$CHROME_BIN" --version | tee chrome-version.log
 
-          set +e
-          timeout 8s xvfb-run -a "$CHROME_BIN" \
-            --no-sandbox \
-            --user-data-dir="$PROFILE" \
-            --disable-extensions-except="$EXT_DIR" \
-            --load-extension="$EXT_DIR" \
-            about:blank >chrome-load.log 2>&1
-          LOAD_STATUS=$?
-          set -e
-          if [[ "$LOAD_STATUS" -ne 0 && "$LOAD_STATUS" -ne 124 ]]; then
-            cat chrome-load.log
-            exit "$LOAD_STATUS"
-          fi
-
-          EXTENSION_ID="$(python3 - "$PROFILE/Default/Preferences" "$EXT_DIR" <<'PY'
-          import json, os, sys
-          preferences_path, extension_path = sys.argv[1], os.path.realpath(sys.argv[2])
-          with open(preferences_path, encoding="utf-8") as f:
-              preferences = json.load(f)
-          for extension_id, settings in preferences.get("extensions", {}).get("settings", {}).items():
-              path = settings.get("path")
-              manifest = settings.get("manifest", {})
-              if (path and os.path.realpath(path) == extension_path) or manifest.get("name") == "CodeArchive":
-                  print(extension_id)
-                  break
-          else:
-              raise SystemExit("CodeArchive unpacked extension was not registered")
+          EXTENSION_ID="$(python3 - "$EXT_DIR" <<'PY'
+          import hashlib, os, sys
+          path = os.path.realpath(sys.argv[1]).encode("utf-8")
+          digest = hashlib.sha256(path).hexdigest()[:32]
+          print("".join(chr(ord("a") + int(ch, 16)) for ch in digest))
           PY
           )"
           echo "$EXTENSION_ID" | tee extension-id.log
@@ -122,7 +99,7 @@ jobs:
           "$CHROME_BIN" \
             --headless=new \
             --no-sandbox \
-            --user-data-dir="$PROFILE_DUMP" \
+            --user-data-dir="$PROFILE" \
             --disable-extensions-except="$EXT_DIR" \
             --load-extension="$EXT_DIR" \
             --dump-dom "chrome-extension://$EXTENSION_ID/popup.html" \
@@ -130,8 +107,7 @@ jobs:
 
           grep -q "로컬 우선 기록 준비 완료" popup-dom.log
           grep -q "서버 연결 없음 · 로컬 프로토타입" popup-dom.log
-          if grep -qi "Failed to load extension" chrome-load.log chrome-popup.log; then
-            cat chrome-load.log
+          if grep -qiE "Failed to load extension|Manifest file is missing|Cannot load extension" chrome-popup.log; then
             cat chrome-popup.log
             exit 1
           fi
@@ -152,7 +128,6 @@ jobs:
             dist-files.log
             dist-manifest.log
             chrome-version.log
-            chrome-load.log
             chrome-popup.log
             extension-id.log
             popup-dom.log
