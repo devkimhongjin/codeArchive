@@ -6,15 +6,20 @@ import { buildExportFilename, downloadTextFile, toJson, toMarkdown, toSource, ty
 import { importSourceFile, parseSolutionJson } from "./solutionImport";
 import type { DetectedProblemInfo } from "./adapters/platformAdapter";
 import type { SweaEditorInfo } from "./adapters/swea/sweaEditor";
+import type { SweaSolvingProblemMeta } from "./adapters/swea/sweaSolvingProblemMeta";
 import { SweaDetectionPanel } from "./SweaDetectionPanel";
+import type { PageContextState } from "./content/pageContextBridge";
 
 const EMPTY_FORM: NewSolutionInput = { platform: "", problemNumber: "", title: "", language: "", code: "", solvedAt: null, aiUsage: "unknown" };
 const REQUIRED_FIELDS: Array<keyof Pick<NewSolutionInput, "platform" | "problemNumber" | "title" | "language" | "code">> = ["platform", "problemNumber", "title", "language", "code"];
 const AI_USAGE_LABELS: Record<AiUsage, string> = { used: "사용함", not_used: "사용 안 함", unknown: "모름" };
-interface PopupProps { repository?: SolutionRepository; }
+interface PopupProps {
+  repository?: SolutionRepository;
+  requestPageContext?: () => Promise<PageContextState>;
+}
 type ViewMode = "list" | "create" | "detail" | "edit";
 
-export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) {
+export function Popup({ repository = indexedDbSolutionRepository, requestPageContext }: PopupProps) {
   const [form, setForm] = useState<NewSolutionInput>(EMPTY_FORM);
   const [records, setRecords] = useState<SolutionRecord[]>([]);
   const [selectedRecord, setSelectedRecord] = useState<SolutionRecord | null>(null);
@@ -32,6 +37,10 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
   }
   function beginEditorCreate(editor: SweaEditorInfo) {
     setForm({ ...EMPTY_FORM, platform: "SWEA", language: editor.language ?? "", code: editor.code });
+    setSelectedRecord(null); setImportedFrom("SWEA 현재 풀이"); setError(""); setMode("create");
+  }
+  function beginSolvingCreate(problem: SweaSolvingProblemMeta, editor: SweaEditorInfo) {
+    setForm({ ...EMPTY_FORM, platform: "SWEA", problemNumber: problem.problemNumber, title: problem.title, language: editor.language ?? "", code: editor.code });
     setSelectedRecord(null); setImportedFrom("SWEA 현재 풀이"); setError(""); setMode("create");
   }
   function beginEdit() {
@@ -79,7 +88,7 @@ export function Popup({ repository = indexedDbSolutionRepository }: PopupProps) 
         {mode === "list" && <div className="header-actions"><label className="secondary-button import-button">파일 가져오기<input aria-label="파일 가져오기" type="file" accept=".java,.py,.js,.ts,.cpp,.cc,.cxx,.c,.kt,.cs,.go,.rs,.swift,.json,text/*,application/json" onChange={handleImportFile} /></label><button className="primary-button" type="button" onClick={beginCreate}>새 풀이 등록</button></div>}
       </header>
 
-      {mode === "list" && <SweaDetectionPanel onProblemPrefill={beginDetectedCreate} onEditorPrefill={beginEditorCreate} />}
+      {mode === "list" && <SweaDetectionPanel requestContext={requestPageContext} onProblemPrefill={beginDetectedCreate} onEditorPrefill={beginEditorCreate} onSolvingPrefill={beginSolvingCreate} />}
 
       {showForm && (
         <form className="solution-form" onSubmit={handleSubmit} noValidate>

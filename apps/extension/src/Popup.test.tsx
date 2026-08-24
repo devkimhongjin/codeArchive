@@ -114,4 +114,28 @@ describe("Popup", () => {
     );
     expect(repository.create).not.toHaveBeenCalled();
   });
+
+  it("prefills the five solving-page fields without saving automatically", async () => {
+    const repository = createRepository();
+    render(<Popup repository={repository} requestPageContext={async () => ({
+      status: "connected",
+      result: {
+        status: "connected_page",
+        platform: "SWEA",
+        pageKind: "solving",
+        url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do?contestProbId=current",
+        metadata: { status: "detected", problem: { problemNumber: "1234", title: "Synthetic title", contestProbId: "current" }, warnings: [] },
+        editor: { status: "detected", editor: { language: "Java", code: "class Main {}" }, warnings: [] },
+      },
+    })} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "등록 폼에 채우기" }));
+
+    expect(screen.getByLabelText(/플랫폼/)).toHaveValue("SWEA");
+    expect(screen.getByLabelText(/문제 번호/)).toHaveValue("1234");
+    expect(screen.getByLabelText(/제목/)).toHaveValue("Synthetic title");
+    expect(screen.getByLabelText(/언어/)).toHaveValue("Java");
+    expect(screen.getByLabelText(/코드/)).toHaveValue("class Main {}");
+    expect(repository.create).not.toHaveBeenCalled();
+  });
 });

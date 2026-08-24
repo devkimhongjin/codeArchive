@@ -1,5 +1,6 @@
 import type { PlatformAdapter, ProblemDetectionResult } from "../platformAdapter";
 import { detectSweaEditor } from "./sweaEditor";
+import { detectSweaSolvingProblemMeta } from "./sweaSolvingProblemMeta";
 import {
   SWEA_PROBLEM_DETAIL_PATH,
   SWEA_SELECTORS,
@@ -53,6 +54,7 @@ export const sweaAdapter: PlatformAdapter = {
         platform: "SWEA",
         pageKind,
         url: url.href,
+        metadata: detectSweaSolvingProblemMeta(document, url),
         editor: detectSweaEditor(document, url),
       };
     }

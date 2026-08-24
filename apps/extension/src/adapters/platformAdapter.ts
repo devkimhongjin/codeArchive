@@ -1,4 +1,5 @@
 import type { SweaEditorDetectionResult } from "./swea/sweaEditor";
+import type { SweaSolvingProblemMetaResult } from "./swea/sweaSolvingProblemMeta";
 
 export type PlatformCode = "SWEA";
 
@@ -12,7 +13,14 @@ export interface DetectedProblemInfo {
 
 export type ProblemDetectionResult =
   | { status: "detected"; problem: DetectedProblemInfo; warnings: string[] }
-  | { status: "connected_page"; platform: "SWEA"; pageKind: "solving"; url: string; editor: SweaEditorDetectionResult }
+  | {
+      status: "connected_page";
+      platform: "SWEA";
+      pageKind: "solving";
+      url: string;
+      metadata: SweaSolvingProblemMetaResult;
+      editor: SweaEditorDetectionResult;
+    }
   | { status: "unsupported_page" }
   | { status: "incomplete"; missing: string[]; warnings: string[] };
 
