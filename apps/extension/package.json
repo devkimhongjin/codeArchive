@@ -7,7 +7,7 @@
     "dev": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "build": "tsc -p tsconfig.json --noEmit && vite build"
+    "build": "tsc -p tsconfig.json --noEmit && vite build && vite build --config vite.content.config.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.4",

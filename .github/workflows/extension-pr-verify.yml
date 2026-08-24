@@ -51,6 +51,7 @@ jobs:
         run: |
           test -f apps/extension/dist/manifest.json
           test -f apps/extension/dist/popup.html
+          test -f apps/extension/dist/content/swea.js
           grep -q '"manifest_version": 3' apps/extension/dist/manifest.json
           test -n "$(find apps/extension/dist -type f -name '*.js' -print -quit)"
           test -n "$(find apps/extension/dist -type f -name '*.css' -print -quit)"
@@ -61,8 +62,14 @@ jobs:
           with open("apps/extension/dist/manifest.json", encoding="utf-8") as f:
               manifest = json.load(f)
           assert manifest["manifest_version"] == 3
-          for key in ("permissions", "host_permissions", "content_scripts", "background"):
+          for key in ("permissions", "host_permissions", "background"):
               assert key not in manifest, f"unexpected manifest key: {key}"
+          scripts = manifest.get("content_scripts")
+          assert isinstance(scripts, list) and len(scripts) == 1
+          script = scripts[0]
+          assert script.get("matches") == ["https://swexpertacademy.com/main/code/problem/problemDetail.do*"]
+          assert script.get("js") == ["content/swea.js"]
+          assert script.get("run_at") == "document_idle"
           PY
 
       - name: Verify unpacked popup in stable Chrome for Testing
@@ -151,10 +158,10 @@ jobs:
 
               page = context.new_page()
               page.goto(f"chrome-extension://{extension_id}/popup.html", wait_until="networkidle")
-              heading = page.get_by_role("heading", name="로컬 우선 기록 준비 완료")
+              heading = page.get_by_role("heading", name="내 풀이 기록")
               status = page.get_by_role("status")
               assert heading.count() == 1
-              assert status.inner_text() == "서버 연결 없음 · 로컬 프로토타입"
+              assert "IndexedDB 로컬 저장" in status.inner_text()
 
               body_text = " ".join(page.locator("body").inner_text().split())
               pathlib.Path("popup-dom.log").write_text(body_text + "\n", encoding="utf-8")
