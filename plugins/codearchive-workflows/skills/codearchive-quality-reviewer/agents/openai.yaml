@@ -1,0 +1,6 @@
+interface:
+  display_name: "CodeArchive Quality Reviewer"
+  short_description: "Review a CodeArchive change independently"
+  default_prompt: "Use $codearchive-quality-reviewer to review the specified CodeArchive PR."
+policy:
+  allow_implicit_invocation: false

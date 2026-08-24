@@ -1,0 +1,6 @@
+interface:
+  display_name: "CodeArchive Integrator"
+  short_description: "Plan and integrate cross-component CodeArchive work"
+  default_prompt: "Use $codearchive-integrator to plan or integrate the next CodeArchive task."
+policy:
+  allow_implicit_invocation: false

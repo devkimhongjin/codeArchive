@@ -1,0 +1,6 @@
+interface:
+  display_name: "CodeArchive Client Builder"
+  short_description: "Build the local-first Extension and web client"
+  default_prompt: "Use $codearchive-client-builder to implement the assigned client task."
+policy:
+  allow_implicit_invocation: false

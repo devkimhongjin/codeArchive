@@ -45,3 +45,7 @@ Some workspace packages are still placeholders. If a root command cannot run bec
 
 A handoff is acceptable only when requirements are traced to the specification, changed paths stay within ownership, relevant tests pass or blockers are evidenced, security/privacy effects are stated, and documentation or contracts are updated when behavior changes.
 
+
+## ChatGPT Work role Skills
+
+When a CodeArchive role Skill is explicitly invoked, use exactly that one role for the chat. Do not invoke another role Skill or spawn subagents. Persist handoffs in the GitHub issue or pull request using `docs/work-skill-workflow.md`.
