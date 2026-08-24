@@ -32,4 +32,15 @@ describe("sweaEditor", () => {
     expect(result.status).toBe("incomplete");
     if (result.status === "incomplete") expect(result.missing).toEqual(["code"]);
   });
+
+  it("does not trust an existing source value when editor sync failed", () => {
+    const document = documentFrom('<select id="selectCodeLang"><option selected>Java 17</option></select><textarea id="textSource">stale</textarea>');
+    const result = detectSweaEditor(document, URL, false);
+    expect(result.status).toBe("incomplete");
+    if (result.status === "incomplete") {
+      expect(result.code).toBeNull();
+      expect(result.missing).toEqual(["code"]);
+      expect(result.warnings).toContain("SWEA 편집기 최신 코드 동기화에 실패했습니다.");
+    }
+  });
 });
