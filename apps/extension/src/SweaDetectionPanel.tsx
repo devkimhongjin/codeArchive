@@ -3,6 +3,7 @@ import type { DetectedProblemInfo, ProblemDetectionResult } from "./adapters/pla
 import type { SweaEditorInfo } from "./adapters/swea/sweaEditor";
 import type { SweaSolvingProblemMeta } from "./adapters/swea/sweaSolvingProblemMeta";
 import { requestCurrentPageContext, type PageContextState } from "./content/pageContextBridge";
+import { formatKstDateTime } from "./displayTime";
 
 interface SweaDetectionPanelProps {
   requestContext?: () => Promise<PageContextState>;
@@ -34,7 +35,7 @@ function DetectionContent({ result, onProblemPrefill, onEditorPrefill, onSolving
           {metadata.status === "incomplete" && <p className="detection-muted">문제 정보 일부 감지 실패</p>}
           {metadata.status === "conflict" && <p className="detection-muted">SWEA 문제 식별 정보 불일치</p>}
           {submissionResult.status === "none" && <p className="detection-muted">제출 결과: 아직 감지되지 않음</p>}
-          {submissionResult.status === "observed" && <p>제출 결과: {submissionResult.submission.result} · 관찰 시각: {submissionResult.submission.observedAt}</p>}
+          {submissionResult.status === "observed" && <p>제출 결과: {submissionResult.submission.result} · 관찰 시각: {formatKstDateTime(submissionResult.submission.observedAt)}</p>}
           {autoSave.status === "saved" && <p>자동 저장 완료</p>}
           {autoSave.status === "duplicate" && <p>이미 처리된 제출</p>}
           {autoSave.status === "failed" && <p>{autoSave.reason === "confirmation_unknown" ? "저장 여부 확인 필요" : "자동 저장 실패 · 수동 저장을 이용해주세요"}</p>}
