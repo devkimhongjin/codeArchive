@@ -116,15 +116,16 @@ describe("Popup", () => {
     expect(screen.getByText("45,678 kb")).toBeInTheDocument();
   });
 
-  it("does not invent submission performance when it is missing", async () => {
+  it("shows performance fields as 미수집 when data is missing", async () => {
     const repository = createRepository([savedRecord]);
     render(<Popup repository={repository} />);
 
     fireEvent.click(await screen.findByRole("button", { name: /A\+B/ }));
 
     expect(await screen.findByRole("heading", { name: "A+B" })).toBeInTheDocument();
-    expect(screen.queryByText("실행시간")).not.toBeInTheDocument();
-    expect(screen.queryByText("메모리")).not.toBeInTheDocument();
+    expect(screen.getByText("실행시간")).toBeInTheDocument();
+    expect(screen.getByText("메모리")).toBeInTheDocument();
+    expect(screen.getAllByText("미수집")).toHaveLength(2);
   });
 
   it("loads a source file into the create form without saving automatically", async () => {
