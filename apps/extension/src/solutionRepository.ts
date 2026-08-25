@@ -10,6 +10,7 @@ export interface SolutionRepository {
   list(): Promise<SolutionRecord[]>;
   getById(id: string): Promise<SolutionRecord | undefined>;
   update(id: string, input: NewSolutionInput): Promise<SolutionRecord>;
+  delete(id: string): Promise<void>;
 }
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
@@ -30,7 +31,6 @@ function transactionDone(transaction: IDBTransaction): Promise<void> {
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
-
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -38,7 +38,6 @@ function openDatabase(): Promise<IDBDatabase> {
         store.createIndex("createdAt", "createdAt");
       }
     };
-
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("IndexedDB open failed."));
   });
@@ -52,22 +51,14 @@ function solutionFields(input: NewSolutionInput): Omit<NewSolutionInput, "perfor
 export const indexedDbSolutionRepository: SolutionRepository = {
   async create(input) {
     const now = new Date().toISOString();
-    const record: SolutionRecord = {
-      id: crypto.randomUUID(),
-      ...solutionFields(input),
-      createdAt: now,
-      updatedAt: now,
-    };
-
+    const record: SolutionRecord = { id: crypto.randomUUID(), ...solutionFields(input), createdAt: now, updatedAt: now };
     const db = await openDatabase();
     try {
       const transaction = db.transaction(STORE_NAME, "readwrite");
       transaction.objectStore(STORE_NAME).add(record);
       await transactionDone(transaction);
       return record;
-    } finally {
-      db.close();
-    }
+    } finally { db.close(); }
   },
 
   async list() {
@@ -75,13 +66,10 @@ export const indexedDbSolutionRepository: SolutionRepository = {
     try {
       const transaction = db.transaction(STORE_NAME, "readonly");
       const done = transactionDone(transaction);
-      const request = transaction.objectStore(STORE_NAME).getAll();
-      const records = await requestToPromise(request);
+      const records = await requestToPromise(transaction.objectStore(STORE_NAME).getAll());
       await done;
-      return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    } finally {
-      db.close();
-    }
+      return records.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    } finally { db.close(); }
   },
 
   async getById(id) {
@@ -89,14 +77,10 @@ export const indexedDbSolutionRepository: SolutionRepository = {
     try {
       const transaction = db.transaction(STORE_NAME, "readonly");
       const done = transactionDone(transaction);
-      const record = await requestToPromise(
-        transaction.objectStore(STORE_NAME).get(id) as IDBRequest<SolutionRecord | undefined>,
-      );
+      const record = await requestToPromise(transaction.objectStore(STORE_NAME).get(id) as IDBRequest<SolutionRecord | undefined>);
       await done;
       return record;
-    } finally {
-      db.close();
-    }
+    } finally { db.close(); }
   },
 
   async update(id, input) {
@@ -107,37 +91,29 @@ export const indexedDbSolutionRepository: SolutionRepository = {
       const store = transaction.objectStore(STORE_NAME);
       const updated = await new Promise<SolutionRecord | undefined>((resolve, reject) => {
         const request = store.get(id) as IDBRequest<SolutionRecord | undefined>;
-
         request.onsuccess = () => {
           const existing = request.result;
-          if (!existing) {
-            resolve(undefined);
-            return;
-          }
-
-          const record: SolutionRecord = {
-            ...existing,
-            ...solutionFields(input),
-            id: existing.id,
-            createdAt: existing.createdAt,
-            updatedAt: new Date().toISOString(),
-          };
+          if (!existing) return resolve(undefined);
+          const record: SolutionRecord = { ...existing, ...solutionFields(input), id: existing.id, createdAt: existing.createdAt, updatedAt: new Date().toISOString() };
           if (!input.performance) delete record.performance;
-
           store.put(record);
           resolve(record);
         };
         request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed."));
       });
-
       await done;
-      if (!updated) {
-        throw new Error("Solution record not found.");
-      }
+      if (!updated) throw new Error("Solution record not found.");
       return updated;
-    } finally {
-      db.close();
-    }
+    } finally { db.close(); }
+  },
+
+  async delete(id) {
+    const db = await openDatabase();
+    try {
+      const transaction = db.transaction(STORE_NAME, "readwrite");
+      transaction.objectStore(STORE_NAME).delete(id);
+      await transactionDone(transaction);
+    } finally { db.close(); }
   },
 };
 
