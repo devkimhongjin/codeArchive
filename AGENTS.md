@@ -5,11 +5,22 @@
 - Read `docs/codearchive-development-spec.md` before planning cross-component work.
 - Use `docs/agent-architecture.md` for role ownership, handoffs, model routing, and escalation.
 - Treat the implementation as the current state and the development specification as the target state. Report drift instead of silently changing either one.
-- Current known drift: the specification recommends Spring Boot 3, while `apps/api/build.gradle` currently declares Spring Boot 4.1.0. The project integrator must decide which side to update before related work proceeds.
+- Current known drift: the specification recommends Spring Boot 3, while `apps/api/build.gradle` currently declares Spring Boot 4.1.0. For the current SWEA MVP, Issue #31 freezes Spring Boot 4.1.0; specification alignment is deferred to stabilization after the MVP.
 
 ## Current delivery priority
 
-Follow section 23.0 of the development specification. The local-first Chrome Extension prototype comes before server integrations, authentication, AI review, statistics, and recommendations.
+Issue #31 (`[MVP] SWEA end-to-end archive + backend sync + AI assistance`) overrides the broader section 23.0 sequencing until the SWEA MVP is complete.
+
+The current delivery goal is one end-to-end SWEA MVP before Phase 4 platforms, Web Dashboard expansion, authentication, integrations, statistics, or recommendations. Follow this order unless the project integrator records a new decision:
+
+1. #32 — trusted SWEA ACCEPTED execution-time/memory evidence and local record extension.
+2. #33 — Spring Main API + PostgreSQL solution persistence.
+3. #34 — local-first Extension record → Main API synchronization.
+4. #35 — FastAPI/OpenAI AI artifact backend for explicit approach/design, commented-code, and code-review requests.
+5. #36 — Extension AI buttons and artifact UI.
+6. #37 — real Chrome + local backend end-to-end acceptance.
+
+Preserve the local-first invariant throughout the MVP: SWEA capture and IndexedDB persistence must still succeed when the API or AI service is unavailable. Do not begin another coding platform while Issue #31 is open unless the project integrator explicitly reprioritizes it.
 
 ## Ownership
 
