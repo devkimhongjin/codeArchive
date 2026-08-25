@@ -9,7 +9,10 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     rollupOptions: {
-      input: resolve(import.meta.dirname, "popup.html"),
+      input: {
+        popup: resolve(import.meta.dirname, "popup.html"),
+        archive: resolve(import.meta.dirname, "archive.html"),
+      },
     },
   },
   test: {

@@ -28,4 +28,5 @@ export interface NewSolutionInput {
   code: string;
   solvedAt: string | null;
   aiUsage: AiUsage;
+  performance?: SubmissionPerformance;
 }
