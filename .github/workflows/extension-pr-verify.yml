@@ -74,6 +74,7 @@ jobs:
           script = scripts[0]
           assert script.get("matches") == [
               "https://swexpertacademy.com/main/code/problem/problemDetail.do*",
+              "https://swexpertacademy.com/main/code/contestProblem/contestProblemDetail.do*",
               "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do*",
               "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do*",
           ]

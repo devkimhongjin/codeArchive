@@ -21,7 +21,7 @@ describe("SweaDetectionPanel", () => {
     expect(screen.getByText("문제: 1234 · Synthetic title")).toBeInTheDocument();
     expect(screen.getByText("언어: Java")).toBeInTheDocument();
     expect(screen.getByText("코드: 감지됨 · 20자")).toBeInTheDocument();
-    expect(screen.getByText("제출 결과: ACCEPTED · 관찰 시각: 2026-08-24T12:00:00.000Z")).toBeInTheDocument();
+    expect(screen.getByText("제출 결과: ACCEPTED · 관찰 시각: 2026-08-24 21:00:00 KST")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "등록 폼에 채우기" }));
     expect(onSolvingPrefill).toHaveBeenCalledWith({ problemNumber: "1234", title: "Synthetic title", contestProbId: "current" }, { language: "Java", code: "public class Main {}" });
     expect(onEditorPrefill).not.toHaveBeenCalled();
@@ -62,7 +62,7 @@ describe("SweaDetectionPanel", () => {
 
   it("shows UNKNOWN without claiming a saved record", async () => {
     render(<SweaDetectionPanel requestContext={async () => ({ status: "connected", result: { status: "connected_page", platform: "SWEA", pageKind: "solving", url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do", metadata: { status: "incomplete", missing: ["problemNumber", "title"], warnings: [] }, editor: { status: "incomplete", language: null, code: null, missing: ["language", "code"], warnings: [] }, submissionResult: { status: "observed", submission: { result: "UNKNOWN", observedAt: "2026-08-24T12:00:00.000Z" }, warnings: ["generic warning"] } } })} onProblemPrefill={noop} onEditorPrefill={noop} onSolvingPrefill={noop} />);
-    expect(await screen.findByText("제출 결과: UNKNOWN · 관찰 시각: 2026-08-24T12:00:00.000Z")).toBeInTheDocument();
+    expect(await screen.findByText("제출 결과: UNKNOWN · 관찰 시각: 2026-08-24 21:00:00 KST")).toBeInTheDocument();
     expect(screen.queryByText(/저장 완료/)).not.toBeInTheDocument();
   });
 });

@@ -1,5 +1,10 @@
 export type AiUsage = "used" | "not_used" | "unknown";
 
+export interface SubmissionPerformance {
+  executionTime: string;
+  memoryUsage: string;
+}
+
 export interface SolutionRecord {
   id: string;
   platform: string;
@@ -11,6 +16,7 @@ export interface SolutionRecord {
   aiUsage: AiUsage;
   createdAt: string;
   updatedAt: string;
+  performance?: SubmissionPerformance;
   autoCapture?: { source: "SWEA_AUTO"; result: "ACCEPTED"; observedAt: string };
 }
 
