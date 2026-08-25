@@ -23,10 +23,16 @@ function createRepository(initialRecords: SolutionRecord[] = []): SolutionReposi
       const current = records.find((record) => record.id === id);
       if (!current) throw new Error("not found");
       const updated: SolutionRecord = { ...current, ...input, createdAt: current.createdAt, updatedAt: "2026-08-24T07:00:00.000Z" };
+      if (!input.performance) delete updated.performance;
       records = records.map((record) => record.id === id ? updated : record);
       return updated;
     }),
   };
+}
+
+async function openSavedDetail(): Promise<void> {
+  fireEvent.click(await screen.findByRole("button", { name: /A\+B/ }));
+  expect(await screen.findByRole("heading", { name: "A+B" })).toBeInTheDocument();
 }
 
 describe("Popup", () => {
@@ -80,18 +86,19 @@ describe("Popup", () => {
     expect(openArchive).toHaveBeenCalledTimes(1);
   });
 
-  it("copies exact code and reports success without false success on failure", async () => {
+  it("copies exact code and reports success", async () => {
     const copyText = vi.fn(async () => undefined);
-    const { rerender } = render(<Popup repository={createRepository([savedRecord])} copyText={copyText} />);
-    fireEvent.click(await screen.findByRole("button", { name: /A\+B/ }));
+    render(<Popup repository={createRepository([savedRecord])} copyText={copyText} />);
+    await openSavedDetail();
     fireEvent.click(screen.getByRole("button", { name: "코드 복사" }));
     await waitFor(() => expect(copyText).toHaveBeenCalledWith("class Main {}"));
     expect(screen.getByText("코드가 복사되었습니다")).toBeInTheDocument();
+  });
 
+  it("does not report copy success when clipboard write fails", async () => {
     const failingCopy = vi.fn(async () => { throw new Error("denied"); });
-    rerender(<Popup repository={createRepository([savedRecord])} copyText={failingCopy} />);
-    fireEvent.click(screen.getByRole("button", { name: "목록으로" }));
-    fireEvent.click(await screen.findByRole("button", { name: /A\+B/ }));
+    render(<Popup repository={createRepository([savedRecord])} copyText={failingCopy} />);
+    await openSavedDetail();
     fireEvent.click(screen.getByRole("button", { name: "코드 복사" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("코드를 복사하지 못했습니다.");
     expect(screen.queryByText("코드가 복사되었습니다")).not.toBeInTheDocument();
@@ -100,7 +107,7 @@ describe("Popup", () => {
   it("stores two manual performance strings exactly", async () => {
     const repository = createRepository([savedRecord]);
     render(<Popup repository={repository} />);
-    fireEvent.click(await screen.findByRole("button", { name: /A\+B/ }));
+    await openSavedDetail();
     fireEvent.click(screen.getByRole("button", { name: "수정" }));
     fireEvent.change(screen.getByLabelText("실행시간"), { target: { value: " 123 ms " } });
     fireEvent.change(screen.getByLabelText("메모리"), { target: { value: " 45,678 kb " } });
@@ -114,20 +121,22 @@ describe("Popup", () => {
   it("removes performance when both fields are cleared", async () => {
     const repository = createRepository([{ ...savedRecord, performance: { executionTime: "123 ms", memoryUsage: "45 kb" } }]);
     render(<Popup repository={repository} />);
-    fireEvent.click(await screen.findByRole("button", { name: /A\+B/ }));
+    await openSavedDetail();
     fireEvent.click(screen.getByRole("button", { name: "수정" }));
     fireEvent.change(screen.getByLabelText("실행시간"), { target: { value: "" } });
     fireEvent.change(screen.getByLabelText("메모리"), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "수정 저장" }));
     await waitFor(() => expect(repository.update).toHaveBeenCalledTimes(1));
     expect(repository.update).toHaveBeenCalledWith(savedRecord.id, expect.objectContaining({ performance: undefined }));
+    expect(await screen.findByRole("heading", { name: "A+B" })).toBeInTheDocument();
     expect(screen.queryByText("123 ms")).not.toBeInTheDocument();
+    expect(screen.queryByText("45 kb")).not.toBeInTheDocument();
   });
 
   it("blocks one-sided performance input", async () => {
     const repository = createRepository([savedRecord]);
     render(<Popup repository={repository} />);
-    fireEvent.click(await screen.findByRole("button", { name: /A\+B/ }));
+    await openSavedDetail();
     fireEvent.click(screen.getByRole("button", { name: "수정" }));
     fireEvent.change(screen.getByLabelText("실행시간"), { target: { value: "123 ms" } });
     fireEvent.click(screen.getByRole("button", { name: "수정 저장" }));
@@ -138,8 +147,7 @@ describe("Popup", () => {
   it("opens a saved solution detail and updates it", async () => {
     const repository = createRepository([savedRecord]);
     render(<Popup repository={repository} />);
-    fireEvent.click(await screen.findByRole("button", { name: /A\+B/ }));
-    expect(await screen.findByRole("heading", { name: "A+B" })).toBeInTheDocument();
+    await openSavedDetail();
     expect(screen.getByText("수동저장")).toBeInTheDocument();
     expect(screen.getByText("class Main {}", { selector: "code" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "수정" }));
