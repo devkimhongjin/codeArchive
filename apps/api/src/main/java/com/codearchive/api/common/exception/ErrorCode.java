@@ -39,6 +39,11 @@ public enum ErrorCode {
             "풀이를 찾을 수 없습니다."
     ),
 
+    AI_ARTIFACT_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "AI 결과를 찾을 수 없습니다."
+    ),
+
     DUPLICATE_SOLUTION(
             HttpStatus.CONFLICT,
             "이미 등록된 풀이입니다."
