@@ -42,26 +42,34 @@ describe("SWEA history fallback discovery", () => {
     expect(readCachedSweaFamilyContext(storage, "other")).toBeNull();
   });
 
-  it("discovers one exact same-family submission history href", () => {
+  it("discovers the evidence-backed UserProblem solver href with matching identity", () => {
     const detailUrl = "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do?contestProbId=current";
     const document = documentFrom(`
       <a href="/main/code/userProblem/userProblemDetail.do?contestProbId=current">문제</a>
-      <a href="/main/code/userProblem/userProblemSubmitHistory.do?contestProbId=current">제출 이력</a>
+      <a href="/main/code/userProblem/userProblemSolver.do?contestProbId=current">답안 이력</a>
     `);
     expect(discoverSweaHistoryUrl(document, detailUrl, "UserProblem")).toBe(
-      "https://swexpertacademy.com/main/code/userProblem/userProblemSubmitHistory.do?contestProbId=current",
+      "https://swexpertacademy.com/main/code/userProblem/userProblemSolver.do?contestProbId=current",
     );
+  });
+
+  it("rejects UserProblem solver candidates with a different contestProbId", () => {
+    const detailUrl = "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do?contestProbId=current";
+    const document = documentFrom(`
+      <a href="/main/code/userProblem/userProblemSolver.do?contestProbId=other">답안 이력</a>
+    `);
+    expect(discoverSweaHistoryUrl(document, detailUrl, "UserProblem")).toBeNull();
   });
 
   it("fails closed for missing, multiple, or wrong-family history links", () => {
     const detailUrl = "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do?contestProbId=current";
     expect(discoverSweaHistoryUrl(documentFrom("<main/>"), detailUrl, "UserProblem")).toBeNull();
     expect(discoverSweaHistoryUrl(documentFrom(`
-      <a href="/main/code/userProblem/aSubmitHistory.do">제출 A</a>
-      <a href="/main/code/userProblem/bSubmitHistory.do">제출 B</a>
+      <a href="/main/code/userProblem/userProblemSolver.do?contestProbId=current&view=a">답안 A</a>
+      <a href="/main/code/userProblem/userProblemSolver.do?contestProbId=current&view=b">답안 B</a>
     `), detailUrl, "UserProblem")).toBeNull();
     expect(discoverSweaHistoryUrl(documentFrom(`
-      <a href="/main/code/problem/problemSubmitHistory.do">제출 이력</a>
+      <a href="/main/code/problem/problemSubmitHistory.do?contestProbId=current">제출 이력</a>
     `), detailUrl, "UserProblem")).toBeNull();
   });
 });
