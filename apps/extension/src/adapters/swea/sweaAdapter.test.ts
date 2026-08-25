@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getSweaPageKind, sweaAdapter } from "./sweaAdapter";
 
 const DETAIL_URL = new URL("https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=ABC");
+const CONTEST_DETAIL_URL = new URL("https://swexpertacademy.com/main/code/contestProblem/contestProblemDetail.do?contestProbId=ABC");
 const USER_DETAIL_URL = new URL("https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do?contestProbId=ABC");
 const SOLVING_URL = new URL("https://swexpertacademy.com/main/solvingProblem/solvingProblem.do?contestProbId=ABC");
 
@@ -12,6 +13,7 @@ function documentFrom(html: string): Document {
 describe("sweaAdapter", () => {
   it("classifies supported SWEA page kinds", () => {
     expect(getSweaPageKind(DETAIL_URL)).toBe("problem_detail");
+    expect(getSweaPageKind(CONTEST_DETAIL_URL)).toBe("contest_problem_detail");
     expect(getSweaPageKind(USER_DETAIL_URL)).toBe("user_problem_detail");
     expect(getSweaPageKind(SOLVING_URL)).toBe("solving");
     expect(getSweaPageKind(new URL("https://swexpertacademy.com/main/code/problem/problemList.do"))).toBeNull();
@@ -23,9 +25,9 @@ describe("sweaAdapter", () => {
     expect(result).toEqual({ status: "detected", problem: { platform: "SWEA", problemNumber: "1206", title: "View", difficulty: "D3", url: DETAIL_URL.href }, warnings: [] });
   });
 
-  it("reuses problem metadata detection on user problem detail", () => {
-    const result = sweaAdapter.detect(documentFrom('<div class="problem_name">1234. Sample</div>'), USER_DETAIL_URL);
-    expect(result.status).toBe("detected");
+  it("reuses problem metadata detection on contest and user problem detail", () => {
+    expect(sweaAdapter.detect(documentFrom('<div class="problem_name">1234. Contest</div>'), CONTEST_DETAIL_URL).status).toBe("detected");
+    expect(sweaAdapter.detect(documentFrom('<div class="problem_name">1234. Sample</div>'), USER_DETAIL_URL).status).toBe("detected");
   });
 
   it("returns solving metadata with editor detection on solving pages", () => {
