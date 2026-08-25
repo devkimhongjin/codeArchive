@@ -5,7 +5,7 @@
 - Read `docs/codearchive-development-spec.md` before planning cross-component work.
 - Use `docs/agent-architecture.md` for role ownership, handoffs, model routing, and escalation.
 - Treat the implementation as the current state and the development specification as the target state. Report drift instead of silently changing either one.
-- Current known drift: the specification recommends Spring Boot 3, while `apps/api/build.gradle` currently declares Spring Boot 4.1.0. For the current SWEA MVP, Issue #31 freezes Spring Boot 4.1.0; specification alignment is deferred to stabilization after the MVP.
+- Current Main API MVP runtime baseline: **Java 21 + Spring Boot 3.5.16 + Gradle 8.14.3**. This supersedes the former Issue #31 Spring Boot 4.1.0 freeze by explicit owner decision during Issue #33 / PR #47. Do not mix a framework/runtime major upgrade into feature work; any future baseline change requires an explicit Integrator decision and dedicated stabilization evidence.
 
 ## Current delivery priority
 
