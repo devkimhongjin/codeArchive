@@ -44,12 +44,17 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
+function solutionFields(input: NewSolutionInput): Omit<NewSolutionInput, "performance"> & Pick<NewSolutionInput, "performance"> {
+  const { performance, ...fields } = input;
+  return performance ? { ...fields, performance } : fields;
+}
+
 export const indexedDbSolutionRepository: SolutionRepository = {
   async create(input) {
     const now = new Date().toISOString();
     const record: SolutionRecord = {
       id: crypto.randomUUID(),
-      ...input,
+      ...solutionFields(input),
       createdAt: now,
       updatedAt: now,
     };
@@ -112,11 +117,12 @@ export const indexedDbSolutionRepository: SolutionRepository = {
 
           const record: SolutionRecord = {
             ...existing,
-            ...input,
+            ...solutionFields(input),
             id: existing.id,
             createdAt: existing.createdAt,
             updatedAt: new Date().toISOString(),
           };
+          if (!input.performance) delete record.performance;
 
           store.put(record);
           resolve(record);
