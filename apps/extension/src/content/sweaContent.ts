@@ -1,6 +1,7 @@
 import { createSweaSubmissionResultStore } from "./sweaSubmissionResultStore";
 import { getSweaPageContext } from "./sweaPageContext";
 import { captureAccepted, type SweaAutoSaveState } from "../sweaAutoCapture";
+import { seedSweaFamilyContext } from "./sweaFamilyContextSeed";
 import { GET_PAGE_CONTEXT, PAGE_CONTEXT, type GetPageContextMessage, type PageContextMessage } from "./messages";
 
 declare const chrome: {
@@ -13,6 +14,12 @@ declare const chrome: {
 };
 
 const initialUrl = new URL(window.location.href);
+try {
+  seedSweaFamilyContext(document, initialUrl, document.referrer, sessionStorage);
+} catch {
+  // Family context is only a fail-closed performance fallback hint.
+}
+
 let autoSave: SweaAutoSaveState = { status: "idle" };
 const submissionResultStore = createSweaSubmissionResultStore(document, initialUrl, undefined, async (observation) => {
   if (observation.submission.result !== "ACCEPTED") return;
