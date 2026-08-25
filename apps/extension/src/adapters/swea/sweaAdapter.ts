@@ -2,17 +2,19 @@ import type { PlatformAdapter, ProblemDetectionResult } from "../platformAdapter
 import { detectSweaEditor } from "./sweaEditor";
 import { detectSweaSolvingProblemMeta } from "./sweaSolvingProblemMeta";
 import {
+  SWEA_CONTEST_PROBLEM_DETAIL_PATH,
   SWEA_PROBLEM_DETAIL_PATH,
   SWEA_SELECTORS,
   SWEA_SOLVING_PATH,
   SWEA_USER_PROBLEM_DETAIL_PATH,
 } from "./sweaSelectors";
 
-export type SweaPageKind = "problem_detail" | "user_problem_detail" | "solving";
+export type SweaPageKind = "problem_detail" | "contest_problem_detail" | "user_problem_detail" | "solving";
 
 export function getSweaPageKind(url: URL): SweaPageKind | null {
   if (url.origin !== "https://swexpertacademy.com") return null;
   if (url.pathname === SWEA_PROBLEM_DETAIL_PATH) return "problem_detail";
+  if (url.pathname === SWEA_CONTEST_PROBLEM_DETAIL_PATH) return "contest_problem_detail";
   if (url.pathname === SWEA_USER_PROBLEM_DETAIL_PATH) return "user_problem_detail";
   if (url.pathname === SWEA_SOLVING_PATH) return "solving";
   return null;
