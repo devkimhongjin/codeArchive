@@ -24,3 +24,10 @@ export function formatKstDateTime(value: string): string {
 
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} KST`;
 }
+
+export function formatKstDateTimeMinute(value: string): string {
+  const parts = partsByType(value);
+  if (!parts) return value;
+
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+}
