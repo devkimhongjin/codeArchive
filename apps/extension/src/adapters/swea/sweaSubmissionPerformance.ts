@@ -5,7 +5,7 @@ export interface SubmissionPerformance {
 
 export type SweaSubmissionPerformanceResult =
   | { status: "detected"; performance: SubmissionPerformance }
-  | { status: "incomplete"; reason: "identity_unavailable" | "no_trusted_candidate" | "ambiguous_candidate" | "metrics_missing" };
+  | { status: "incomplete"; reason: "identity_unavailable" | "identity_mismatch" | "no_trusted_candidate" | "ambiguous_candidate" | "metrics_missing" };
 
 const HISTORY_FORM_SELECTOR = "form#contestProbForm";
 const ROW_SELECTOR = ".box-list .box-list-inner > .problem_smt";
@@ -54,11 +54,21 @@ function labelledValues(row: Element): Map<string, string> {
   return values;
 }
 
-export function detectSweaSubmissionPerformance(document: Document, observedAt: string): SweaSubmissionPerformanceResult {
+export function detectSweaSubmissionPerformance(
+  document: Document,
+  observedAt: string,
+  expectedContestProbId?: string | null,
+): SweaSubmissionPerformanceResult {
   const form = document.querySelector(HISTORY_FORM_SELECTOR);
   const nickname = currentNickname(document);
   const observedMillis = Date.parse(observedAt);
   if (!form || !nickname || !Number.isFinite(observedMillis)) return { status: "incomplete", reason: "identity_unavailable" };
+
+  if (expectedContestProbId) {
+    const actualContestProbId = (form.querySelector<HTMLInputElement>('input[name="contestProbId"], #contestProbId')?.value ?? "").trim();
+    if (!actualContestProbId) return { status: "incomplete", reason: "identity_unavailable" };
+    if (actualContestProbId !== expectedContestProbId) return { status: "incomplete", reason: "identity_mismatch" };
+  }
 
   const trusted: Array<{ distance: number; performance: SubmissionPerformance | null }> = [];
   for (const row of form.querySelectorAll(ROW_SELECTOR)) {
