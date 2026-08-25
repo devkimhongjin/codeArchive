@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { cacheSweaFamilyContext, trustedFamilyContext } from "./adapters/swea/sweaHistoryFallback";
-import { captureAccepted } from "./sweaAutoCapture";
+import { captureAccepted, type SaveResponse } from "./sweaAutoCapture";
 
 const url = new URL("https://swexpertacademy.com/main/solvingProblem/solvingProblem.do?contestProbId=current");
 const accepted = { status: "observed" as const, submission: { result: "ACCEPTED" as const, observedAt: "2026-08-25T01:11:00.000Z" }, warnings: [] };
@@ -32,7 +32,7 @@ function response(body: string, ok = true): Response {
 }
 
 function sender() {
-  return vi.fn(async () => ({ status: "saved" as const, solutionId: "swea-auto:uuid", savedAt: "2026-08-25T01:11:01.000Z" }));
+  return vi.fn<(message: unknown) => Promise<SaveResponse>>(async () => ({ status: "saved", solutionId: "swea-auto:uuid", savedAt: "2026-08-25T01:11:01.000Z" }));
 }
 
 describe("captureAccepted history fallback", () => {
