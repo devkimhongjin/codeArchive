@@ -18,7 +18,7 @@ interface CaptureSyncDependencies {
 export async function saveThenSyncAcceptedCapture(capture: SweaAcceptedCapture, dependencies: CaptureSyncDependencies): Promise<SaveResponse> {
   const localResult = await dependencies.saveCapture(capture);
   if (localResult.status === "saved" || localResult.status === "duplicate") {
-    await syncSolutionRecord(localResult.solutionId, dependencies.sync).catch(() => undefined);
+    void syncSolutionRecord(localResult.solutionId, dependencies.sync).catch(() => undefined);
   }
   return localResult;
 }
