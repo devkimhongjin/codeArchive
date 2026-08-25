@@ -1,0 +1,311 @@
+package com.codearchive.api.auth;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.util.Optional;
+
+import org.springframework.stereotype.Service;
+import org.springframework.web.util.UriComponentsBuilder;
+
+import com.codearchive.api.auth.config.AuthProperties;
+import com.codearchive.api.auth.oauth.AuthExchangeCode;
+import com.codearchive.api.auth.oauth.AuthExchangeCodeRepository;
+import com.codearchive.api.auth.oauth.GitHubProviderClient;
+import com.codearchive.api.auth.oauth.GitHubUserProfile;
+import com.codearchive.api.auth.oauth.OAuthState;
+import com.codearchive.api.auth.oauth.OAuthStateRepository;
+import com.codearchive.api.auth.security.CodeArchivePrincipal;
+import com.codearchive.api.auth.security.SecureTokenCodec;
+import com.codearchive.api.auth.session.AuthSession;
+import com.codearchive.api.auth.session.AuthSessionRepository;
+import com.codearchive.api.auth.user.CodeArchiveUser;
+import com.codearchive.api.auth.user.UserService;
+import com.codearchive.api.common.exception.CodeArchiveException;
+import com.codearchive.api.common.exception.ErrorCode;
+
+@Service
+public class AuthService {
+
+    private final AuthProperties authProperties;
+    private final GitHubProviderClient githubProviderClient;
+    private final OAuthStateRepository oauthStateRepository;
+    private final AuthExchangeCodeRepository exchangeCodeRepository;
+    private final AuthSessionRepository authSessionRepository;
+    private final UserService userService;
+    private final SecureTokenCodec tokenCodec;
+    private final Clock clock;
+
+    public AuthService(
+            AuthProperties authProperties,
+            GitHubProviderClient githubProviderClient,
+            OAuthStateRepository oauthStateRepository,
+            AuthExchangeCodeRepository exchangeCodeRepository,
+            AuthSessionRepository authSessionRepository,
+            UserService userService,
+            SecureTokenCodec tokenCodec
+    ) {
+        this(
+                authProperties,
+                githubProviderClient,
+                oauthStateRepository,
+                exchangeCodeRepository,
+                authSessionRepository,
+                userService,
+                tokenCodec,
+                Clock.systemUTC()
+        );
+    }
+
+    AuthService(
+            AuthProperties authProperties,
+            GitHubProviderClient githubProviderClient,
+            OAuthStateRepository oauthStateRepository,
+            AuthExchangeCodeRepository exchangeCodeRepository,
+            AuthSessionRepository authSessionRepository,
+            UserService userService,
+            SecureTokenCodec tokenCodec,
+            Clock clock
+    ) {
+        this.authProperties = authProperties;
+        this.githubProviderClient = githubProviderClient;
+        this.oauthStateRepository = oauthStateRepository;
+        this.exchangeCodeRepository = exchangeCodeRepository;
+        this.authSessionRepository = authSessionRepository;
+        this.userService = userService;
+        this.tokenCodec = tokenCodec;
+        this.clock = clock;
+    }
+
+    public LoginStart beginGitHubLogin() {
+        ensureProviderConfigured();
+
+        Instant now = clock.instant();
+        Instant expiresAt = now.plus(
+                authProperties.getStateTtl()
+        );
+        String rawState = tokenCodec.generate();
+
+        oauthStateRepository.save(
+                OAuthState.create(
+                        tokenCodec.hash(rawState),
+                        expiresAt,
+                        now
+                )
+        );
+
+        AuthProperties.Github github =
+                authProperties.getGithub();
+
+        String authorizationUrl = UriComponentsBuilder
+                .fromUriString(github.getAuthorizeUrl())
+                .queryParam("client_id", github.getClientId())
+                .queryParam(
+                        "redirect_uri",
+                        github.getCallbackUrl()
+                )
+                .queryParam("state", rawState)
+                .build()
+                .encode()
+                .toUriString();
+
+        return new LoginStart(
+                authorizationUrl,
+                expiresAt
+        );
+    }
+
+    public CallbackExchange completeGitHubCallback(
+            String authorizationCode,
+            String rawState
+    ) {
+        ensureProviderConfigured();
+
+        if (isBlank(authorizationCode)
+                || isBlank(rawState)) {
+            throw new CodeArchiveException(
+                    ErrorCode.AUTH_FLOW_INVALID
+            );
+        }
+
+        Instant now = clock.instant();
+        String stateHash = tokenCodec.hash(rawState);
+
+        if (oauthStateRepository.consumeActive(
+                stateHash,
+                now
+        ) != 1) {
+            throw new CodeArchiveException(
+                    ErrorCode.AUTH_FLOW_INVALID
+            );
+        }
+
+        GitHubUserProfile profile =
+                githubProviderClient.fetchUser(
+                        authorizationCode
+                );
+        CodeArchiveUser user = userService.upsert(profile);
+
+        String rawExchangeCode = tokenCodec.generate();
+        Instant expiresAt = now.plus(
+                authProperties.getExchangeTtl()
+        );
+
+        exchangeCodeRepository.save(
+                AuthExchangeCode.create(
+                        user.getId(),
+                        tokenCodec.hash(rawExchangeCode),
+                        expiresAt,
+                        now
+                )
+        );
+
+        return new CallbackExchange(
+                rawExchangeCode,
+                expiresAt
+        );
+    }
+
+    public IssuedSession exchange(String rawExchangeCode) {
+        if (isBlank(rawExchangeCode)) {
+            throw new CodeArchiveException(
+                    ErrorCode.AUTH_EXCHANGE_INVALID
+            );
+        }
+
+        Instant now = clock.instant();
+        String codeHash = tokenCodec.hash(
+                rawExchangeCode
+        );
+        AuthExchangeCode exchangeCode =
+                exchangeCodeRepository
+                        .findByCodeHash(codeHash)
+                        .orElseThrow(() ->
+                                new CodeArchiveException(
+                                        ErrorCode.AUTH_EXCHANGE_INVALID
+                                )
+                        );
+
+        if (exchangeCodeRepository.consumeActive(
+                codeHash,
+                now
+        ) != 1) {
+            throw new CodeArchiveException(
+                    ErrorCode.AUTH_EXCHANGE_INVALID
+            );
+        }
+
+        CodeArchiveUser user = userService.getById(
+                exchangeCode.getUserId()
+        );
+
+        String rawAccessToken = tokenCodec.generate();
+        Instant expiresAt = now.plus(
+                authProperties.getSessionTtl()
+        );
+
+        authSessionRepository.save(
+                AuthSession.create(
+                        user.getId(),
+                        tokenCodec.hash(rawAccessToken),
+                        expiresAt,
+                        now
+                )
+        );
+
+        return new IssuedSession(
+                rawAccessToken,
+                expiresAt
+        );
+    }
+
+    public Optional<CodeArchivePrincipal> authenticate(
+            String rawAccessToken
+    ) {
+        if (isBlank(rawAccessToken)) {
+            return Optional.empty();
+        }
+
+        Instant now = clock.instant();
+
+        return authSessionRepository
+                .findActiveByTokenHash(
+                        tokenCodec.hash(rawAccessToken),
+                        now
+                )
+                .flatMap(session -> {
+                    try {
+                        CodeArchiveUser user =
+                                userService.getById(
+                                        session.getUserId()
+                                );
+                        return Optional.of(
+                                new CodeArchivePrincipal(
+                                        user.getId(),
+                                        session.getId(),
+                                        user.getGithubLogin()
+                                )
+                        );
+                    } catch (CodeArchiveException exception) {
+                        return Optional.empty();
+                    }
+                });
+    }
+
+    public void logout(CodeArchivePrincipal principal) {
+        if (principal == null) {
+            throw new CodeArchiveException(
+                    ErrorCode.AUTH_REQUIRED
+            );
+        }
+        authSessionRepository.revoke(
+                principal.sessionId(),
+                clock.instant()
+        );
+    }
+
+    public CodeArchiveUser currentUser(
+            CodeArchivePrincipal principal
+    ) {
+        if (principal == null) {
+            throw new CodeArchiveException(
+                    ErrorCode.AUTH_REQUIRED
+            );
+        }
+        return userService.getById(principal.userId());
+    }
+
+    private void ensureProviderConfigured() {
+        AuthProperties.Github github =
+                authProperties.getGithub();
+
+        if (isBlank(github.getClientId())
+                || isBlank(github.getClientSecret())
+                || isBlank(github.getCallbackUrl())) {
+            throw new CodeArchiveException(
+                    ErrorCode.AUTH_PROVIDER_UNAVAILABLE
+            );
+        }
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    public record LoginStart(
+            String authorizationUrl,
+            Instant expiresAt
+    ) {
+    }
+
+    public record CallbackExchange(
+            String exchangeCode,
+            Instant expiresAt
+    ) {
+    }
+
+    public record IssuedSession(
+            String accessToken,
+            Instant expiresAt
+    ) {
+    }
+}
