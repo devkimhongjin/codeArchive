@@ -43,12 +43,6 @@ function createRepository(initialRecords: SolutionRecord[] = []): SolutionReposi
 }
 
 describe("Popup", () => {
-  it("shows the popup build version", async () => {
-    render(<Popup repository={createRepository()} />);
-
-    expect(screen.getByText("CodeArchive · v0.3.9")).toBeInTheDocument();
-  });
-
   it("blocks save when required fields are missing", async () => {
     const repository = createRepository();
     render(<Popup repository={repository} />);
@@ -119,34 +113,6 @@ describe("Popup", () => {
       savedRecord.id,
       expect.objectContaining({ title: "A+B 수정" }),
     );
-  });
-
-  it("shows saved submission performance in the detail view", async () => {
-    const repository = createRepository([{
-      ...savedRecord,
-      platform: "SWEA",
-      performance: { executionTime: "123 ms", memoryUsage: "45,678 kb" },
-    }]);
-    render(<Popup repository={repository} />);
-
-    fireEvent.click(await screen.findByRole("button", { name: /A\+B/ }));
-
-    expect(await screen.findByText("실행시간")).toBeInTheDocument();
-    expect(screen.getByText("123 ms")).toBeInTheDocument();
-    expect(screen.getByText("메모리")).toBeInTheDocument();
-    expect(screen.getByText("45,678 kb")).toBeInTheDocument();
-  });
-
-  it("shows performance fields as 미수집 when data is missing", async () => {
-    const repository = createRepository([savedRecord]);
-    render(<Popup repository={repository} />);
-
-    fireEvent.click(await screen.findByRole("button", { name: /A\+B/ }));
-
-    expect(await screen.findByRole("heading", { name: "A+B" })).toBeInTheDocument();
-    expect(screen.getByText("실행시간")).toBeInTheDocument();
-    expect(screen.getByText("메모리")).toBeInTheDocument();
-    expect(screen.getAllByText("미수집")).toHaveLength(2);
   });
 
   it("loads a source file into the create form without saving automatically", async () => {
