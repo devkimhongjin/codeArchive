@@ -3,6 +3,9 @@ package com.codearchive.api.auth.oauth;
 import java.time.Instant;
 import java.util.UUID;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -18,6 +21,7 @@ public class AuthExchangeCode {
     @Column(name = "user_id", nullable = false)
     private UUID userId;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "code_hash", nullable = false, unique = true, length = 64)
     private String codeHash;
 
