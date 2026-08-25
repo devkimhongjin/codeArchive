@@ -1,12 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
+import { seedSweaFamilyContext } from "./content/sweaFamilyContextSeed";
 import { captureAccepted, SAVE_SWEA_ACCEPTED, waitForSweaSubmissionPerformance } from "./sweaAutoCapture";
 
 const url = new URL("https://swexpertacademy.com/main/solvingProblem/solvingProblem.do?contestProbId=current");
 const accepted = { status: "observed" as const, submission: { result: "ACCEPTED" as const, observedAt: "2026-08-25T01:11:00.000Z" }, warnings: [] };
 const historyRow = `<div class="problem_smt"><div class="submitter"><dl class="smt_txt"><dt>#Beginner</dt><dd>제출일 : 2026-08-25 10:10</dd></dl></div><div class="info"><ul><li><span>Java</span><span>언어</span></li><li><span>12,345 kb</span><span>메모리</span></li><li><span>67 ms</span><span>시간</span></li><li><span>6 Bytes</span><span>코드길이</span></li><li><span>Pass</span><span>결과</span></li></ul></div></div>`;
 const history = `<header><span class="name">Beginner</span></header><form id="contestProbForm"><div class="box-list"><div class="box-list-inner">${historyRow}</div></div></form>`;
+const historyWithId = `<header><span class="name">Beginner</span></header><form id="contestProbForm"><input name="contestProbId" value="current"><div class="box-list"><div class="box-list-inner">${historyRow}</div></div></form>`;
 const emptyHistory = `<header><span class="name">Beginner</span></header><form id="contestProbForm"><div class="box-list"><div class="box-list-inner"></div></div></form>`;
 function doc(extra = history): Document { return new DOMParser().parseFromString(`<div class="problem_box"><h3>1234. Synthetic title</h3></div><input id="contestProbId" value="current"><select id="selectCodeLang"><option selected>Java 17</option></select><textarea id="textSource">latest</textarea>${extra}`, "text/html"); }
+function memoryStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() { return values.size; },
+    clear() { values.clear(); },
+    getItem(key) { return values.get(key) ?? null; },
+    key(index) { return Array.from(values.keys())[index] ?? null; },
+    removeItem(key) { values.delete(key); },
+    setItem(key, value) { values.set(key, value); },
+  };
+}
 
 describe("captureAccepted", () => {
   it("sends one accepted capture with trusted performance after metadata and editor sync", async () => {
@@ -27,6 +40,39 @@ describe("captureAccepted", () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0][0]).toMatchObject({ capture: { performance: { memoryUsage: "12,345 kb", executionTime: "67 ms" } } });
+  });
+
+  it("uses matching early-cached family context after solving-page reload", async () => {
+    const storage = memoryStorage();
+    const initialDocument = doc(emptyHistory);
+    const detailUrl = "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do?contestProbId=current";
+    seedSweaFamilyContext(initialDocument, url, detailUrl, storage);
+
+    const reloadedDocument = doc(emptyHistory);
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const requestUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (requestUrl === detailUrl) {
+        return new Response('<a href="/main/code/userProblem/userProblemSubmitHistory.do?contestProbId=current">제출 이력</a>', { status: 200 });
+      }
+      return new Response(historyWithId, { status: 200 });
+    });
+    const send = vi.fn<(message: unknown) => Promise<any>>(async () => ({ status: "saved" as const, solutionId: "swea-auto:uuid", savedAt: "2026-08-25T01:11:01.000Z" }));
+
+    await captureAccepted(
+      reloadedDocument,
+      url,
+      accepted,
+      send,
+      () => "uuid",
+      () => ({ status: "synced" }),
+      0,
+      { referrer: "", storage, fetcher },
+    );
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[0][0]).toMatchObject({
+      capture: { performance: { memoryUsage: "12,345 kb", executionTime: "67 ms" } },
+    });
   });
 
   it("times out bounded performance waiting but still saves the ACCEPTED source", async () => {
