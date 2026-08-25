@@ -10,7 +10,7 @@ import type { SweaSolvingProblemMeta } from "./adapters/swea/sweaSolvingProblemM
 import { SweaDetectionPanel } from "./SweaDetectionPanel";
 import type { PageContextState } from "./content/pageContextBridge";
 
-const POPUP_VERSION = "v0.3.9-pr39.1";
+const POPUP_VERSION = "v0.3.9";
 const EMPTY_FORM: NewSolutionInput = { platform: "", problemNumber: "", title: "", language: "", code: "", solvedAt: null, aiUsage: "unknown" };
 const REQUIRED_FIELDS: Array<keyof Pick<NewSolutionInput, "platform" | "problemNumber" | "title" | "language" | "code">> = ["platform", "problemNumber", "title", "language", "code"];
 const AI_USAGE_LABELS: Record<AiUsage, string> = { used: "사용함", not_used: "사용 안 함", unknown: "모름" };
