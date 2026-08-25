@@ -34,6 +34,11 @@ public enum ErrorCode {
             "요청 값이 올바르지 않습니다."
     ),
 
+    SOLUTION_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "풀이를 찾을 수 없습니다."
+    ),
+
     DUPLICATE_SOLUTION(
             HttpStatus.CONFLICT,
             "이미 등록된 풀이입니다."

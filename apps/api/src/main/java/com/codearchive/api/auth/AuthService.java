@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -35,6 +36,7 @@ public class AuthService {
     private final SecureTokenCodec tokenCodec;
     private final Clock clock;
 
+    @Autowired
     public AuthService(
             AuthProperties authProperties,
             GitHubProviderClient githubProviderClient,
