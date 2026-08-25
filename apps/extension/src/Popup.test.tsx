@@ -20,8 +20,12 @@ function createRepository(initialRecords: SolutionRecord[] = []): SolutionReposi
   };
 }
 
+function escapedRegExp(text: string): RegExp {
+  return new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+}
+
 async function expandAndOpen(title = "A+B"): Promise<void> {
-  fireEvent.click(await screen.findByRole("button", { name: new RegExp(title) }));
+  fireEvent.click(await screen.findByRole("button", { name: escapedRegExp(title) }));
   fireEvent.click(screen.getByRole("button", { name: /수동저장|PASS 자동저장/ }));
   expect(await screen.findByRole("heading", { name: title })).toBeInTheDocument();
 }
@@ -30,9 +34,10 @@ describe("Popup", () => {
   beforeEach(() => localStorage.clear());
 
   it("groups submissions by platform and problemNumber and limits recent problem groups to five", async () => {
-    const sameProblemOlder = { ...savedRecord, id: "older", updatedAt: "2026-08-24T05:00:00.000Z" };
+    const sameProblemNewest = { ...savedRecord, updatedAt: "2026-08-24T01:00:00.000Z" };
+    const sameProblemOlder = { ...sameProblemNewest, id: "older", updatedAt: "2026-08-24T00:00:00.000Z" };
     const otherGroups = Array.from({ length: 5 }, (_, index) => ({ ...savedRecord, id: `other-${index}`, problemNumber: `${2000 + index}`, title: `Other ${index}`, updatedAt: `2026-08-24T0${9 - index}:00:00.000Z` }));
-    render(<Popup repository={createRepository([savedRecord, sameProblemOlder, ...otherGroups])} />);
+    render(<Popup repository={createRepository([sameProblemNewest, sameProblemOlder, ...otherGroups])} />);
     expect(await screen.findByText("저장된 풀이 7건 · 6문제")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { expanded: false })).toHaveLength(5);
     expect(screen.queryByText("A+B")).not.toBeInTheDocument();
