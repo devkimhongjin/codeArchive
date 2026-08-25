@@ -26,6 +26,19 @@ spring:
       port: ${REDIS_PORT:6379}
       timeout: 2s
 
+codearchive:
+  auth:
+    github:
+      client-id: ${GITHUB_CLIENT_ID:}
+      client-secret: ${GITHUB_CLIENT_SECRET:}
+      callback-url: ${GITHUB_CALLBACK_URL:http://localhost:8080/api/v1/auth/github/callback}
+      authorize-url: ${GITHUB_AUTHORIZE_URL:https://github.com/login/oauth/authorize}
+      token-url: ${GITHUB_TOKEN_URL:https://github.com/login/oauth/access_token}
+      user-url: ${GITHUB_USER_URL:https://api.github.com/user}
+    session-ttl: ${CODEARCHIVE_SESSION_TTL:30d}
+    state-ttl: ${CODEARCHIVE_OAUTH_STATE_TTL:10m}
+    exchange-ttl: ${CODEARCHIVE_EXCHANGE_TTL:2m}
+
 server:
   port: 8080
 

@@ -9,6 +9,21 @@ public enum ErrorCode {
             "인증이 필요합니다."
     ),
 
+    AUTH_FLOW_INVALID(
+            HttpStatus.BAD_REQUEST,
+            "인증 흐름이 올바르지 않거나 만료되었습니다."
+    ),
+
+    AUTH_EXCHANGE_INVALID(
+            HttpStatus.UNAUTHORIZED,
+            "인증 교환 코드가 올바르지 않거나 만료되었습니다."
+    ),
+
+    AUTH_PROVIDER_UNAVAILABLE(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "GitHub 인증을 사용할 수 없습니다."
+    ),
+
     ACCESS_DENIED(
             HttpStatus.FORBIDDEN,
             "접근 권한이 없습니다."
