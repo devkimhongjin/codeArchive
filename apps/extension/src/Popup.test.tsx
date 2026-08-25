@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Popup } from "./PopupView";
 import type { SolutionRepository } from "./solutionRepository";
 import type { SolutionRecord } from "./solution";
@@ -12,163 +12,101 @@ const savedRecord: SolutionRecord = {
 function createRepository(initialRecords: SolutionRecord[] = []): SolutionRepository {
   let records = [...initialRecords];
   return {
-    create: vi.fn(async (input) => {
-      const record: SolutionRecord = { ...savedRecord, id: `solution-${records.length + 1}`, ...input };
-      records = [record, ...records];
-      return record;
-    }),
+    create: vi.fn(async (input) => { const record: SolutionRecord = { ...savedRecord, id: `solution-${records.length + 1}`, ...input }; records = [record, ...records]; return record; }),
     list: vi.fn(async () => records),
     getById: vi.fn(async (id) => records.find((record) => record.id === id)),
-    update: vi.fn(async (id, input) => {
-      const current = records.find((record) => record.id === id);
-      if (!current) throw new Error("not found");
-      const updated: SolutionRecord = { ...current, ...input, createdAt: current.createdAt, updatedAt: "2026-08-24T07:00:00.000Z" };
-      if (!input.performance) delete updated.performance;
-      records = records.map((record) => record.id === id ? updated : record);
-      return updated;
-    }),
+    update: vi.fn(async (id, input) => { const current = records.find((record) => record.id === id); if (!current) throw new Error("not found"); const updated: SolutionRecord = { ...current, ...input, createdAt: current.createdAt, updatedAt: "2026-08-24T07:00:00.000Z" }; if (!input.performance) delete updated.performance; records = records.map((record) => record.id === id ? updated : record); return updated; }),
+    delete: vi.fn(async (id) => { records = records.filter((record) => record.id !== id); }),
   };
 }
 
-async function openSavedDetail(): Promise<void> {
-  fireEvent.click(await screen.findByRole("button", { name: /A\+B/ }));
-  expect(await screen.findByRole("heading", { name: "A+B" })).toBeInTheDocument();
+async function expandAndOpen(title = "A+B"): Promise<void> {
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(title) }));
+  fireEvent.click(screen.getByRole("button", { name: /수동저장|PASS 자동저장/ }));
+  expect(await screen.findByRole("heading", { name: title })).toBeInTheDocument();
 }
 
 describe("Popup", () => {
-  it("blocks save when required fields are missing", async () => {
-    const repository = createRepository();
-    render(<Popup repository={repository} />);
-    fireEvent.click(screen.getByRole("button", { name: "새 풀이 등록" }));
-    fireEvent.click(screen.getByRole("button", { name: "저장" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("필수 입력값을 모두 입력해주세요.");
-    expect(repository.create).not.toHaveBeenCalled();
+  beforeEach(() => localStorage.clear());
+
+  it("groups submissions by platform and problemNumber and limits recent problem groups to five", async () => {
+    const sameProblemOlder = { ...savedRecord, id: "older", updatedAt: "2026-08-24T05:00:00.000Z" };
+    const otherGroups = Array.from({ length: 5 }, (_, index) => ({ ...savedRecord, id: `other-${index}`, problemNumber: `${2000 + index}`, title: `Other ${index}`, updatedAt: `2026-08-24T0${9 - index}:00:00.000Z` }));
+    render(<Popup repository={createRepository([savedRecord, sameProblemOlder, ...otherGroups])} />);
+    expect(await screen.findByText("저장된 풀이 7건 · 6문제")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { expanded: false })).toHaveLength(5);
+    expect(screen.queryByText("A+B")).not.toBeInTheDocument();
   });
 
-  it("saves a manual solution and labels its provenance", async () => {
-    const repository = createRepository();
-    render(<Popup repository={repository} />);
-    fireEvent.click(screen.getByRole("button", { name: "새 풀이 등록" }));
-    fireEvent.change(screen.getByLabelText(/플랫폼/), { target: { value: "BOJ" } });
-    fireEvent.change(screen.getByLabelText(/문제 번호/), { target: { value: "1000" } });
-    fireEvent.change(screen.getByLabelText(/제목/), { target: { value: "A+B" } });
-    fireEvent.change(screen.getByLabelText(/언어/), { target: { value: "Java" } });
-    fireEvent.change(screen.getByLabelText(/코드/), { target: { value: "class Main {}" } });
-    fireEvent.click(screen.getByRole("button", { name: "저장" }));
-    await waitFor(() => expect(repository.create).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("A+B")).toBeInTheDocument();
-    expect(screen.getByText("BOJ · 1000 · 수동저장")).toBeInTheDocument();
+  it("shows group count, expands children in updatedAt desc, and uses updatedAt rather than observedAt", async () => {
+    const auto: SolutionRecord = { ...savedRecord, id: "auto", platform: "SWEA", problemNumber: "1234", title: "Same", updatedAt: "2026-08-24T15:00:00.000Z", autoCapture: { source: "SWEA_AUTO", result: "ACCEPTED", observedAt: "2026-08-24T12:34:56.000Z" } };
+    const manual: SolutionRecord = { ...auto, id: "manual", autoCapture: undefined, updatedAt: "2026-08-24T14:00:00.000Z" };
+    render(<Popup repository={createRepository([manual, auto])} />);
+    const group = await screen.findByRole("button", { name: /Same.*2회.*2026-08-25 00:00/ });
+    fireEvent.click(group);
+    const children = screen.getAllByRole("button", { name: /PASS 자동저장|수동저장/ });
+    expect(children[0]).toHaveTextContent("2026-08-25 00:00");
+    expect(children[1]).toHaveTextContent("2026-08-24 23:00");
+    expect(screen.queryByText(/21:34/)).not.toBeInTheDocument();
   });
 
-  it("shows PASS auto provenance and uses observedAt in KST minute precision", async () => {
-    render(<Popup repository={createRepository([{
-      ...savedRecord, platform: "SWEA",
-      autoCapture: { source: "SWEA_AUTO", result: "ACCEPTED", observedAt: "2026-08-24T12:34:56.000Z" },
-      updatedAt: "2026-08-24T15:00:00.000Z",
-    }])} />);
-    expect(await screen.findByText("SWEA · 1000 · PASS 자동저장")).toBeInTheDocument();
-    expect(screen.getByText("Java · 2026-08-24 21:34")).toBeInTheDocument();
+  it("keeps popup detail actions in parity and removes JSON export", async () => {
+    render(<Popup repository={createRepository([savedRecord])} />);
+    await expandAndOpen();
+    for (const name of ["수정", "코드 복사", "Source", "Markdown", "삭제"]) expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "JSON" })).not.toBeInTheDocument();
+    expect(screen.getByText("2026-08-24 15:00:00 KST")).toBeInTheDocument();
   });
 
-  it("falls back to updatedAt for manual list timestamps", async () => {
-    render(<Popup repository={createRepository([{ ...savedRecord, updatedAt: "2026-08-24T15:07:59.000Z" }])} />);
-    expect(await screen.findByText("Java · 2026-08-25 00:07")).toBeInTheDocument();
-  });
-
-  it("limits popup preview to five records and opens the archive", async () => {
-    const records = Array.from({ length: 6 }, (_, index) => ({ ...savedRecord, id: `id-${index}`, problemNumber: `${1000 + index}`, title: `title-${index}` }));
-    const openArchive = vi.fn();
-    render(<Popup repository={createRepository(records)} openArchive={openArchive} />);
-    expect(await screen.findByText("저장된 풀이 6건")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /title-/ })).toHaveLength(5);
-    expect(screen.queryByText("title-5")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "전체 풀이 보기" }));
-    expect(openArchive).toHaveBeenCalledTimes(1);
-  });
-
-  it("copies exact code and reports success", async () => {
+  it("copies raw code by default and persists copy annotation settings", async () => {
     const copyText = vi.fn(async () => undefined);
-    render(<Popup repository={createRepository([savedRecord])} copyText={copyText} />);
-    await openSavedDetail();
-    fireEvent.click(screen.getByRole("button", { name: "코드 복사" }));
-    await waitFor(() => expect(copyText).toHaveBeenCalledWith("class Main {}"));
-    expect(screen.getByText("코드가 복사되었습니다")).toBeInTheDocument();
-  });
-
-  it("does not report copy success when clipboard write fails", async () => {
-    const failingCopy = vi.fn(async () => { throw new Error("denied"); });
-    render(<Popup repository={createRepository([savedRecord])} copyText={failingCopy} />);
-    await openSavedDetail();
-    fireEvent.click(screen.getByRole("button", { name: "코드 복사" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("코드를 복사하지 못했습니다.");
-    expect(screen.queryByText("코드가 복사되었습니다")).not.toBeInTheDocument();
-  });
-
-  it("stores two manual performance strings exactly", async () => {
-    const repository = createRepository([savedRecord]);
-    render(<Popup repository={repository} />);
-    await openSavedDetail();
-    fireEvent.click(screen.getByRole("button", { name: "수정" }));
-    fireEvent.change(screen.getByLabelText("실행시간"), { target: { value: " 123 ms " } });
-    fireEvent.change(screen.getByLabelText("메모리"), { target: { value: " 45,678 kb " } });
-    fireEvent.click(screen.getByRole("button", { name: "수정 저장" }));
-    await waitFor(() => expect(repository.update).toHaveBeenCalledTimes(1));
-    expect(repository.update).toHaveBeenCalledWith(savedRecord.id, expect.objectContaining({ performance: { executionTime: "123 ms", memoryUsage: "45,678 kb" } }));
-    expect(await screen.findByText("123 ms")).toBeInTheDocument();
-    expect(screen.getByText("45,678 kb")).toBeInTheDocument();
-  });
-
-  it("removes performance when both fields are cleared", async () => {
     const repository = createRepository([{ ...savedRecord, performance: { executionTime: "123 ms", memoryUsage: "45 kb" } }]);
-    render(<Popup repository={repository} />);
-    await openSavedDetail();
-    fireEvent.click(screen.getByRole("button", { name: "수정" }));
-    fireEvent.change(screen.getByLabelText("실행시간"), { target: { value: "" } });
-    fireEvent.change(screen.getByLabelText("메모리"), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "수정 저장" }));
-    await waitFor(() => expect(repository.update).toHaveBeenCalledTimes(1));
-    expect(repository.update).toHaveBeenCalledWith(savedRecord.id, expect.objectContaining({ performance: undefined }));
-    expect(await screen.findByRole("heading", { name: "A+B" })).toBeInTheDocument();
-    expect(screen.queryByText("123 ms")).not.toBeInTheDocument();
-    expect(screen.queryByText("45 kb")).not.toBeInTheDocument();
+    const { unmount } = render(<Popup repository={repository} copyText={copyText} />);
+    await expandAndOpen();
+    fireEvent.click(screen.getByRole("button", { name: "코드 복사" }));
+    await waitFor(() => expect(copyText).toHaveBeenLastCalledWith("class Main {}"));
+    fireEvent.click(screen.getByLabelText("문제 정보 주석"));
+    fireEvent.click(screen.getByLabelText("언어 주석"));
+    fireEvent.click(screen.getByLabelText("실행시간·메모리 주석"));
+    fireEvent.click(screen.getByRole("button", { name: "코드 복사" }));
+    await waitFor(() => expect(copyText).toHaveBeenLastCalledWith("// BOJ 1000 · A+B\n// 언어: Java\n// 실행시간: 123 ms · 메모리: 45 kb\nclass Main {}"));
+    unmount();
+    render(<Popup repository={repository} copyText={copyText} />);
+    await expandAndOpen();
+    expect(screen.getByLabelText("문제 정보 주석")).toBeChecked();
+    expect(screen.getByLabelText("언어 주석")).toBeChecked();
+    expect(screen.getByLabelText("실행시간·메모리 주석")).toBeChecked();
   });
 
-  it("blocks one-sided performance input", async () => {
+  it("deletes only the selected record after confirmation and refreshes the group", async () => {
+    const sibling = { ...savedRecord, id: "solution-2", updatedAt: "2026-08-24T05:00:00.000Z" };
+    const repository = createRepository([savedRecord, sibling]);
+    render(<Popup repository={repository} confirmDelete={() => true} />);
+    fireEvent.click(await screen.findByRole("button", { name: /A\+B.*2회/ }));
+    const children = screen.getAllByRole("button", { name: /수동저장/ });
+    fireEvent.click(children[0]);
+    expect(await screen.findByRole("heading", { name: "A+B" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "삭제" }));
+    await waitFor(() => expect(repository.delete).toHaveBeenCalledWith("solution-1"));
+    expect(await screen.findByText("저장된 풀이 1건 · 1문제")).toBeInTheDocument();
+  });
+
+  it("does not delete when confirmation is cancelled", async () => {
+    const repository = createRepository([savedRecord]);
+    render(<Popup repository={repository} confirmDelete={() => false} />);
+    await expandAndOpen();
+    fireEvent.click(screen.getByRole("button", { name: "삭제" }));
+    expect(repository.delete).not.toHaveBeenCalled();
+  });
+
+  it("keeps manual performance both-or-none validation", async () => {
     const repository = createRepository([savedRecord]);
     render(<Popup repository={repository} />);
-    await openSavedDetail();
+    await expandAndOpen();
     fireEvent.click(screen.getByRole("button", { name: "수정" }));
     fireEvent.change(screen.getByLabelText("실행시간"), { target: { value: "123 ms" } });
     fireEvent.click(screen.getByRole("button", { name: "수정 저장" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("실행시간과 메모리는 둘 다 입력하거나 둘 다 비워주세요.");
     expect(repository.update).not.toHaveBeenCalled();
-  });
-
-  it("opens a saved solution detail and updates it", async () => {
-    const repository = createRepository([savedRecord]);
-    render(<Popup repository={repository} />);
-    await openSavedDetail();
-    expect(screen.getByText("수동저장")).toBeInTheDocument();
-    expect(screen.getByText("class Main {}", { selector: "code" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "수정" }));
-    fireEvent.change(screen.getByLabelText(/제목/), { target: { value: "A+B 수정" } });
-    fireEvent.click(screen.getByRole("button", { name: "수정 저장" }));
-    await waitFor(() => expect(repository.update).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("heading", { name: "A+B 수정" })).toBeInTheDocument();
-  });
-
-  it("loads a source file and solving-page fields without auto-saving", async () => {
-    const repository = createRepository();
-    const { unmount } = render(<Popup repository={repository} />);
-    fireEvent.change(screen.getByLabelText("파일 가져오기"), { target: { files: [{ name: "Main.java", text: vi.fn(async () => "class Main {}") }] } });
-    expect(await screen.findByText(/Main.java에서 가져왔습니다/)).toBeInTheDocument();
-    expect(repository.create).not.toHaveBeenCalled();
-    unmount();
-
-    render(<Popup repository={repository} requestPageContext={async () => ({ status: "connected", result: { status: "connected_page", platform: "SWEA", pageKind: "solving", url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do?contestProbId=current", metadata: { status: "detected", problem: { problemNumber: "1234", title: "Synthetic title", contestProbId: "current" }, warnings: [] }, editor: { status: "detected", editor: { language: "Java", code: "class Main {}" }, warnings: [] }, submissionResult: { status: "observed", submission: { result: "ACCEPTED", observedAt: "2026-08-24T12:00:00.000Z" }, warnings: [] } } })} />);
-    fireEvent.click(await screen.findByRole("button", { name: "등록 폼에 채우기" }));
-    expect(screen.getByLabelText(/문제 번호/)).toHaveValue("1234");
-    expect(screen.getByLabelText(/코드/)).toHaveValue("class Main {}");
-    expect(repository.create).not.toHaveBeenCalled();
   });
 });
