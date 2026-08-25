@@ -3,6 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import { SweaDetectionPanel } from "./SweaDetectionPanel";
 
 const noop = () => undefined;
+const savedAutoRecord = {
+  id: "swea-auto:1", platform: "SWEA", problemNumber: "1234", title: "Synthetic title", language: "Java", code: "code",
+  solvedAt: "2026-08-24", aiUsage: "unknown" as const, createdAt: "2026-08-24T12:00:01.000Z", updatedAt: "2026-08-24T12:00:01.000Z",
+  autoCapture: { source: "SWEA_AUTO" as const, result: "ACCEPTED" as const, observedAt: "2026-08-24T12:00:00.000Z" },
+};
 
 describe("SweaDetectionPanel", () => {
   it("shows detected metadata and prefills through the callback", async () => {
@@ -13,18 +18,24 @@ describe("SweaDetectionPanel", () => {
     expect(onProblemPrefill).toHaveBeenCalledWith(expect.objectContaining({ problemNumber: "1206", title: "View" }));
   });
 
-  it("shows combined solving metadata and prefills all trusted fields", async () => {
+  it("shows combined solving metadata, current session result, and saved provenance", async () => {
     const onEditorPrefill = vi.fn();
     const onSolvingPrefill = vi.fn();
-    render(<SweaDetectionPanel requestContext={async () => ({ status: "connected", result: { status: "connected_page", platform: "SWEA", pageKind: "solving", url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do", metadata: { status: "detected", problem: { problemNumber: "1234", title: "Synthetic title", contestProbId: "current" }, warnings: [] }, editor: { status: "detected", editor: { language: "Java", code: "public class Main {}" }, warnings: [] }, submissionResult: { status: "observed", submission: { result: "ACCEPTED", observedAt: "2026-08-24T12:00:00.000Z" }, warnings: [] } } })} onProblemPrefill={noop} onEditorPrefill={onEditorPrefill} onSolvingPrefill={onSolvingPrefill} />);
+    render(<SweaDetectionPanel savedRecords={[savedAutoRecord]} requestContext={async () => ({ status: "connected", result: { status: "connected_page", platform: "SWEA", pageKind: "solving", url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do", metadata: { status: "detected", problem: { problemNumber: "1234", title: "Synthetic title", contestProbId: "current" }, warnings: [] }, editor: { status: "detected", editor: { language: "Java", code: "public class Main {}" }, warnings: [] }, submissionResult: { status: "observed", submission: { result: "ACCEPTED", observedAt: "2026-08-24T12:00:00.000Z" }, warnings: [] } } })} onProblemPrefill={noop} onEditorPrefill={onEditorPrefill} onSolvingPrefill={onSolvingPrefill} />);
     expect(await screen.findByText("SWEA 풀이 페이지 연결됨")).toBeInTheDocument();
     expect(screen.getByText("문제: 1234 · Synthetic title")).toBeInTheDocument();
     expect(screen.getByText("언어: Java")).toBeInTheDocument();
     expect(screen.getByText("코드: 감지됨 · 20자")).toBeInTheDocument();
-    expect(screen.getByText("제출 결과: ACCEPTED · 관찰 시각: 2026-08-24 21:00:00 KST")).toBeInTheDocument();
+    expect(screen.getByText("현재 세션 제출 결과: ACCEPTED · 관찰 시각: 2026-08-24 21:00:00 KST")).toBeInTheDocument();
+    expect(screen.getByText("최근 저장: PASS 자동저장")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "등록 폼에 채우기" }));
     expect(onSolvingPrefill).toHaveBeenCalledWith({ problemNumber: "1234", title: "Synthetic title", contestProbId: "current" }, { language: "Java", code: "public class Main {}" });
     expect(onEditorPrefill).not.toHaveBeenCalled();
+  });
+
+  it("shows observer none as current-session detection pending", async () => {
+    render(<SweaDetectionPanel requestContext={async () => ({ status: "connected", result: { status: "connected_page", platform: "SWEA", pageKind: "solving", url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do", metadata: { status: "detected", problem: { problemNumber: "1234", title: "Synthetic title", contestProbId: "current" }, warnings: [] }, editor: { status: "detected", editor: { language: "Java", code: "current" }, warnings: [] }, submissionResult: { status: "none" } } })} onProblemPrefill={noop} onEditorPrefill={noop} onSolvingPrefill={noop} />);
+    expect(await screen.findByText("현재 세션 제출 결과: 감지 전")).toBeInTheDocument();
   });
 
   it("keeps editor-only prefill when metadata is incomplete", async () => {
@@ -62,7 +73,7 @@ describe("SweaDetectionPanel", () => {
 
   it("shows UNKNOWN without claiming a saved record", async () => {
     render(<SweaDetectionPanel requestContext={async () => ({ status: "connected", result: { status: "connected_page", platform: "SWEA", pageKind: "solving", url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do", metadata: { status: "incomplete", missing: ["problemNumber", "title"], warnings: [] }, editor: { status: "incomplete", language: null, code: null, missing: ["language", "code"], warnings: [] }, submissionResult: { status: "observed", submission: { result: "UNKNOWN", observedAt: "2026-08-24T12:00:00.000Z" }, warnings: ["generic warning"] } } })} onProblemPrefill={noop} onEditorPrefill={noop} onSolvingPrefill={noop} />);
-    expect(await screen.findByText("제출 결과: UNKNOWN · 관찰 시각: 2026-08-24 21:00:00 KST")).toBeInTheDocument();
+    expect(await screen.findByText("현재 세션 제출 결과: UNKNOWN · 관찰 시각: 2026-08-24 21:00:00 KST")).toBeInTheDocument();
     expect(screen.queryByText(/저장 완료/)).not.toBeInTheDocument();
   });
 });
