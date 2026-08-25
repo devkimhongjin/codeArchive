@@ -9,7 +9,7 @@ import type { SweaEditorInfo } from "./adapters/swea/sweaEditor";
 import type { SweaSolvingProblemMeta } from "./adapters/swea/sweaSolvingProblemMeta";
 import { SweaDetectionPanel } from "./SweaDetectionPanel";
 import type { PageContextState } from "./content/pageContextBridge";
-import { formatKstDateTime } from "./displayTime";
+import { formatKstDateTime, formatKstDateTimeMinute } from "./displayTime";
 
 const POPUP_VERSION = "v0.3.9";
 const EMPTY_FORM: NewSolutionInput = { platform: "", problemNumber: "", title: "", language: "", code: "", solvedAt: null, aiUsage: "unknown" };
@@ -20,6 +20,10 @@ interface PopupProps {
   requestPageContext?: () => Promise<PageContextState>;
 }
 type ViewMode = "list" | "create" | "detail" | "edit";
+
+function recordDisplayTime(record: SolutionRecord): string {
+  return formatKstDateTimeMinute(record.autoCapture?.observedAt ?? record.updatedAt);
+}
 
 export function Popup({ repository = indexedDbSolutionRepository, requestPageContext }: PopupProps) {
   const [form, setForm] = useState<NewSolutionInput>(EMPTY_FORM);
@@ -108,7 +112,7 @@ export function Popup({ repository = indexedDbSolutionRepository, requestPageCon
 
       {mode === "detail" && selectedRecord && <section className="detail-card" aria-labelledby="detail-title"><div className="detail-heading"><div><p className="eyebrow">{selectedRecord.platform} · {selectedRecord.problemNumber}</p><h2 id="detail-title">{selectedRecord.title}</h2></div><button className="text-button" type="button" onClick={backToList}>목록으로</button></div><dl className="detail-meta"><div><dt>언어</dt><dd>{selectedRecord.language}</dd></div><div><dt>풀이 날짜</dt><dd>{selectedRecord.solvedAt ?? "미입력"}</dd></div><div><dt>AI 활용</dt><dd>{AI_USAGE_LABELS[selectedRecord.aiUsage]}</dd></div><div><dt>실행시간</dt><dd>{selectedRecord.performance?.executionTime ?? "미수집"}</dd></div><div><dt>메모리</dt><dd>{selectedRecord.performance?.memoryUsage ?? "미수집"}</dd></div><div><dt>수정 시각</dt><dd>{formatKstDateTime(selectedRecord.updatedAt)}</dd></div></dl><pre className="code-view"><code>{selectedRecord.code}</code></pre>{error && <p className="error" role="alert">{error}</p>}<div className="detail-actions"><button className="primary-button" type="button" onClick={beginEdit}>수정</button><div className="export-actions" aria-label="내보내기"><button type="button" onClick={() => exportRecord("source")}>Source</button><button type="button" onClick={() => exportRecord("markdown")}>Markdown</button><button type="button" onClick={() => exportRecord("json")}>JSON</button></div></div></section>}
       {mode === "list" && error && <p className="error list-error" role="alert">{error}</p>}
-      {mode === "list" && <section className="record-section" aria-labelledby="record-list-title"><div className="section-heading"><h2 id="record-list-title">저장된 풀이</h2><span>{records.length}건</span></div>{records.length === 0 ? <p className="empty-state">아직 저장된 풀이가 없습니다.</p> : <ul className="record-list">{records.map((record) => <li key={record.id}><button className="record-card" type="button" onClick={() => openDetail(record.id)}><strong>{record.title}</strong><span>{record.platform} · {record.problemNumber}</span><span>{record.language}{record.solvedAt ? ` · ${record.solvedAt}` : ""}</span></button></li>)}</ul>}</section>}
+      {mode === "list" && <section className="record-section" aria-labelledby="record-list-title"><div className="section-heading"><h2 id="record-list-title">저장된 풀이</h2><span>{records.length}건</span></div>{records.length === 0 ? <p className="empty-state">아직 저장된 풀이가 없습니다.</p> : <ul className="record-list">{records.map((record) => <li key={record.id}><button className="record-card" type="button" onClick={() => openDetail(record.id)}><strong>{record.title}</strong><span>{record.platform} · {record.problemNumber}</span><span>{record.language} · {recordDisplayTime(record)}</span></button></li>)}</ul>}</section>}
       <p className="status" role="status">서버 연결 없음 · IndexedDB 로컬 저장</p>
     </main>
   );
