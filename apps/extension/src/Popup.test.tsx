@@ -17,6 +17,7 @@ function createRepository(initialRecords: SolutionRecord[] = []): SolutionReposi
     getById: vi.fn(async (id) => records.find((record) => record.id === id)),
     update: vi.fn(async (id, input) => { const current = records.find((record) => record.id === id); if (!current) throw new Error("not found"); const updated: SolutionRecord = { ...current, ...input, createdAt: current.createdAt, updatedAt: "2026-08-24T07:00:00.000Z" }; if (!input.performance) delete updated.performance; records = records.map((record) => record.id === id ? updated : record); return updated; }),
     delete: vi.fn(async (id) => { records = records.filter((record) => record.id !== id); }),
+    setSyncMetadata: vi.fn(async (id, sync) => { const current = records.find((record) => record.id === id); if (!current) throw new Error("not found"); const updated = { ...current, sync }; records = records.map((record) => record.id === id ? updated : record); return updated; }),
   };
 }
 

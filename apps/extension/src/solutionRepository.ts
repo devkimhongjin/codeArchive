@@ -1,4 +1,4 @@
-import type { NewSolutionInput, SolutionRecord } from "./solution";
+import type { NewSolutionInput, SolutionRecord, SolutionSyncMetadata } from "./solution";
 import type { SaveResponse, SweaAcceptedCapture } from "./sweaAutoCapture";
 
 const DB_NAME = "codearchive";
@@ -11,6 +11,7 @@ export interface SolutionRepository {
   getById(id: string): Promise<SolutionRecord | undefined>;
   update(id: string, input: NewSolutionInput): Promise<SolutionRecord>;
   delete(id: string): Promise<void>;
+  setSyncMetadata(id: string, sync: SolutionSyncMetadata): Promise<SolutionRecord>;
 }
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
@@ -46,6 +47,24 @@ function openDatabase(): Promise<IDBDatabase> {
 function solutionFields(input: NewSolutionInput): Omit<NewSolutionInput, "performance"> & Pick<NewSolutionInput, "performance"> {
   const { performance, ...fields } = input;
   return performance ? { ...fields, performance } : fields;
+}
+
+async function updateStoredRecord(id: string, mutate: (record: SolutionRecord) => SolutionRecord): Promise<SolutionRecord> {
+  const db = await openDatabase();
+  try {
+    const transaction = db.transaction(STORE_NAME, "readwrite");
+    const done = transactionDone(transaction);
+    const store = transaction.objectStore(STORE_NAME);
+    const existing = await requestToPromise(store.get(id) as IDBRequest<SolutionRecord | undefined>);
+    if (!existing) {
+      transaction.abort();
+      throw new Error("Solution record not found.");
+    }
+    const updated = mutate(existing);
+    store.put(updated);
+    await done;
+    return updated;
+  } finally { db.close(); }
 }
 
 export const indexedDbSolutionRepository: SolutionRepository = {
@@ -84,27 +103,11 @@ export const indexedDbSolutionRepository: SolutionRepository = {
   },
 
   async update(id, input) {
-    const db = await openDatabase();
-    try {
-      const transaction = db.transaction(STORE_NAME, "readwrite");
-      const done = transactionDone(transaction);
-      const store = transaction.objectStore(STORE_NAME);
-      const updated = await new Promise<SolutionRecord | undefined>((resolve, reject) => {
-        const request = store.get(id) as IDBRequest<SolutionRecord | undefined>;
-        request.onsuccess = () => {
-          const existing = request.result;
-          if (!existing) return resolve(undefined);
-          const record: SolutionRecord = { ...existing, ...solutionFields(input), id: existing.id, createdAt: existing.createdAt, updatedAt: new Date().toISOString() };
-          if (!input.performance) delete record.performance;
-          store.put(record);
-          resolve(record);
-        };
-        request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed."));
-      });
-      await done;
-      if (!updated) throw new Error("Solution record not found.");
-      return updated;
-    } finally { db.close(); }
+    return updateStoredRecord(id, (existing) => {
+      const record: SolutionRecord = { ...existing, ...solutionFields(input), id: existing.id, createdAt: existing.createdAt, updatedAt: new Date().toISOString() };
+      if (!input.performance) delete record.performance;
+      return record;
+    });
   },
 
   async delete(id) {
@@ -114,6 +117,10 @@ export const indexedDbSolutionRepository: SolutionRepository = {
       transaction.objectStore(STORE_NAME).delete(id);
       await transactionDone(transaction);
     } finally { db.close(); }
+  },
+
+  async setSyncMetadata(id, sync) {
+    return updateStoredRecord(id, (existing) => ({ ...existing, sync }));
   },
 };
 
