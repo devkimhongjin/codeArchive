@@ -10,6 +10,7 @@ import type { SweaSolvingProblemMeta } from "./adapters/swea/sweaSolvingProblemM
 import { SweaDetectionPanel } from "./SweaDetectionPanel";
 import type { PageContextState } from "./content/pageContextBridge";
 
+const POPUP_VERSION = "v0.3.9-pr39.1";
 const EMPTY_FORM: NewSolutionInput = { platform: "", problemNumber: "", title: "", language: "", code: "", solvedAt: null, aiUsage: "unknown" };
 const REQUIRED_FIELDS: Array<keyof Pick<NewSolutionInput, "platform" | "problemNumber" | "title" | "language" | "code">> = ["platform", "problemNumber", "title", "language", "code"];
 const AI_USAGE_LABELS: Record<AiUsage, string> = { used: "사용함", not_used: "사용 안 함", unknown: "모름" };
@@ -84,7 +85,7 @@ export function Popup({ repository = indexedDbSolutionRepository, requestPageCon
   return (
     <main className="popup" aria-labelledby="popup-title">
       <header className="popup-header">
-        <div><p className="eyebrow">CodeArchive</p><h1 id="popup-title">내 풀이 기록</h1></div>
+        <div><p className="eyebrow">CodeArchive · {POPUP_VERSION}</p><h1 id="popup-title">내 풀이 기록</h1></div>
         {mode === "list" && <div className="header-actions"><label className="secondary-button import-button">파일 가져오기<input aria-label="파일 가져오기" type="file" accept=".java,.py,.js,.ts,.cpp,.cc,.cxx,.c,.kt,.cs,.go,.rs,.swift,.json,text/*,application/json" onChange={handleImportFile} /></label><button className="primary-button" type="button" onClick={beginCreate}>새 풀이 등록</button></div>}
       </header>
 
