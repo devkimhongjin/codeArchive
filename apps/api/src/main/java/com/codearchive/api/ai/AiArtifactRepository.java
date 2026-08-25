@@ -11,26 +11,34 @@ import org.springframework.data.repository.query.Param;
 public interface AiArtifactRepository
         extends JpaRepository<AiArtifact, UUID> {
 
-    @Query("""
-            select artifact
-            from AiArtifact artifact
-            join Solution solution on solution.id = artifact.solutionId
-            where artifact.solutionId = :solutionId
-              and solution.userId = :userId
-            order by artifact.createdAt desc
-            """)
+    @Query(
+            value = """
+                    SELECT artifact.*
+                    FROM ai_artifacts artifact
+                    JOIN solutions solution
+                      ON solution.id = artifact.solution_id
+                    WHERE artifact.solution_id = :solutionId
+                      AND solution.user_id = :userId
+                    ORDER BY artifact.created_at DESC
+                    """,
+            nativeQuery = true
+    )
     List<AiArtifact> findOwnedBySolutionId(
             @Param("solutionId") UUID solutionId,
             @Param("userId") UUID userId
     );
 
-    @Query("""
-            select artifact
-            from AiArtifact artifact
-            join Solution solution on solution.id = artifact.solutionId
-            where artifact.id = :artifactId
-              and solution.userId = :userId
-            """)
+    @Query(
+            value = """
+                    SELECT artifact.*
+                    FROM ai_artifacts artifact
+                    JOIN solutions solution
+                      ON solution.id = artifact.solution_id
+                    WHERE artifact.id = :artifactId
+                      AND solution.user_id = :userId
+                    """,
+            nativeQuery = true
+    )
     Optional<AiArtifact> findOwnedById(
             @Param("artifactId") UUID artifactId,
             @Param("userId") UUID userId
