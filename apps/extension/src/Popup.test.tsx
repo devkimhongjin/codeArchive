@@ -46,7 +46,7 @@ describe("Popup", () => {
   it("shows the popup build version", async () => {
     render(<Popup repository={createRepository()} />);
 
-    expect(screen.getByText("CodeArchive · v0.3.9-pr39.1")).toBeInTheDocument();
+    expect(screen.getByText("CodeArchive · v0.3.9")).toBeInTheDocument();
   });
 
   it("blocks save when required fields are missing", async () => {
