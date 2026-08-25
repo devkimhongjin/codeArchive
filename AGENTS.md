@@ -14,11 +14,12 @@ Issue #31 (`[MVP] SWEA end-to-end archive + backend sync + AI assistance`) overr
 The current delivery goal is one end-to-end SWEA MVP before Phase 4 platforms, Web Dashboard expansion, authentication, integrations, statistics, or recommendations. Follow this order unless the project integrator records a new decision:
 
 1. #32 — trusted SWEA ACCEPTED execution-time/memory evidence and local record extension.
-2. #33 — Spring Main API + PostgreSQL solution persistence.
-3. #34 — local-first Extension record → Main API synchronization.
-4. #35 — FastAPI/OpenAI AI artifact backend for explicit approach/design, commented-code, and code-review requests.
-5. #36 — Extension AI buttons and artifact UI.
-6. #37 — real Chrome + local backend end-to-end acceptance.
+2. #40 — Extension saved-record provenance, bounded popup list, full archive view, and code-copy UX.
+3. #33 — Spring Main API + PostgreSQL solution persistence.
+4. #34 — local-first Extension record → Main API synchronization.
+5. #35 — FastAPI/OpenAI AI artifact backend for explicit approach/design, commented-code, and code-review requests.
+6. #36 — Extension AI buttons and artifact UI.
+7. #37 — real Chrome + local backend end-to-end acceptance.
 
 Preserve the local-first invariant throughout the MVP: SWEA capture and IndexedDB persistence must still succeed when the API or AI service is unavailable. Do not begin another coding platform while Issue #31 is open unless the project integrator explicitly reprioritizes it.
 
