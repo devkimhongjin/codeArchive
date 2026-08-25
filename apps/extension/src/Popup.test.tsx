@@ -94,6 +94,33 @@ describe("Popup", () => {
     );
   });
 
+  it("shows saved submission performance in the detail view", async () => {
+    const repository = createRepository([{
+      ...savedRecord,
+      platform: "SWEA",
+      performance: { executionTime: "123 ms", memoryUsage: "45,678 kb" },
+    }]);
+    render(<Popup repository={repository} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /A\+B/ }));
+
+    expect(await screen.findByText("실행시간")).toBeInTheDocument();
+    expect(screen.getByText("123 ms")).toBeInTheDocument();
+    expect(screen.getByText("메모리")).toBeInTheDocument();
+    expect(screen.getByText("45,678 kb")).toBeInTheDocument();
+  });
+
+  it("does not invent submission performance when it is missing", async () => {
+    const repository = createRepository([savedRecord]);
+    render(<Popup repository={repository} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /A\+B/ }));
+
+    expect(await screen.findByRole("heading", { name: "A+B" })).toBeInTheDocument();
+    expect(screen.queryByText("실행시간")).not.toBeInTheDocument();
+    expect(screen.queryByText("메모리")).not.toBeInTheDocument();
+  });
+
   it("loads a source file into the create form without saving automatically", async () => {
     const repository = createRepository();
     render(<Popup repository={repository} />);
