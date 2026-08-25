@@ -129,7 +129,8 @@ describe("solution authenticated sync", () => {
     await syncSolutionRecord(baseRecord.id, deps);
     await syncSolutionRecord(baseRecord.id, deps);
     expect(upsert).toHaveBeenCalledTimes(2);
-    expect(upsert.mock.calls.map((call) => call[1])).toEqual([baseRecord.id, baseRecord.id]);
+    const calls = upsert.mock.calls as unknown as Array<[AuthenticatedCodeArchiveSession, string, unknown]>;
+    expect(calls.map((call) => call[1])).toEqual([baseRecord.id, baseRecord.id]);
   });
 
   it("does not reuse user A synced ownership when the current user changes to B", async () => {
