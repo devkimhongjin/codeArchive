@@ -2,6 +2,7 @@ import {
   SWEA_CONTEST_PROBLEM_DETAIL_PATH,
   SWEA_PROBLEM_DETAIL_PATH,
   SWEA_USER_PROBLEM_DETAIL_PATH,
+  SWEA_USER_PROBLEM_SOLVER_PATH,
 } from "./sweaSelectors";
 
 export type SweaProblemFamily = "Problem" | "ContestProblem" | "UserProblem";
@@ -63,6 +64,11 @@ export function readCachedSweaFamilyContext(storage: Storage, contestProbId: str
   }
 }
 
+function matchesContestProbId(url: URL, expectedContestProbId: string | null): boolean {
+  if (!expectedContestProbId) return true;
+  return (url.searchParams.get("contestProbId")?.trim() || null) === expectedContestProbId;
+}
+
 export function discoverSweaHistoryUrl(detailDocument: Document, detailUrl: string, family: SweaProblemFamily): string | null {
   let base: URL;
   try {
@@ -72,6 +78,7 @@ export function discoverSweaHistoryUrl(detailDocument: Document, detailUrl: stri
   }
   if (base.origin !== SWEA_ORIGIN || DETAIL_PATH_TO_FAMILY[base.pathname] !== family) return null;
 
+  const expectedContestProbId = base.searchParams.get("contestProbId")?.trim() || null;
   const candidates = Array.from(detailDocument.querySelectorAll<HTMLAnchorElement>("a[href]"))
     .map((anchor) => {
       try {
@@ -83,11 +90,16 @@ export function discoverSweaHistoryUrl(detailDocument: Document, detailUrl: stri
       }
     })
     .filter((candidate): candidate is { url: URL; text: string } => candidate !== null)
-    .filter(({ url, text }) =>
-      url.origin === SWEA_ORIGIN
-      && url.pathname.startsWith(FAMILY_PREFIX[family])
-      && (/제출/.test(text) || /submit|history/i.test(url.pathname))
-    );
+    .filter(({ url, text }) => {
+      if (url.origin !== SWEA_ORIGIN || !matchesContestProbId(url, expectedContestProbId)) return false;
+
+      if (family === "UserProblem") {
+        return url.pathname === SWEA_USER_PROBLEM_SOLVER_PATH;
+      }
+
+      return url.pathname.startsWith(FAMILY_PREFIX[family])
+        && (/제출/.test(text) || /submit|history/i.test(url.pathname));
+    });
 
   const unique = new Map(candidates.map(({ url }) => [url.href, url.href]));
   return unique.size === 1 ? Array.from(unique.values())[0] : null;
