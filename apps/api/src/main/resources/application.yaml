@@ -44,6 +44,12 @@ codearchive:
     session-ttl: ${CODEARCHIVE_SESSION_TTL:30d}
     state-ttl: ${CODEARCHIVE_OAUTH_STATE_TTL:10m}
     exchange-ttl: ${CODEARCHIVE_EXCHANGE_TTL:2m}
+  ai:
+    daily-request-limit: ${AI_DAILY_REQUEST_LIMIT:20}
+  analysis:
+    base-url: ${ANALYSIS_BASE_URL:http://localhost:8000}
+    internal-token: ${ANALYSIS_INTERNAL_TOKEN:}
+    request-timeout: ${ANALYSIS_REQUEST_TIMEOUT:15s}
 
 server:
   port: 8080
