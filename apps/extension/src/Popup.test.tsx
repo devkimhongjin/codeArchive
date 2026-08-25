@@ -78,6 +78,27 @@ describe("Popup", () => {
     expect(screen.getByRole("status")).toHaveTextContent("IndexedDB 로컬 저장");
   });
 
+  it("shows auto-capture observedAt in the saved list using KST minute precision", async () => {
+    render(<Popup repository={createRepository([{
+      ...savedRecord,
+      platform: "SWEA",
+      autoCapture: { source: "SWEA_AUTO", result: "ACCEPTED", observedAt: "2026-08-24T12:34:56.000Z" },
+      updatedAt: "2026-08-24T15:00:00.000Z",
+    }])} />);
+
+    expect(await screen.findByText("Java · 2026-08-24 21:34")).toBeInTheDocument();
+    expect(screen.queryByText("Java · 2026-08-25 00:00")).not.toBeInTheDocument();
+  });
+
+  it("falls back to updatedAt in the saved list when autoCapture is absent", async () => {
+    render(<Popup repository={createRepository([{
+      ...savedRecord,
+      updatedAt: "2026-08-24T15:07:59.000Z",
+    }])} />);
+
+    expect(await screen.findByText("Java · 2026-08-25 00:07")).toBeInTheDocument();
+  });
+
   it("opens a saved solution detail and updates it", async () => {
     const repository = createRepository([savedRecord]);
     render(<Popup repository={repository} />);
