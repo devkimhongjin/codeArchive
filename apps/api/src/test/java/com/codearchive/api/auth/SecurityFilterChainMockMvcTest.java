@@ -49,6 +49,10 @@ class SecurityFilterChainMockMvcTest {
             throws Exception {
         mockMvc.perform(
                         get("/api/v1/me")
+                                .requestAttr(
+                                        RequestIdFilter.REQUEST_ID_ATTRIBUTE,
+                                        REQUEST_ID
+                                )
                                 .header(
                                         RequestIdFilter.REQUEST_ID_HEADER,
                                         REQUEST_ID
@@ -79,6 +83,10 @@ class SecurityFilterChainMockMvcTest {
 
         mockMvc.perform(
                         get("/api/v1/me")
+                                .requestAttr(
+                                        RequestIdFilter.REQUEST_ID_ATTRIBUTE,
+                                        REQUEST_ID
+                                )
                                 .header(
                                         HttpHeaders.AUTHORIZATION,
                                         "Bearer invalid-token"
@@ -126,6 +134,10 @@ class SecurityFilterChainMockMvcTest {
 
         mockMvc.perform(
                         get("/api/v1/me")
+                                .requestAttr(
+                                        RequestIdFilter.REQUEST_ID_ATTRIBUTE,
+                                        REQUEST_ID
+                                )
                                 .header(
                                         HttpHeaders.AUTHORIZATION,
                                         "Bearer valid-token"
@@ -143,7 +155,7 @@ class SecurityFilterChainMockMvcTest {
                 )
                 .andExpect(
                         jsonPath("$.data.githubUserId")
-                                .value(1001L)
+                                .value(1001)
                 )
                 .andExpect(
                         jsonPath("$.data.githubLogin")
@@ -186,6 +198,10 @@ class SecurityFilterChainMockMvcTest {
 
         mockMvc.perform(
                         get("/api/v1/auth/github/login")
+                                .requestAttr(
+                                        RequestIdFilter.REQUEST_ID_ATTRIBUTE,
+                                        REQUEST_ID
+                                )
                                 .header(
                                         RequestIdFilter.REQUEST_ID_HEADER,
                                         REQUEST_ID
@@ -203,6 +219,10 @@ class SecurityFilterChainMockMvcTest {
                                         "state",
                                         "oauth-state"
                                 )
+                                .requestAttr(
+                                        RequestIdFilter.REQUEST_ID_ATTRIBUTE,
+                                        REQUEST_ID
+                                )
                                 .header(
                                         RequestIdFilter.REQUEST_ID_HEADER,
                                         REQUEST_ID
@@ -215,6 +235,10 @@ class SecurityFilterChainMockMvcTest {
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
                                         "{\"code\":\"exchange-code\"}"
+                                )
+                                .requestAttr(
+                                        RequestIdFilter.REQUEST_ID_ATTRIBUTE,
+                                        REQUEST_ID
                                 )
                                 .header(
                                         RequestIdFilter.REQUEST_ID_HEADER,
