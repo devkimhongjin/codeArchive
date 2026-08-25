@@ -46,13 +46,14 @@ describe("captureAccepted", () => {
     const storage = memoryStorage();
     const initialDocument = doc(emptyHistory);
     const detailUrl = "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do?contestProbId=current";
+    const solverUrl = "https://swexpertacademy.com/main/code/userProblem/userProblemSolver.do?contestProbId=current";
     seedSweaFamilyContext(initialDocument, url, detailUrl, storage);
 
     const reloadedDocument = doc(emptyHistory);
     const fetcher = vi.fn<typeof fetch>(async (input) => {
       const requestUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (requestUrl === detailUrl) {
-        return new Response('<a href="/main/code/userProblem/userProblemSubmitHistory.do?contestProbId=current">제출 이력</a>', { status: 200 });
+        return new Response('<a href="/main/code/userProblem/userProblemSolver.do?contestProbId=current">답안 이력</a>', { status: 200 });
       }
       return new Response(historyWithId, { status: 200 });
     });
@@ -70,6 +71,7 @@ describe("captureAccepted", () => {
     );
 
     expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[1][0]).toBe(solverUrl);
     expect(send.mock.calls[0][0]).toMatchObject({
       capture: { performance: { memoryUsage: "12,345 kb", executionTime: "67 ms" } },
     });
