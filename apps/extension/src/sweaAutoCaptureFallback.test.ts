@@ -24,7 +24,8 @@ function memoryStorage(): Storage {
 }
 
 const referrer = "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do?contestProbId=current";
-const detailHtml = `<a href="/main/code/userProblem/userProblemSubmitHistory.do?contestProbId=current">제출 이력</a>`;
+const solverUrl = "https://swexpertacademy.com/main/code/userProblem/userProblemSolver.do?contestProbId=current";
+const detailHtml = `<a href="/main/code/userProblem/userProblemSolver.do?contestProbId=current">답안 이력</a>`;
 const historyHtml = `<header><span class="name">Beginner</span></header>${historyForm()}`;
 
 function response(body: string, ok = true): Response {
@@ -42,7 +43,7 @@ describe("captureAccepted history fallback", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("discovers and follows the exact history href after a primary miss", async () => {
+  it("discovers and follows the exact evidence-backed solver href after a primary miss", async () => {
     const send = sender();
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(response(detailHtml))
@@ -52,7 +53,7 @@ describe("captureAccepted history fallback", () => {
 
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(fetcher.mock.calls[0][0]).toBe(referrer);
-    expect(fetcher.mock.calls[1][0]).toBe("https://swexpertacademy.com/main/code/userProblem/userProblemSubmitHistory.do?contestProbId=current");
+    expect(fetcher.mock.calls[1][0]).toBe(solverUrl);
     expect(send.mock.calls[0][0]).toMatchObject({ capture: { performance: { memoryUsage: "12,345 kb", executionTime: "67 ms" } } });
   });
 
@@ -65,6 +66,7 @@ describe("captureAccepted history fallback", () => {
     await captureAccepted(doc(historyForm("")), url, accepted, send, () => "uuid", () => ({ status: "synced" }), 0, { referrer: "", storage, fetcher });
 
     expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[1][0]).toBe(solverUrl);
     expect(send.mock.calls[0][0]).toMatchObject({ capture: { performance: { executionTime: "67 ms" } } });
   });
 
