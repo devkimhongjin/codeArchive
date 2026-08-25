@@ -3,6 +3,9 @@ package com.codearchive.api.auth.oauth;
 import java.time.Instant;
 import java.util.UUID;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -15,6 +18,7 @@ public class OAuthState {
     @Id
     private UUID id;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "state_hash", nullable = false, unique = true, length = 64)
     private String stateHash;
 
