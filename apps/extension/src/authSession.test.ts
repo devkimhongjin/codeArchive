@@ -106,12 +106,13 @@ describe("CodeArchiveAuthService", () => {
       login_start: new Error("state=private original network detail"),
       health: new Error("token=private health network detail"),
     });
-    const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, fetcher);
+    const bridge: ChromeIdentityBridge = { ...identity, launchWebAuthFlow: vi.fn() };
+    const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), bridge, fetcher);
 
     await expectStage(service.login(), "login_start_fetch_origin");
     expect(fetcher).toHaveBeenNthCalledWith(1, "https://api.example.com/api/v1/auth/github/extension-login", { method: "GET" });
     expect(fetcher).toHaveBeenNthCalledWith(2, "https://api.example.com/actuator/health", { method: "GET", cache: "no-store" });
-    expect(identity.launchWebAuthFlow).not.toHaveBeenCalled();
+    expect(bridge.launchWebAuthFlow).not.toHaveBeenCalled();
   });
 
   it("classifies login-start rejection as request-specific when the same origin still returns an HTTP response", async () => {
@@ -119,11 +120,12 @@ describe("CodeArchiveAuthService", () => {
       login_start: new Error("state=private original network detail"),
       health: response({ private: "body is intentionally ignored" }, 503),
     });
-    const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, fetcher);
+    const bridge: ChromeIdentityBridge = { ...identity, launchWebAuthFlow: vi.fn() };
+    const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), bridge, fetcher);
 
     await expectStage(service.login(), "login_start_fetch_request");
     expect(fetcher).toHaveBeenNthCalledWith(2, "https://api.example.com/actuator/health", { method: "GET", cache: "no-store" });
-    expect(identity.launchWebAuthFlow).not.toHaveBeenCalled();
+    expect(bridge.launchWebAuthFlow).not.toHaveBeenCalled();
   });
 
   it("classifies extension-login HTTP non-success separately", async () => {
