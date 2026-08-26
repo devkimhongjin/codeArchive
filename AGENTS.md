@@ -47,8 +47,9 @@ Preserve the local-first invariant throughout the MVP: SWEA capture, IndexedDB p
 
 - Implement feature and fix work on bounded branches and merge it into `develop` through a pull request.
 - Treat `develop` as the integration branch. Do not deploy the beta or production services from it.
-- Promote releases only through a `develop` -> `master` pull request. Do not open release pull requests to `master` from any other branch.
+- Promote releases only through a same-repository `develop` -> `master` pull request. Do not open release pull requests to `master` from a fork or any other branch.
 - Treat `master` as the deployable branch. Keep provider auto-deploy disabled and deploy manually only after the release pull request is approved and merged.
+- Protect `master` by requiring the `Master Release Source / require-develop` check before merge.
 - Obtain explicit user approval immediately before the `develop` -> `master` merge and again immediately before the external deployment action.
 
 ## Validation

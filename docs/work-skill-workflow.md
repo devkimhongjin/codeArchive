@@ -38,12 +38,12 @@ If chat output conflicts with GitHub state, GitHub state wins unless the Integra
 
 1. Create bounded `feature/*`, `fix/*`, or `chore/*` branches from current `develop`.
 2. Merge implementation pull requests into `develop` after the assigned checks and review pass.
-3. Open a release pull request with `develop` as the head and `master` as the base.
+3. Open a release pull request with the same repository's `develop` as the head and `master` as the base.
 4. Obtain explicit owner approval immediately before merging the release pull request.
 5. Keep provider auto-deploy disabled. After the merge, obtain a separate explicit owner approval immediately before manually deploying `master`.
 6. Record the deployed commit and smoke evidence in the release issue or pull request.
 
-No other head branch may target `master`, and a merge into `master` does not by itself authorize deployment.
+No fork or other head branch may target `master`. Require the `Master Release Source / require-develop` status check in `master` branch protection so a failing policy check blocks merge. A merge into `master` does not by itself authorize deployment.
 
 ## Starting prompt
 
