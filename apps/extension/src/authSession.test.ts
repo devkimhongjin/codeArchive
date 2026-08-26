@@ -23,13 +23,20 @@ const identity: ChromeIdentityBridge = {
 
 const me = { id: "user-a", githubLogin: "tester", displayName: "Tester", avatarUrl: "https://example.com/avatar.png" };
 
-function successfulFetcher(overrides: Partial<Record<"login_start" | "exchange" | "me", Response | Error>> = {}): typeof fetch {
+type FetchOverride = Response | Error;
+
+function successfulFetcher(overrides: Partial<Record<"login_start" | "health" | "exchange" | "me", FetchOverride>> = {}): typeof fetch {
   return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const path = new URL(String(url)).pathname;
     if (path.endsWith("/extension-login")) {
       const override = overrides.login_start;
       if (override instanceof Error) throw override;
       return override ?? response({ success: true, data: { authorizationUrl: "https://github.com/login/oauth/authorize?state=fixture", expiresAt: "2026-08-26T01:00:00Z" } });
+    }
+    if (path === "/actuator/health") {
+      const override = overrides.health;
+      if (override instanceof Error) throw override;
+      return override ?? response({ status: "UP" });
     }
     if (path.endsWith("/exchange")) {
       expect(JSON.parse(String(init?.body))).toEqual({ code: "one-time-code" });
@@ -73,6 +80,7 @@ describe("CodeArchiveAuthService", () => {
 
     await expect(service.login()).resolves.toEqual({ status: "authenticated", user: me, expiresAt: "2026-08-26T03:00:00Z" });
     expect(store.current()).toEqual({ accessToken: "codearchive-bearer", expiresAt: "2026-08-26T03:00:00Z", user: me });
+    expect(fetcher).not.toHaveBeenCalledWith("https://api.example.com/actuator/health", expect.anything());
   });
 
   it("classifies missing runtime host access before fetch", async () => {
@@ -93,14 +101,29 @@ describe("CodeArchiveAuthService", () => {
     await expectStage(service.login(), "login_start_host_access");
   });
 
-  it("classifies extension-login fetch rejection separately", async () => {
-    const service = new CodeArchiveAuthService(
-      "https://api.example.com",
-      memoryStore(),
-      identity,
-      successfulFetcher({ login_start: new Error("network detail") }),
-    );
-    await expectStage(service.login(), "login_start_fetch");
+  it("classifies login-start rejection as origin-level when the same-origin health probe also rejects", async () => {
+    const fetcher = successfulFetcher({
+      login_start: new Error("state=private original network detail"),
+      health: new Error("token=private health network detail"),
+    });
+    const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, fetcher);
+
+    await expectStage(service.login(), "login_start_fetch_origin");
+    expect(fetcher).toHaveBeenNthCalledWith(1, "https://api.example.com/api/v1/auth/github/extension-login", { method: "GET" });
+    expect(fetcher).toHaveBeenNthCalledWith(2, "https://api.example.com/actuator/health", { method: "GET", cache: "no-store" });
+    expect(identity.launchWebAuthFlow).not.toHaveBeenCalled();
+  });
+
+  it("classifies login-start rejection as request-specific when the same origin still returns an HTTP response", async () => {
+    const fetcher = successfulFetcher({
+      login_start: new Error("state=private original network detail"),
+      health: response({ private: "body is intentionally ignored" }, 503),
+    });
+    const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, fetcher);
+
+    await expectStage(service.login(), "login_start_fetch_request");
+    expect(fetcher).toHaveBeenNthCalledWith(2, "https://api.example.com/actuator/health", { method: "GET", cache: "no-store" });
+    expect(identity.launchWebAuthFlow).not.toHaveBeenCalled();
   });
 
   it("classifies extension-login HTTP non-success separately", async () => {
@@ -178,7 +201,8 @@ describe("CodeArchiveAuthService", () => {
 
   it("login-start substage errors expose only fixed safe labels", async () => {
     const cases: Array<[string, CodeArchiveAuthService]> = [
-      ["login_start_fetch", new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, successfulFetcher({ login_start: new Error("state=private") }))],
+      ["login_start_fetch_origin", new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, successfulFetcher({ login_start: new Error("state=private"), health: new Error("token=private") }))],
+      ["login_start_fetch_request", new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, successfulFetcher({ login_start: new Error("state=private"), health: response({ raw: "token=private" }, 500) }))],
       ["login_start_http", new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, successfulFetcher({ login_start: response({ raw: "token=private" }, 500) }))],
       ["login_start_json", new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, vi.fn(async () => new Response("code=private", { status: 200 })) as typeof fetch)],
       ["login_start_envelope", new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, successfulFetcher({ login_start: response({ success: false, data: { authorizationUrl: "https://github.com/login/oauth/authorize?state=private" } }) }))],
