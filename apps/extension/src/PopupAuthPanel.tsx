@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AuthLoginStageError, authLoginFailureMessage } from "./authDiagnostics";
 import type { AuthViewState, CodeArchiveAuthService } from "./authSession";
 import type { SolutionRepository } from "./solutionRepository";
 import { clearForeignSyncOwnership } from "./syncOwnership";
@@ -44,8 +45,8 @@ export function PopupAuthPanel({ authService, repository, onRecordsChange }: Pop
     setMessage("");
     try {
       await applyAuthState(await authService.login());
-    } catch {
-      setMessage("GitHub 로그인을 완료하지 못했습니다.");
+    } catch (error) {
+      setMessage(authLoginFailureMessage(error instanceof AuthLoginStageError ? error.stage : "auth_failed"));
     } finally {
       setBusy(false);
     }
