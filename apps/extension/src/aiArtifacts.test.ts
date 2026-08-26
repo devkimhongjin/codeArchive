@@ -38,4 +38,11 @@ describe("CodeArchive AI artifact client", () => {
     await expect(codeArchiveAiApi.list(session(vi.fn(async () => json({ success: false, data: null }, 401))), "s1"))
       .rejects.toMatchObject({ kind: "auth" });
   });
+
+  it("maps provider and backend failures to a non-sensitive unavailable state", async () => {
+    await expect(codeArchiveAiApi.create(session(vi.fn(async () => json({ success: false, data: null, error: { code: "EXTERNAL_API_ERROR" } }, 502))), "s1", "CODE_REVIEW"))
+      .rejects.toMatchObject({ kind: "unavailable" });
+    await expect(codeArchiveAiApi.create(session(vi.fn(async () => json({ success: false, data: null, error: { code: "INTERNAL_ERROR" } }, 500))), "s1", "COMMENTED_CODE"))
+      .rejects.toMatchObject({ kind: "unavailable" });
+  });
 });
