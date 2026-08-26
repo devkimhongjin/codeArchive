@@ -1,0 +1,95 @@
+previews:
+  generation: "off"
+
+projects:
+  - name: codearchive-beta
+    environments:
+      - name: beta
+        services:
+          - type: web
+            name: codearchive-api
+            runtime: docker
+            plan: free
+            region: singapore
+            branch: develop
+            repo: https://github.com/devkimhongjin/codeArchive
+            dockerfilePath: ./apps/api/Dockerfile
+            dockerContext: ./apps/api
+            autoDeployTrigger: "off"
+            healthCheckPath: /actuator/health
+            envVars:
+              # Render's public proxy and Spring both use the same explicit port.
+              - key: PORT
+                value: "8080"
+              - key: SERVER_PORT
+                value: "8080"
+
+              # Neon Free PostgreSQL credentials remain runtime-only.
+              # Use a direct (non-pooler) Neon JDBC endpoint with sslmode=require.
+              - key: SPRING_DATASOURCE_URL
+                sync: false
+              - key: SPRING_DATASOURCE_USERNAME
+                sync: false
+              - key: SPRING_DATASOURCE_PASSWORD
+                sync: false
+              - key: DB_MAX_POOL_SIZE
+                value: "5"
+              - key: DB_MIN_IDLE
+                value: "1"
+
+              # Free Web Services cannot use Render private networking.
+              # Analysis stays protected by the generated internal bearer token.
+              - key: ANALYSIS_BASE_URL
+                fromService:
+                  type: web
+                  name: codearchive-analysis
+                  envVarKey: RENDER_EXTERNAL_URL
+              - key: ANALYSIS_INTERNAL_TOKEN
+                fromService:
+                  type: web
+                  name: codearchive-analysis
+                  envVarKey: ANALYSIS_INTERNAL_TOKEN
+              - key: ANALYSIS_REQUEST_TIMEOUT
+                value: 90s
+              - key: AI_DAILY_REQUEST_LIMIT
+                value: "20"
+
+              # Runtime-only GitHub / Extension auth values.
+              - key: GITHUB_CLIENT_ID
+                sync: false
+              - key: GITHUB_CLIENT_SECRET
+                sync: false
+              - key: GITHUB_CALLBACK_URL
+                sync: false
+              - key: CODEARCHIVE_EXTENSION_REDIRECT_URI
+                sync: false
+              - key: CODEARCHIVE_SESSION_TTL
+                value: 30d
+              - key: CODEARCHIVE_OAUTH_STATE_TTL
+                value: 10m
+              - key: CODEARCHIVE_EXCHANGE_TTL
+                value: 2m
+
+              # Redis is intentionally absent from the MVP beta topology.
+              - key: MANAGEMENT_HEALTH_REDIS_ENABLED
+                value: "false"
+
+          - type: web
+            name: codearchive-analysis
+            runtime: docker
+            plan: free
+            region: singapore
+            branch: develop
+            repo: https://github.com/devkimhongjin/codeArchive
+            dockerfilePath: ./apps/analysis/Dockerfile
+            dockerContext: ./apps/analysis
+            autoDeployTrigger: "off"
+            healthCheckPath: /health
+            envVars:
+              - key: ANALYSIS_PROVIDER
+                value: fake
+              - key: ANALYSIS_INTERNAL_TOKEN
+                generateValue: true
+
+              # OPENAI_API_KEY is intentionally not configured.
+              # Live OpenAI remains a separate owner approval gate.
