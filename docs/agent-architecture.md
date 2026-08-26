@@ -88,7 +88,7 @@ follow_up: []
 
 ### Approval gates
 
-Obtain explicit user approval immediately before production deployment, public/external upload of user code, OAuth or browser permission expansion, destructive migration or deletion, secret rotation, or a cost-bearing external action beyond the agreed task.
+Obtain explicit user approval immediately before merging `develop` into `master`, production deployment, public/external upload of user code, OAuth or browser permission expansion, destructive migration or deletion, secret rotation, or a cost-bearing external action beyond the agreed task. Release merge approval and provider deployment approval are separate gates; one never authorizes the other.
 
 ### Budgets and stopping
 
