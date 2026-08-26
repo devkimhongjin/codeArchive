@@ -148,15 +148,13 @@ public class AuthService {
 
         Instant now = clock.instant();
         String stateHash = tokenCodec.hash(rawState);
-        OAuthState oauthState = oauthStateRepository
+        OAuthState.FlowType flowType = oauthStateRepository
                 .findByStateHash(stateHash)
-                .orElseThrow(() -> new CodeArchiveException(
-                        ErrorCode.AUTH_FLOW_INVALID
-                ));
+                .map(OAuthState::getFlowType)
+                .orElse(OAuthState.FlowType.GENERIC);
 
         String completionRedirectUri = null;
-        if (oauthState.getFlowType()
-                == OAuthState.FlowType.EXTENSION) {
+        if (flowType == OAuthState.FlowType.EXTENSION) {
             completionRedirectUri =
                     requireExtensionRedirectUri();
         }
