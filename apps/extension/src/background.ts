@@ -1,3 +1,4 @@
+import { AuthLoginStageError } from "./authDiagnostics";
 import { AUTH_LOGIN, type AuthLoginResponse } from "./authMessages";
 import type { CodeArchiveAuthService } from "./authSession";
 import { backgroundCodeArchiveAuthService } from "./backgroundAuthRuntime";
@@ -31,8 +32,8 @@ export async function saveThenSyncAcceptedCapture(capture: SweaAcceptedCapture, 
 export async function runBackgroundLogin(authService: Pick<CodeArchiveAuthService, "login">): Promise<AuthLoginResponse> {
   try {
     return { ok: true, state: await authService.login() };
-  } catch {
-    return { ok: false, error: "auth_failed" };
+  } catch (error) {
+    return { ok: false, error: error instanceof AuthLoginStageError ? error.stage : "auth_failed" };
   }
 }
 
