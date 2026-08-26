@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SolutionRecord } from "./solution";
 import {
   buildExportFilename,
+  toConfiguredSource,
   toJson,
   toMarkdown,
   toSource,
@@ -18,12 +19,23 @@ const record: SolutionRecord = {
   aiUsage: "used",
   createdAt: "2026-08-24T06:00:00.000Z",
   updatedAt: "2026-08-24T07:00:00.000Z",
+  performance: { executionTime: "123 ms", memoryUsage: "45,678 kb" },
 };
 
 describe("solution export", () => {
   it("exports source without changing code", () => {
     expect(toSource(record)).toBe(record.code);
     expect(buildExportFilename(record, "source")).toBe("BOJ-1000-A-B.java");
+  });
+
+  it("uses the same annotation contract for configured Source export and keeps annotation-off raw", () => {
+    expect(toConfiguredSource(record, { includeProblemInfo: false, includeLanguage: false, includePerformance: false })).toBe(record.code);
+    expect(toConfiguredSource(record, { includeProblemInfo: true, includeLanguage: true, includePerformance: true })).toBe([
+      "// BOJ 1000 · A/B:*?",
+      "// 언어: Java",
+      "// 실행시간: 123 ms · 메모리: 45,678 kb",
+      "class Main {}",
+    ].join("\n"));
   });
 
   it("exports markdown metadata and fenced code", () => {
