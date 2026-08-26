@@ -1,4 +1,5 @@
 import { CODEARCHIVE_API_BASE_URL } from "./apiConfig";
+import { AuthLoginStageError } from "./authDiagnostics";
 import { AUTH_LOGIN, type AuthLoginResponse } from "./authMessages";
 import { CodeArchiveAuthService, indexedDbAuthSessionStore, type ChromeIdentityBridge } from "./authSession";
 
@@ -19,7 +20,7 @@ const delegatedIdentityBridge: ChromeIdentityBridge = {
 
 async function loginThroughBackground() {
   const response = await chrome.runtime.sendMessage({ type: AUTH_LOGIN }) as AuthLoginResponse;
-  if (!response?.ok) throw new Error("Background auth failed.");
+  if (!response?.ok) throw new AuthLoginStageError(response?.error ?? "auth_failed");
   return response.state;
 }
 
