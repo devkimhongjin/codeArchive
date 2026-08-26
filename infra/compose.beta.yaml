@@ -1,0 +1,95 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-codearchive}
+      POSTGRES_USER: ${POSTGRES_USER:-codearchive}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - beta-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-codearchive} -d ${POSTGRES_DB:-codearchive}
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - backend
+
+  analysis:
+    build:
+      context: ../apps/analysis
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      ANALYSIS_PROVIDER: ${ANALYSIS_PROVIDER:-fake}
+      ANALYSIS_INTERNAL_TOKEN: ${ANALYSIS_INTERNAL_TOKEN:?ANALYSIS_INTERNAL_TOKEN is required}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2); raise SystemExit(0 if response.status == 200 else 1)"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    networks:
+      - backend
+
+  api:
+    build:
+      context: ../apps/api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      analysis:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-codearchive}
+      DB_USERNAME: ${POSTGRES_USER:-codearchive}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      DB_MAX_POOL_SIZE: ${DB_MAX_POOL_SIZE:-5}
+      DB_MIN_IDLE: ${DB_MIN_IDLE:-1}
+      ANALYSIS_BASE_URL: http://analysis:8000
+      ANALYSIS_INTERNAL_TOKEN: ${ANALYSIS_INTERNAL_TOKEN:?ANALYSIS_INTERNAL_TOKEN is required}
+      ANALYSIS_REQUEST_TIMEOUT: ${ANALYSIS_REQUEST_TIMEOUT:-15s}
+      AI_DAILY_REQUEST_LIMIT: ${AI_DAILY_REQUEST_LIMIT:-20}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL:-http://localhost:8080/api/v1/auth/github/callback}
+      CODEARCHIVE_EXTENSION_REDIRECT_URI: ${CODEARCHIVE_EXTENSION_REDIRECT_URI:-}
+      CODEARCHIVE_SESSION_TTL: ${CODEARCHIVE_SESSION_TTL:-30d}
+      CODEARCHIVE_OAUTH_STATE_TTL: ${CODEARCHIVE_OAUTH_STATE_TTL:-10m}
+      CODEARCHIVE_EXCHANGE_TTL: ${CODEARCHIVE_EXCHANGE_TTL:-2m}
+      MANAGEMENT_HEALTH_REDIS_ENABLED: "false"
+    ports:
+      - "${BETA_API_BIND_ADDRESS:-127.0.0.1}:${BETA_API_PORT:-8080}:8080"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/8080; printf \"GET /actuator/health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3; grep -q \"\\\"status\\\":\\\"UP\\\"\" <&3'"
+      interval: 5s
+      timeout: 4s
+      retries: 18
+      start_period: 20s
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  beta-postgres-data:
