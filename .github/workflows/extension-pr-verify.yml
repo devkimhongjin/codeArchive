@@ -66,8 +66,26 @@ jobs:
           assert manifest.get("permissions") == ["identity"], (
               f"unexpected extension permissions: {manifest.get('permissions')}"
           )
-          for key in ("host_permissions", "optional_permissions", "optional_host_permissions"):
+          expected_host_permissions = ["https://codearchive-api.onrender.com/*"]
+          host_permissions = manifest.get("host_permissions")
+          assert host_permissions == expected_host_permissions, (
+              f"unexpected host_permissions: {host_permissions}"
+          )
+          for key in ("optional_permissions", "optional_host_permissions"):
               assert key not in manifest, f"unexpected manifest key: {key}"
+          forbidden_host_permissions = {
+              "https://codearchive-analysis.onrender.com/*",
+              "<all_urls>",
+              "http://*/*",
+              "https://*/*",
+          }
+          assert not forbidden_host_permissions.intersection(host_permissions), (
+              f"forbidden host permission present: {host_permissions}"
+          )
+          assert all(
+              "localhost" not in permission and "127.0.0.1" not in permission
+              for permission in host_permissions
+          ), f"local host permission present: {host_permissions}"
           assert manifest.get("background") == {
               "service_worker": "background.js",
               "type": "module",
