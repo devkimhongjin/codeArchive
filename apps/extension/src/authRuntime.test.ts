@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AuthLoginStageError } from "./authDiagnostics";
 import { AUTH_LOGIN } from "./authMessages";
 
 const authenticated = {
@@ -32,14 +31,10 @@ describe("popup auth runtime", () => {
     (globalThis as any).chrome = { runtime: { sendMessage: vi.fn(async () => response) } };
     const { codeArchiveAuthService } = await import("./authRuntime");
 
-    try {
-      await codeArchiveAuthService.login();
-      throw new Error("expected login failure");
-    } catch (caught) {
-      expect(caught).toBeInstanceOf(AuthLoginStageError);
-      const error = caught as AuthLoginStageError;
-      expect(error.stage).toBe("exchange");
-    }
+    await expect(codeArchiveAuthService.login()).rejects.toMatchObject({
+      name: "AuthLoginStageError",
+      stage: "exchange",
+    });
     expect(JSON.stringify(response)).toBe('{"ok":false,"error":"exchange"}');
     expect(JSON.stringify(response)).not.toMatch(/authorization|state=|code=|token|secret|github\.com\/login/i);
   });
