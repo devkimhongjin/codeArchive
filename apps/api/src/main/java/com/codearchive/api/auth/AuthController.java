@@ -1,5 +1,9 @@
 package com.codearchive.api.auth;
 
+import java.net.URI;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -40,20 +44,46 @@ public class AuthController {
         );
     }
 
+    @GetMapping("/github/extension-login")
+    public ApiResponse<AuthService.LoginStart> extensionLogin(
+            @RequestAttribute(
+                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
+            ) String requestId
+    ) {
+        return ApiResponse.success(
+                authService.beginGitHubExtensionLogin(),
+                requestId
+        );
+    }
+
     @GetMapping("/github/callback")
-    public ApiResponse<AuthService.CallbackExchange> callback(
+    public ResponseEntity<?> callback(
             @RequestParam(required = false) String code,
             @RequestParam(required = false) String state,
             @RequestAttribute(
                     RequestIdFilter.REQUEST_ID_ATTRIBUTE
             ) String requestId
     ) {
-        return ApiResponse.success(
+        AuthService.CallbackExchange completion =
                 authService.completeGitHubCallback(
                         code,
                         state
-                ),
-                requestId
+                );
+
+        if (completion.completionRedirectUri() != null) {
+            return ResponseEntity
+                    .status(HttpStatus.FOUND)
+                    .location(URI.create(
+                            completion.completionRedirectUri()
+                    ))
+                    .build();
+        }
+
+        return ResponseEntity.ok(
+                ApiResponse.success(
+                        completion,
+                        requestId
+                )
         );
     }
 
