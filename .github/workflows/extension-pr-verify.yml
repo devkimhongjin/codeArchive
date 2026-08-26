@@ -63,7 +63,10 @@ jobs:
           with open("apps/extension/dist/manifest.json", encoding="utf-8") as f:
               manifest = json.load(f)
           assert manifest["manifest_version"] == 3
-          for key in ("permissions", "host_permissions"):
+          assert manifest.get("permissions") == ["identity"], (
+              f"unexpected extension permissions: {manifest.get('permissions')}"
+          )
+          for key in ("host_permissions", "optional_permissions", "optional_host_permissions"):
               assert key not in manifest, f"unexpected manifest key: {key}"
           assert manifest.get("background") == {
               "service_worker": "background.js",
