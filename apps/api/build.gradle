@@ -50,3 +50,19 @@ tasks.named('test') {
         exceptionFormat = 'full'
     }
 }
+
+if (System.getenv('GITHUB_HEAD_REF') == 'feature/beta-deployment-prep') {
+    tasks.register('verifyBetaStack', Exec) {
+        workingDir projectDir
+        environment 'POSTGRES_PASSWORD', 'ci-local-beta-only'
+        environment 'ANALYSIS_INTERNAL_TOKEN', 'ci-local-analysis-only'
+        environment 'ANALYSIS_PROVIDER', 'fake'
+        environment 'OPENAI_API_KEY', ''
+        environment 'OPENAI_MODEL', ''
+        commandLine 'bash', '../../infra/verify-beta-stack.sh'
+    }
+
+    tasks.named('test') {
+        finalizedBy 'verifyBetaStack'
+    }
+}
