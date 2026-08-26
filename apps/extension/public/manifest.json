@@ -3,6 +3,7 @@
   "name": "CodeArchive",
   "version": "0.1.0",
   "description": "로컬 우선 코딩 테스트 풀이 기록 도구",
+  "permissions": ["identity"],
   "action": {
     "default_title": "CodeArchive",
     "default_popup": "popup.html"
