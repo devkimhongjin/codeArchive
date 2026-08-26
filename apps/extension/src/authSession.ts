@@ -190,9 +190,12 @@ export class CodeArchiveAuthService implements CodeArchiveAuthProvider {
       if (!hasHostAccess) throw new AuthLoginStageError("login_start_host_access");
     }
 
-    const loginResponse = await atLoginStage("login_start_fetch", () =>
-      this.fetcher(`${this.apiBaseUrl}/api/v1/auth/github/extension-login`, { method: "GET" }),
-    );
+    let loginResponse: Response;
+    try {
+      loginResponse = await this.fetcher(`${this.apiBaseUrl}/api/v1/auth/github/extension-login`, { method: "GET" });
+    } catch {
+      throw new AuthLoginStageError(await this.classifyLoginStartFetchFailure());
+    }
     if (!loginResponse.ok) throw new AuthLoginStageError("login_start_http");
 
     const loginBody = await atLoginStage("login_start_json", () => loginResponse.json());
@@ -254,6 +257,15 @@ export class CodeArchiveAuthService implements CodeArchiveAuthProvider {
         return response;
       },
     };
+  }
+
+  private async classifyLoginStartFetchFailure(): Promise<AuthLoginFailureStage> {
+    try {
+      await this.fetcher(`${this.apiBaseUrl}/actuator/health`, { method: "GET", cache: "no-store" });
+      return "login_start_fetch_route";
+    } catch {
+      return "login_start_fetch_origin";
+    }
   }
 
   private async loadValidStoredSession(): Promise<StoredSession | null> {
