@@ -5,7 +5,7 @@ import { indexedDbSolutionRepository, type SolutionRepository } from "./solution
 import { formatKstDateTime } from "./displayTime";
 import { groupSolutions, solutionDisplayTime, solutionProvenance } from "./solutionPresentation";
 import { buildCopyText, loadCopySettings, saveCopySettings, type CopySettings } from "./copySettings";
-import { buildExportFilename, downloadTextFile, toMarkdown, toSource } from "./solutionExport";
+import { buildExportFilename, downloadTextFile, toMarkdown } from "./solutionExport";
 
 interface ArchiveProps {
   repository?: SolutionRepository;
@@ -40,7 +40,7 @@ export function Archive({ repository = indexedDbSolutionRepository, copyText = (
   async function saveEdit(event: FormEvent) { event.preventDefault(); if (!selectedRecord || !form) return; if ([form.platform, form.problemNumber, form.title, form.language, form.code].some((value) => !value.trim())) return setError("필수 입력값을 모두 입력해주세요."); const normalized = normalizedForm(form); if (!normalized) return setError("실행시간과 메모리는 둘 다 입력하거나 둘 다 비워주세요."); try { const updated = await repository.update(selectedRecord.id, normalized); setSelectedRecord(updated); setEditing(false); await refresh(); } catch { setError("풀이를 수정하지 못했습니다."); } }
   async function copyCode() { if (!selectedRecord) return; setError(""); setFeedback(""); try { await copyText(buildCopyText(selectedRecord, copySettings)); setFeedback("코드가 복사되었습니다"); } catch { setError("코드를 복사하지 못했습니다."); } }
   function changeCopySettings(key: keyof CopySettings) { const next = { ...copySettings, [key]: !copySettings[key] }; setCopySettings(next); saveCopySettings(next); }
-  function exportRecord(format: "source" | "markdown") { if (!selectedRecord) return; const content = format === "source" ? toSource(selectedRecord) : toMarkdown(selectedRecord); downloadTextFile(buildExportFilename(selectedRecord, format), content, format === "markdown" ? "text/markdown;charset=utf-8" : "text/plain;charset=utf-8"); }
+  function exportRecord(format: "source" | "markdown") { if (!selectedRecord) return; const content = format === "source" ? buildCopyText(selectedRecord, copySettings) : toMarkdown(selectedRecord); downloadTextFile(buildExportFilename(selectedRecord, format), content, format === "markdown" ? "text/markdown;charset=utf-8" : "text/plain;charset=utf-8"); }
   async function deleteRecord() { if (!selectedRecord || !confirmDelete("이 풀이 기록을 삭제할까요?")) return; try { await repository.delete(selectedRecord.id); setSelectedRecord(null); setEditing(false); await refresh(); } catch { setError("풀이 기록을 삭제하지 못했습니다."); } }
   function toggleGroup(key: string) { setExpandedGroups((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; }); }
 

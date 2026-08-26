@@ -6,4 +6,9 @@ describe("extension manifest", () => {
     const matches = manifest.content_scripts.flatMap((script) => script.matches);
     expect(matches).toContain("https://swexpertacademy.com/main/code/contestProblem/contestProblemDetail.do*");
   });
+
+  it("grants only Chrome identity while the Main API host remains owner-gated", () => {
+    expect(manifest.permissions).toEqual(["identity"]);
+    expect("host_permissions" in manifest).toBe(false);
+  });
 });

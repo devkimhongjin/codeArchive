@@ -1,6 +1,7 @@
 import { SAVE_SWEA_ACCEPTED, type SaveResponse, type SweaAcceptedCapture } from "./sweaAutoCapture";
 import { indexedDbSolutionRepository, saveSweaAcceptedCapture } from "./solutionRepository";
-import { syncSolutionRecord, unauthenticatedAuthProvider, type SolutionSyncDependencies } from "./solutionSync";
+import { syncSolutionRecord, type SolutionSyncDependencies } from "./solutionSync";
+import { codeArchiveAuthService } from "./authRuntime";
 
 declare const chrome: { runtime: { onMessage: { addListener(listener: (message: unknown, sender: unknown, sendResponse: (response: SaveResponse) => void) => boolean | void): void } } };
 
@@ -27,7 +28,7 @@ const defaultDependencies: CaptureSyncDependencies = {
   saveCapture: saveSweaAcceptedCapture,
   sync: {
     repository: indexedDbSolutionRepository,
-    authProvider: unauthenticatedAuthProvider,
+    authProvider: codeArchiveAuthService,
   },
 };
 

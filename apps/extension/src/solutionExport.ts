@@ -1,4 +1,5 @@
 import type { SolutionRecord } from "./solution";
+import { buildCopyText, type CopySettings } from "./copySettings";
 
 export type ExportFormat = "source" | "markdown" | "json";
 
@@ -26,6 +27,10 @@ const AI_USAGE_LABELS: Record<SolutionRecord["aiUsage"], string> = {
 
 export function toSource(record: SolutionRecord): string {
   return record.code;
+}
+
+export function toConfiguredSource(record: SolutionRecord, settings: CopySettings): string {
+  return buildCopyText(record, settings);
 }
 
 export function toMarkdown(record: SolutionRecord): string {

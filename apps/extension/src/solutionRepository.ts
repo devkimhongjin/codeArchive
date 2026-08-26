@@ -11,7 +11,7 @@ export interface SolutionRepository {
   getById(id: string): Promise<SolutionRecord | undefined>;
   update(id: string, input: NewSolutionInput): Promise<SolutionRecord>;
   delete(id: string): Promise<void>;
-  setSyncMetadata(id: string, sync: SolutionSyncMetadata): Promise<SolutionRecord>;
+  setSyncMetadata(id: string, sync: SolutionSyncMetadata | undefined): Promise<SolutionRecord>;
 }
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
@@ -120,7 +120,12 @@ export const indexedDbSolutionRepository: SolutionRepository = {
   },
 
   async setSyncMetadata(id, sync) {
-    return updateStoredRecord(id, (existing) => ({ ...existing, sync }));
+    return updateStoredRecord(id, (existing) => {
+      const updated = { ...existing };
+      if (sync) updated.sync = sync;
+      else delete updated.sync;
+      return updated;
+    });
   },
 };
 
