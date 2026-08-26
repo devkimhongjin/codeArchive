@@ -1,0 +1,22 @@
+name: Master Release Source
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  require-develop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require develop as the release source
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "$HEAD_REF" != "develop" ]; then
+            echo "Pull requests into master must use develop as their head branch."
+            exit 1
+          fi

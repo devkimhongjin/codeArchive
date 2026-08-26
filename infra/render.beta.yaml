@@ -11,7 +11,7 @@ projects:
             runtime: docker
             plan: free
             region: singapore
-            branch: develop
+            branch: master
             repo: https://github.com/devkimhongjin/codeArchive
             dockerfilePath: ./apps/api/Dockerfile
             dockerContext: ./apps/api
@@ -74,7 +74,7 @@ projects:
             runtime: docker
             plan: free
             region: singapore
-            branch: develop
+            branch: master
             repo: https://github.com/devkimhongjin/codeArchive
             dockerfilePath: ./apps/analysis/Dockerfile
             dockerContext: ./apps/analysis

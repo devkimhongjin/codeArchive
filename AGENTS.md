@@ -43,6 +43,14 @@ Preserve the local-first invariant throughout the MVP: SWEA capture, IndexedDB p
 7. External uploads, production deployment, destructive migrations, token-scope changes, and permission expansion require explicit user approval immediately before execution.
 8. When a lower-tier agent encounters a cross-component decision, security boundary, schema migration, conflicting requirement, or two failed attempts, stop and escalate to the project integrator.
 
+## Branch and deployment flow
+
+- Implement feature and fix work on bounded branches and merge it into `develop` through a pull request.
+- Treat `develop` as the integration branch. Do not deploy the beta or production services from it.
+- Promote releases only through a `develop` -> `master` pull request. Do not open release pull requests to `master` from any other branch.
+- Treat `master` as the deployable branch. Keep provider auto-deploy disabled and deploy manually only after the release pull request is approved and merged.
+- Obtain explicit user approval immediately before the `develop` -> `master` merge and again immediately before the external deployment action.
+
 ## Validation
 
 Run the narrowest relevant checks first, then broader checks when available.

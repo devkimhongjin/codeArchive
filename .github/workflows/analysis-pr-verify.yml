@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - develop
+      - master
     paths:
       - 'apps/analysis/**'
       - '.github/workflows/analysis-pr-verify.yml'
