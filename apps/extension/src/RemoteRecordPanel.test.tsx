@@ -90,7 +90,10 @@ describe("RemoteRecordPanel", () => {
     const service = auth({ restore: vi.fn(async () => ({ status: "authenticated" as const, user: { id: "user-b", githubLogin: "other", displayName: "Other", avatarUrl: null }, expiresAt: "2026-08-27T00:00:00Z" })) as any });
     render(<RemoteRecordPanel record={record} repository={repo} authService={service} aiApi={aiApi} onRecordChange={onRecordChange} />);
     await waitFor(() => expect(repo.setSyncMetadata).toHaveBeenCalledWith("local-1", undefined));
-    await waitFor(() => expect(onRecordChange).toHaveBeenCalledWith(expect.objectContaining({ id: "local-1", sync: undefined })));
+    await waitFor(() => expect(onRecordChange).toHaveBeenCalledOnce());
+    const reconciled = onRecordChange.mock.calls[0][0] as SolutionRecord;
+    expect(reconciled.id).toBe("local-1");
+    expect(reconciled.sync).toBeUndefined();
     expect(await screen.findByText("동기화 상태: 로컬 전용")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "다시 동기화" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "코드 리뷰" })).toBeDisabled();
