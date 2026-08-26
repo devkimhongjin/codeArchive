@@ -2,6 +2,8 @@ export type AuthLoginFailureStage =
   | "login_start"
   | "login_start_host_access"
   | "login_start_fetch"
+  | "login_start_fetch_origin"
+  | "login_start_fetch_route"
   | "login_start_http"
   | "login_start_json"
   | "login_start_envelope"
