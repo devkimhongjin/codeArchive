@@ -1,0 +1,119 @@
+previews:
+  generation: "off"
+
+projects:
+  - name: codearchive-beta
+    environments:
+      - name: beta
+        services:
+          - type: web
+            name: codearchive-api
+            runtime: docker
+            plan: starter
+            region: singapore
+            branch: develop
+            dockerfilePath: ./apps/api/Dockerfile
+            dockerContext: ./apps/api
+            autoDeployTrigger: "off"
+            healthCheckPath: /actuator/health
+            envVars:
+              # Render's public proxy and Spring both use the same explicit port.
+              - key: PORT
+                value: "8080"
+              - key: SERVER_PORT
+                value: "8080"
+
+              # Render Postgres private/internal connection properties only.
+              - key: DB_HOST
+                fromDatabase:
+                  name: codearchive-postgres
+                  property: host
+              - key: DB_PORT
+                fromDatabase:
+                  name: codearchive-postgres
+                  property: port
+              - key: DB_NAME
+                fromDatabase:
+                  name: codearchive-postgres
+                  property: database
+              - key: DB_USERNAME
+                fromDatabase:
+                  name: codearchive-postgres
+                  property: user
+              - key: DB_PASSWORD
+                fromDatabase:
+                  name: codearchive-postgres
+                  property: password
+              - key: DB_MAX_POOL_SIZE
+                value: "5"
+              - key: DB_MIN_IDLE
+                value: "1"
+
+              # Render provides the Analysis private host:port dynamically.
+              # Spring resolves the nested ${ANALYSIS_HOSTPORT} placeholder.
+              - key: ANALYSIS_HOSTPORT
+                fromService:
+                  type: pserv
+                  name: codearchive-analysis
+                  property: hostport
+              - key: ANALYSIS_BASE_URL
+                value: 'http://${ANALYSIS_HOSTPORT}'
+              - key: ANALYSIS_INTERNAL_TOKEN
+                fromService:
+                  type: pserv
+                  name: codearchive-analysis
+                  envVarKey: ANALYSIS_INTERNAL_TOKEN
+              - key: ANALYSIS_REQUEST_TIMEOUT
+                value: 15s
+              - key: AI_DAILY_REQUEST_LIMIT
+                value: "20"
+
+              # Runtime-only GitHub / Extension auth values.
+              - key: GITHUB_CLIENT_ID
+                sync: false
+              - key: GITHUB_CLIENT_SECRET
+                sync: false
+              - key: GITHUB_CALLBACK_URL
+                sync: false
+              - key: CODEARCHIVE_EXTENSION_REDIRECT_URI
+                sync: false
+              - key: CODEARCHIVE_SESSION_TTL
+                value: 30d
+              - key: CODEARCHIVE_OAUTH_STATE_TTL
+                value: 10m
+              - key: CODEARCHIVE_EXCHANGE_TTL
+                value: 2m
+
+              # Redis is intentionally absent from the MVP beta topology.
+              - key: MANAGEMENT_HEALTH_REDIS_ENABLED
+                value: "false"
+
+          - type: pserv
+            name: codearchive-analysis
+            runtime: docker
+            plan: starter
+            region: singapore
+            branch: develop
+            dockerfilePath: ./apps/analysis/Dockerfile
+            dockerContext: ./apps/analysis
+            autoDeployTrigger: "off"
+            envVars:
+              - key: ANALYSIS_PROVIDER
+                value: fake
+              - key: ANALYSIS_INTERNAL_TOKEN
+                sync: false
+
+              # OPENAI_API_KEY is intentionally not configured in Phase B1.
+              # Live OpenAI remains a separate owner approval gate.
+
+        databases:
+          - name: codearchive-postgres
+            plan: basic-256mb
+            region: singapore
+            postgresMajorVersion: "17"
+            databaseName: codearchive
+            user: codearchive
+            diskSizeGB: 1
+            storageAutoscalingEnabled: false
+            connectionPool: none
+            ipAllowList: []
