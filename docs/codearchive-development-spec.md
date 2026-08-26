@@ -1030,12 +1030,14 @@ codearchive/
 
 ### 18.2 브랜치 전략
 
-- `main`: 운영 배포
+- `master`: 운영 배포
 - `develop`: 통합 개발
 - `feature/*`: 기능 개발
 - `fix/*`: 버그 수정
 - `hotfix/*`: 긴급 수정
 - `release/*`: 배포 준비
+
+기능·수정 브랜치는 Pull Request를 통해 `develop`에 통합한다. 배포 후보는 `develop`에서 `master`로 향하는 release Pull Request만 허용하며, 승인된 병합 후 `master`의 정확한 commit을 수동 배포한다. `master` 병합과 외부 배포는 각각 별도의 즉시 승인 단계로 관리한다.
 
 ### 18.3 Pull Request 검사
 
