@@ -54,15 +54,10 @@ projects:
               - key: AI_DAILY_REQUEST_LIMIT
                 value: "20"
 
-              # Runtime-only GitHub / Extension auth values.
-              - key: GITHUB_CLIENT_ID
-                sync: false
-              - key: GITHUB_CLIENT_SECRET
-                sync: false
-              - key: GITHUB_CALLBACK_URL
-                sync: false
-              - key: CODEARCHIVE_EXTENSION_REDIRECT_URI
-                sync: false
+              # GitHub / Extension auth is intentionally omitted from the
+              # initial Blueprint. Exact callback/completion values are added
+              # manually after the public API origin and stable Extension ID
+              # exist; Spring keeps GitHub auth disabled while they are absent.
               - key: CODEARCHIVE_SESSION_TTL
                 value: 30d
               - key: CODEARCHIVE_OAUTH_STATE_TTL
@@ -86,6 +81,9 @@ projects:
             autoDeployTrigger: "off"
             healthCheckPath: /health
             envVars:
+              # Match the fixed Uvicorn port in apps/analysis/Dockerfile.
+              - key: PORT
+                value: "8000"
               - key: ANALYSIS_PROVIDER
                 value: fake
               - key: ANALYSIS_INTERNAL_TOKEN
