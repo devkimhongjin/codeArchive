@@ -75,9 +75,58 @@ describe("CodeArchiveAuthService", () => {
     expect(store.current()).toEqual({ accessToken: "codearchive-bearer", expiresAt: "2026-08-26T03:00:00Z", user: me });
   });
 
-  it("classifies extension-login request/envelope failures as login_start", async () => {
-    const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, successfulFetcher({ login_start: response({ success: false, data: null }, 503) }));
-    await expectStage(service.login(), "login_start");
+  it("classifies missing runtime host access before fetch", async () => {
+    const fetcher = successfulFetcher();
+    const bridge: ChromeIdentityBridge = { ...identity, hasHostAccess: vi.fn(async () => false) };
+    const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), bridge, fetcher);
+
+    await expectStage(service.login(), "login_start_host_access");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("classifies host access API failure without retaining runtime details", async () => {
+    const bridge: ChromeIdentityBridge = {
+      ...identity,
+      hasHostAccess: vi.fn(async () => { throw new Error("sensitive runtime detail"); }),
+    };
+    const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), bridge, successfulFetcher());
+    await expectStage(service.login(), "login_start_host_access");
+  });
+
+  it("classifies extension-login fetch rejection separately", async () => {
+    const service = new CodeArchiveAuthService(
+      "https://api.example.com",
+      memoryStore(),
+      identity,
+      successfulFetcher({ login_start: new Error("network detail") }),
+    );
+    await expectStage(service.login(), "login_start_fetch");
+  });
+
+  it("classifies extension-login HTTP non-success separately", async () => {
+    const service = new CodeArchiveAuthService(
+      "https://api.example.com",
+      memoryStore(),
+      identity,
+      successfulFetcher({ login_start: response({ error: "provider body must stay private" }, 503) }),
+    );
+    await expectStage(service.login(), "login_start_http");
+  });
+
+  it("classifies extension-login JSON parsing failure separately", async () => {
+    const malformed = new Response("not-json", { status: 200, headers: { "Content-Type": "application/json" } });
+    const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, successfulFetcher({ login_start: malformed }));
+    await expectStage(service.login(), "login_start_json");
+  });
+
+  it("classifies extension-login API envelope validation failure separately", async () => {
+    const service = new CodeArchiveAuthService(
+      "https://api.example.com",
+      memoryStore(),
+      identity,
+      successfulFetcher({ login_start: response({ success: true, data: { expiresAt: "2026-08-26T01:00:00Z" } }) }),
+    );
+    await expectStage(service.login(), "login_start_envelope");
   });
 
   it("classifies launchWebAuthFlow rejection as web_auth_launch", async () => {
@@ -124,6 +173,27 @@ describe("CodeArchiveAuthService", () => {
       const error = caught as AuthLoginStageError;
       expect(error.stage).toBe("web_auth_launch");
       expect(JSON.stringify({ name: error.name, message: error.message, stage: error.stage })).not.toMatch(/state=|code=|token|github\.com\/login/i);
+    }
+  });
+
+  it("login-start substage errors expose only fixed safe labels", async () => {
+    const cases: Array<[string, CodeArchiveAuthService]> = [
+      ["login_start_fetch", new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, successfulFetcher({ login_start: new Error("state=private") }))],
+      ["login_start_http", new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, successfulFetcher({ login_start: response({ raw: "token=private" }, 500) }))],
+      ["login_start_json", new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, vi.fn(async () => new Response("code=private", { status: 200 })) as typeof fetch)],
+      ["login_start_envelope", new CodeArchiveAuthService("https://api.example.com", memoryStore(), identity, successfulFetcher({ login_start: response({ success: false, data: { authorizationUrl: "https://github.com/login/oauth/authorize?state=private" } }) }))],
+    ];
+
+    for (const [stage, service] of cases) {
+      try {
+        await service.login();
+        throw new Error("expected login failure");
+      } catch (caught) {
+        expect(caught).toBeInstanceOf(AuthLoginStageError);
+        const error = caught as AuthLoginStageError;
+        expect(error.stage).toBe(stage);
+        expect(JSON.stringify({ name: error.name, message: error.message, stage: error.stage })).not.toMatch(/authorization|state=|code=|token|secret|github\.com\/login/i);
+      }
     }
   });
 

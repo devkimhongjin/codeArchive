@@ -43,6 +43,7 @@ export interface AuthSessionStore {
 export interface ChromeIdentityBridge {
   getRedirectURL(path: string): string;
   launchWebAuthFlow(options: { url: string; interactive: boolean }): Promise<string>;
+  hasHostAccess?(origin: string): Promise<boolean>;
 }
 
 export type AuthLoginDelegate = () => Promise<AuthViewState>;
@@ -119,6 +120,19 @@ function parseSuccess<T>(response: Response): Promise<T> {
   });
 }
 
+function parseLoginStartEnvelope(body: unknown): LoginStart {
+  if (!body || typeof body !== "object") throw new Error("Invalid API envelope.");
+  const envelope = body as Partial<ApiEnvelope<unknown>>;
+  if (envelope.success !== true || !envelope.data || typeof envelope.data !== "object") {
+    throw new Error("Invalid API envelope.");
+  }
+  const data = envelope.data as Partial<LoginStart>;
+  if (typeof data.authorizationUrl !== "string" || !data.authorizationUrl || typeof data.expiresAt !== "string" || !data.expiresAt) {
+    throw new Error("Invalid login-start payload.");
+  }
+  return { authorizationUrl: data.authorizationUrl, expiresAt: data.expiresAt };
+}
+
 function normalizeBaseUrl(value: string): string {
   const trimmed = value.trim().replace(/\/$/, "");
   if (!trimmed) return "";
@@ -171,9 +185,18 @@ export class CodeArchiveAuthService implements CodeArchiveAuthProvider {
     if (!this.isConfigured()) return { status: "unavailable" };
     if (this.loginDelegate) return this.loginDelegate();
 
-    const login = await atLoginStage("login_start", async () =>
-      parseSuccess<LoginStart>(await this.fetcher(`${this.apiBaseUrl}/api/v1/auth/github/extension-login`, { method: "GET" })),
+    if (this.identity.hasHostAccess) {
+      const hasHostAccess = await atLoginStage("login_start_host_access", () => this.identity.hasHostAccess!(this.apiBaseUrl));
+      if (!hasHostAccess) throw new AuthLoginStageError("login_start_host_access");
+    }
+
+    const loginResponse = await atLoginStage("login_start_fetch", () =>
+      this.fetcher(`${this.apiBaseUrl}/api/v1/auth/github/extension-login`, { method: "GET" }),
     );
+    if (!loginResponse.ok) throw new AuthLoginStageError("login_start_http");
+
+    const loginBody = await atLoginStage("login_start_json", () => loginResponse.json());
+    const login = await atLoginStage("login_start_envelope", () => parseLoginStartEnvelope(loginBody));
 
     const callbackUrl = await atLoginStage("web_auth_launch", () =>
       this.identity.launchWebAuthFlow({ url: login.authorizationUrl, interactive: true }),

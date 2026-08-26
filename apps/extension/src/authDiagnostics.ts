@@ -1,5 +1,10 @@
 export type AuthLoginFailureStage =
   | "login_start"
+  | "login_start_host_access"
+  | "login_start_fetch"
+  | "login_start_http"
+  | "login_start_json"
+  | "login_start_envelope"
   | "web_auth_launch"
   | "callback_validation"
   | "exchange"

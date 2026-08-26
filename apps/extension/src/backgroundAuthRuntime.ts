@@ -6,6 +6,9 @@ declare const chrome: {
     getRedirectURL(path?: string): string;
     launchWebAuthFlow(options: { url: string; interactive: boolean }): Promise<string>;
   };
+  permissions: {
+    contains(permissions: { origins: string[] }): Promise<boolean>;
+  };
 };
 
 const backgroundIdentityBridge: ChromeIdentityBridge = {
@@ -14,6 +17,9 @@ const backgroundIdentityBridge: ChromeIdentityBridge = {
   },
   launchWebAuthFlow(options) {
     return chrome.identity.launchWebAuthFlow(options);
+  },
+  hasHostAccess(origin) {
+    return chrome.permissions.contains({ origins: [`${origin}/*`] });
   },
 };
 
