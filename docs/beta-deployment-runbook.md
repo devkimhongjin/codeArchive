@@ -7,7 +7,9 @@ This runbook covers the ~20-user SWEA beta deployment path. Infrastructure shoul
 ## 1. Frozen topology
 
 - Main API: Render Free Web Service, Docker, Singapore
+- Main API origin: `https://codearchive-api.onrender.com`
 - Analysis: Render Free Web Service, Docker, Singapore
+- Analysis origin: `https://codearchive-analysis.onrender.com`
 - Database: Neon Free PostgreSQL 17, AWS Singapore
 - Redis/cache/queue: none for the MVP beta
 - Analysis provider: `fake`
@@ -82,31 +84,34 @@ Traffic from Render to the external Neon database counts as Render outbound band
 
 For this project, service suspension or delayed builds are preferable to silently creating infrastructure cost. Monitor Render Dashboard monthly usage during the beta and do not add a payment method merely to bypass a Free limit without a new owner decision.
 
-## 4. Initial runtime values
+## 4. Runtime auth values
 
 Database values must be real Neon runtime values before the API can start successfully.
 
-GitHub OAuth values can be configured after the stable Render API origin and stable beta Extension ID are known. Until then, GitHub login is expected to remain unavailable; local-first capture and deployed health checks are independent of OAuth.
+GitHub OAuth runtime values are managed manually in the Render Dashboard. They intentionally remain omitted from `infra/render.beta.yaml` so later Blueprint sync does not prompt for or overwrite manually managed auth settings.
 
-Runtime-only auth fields:
+Frozen non-secret beta values:
 
 ```text
-GITHUB_CLIENT_ID
-GITHUB_CLIENT_SECRET
-GITHUB_CALLBACK_URL
-CODEARCHIVE_EXTENSION_REDIRECT_URI
+GITHUB_CALLBACK_URL=https://codearchive-api.onrender.com/api/v1/auth/github/callback
+CODEARCHIVE_EXTENSION_REDIRECT_URI=https://oohlcmihldmfninmdcmanddfmhoonmdl.chromiumapp.org/codearchive-auth
 ```
 
-Never commit their secret values.
+Runtime secret values that must never be committed or pasted into issues/chat:
+
+```text
+GITHUB_CLIENT_ID=<runtime value>
+GITHUB_CLIENT_SECRET=<runtime secret>
+```
+
+For the deployed `codearchive-api` service, configure all four variables in the Render Dashboard and redeploy/restart the service after saving them. `CODEARCHIVE_EXTENSION_REDIRECT_URI` is frozen to the stable unpacked beta Extension ID from merged Issue #59 / PR #63 and must not be changed unless the manifest development key itself is intentionally rotated in a separately reviewed change.
 
 ## 5. Deployment smoke checks
-
-After Render creates both services, record their public HTTPS origins without credentials.
 
 Check Analysis:
 
 ```text
-GET https://<analysis-origin>/health
+GET https://codearchive-analysis.onrender.com/health
 ```
 
 Expected: HTTP 200 and service status `UP`.
@@ -114,7 +119,7 @@ Expected: HTTP 200 and service status `UP`.
 Check Main API:
 
 ```text
-GET https://<api-origin>/actuator/health
+GET https://codearchive-api.onrender.com/actuator/health
 ```
 
 Expected: HTTP 200 / `UP` after Neon connectivity and Flyway startup succeed.
@@ -136,50 +141,60 @@ Required smoke behavior:
 
 ## 7. Render Free port note
 
-Render Web Services default `PORT` to `10000` and recommend binding to `$PORT` on `0.0.0.0`.
+The beta Blueprint pins Analysis `PORT=8000`, matching the current Docker listener. Do not broaden the port configuration unless live Render evidence requires a bounded correction.
 
-The current Analysis Docker image binds Uvicorn to `0.0.0.0:8000`. Render can usually detect an alternate bound HTTP port, so do not change this speculatively. If the first Analysis deploy fails specifically because no bound port is detected, capture the non-secret deploy error and open a bounded Service Builder correction.
+## 8. Stable beta Extension identity and OAuth
 
-Allowed correction candidates after evidence:
-
-- explicitly set the Analysis Render `PORT` to `8000`, or
-- update its Docker start command to use Render `$PORT` while preserving local defaults.
-
-## 8. Stable beta Extension ID before OAuth
-
-The current extension login uses:
+The Extension login uses:
 
 ```text
 chrome.identity.getRedirectURL("codearchive-auth")
 ```
 
-Issue #59 owns stabilizing the unpacked beta Extension ID. Do not configure the final Extension completion URI until #59 produces one stable ID.
-
-Final form:
+Merged Issue #59 / PR #63 freezes the unpacked beta Extension identity:
 
 ```text
-CODEARCHIVE_EXTENSION_REDIRECT_URI=https://<stable-extension-id>.chromiumapp.org/codearchive-auth
+Extension ID=oohlcmihldmfninmdcmanddfmhoonmdl
+CODEARCHIVE_EXTENSION_REDIRECT_URI=https://oohlcmihldmfninmdcmanddfmhoonmdl.chromiumapp.org/codearchive-auth
 ```
+
+Owner runtime acceptance confirmed that the same build loaded unpacked from two different directories produced the same Extension ID and the same `chrome.identity.getRedirectURL("codearchive-auth")` result.
 
 GitHub OAuth callback points to the deployed Main API, not directly to the Extension:
 
 ```text
-GITHUB_CALLBACK_URL=https://<api-origin>/api/v1/auth/github/callback
+GITHUB_CALLBACK_URL=https://codearchive-api.onrender.com/api/v1/auth/github/callback
 ```
+
+The exact GitHub OAuth application callback setting and the Render runtime values must match these strings exactly.
 
 ## 9. Browser permission gate
 
 The Extension currently has `identity` only and no API `host_permissions`.
 
-After the exact Main API HTTPS origin exists, adding that one origin to `host_permissions` requires a separate immediate owner approval. Do not use wildcards, `<all_urls>`, LAN fallbacks, or the Analysis origin.
+The exact beta Main API origin is now known:
+
+```text
+https://codearchive-api.onrender.com
+```
+
+Adding this origin to `host_permissions` is a separate owner-approved change. The allowed change, after explicit approval, is one exact Render API pattern only:
+
+```json
+"host_permissions": [
+  "https://codearchive-api.onrender.com/*"
+]
+```
+
+Do not use `*.onrender.com`, `<all_urls>`, localhost/LAN fallbacks, or the Analysis origin.
 
 ## 10. Real beta acceptance order
 
 1. Neon + Render deployed with fake AI.
 2. API / Analysis / Flyway health PASS.
 3. Stable Extension ID from #59.
-4. Configure exact GitHub callback and Extension completion URI.
-5. Request owner approval for one exact API `host_permissions` origin.
+4. Configure the frozen GitHub callback and Extension completion URI in Render/GitHub OAuth runtime settings.
+5. Obtain separate owner approval for `https://codearchive-api.onrender.com/*` in Extension `host_permissions`.
 6. Build/load beta Extension.
 7. Test GitHub accounts A and B for ownership isolation.
 8. Test logout/local save/account switch/API-down retry behavior.
@@ -193,6 +208,6 @@ Stop and escalate instead of silently changing scope when any of these occur:
 - deployed resource differs from Free/Singapore topology.
 - Neon is not Singapore/PostgreSQL 17.
 - a secret would need to be committed or pasted into an issue/chat.
-- browser permission expansion is required.
+- browser permission expansion exceeds the exact separately approved API origin.
 - live AI would transmit user source externally.
 - a destructive DB migration/deletion is required.
