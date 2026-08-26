@@ -32,9 +32,14 @@ describe("popup auth runtime", () => {
     (globalThis as any).chrome = { runtime: { sendMessage: vi.fn(async () => response) } };
     const { codeArchiveAuthService } = await import("./authRuntime");
 
-    const error = await codeArchiveAuthService.login().catch((caught) => caught as AuthLoginStageError);
-    expect(error).toBeInstanceOf(AuthLoginStageError);
-    expect(error.stage).toBe("exchange");
+    try {
+      await codeArchiveAuthService.login();
+      throw new Error("expected login failure");
+    } catch (caught) {
+      expect(caught).toBeInstanceOf(AuthLoginStageError);
+      const error = caught as AuthLoginStageError;
+      expect(error.stage).toBe("exchange");
+    }
     expect(JSON.stringify(response)).toBe('{"ok":false,"error":"exchange"}');
     expect(JSON.stringify(response)).not.toMatch(/authorization|state=|code=|token|secret|github\.com\/login/i);
   });
