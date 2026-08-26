@@ -4,6 +4,7 @@ import type { SolutionRepository } from "./solutionRepository";
 import { syncSolutionRecord } from "./solutionSync";
 import type { AuthViewState, CodeArchiveAuthService } from "./authSession";
 import { AiApiError, codeArchiveAiApi, type AiArtifact, type AiArtifactType, type CodeArchiveAiApi } from "./aiArtifacts";
+import { clearForeignSyncOwnership } from "./syncOwnership";
 
 const AI_ACTIONS: Array<{ type: AiArtifactType; label: string }> = [
   { type: "APPROACH_DESIGN", label: "접근 및 설계 작성" },
@@ -33,11 +34,29 @@ export function RemoteRecordPanel({ record, repository, authService, aiApi = cod
   const [message, setMessage] = useState("");
   const [artifacts, setArtifacts] = useState<AiArtifact[]>([]);
 
+  async function applyAuthState(state: AuthViewState): Promise<void> {
+    if (state.status === "authenticated") {
+      const reconciled = await clearForeignSyncOwnership(repository, state.user.id);
+      const current = reconciled.find((item) => item.id === record.id);
+      if (current && current.sync !== record.sync) onRecordChange?.(current);
+    }
+    setAuth(state);
+  }
+
   useEffect(() => {
     let active = true;
-    authService.restore().then((state) => { if (active) setAuth(state); }).catch(() => { if (active) setAuth({ status: "signed_out" }); });
+    authService.restore().then(async (state) => {
+      if (!active) return;
+      if (state.status === "authenticated") {
+        const reconciled = await clearForeignSyncOwnership(repository, state.user.id);
+        if (!active) return;
+        const current = reconciled.find((item) => item.id === record.id);
+        if (current && current.sync !== record.sync) onRecordChange?.(current);
+      }
+      if (active) setAuth(state);
+    }).catch(() => { if (active) setAuth({ status: "signed_out" }); });
     return () => { active = false; };
-  }, [authService]);
+  }, [authService, repository, record.id]);
 
   const currentUserKey = auth.status === "authenticated" ? auth.user.id : undefined;
   const syncState = useMemo(() => {
@@ -53,7 +72,10 @@ export function RemoteRecordPanel({ record, repository, authService, aiApi = cod
       return () => { active = false; };
     }
     authService.getAuthenticatedSession().then(async (session) => {
-      if (!session) return;
+      if (!session) {
+        if (active) setAuth({ status: "signed_out" });
+        return;
+      }
       try {
         const items = await aiApi.list(session, record.sync!.serverSolutionId!);
         if (active) setArtifacts(items);
@@ -67,7 +89,7 @@ export function RemoteRecordPanel({ record, repository, authService, aiApi = cod
   async function login() {
     if (busy) return;
     setBusy("login"); setMessage("");
-    try { setAuth(await authService.login()); }
+    try { await applyAuthState(await authService.login()); }
     catch { setMessage("GitHub 로그인을 완료하지 못했습니다."); }
     finally { setBusy(null); }
   }
@@ -88,8 +110,7 @@ export function RemoteRecordPanel({ record, repository, authService, aiApi = cod
       await syncSolutionRecord(record.id, { repository, authProvider: authService });
       const updated = await repository.getById(record.id);
       if (updated) onRecordChange?.(updated);
-      const state = await authService.restore();
-      setAuth(state);
+      await applyAuthState(await authService.restore());
       setMessage(updated?.sync?.state === "synced" ? "동기화되었습니다." : "동기화하지 못했습니다. 다시 시도할 수 있습니다.");
     } catch {
       setMessage("동기화하지 못했습니다. 로컬 기록은 그대로 유지됩니다.");
