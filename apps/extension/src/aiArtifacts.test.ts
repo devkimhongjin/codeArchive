@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AiApiError, codeArchiveAiApi } from "./aiArtifacts";
+import { codeArchiveAiApi } from "./aiArtifacts";
 import type { AuthenticatedCodeArchiveSession } from "./solutionSync";
 
 function json(data: unknown, status = 200): Response {
@@ -34,8 +34,8 @@ describe("CodeArchive AI artifact client", () => {
 
   it("maps 429 and 401 to safe typed failures", async () => {
     await expect(codeArchiveAiApi.create(session(vi.fn(async () => json({ success: false, data: null, error: { code: "RATE_LIMITED" } }, 429))), "s1", "APPROACH_DESIGN"))
-      .rejects.toMatchObject<Partial<AiApiError>>({ kind: "rate_limit" });
+      .rejects.toMatchObject({ kind: "rate_limit" });
     await expect(codeArchiveAiApi.list(session(vi.fn(async () => json({ success: false, data: null }, 401))), "s1"))
-      .rejects.toMatchObject<Partial<AiApiError>>({ kind: "auth" });
+      .rejects.toMatchObject({ kind: "auth" });
   });
 });
