@@ -262,7 +262,7 @@ export class CodeArchiveAuthService implements CodeArchiveAuthProvider {
   private async classifyLoginStartFetchFailure(): Promise<AuthLoginFailureStage> {
     try {
       await this.fetcher(`${this.apiBaseUrl}/actuator/health`, { method: "GET", cache: "no-store" });
-      return "login_start_fetch_route";
+      return "login_start_fetch_request";
     } catch {
       return "login_start_fetch_origin";
     }
