@@ -73,4 +73,26 @@ describe("background capture validation", () => {
 
     await expect(acknowledgement).resolves.toEqual({ status: "saved", solutionId: record.id, savedAt: record.createdAt });
   });
+
+  it("returns only the persisted auth view state from a successful background login", async () => {
+    setupChrome();
+    const { runBackgroundLogin } = await import("./background");
+    const state = {
+      status: "authenticated" as const,
+      user: { id: "user-a", githubLogin: "tester", displayName: "Tester", avatarUrl: null },
+      expiresAt: "2026-08-27T00:00:00Z",
+    };
+
+    await expect(runBackgroundLogin({ login: vi.fn(async () => state) } as any)).resolves.toEqual({ ok: true, state });
+  });
+
+  it("collapses background OAuth failures to a generic non-sensitive category", async () => {
+    setupChrome();
+    const { runBackgroundLogin } = await import("./background");
+    const sensitiveFailure = new Error("state=secret&code=secret-token https://github.com/login/oauth/authorize");
+
+    const response = await runBackgroundLogin({ login: vi.fn(async () => { throw sensitiveFailure; }) } as any);
+    expect(response).toEqual({ ok: false, error: "auth_failed" });
+    expect(JSON.stringify(response)).not.toMatch(/state=|code=|token|github\.com\/login/i);
+  });
 });

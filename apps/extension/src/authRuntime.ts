@@ -1,24 +1,33 @@
 import { CODEARCHIVE_API_BASE_URL } from "./apiConfig";
+import { AUTH_LOGIN, type AuthLoginResponse } from "./authMessages";
 import { CodeArchiveAuthService, indexedDbAuthSessionStore, type ChromeIdentityBridge } from "./authSession";
 
 declare const chrome: {
-  identity: {
-    getRedirectURL(path?: string): string;
-    launchWebAuthFlow(options: { url: string; interactive: boolean }): Promise<string>;
+  runtime: {
+    sendMessage(message: unknown): Promise<unknown>;
   };
 };
 
-export const chromeIdentityBridge: ChromeIdentityBridge = {
-  getRedirectURL(path) {
-    return chrome.identity.getRedirectURL(path);
+const delegatedIdentityBridge: ChromeIdentityBridge = {
+  getRedirectURL() {
+    throw new Error("Interactive auth is background-owned.");
   },
-  launchWebAuthFlow(options) {
-    return chrome.identity.launchWebAuthFlow(options);
+  launchWebAuthFlow() {
+    return Promise.reject(new Error("Interactive auth is background-owned."));
   },
 };
+
+async function loginThroughBackground() {
+  const response = await chrome.runtime.sendMessage({ type: AUTH_LOGIN }) as AuthLoginResponse;
+  if (!response?.ok) throw new Error("Background auth failed.");
+  return response.state;
+}
 
 export const codeArchiveAuthService = new CodeArchiveAuthService(
   CODEARCHIVE_API_BASE_URL,
   indexedDbAuthSessionStore,
-  chromeIdentityBridge,
+  delegatedIdentityBridge,
+  fetch,
+  () => Date.now(),
+  loginThroughBackground,
 );

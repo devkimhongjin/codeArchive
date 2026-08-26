@@ -44,6 +44,8 @@ export interface ChromeIdentityBridge {
   launchWebAuthFlow(options: { url: string; interactive: boolean }): Promise<string>;
 }
 
+export type AuthLoginDelegate = () => Promise<AuthViewState>;
+
 const DB_NAME = "codearchive-auth";
 const STORE_NAME = "session";
 const SESSION_KEY = "current";
@@ -133,6 +135,7 @@ export class CodeArchiveAuthService implements CodeArchiveAuthProvider {
     private readonly identity: ChromeIdentityBridge,
     private readonly fetcher: typeof fetch = fetch,
     private readonly now: () => number = () => Date.now(),
+    private readonly loginDelegate?: AuthLoginDelegate,
   ) {
     this.apiBaseUrl = normalizeBaseUrl(apiBaseUrl);
   }
@@ -157,6 +160,8 @@ export class CodeArchiveAuthService implements CodeArchiveAuthProvider {
 
   async login(): Promise<AuthViewState> {
     if (!this.isConfigured()) return { status: "unavailable" };
+    if (this.loginDelegate) return this.loginDelegate();
+
     const login = await parseSuccess<LoginStart>(await this.fetcher(`${this.apiBaseUrl}/api/v1/auth/github/extension-login`, { method: "GET" }));
     const callbackUrl = await this.identity.launchWebAuthFlow({ url: login.authorizationUrl, interactive: true });
     const expected = new URL(this.identity.getRedirectURL("codearchive-auth"));
