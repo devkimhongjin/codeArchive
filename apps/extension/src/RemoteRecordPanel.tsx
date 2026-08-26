@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { AuthLoginStageError, authLoginFailureMessage } from "./authDiagnostics";
 import type { SolutionRecord } from "./solution";
 import type { SolutionRepository } from "./solutionRepository";
 import { syncSolutionRecord } from "./solutionSync";
@@ -90,7 +91,7 @@ export function RemoteRecordPanel({ record, repository, authService, aiApi = cod
     if (busy) return;
     setBusy("login"); setMessage("");
     try { await applyAuthState(await authService.login()); }
-    catch { setMessage("GitHub 로그인을 완료하지 못했습니다."); }
+    catch (error) { setMessage(authLoginFailureMessage(error instanceof AuthLoginStageError ? error.stage : "auth_failed")); }
     finally { setBusy(null); }
   }
 
