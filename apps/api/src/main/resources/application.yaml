@@ -41,6 +41,7 @@ codearchive:
       authorize-url: ${GITHUB_AUTHORIZE_URL:https://github.com/login/oauth/authorize}
       token-url: ${GITHUB_TOKEN_URL:https://github.com/login/oauth/access_token}
       user-url: ${GITHUB_USER_URL:https://api.github.com/user}
+    extension-redirect-uri: ${CODEARCHIVE_EXTENSION_REDIRECT_URI:}
     session-ttl: ${CODEARCHIVE_SESSION_TTL:30d}
     state-ttl: ${CODEARCHIVE_OAUTH_STATE_TTL:10m}
     exchange-ttl: ${CODEARCHIVE_EXCHANGE_TTL:2m}
