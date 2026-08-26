@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AuthLoginStageError } from "./authDiagnostics";
 import { AUTH_LOGIN } from "./authMessages";
 
 const authenticated = {
@@ -26,9 +27,21 @@ describe("popup auth runtime", () => {
     expect(JSON.stringify(sendMessage.mock.calls[0]?.[0])).not.toMatch(/code=|token|state|github\.com\/login/i);
   });
 
-  it("maps a background login failure to a generic popup-safe error", async () => {
-    (globalThis as any).chrome = { runtime: { sendMessage: vi.fn(async () => ({ ok: false, error: "auth_failed" })) } };
+  it("maps the background-safe failure stage without exposing OAuth values", async () => {
+    const response = { ok: false, error: "exchange" as const };
+    (globalThis as any).chrome = { runtime: { sendMessage: vi.fn(async () => response) } };
     const { codeArchiveAuthService } = await import("./authRuntime");
-    await expect(codeArchiveAuthService.login()).rejects.toThrow("Background auth failed.");
+
+    const error = await codeArchiveAuthService.login().catch((caught) => caught as AuthLoginStageError);
+    expect(error).toBeInstanceOf(AuthLoginStageError);
+    expect(error.stage).toBe("exchange");
+    expect(JSON.stringify(response)).toBe('{"ok":false,"error":"exchange"}');
+    expect(JSON.stringify(response)).not.toMatch(/authorization|state=|code=|token|secret|github\.com\/login/i);
+  });
+
+  it("uses auth_failed when the background response is malformed", async () => {
+    (globalThis as any).chrome = { runtime: { sendMessage: vi.fn(async () => null) } };
+    const { codeArchiveAuthService } = await import("./authRuntime");
+    await expect(codeArchiveAuthService.login()).rejects.toMatchObject({ stage: "auth_failed" });
   });
 });
