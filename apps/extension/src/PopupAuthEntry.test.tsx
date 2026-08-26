@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { AuthLoginStageError } from "./authDiagnostics";
 import { Popup } from "./PopupView";
 import type { CodeArchiveAuthService } from "./authSession";
 import type { SolutionRepository } from "./solutionRepository";
@@ -50,5 +51,16 @@ describe("Popup auth entry", () => {
     fireEvent.click(screen.getByRole("button", { name: "로그아웃" }));
     await waitFor(() => expect(service.logout).toHaveBeenCalledOnce());
     expect(await screen.findByRole("button", { name: "GitHub로 로그인" })).toBeInTheDocument();
+  });
+
+  it("shows only the safe stage when delegated OAuth fails", async () => {
+    const service = authService();
+    service.login = vi.fn(async () => { throw new AuthLoginStageError("web_auth_launch"); });
+    render(<Popup repository={emptyRepository()} authService={service} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "GitHub로 로그인" }));
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("진단 단계: web_auth_launch");
+    expect(status.textContent).not.toMatch(/authorization|state=|code=|token|secret|github\.com\/login/i);
   });
 });
