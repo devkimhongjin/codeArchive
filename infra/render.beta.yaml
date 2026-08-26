@@ -12,6 +12,7 @@ projects:
             plan: starter
             region: singapore
             branch: develop
+            repo: https://github.com/devkimhongjin/codeArchive
             dockerfilePath: ./apps/api/Dockerfile
             dockerContext: ./apps/api
             autoDeployTrigger: "off"
@@ -94,6 +95,7 @@ projects:
             plan: starter
             region: singapore
             branch: develop
+            repo: https://github.com/devkimhongjin/codeArchive
             dockerfilePath: ./apps/analysis/Dockerfile
             dockerContext: ./apps/analysis
             autoDeployTrigger: "off"
