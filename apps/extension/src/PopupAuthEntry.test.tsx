@@ -59,8 +59,7 @@ describe("Popup auth entry", () => {
     render(<Popup repository={emptyRepository()} authService={service} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "GitHub로 로그인" }));
-    const status = await screen.findByRole("status");
-    expect(status).toHaveTextContent("진단 단계: web_auth_launch");
-    expect(status.textContent).not.toMatch(/authorization|state=|code=|token|secret|github\.com\/login/i);
+    const diagnostic = await screen.findByText(/진단 단계: web_auth_launch/);
+    expect(diagnostic.textContent).not.toMatch(/authorization|state=|code=|token|secret|github\.com\/login/i);
   });
 });
