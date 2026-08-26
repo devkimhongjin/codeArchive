@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { AuthLoginStageError } from "./authDiagnostics";
 import type { SolutionRecord, SolutionSyncMetadata } from "./solution";
 import type { SolutionRepository } from "./solutionRepository";
 
@@ -66,11 +67,9 @@ describe("background capture validation", () => {
     });
 
     await expect(acknowledgement).resolves.toEqual({ status: "saved", solutionId: record.id, savedAt: record.createdAt });
-
     rejectAuth(new Error("backend unavailable"));
     await Promise.resolve();
     await Promise.resolve();
-
     await expect(acknowledgement).resolves.toEqual({ status: "saved", solutionId: record.id, savedAt: record.createdAt });
   });
 
@@ -82,15 +81,21 @@ describe("background capture validation", () => {
       user: { id: "user-a", githubLogin: "tester", displayName: "Tester", avatarUrl: null },
       expiresAt: "2026-08-27T00:00:00Z",
     };
-
     await expect(runBackgroundLogin({ login: vi.fn(async () => state) } as any)).resolves.toEqual({ ok: true, state });
   });
 
-  it("collapses background OAuth failures to a generic non-sensitive category", async () => {
+  it("returns only the safe staged diagnostic for a classified OAuth failure", async () => {
+    setupChrome();
+    const { runBackgroundLogin } = await import("./background");
+    const response = await runBackgroundLogin({ login: vi.fn(async () => { throw new AuthLoginStageError("web_auth_launch"); }) } as any);
+    expect(response).toEqual({ ok: false, error: "web_auth_launch" });
+    expect(JSON.stringify(response)).not.toMatch(/authorization|state=|code=|token|secret|github\.com\/login/i);
+  });
+
+  it("collapses unknown background OAuth failures to auth_failed without retaining sensitive details", async () => {
     setupChrome();
     const { runBackgroundLogin } = await import("./background");
     const sensitiveFailure = new Error("state=secret&code=secret-token https://github.com/login/oauth/authorize");
-
     const response = await runBackgroundLogin({ login: vi.fn(async () => { throw sensitiveFailure; }) } as any);
     expect(response).toEqual({ ok: false, error: "auth_failed" });
     expect(JSON.stringify(response)).not.toMatch(/state=|code=|token|github\.com\/login/i);
