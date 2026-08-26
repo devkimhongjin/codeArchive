@@ -70,6 +70,18 @@ In Render Dashboard:
 
 Do not accept a paid-plan upgrade prompt.
 
+### Zero-cost usage guard
+
+The current Render Hobby workspace plan has no monthly plan fee. Its included usage currently includes:
+
+- 750 Free instance-hours per workspace/month
+- 5 GB outbound bandwidth per workspace/month
+- 500 Starter build-pipeline minutes per workspace/month
+
+Traffic from Render to the external Neon database counts as Render outbound bandwidth. Keep the Render workspace without a payment method for this beta. Under Render's current policy, when a no-payment-method workspace would exceed billable bandwidth, Render suspends Free services for the remainder of the billing period instead of charging. When included build minutes are exhausted without a payment method, new builds are disabled instead of charged.
+
+For this project, service suspension or delayed builds are preferable to silently creating infrastructure cost. Monitor Render Dashboard monthly usage during the beta and do not add a payment method merely to bypass a Free limit without a new owner decision.
+
 ## 4. Initial runtime values
 
 Database values must be real Neon runtime values before the API can start successfully.
