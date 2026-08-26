@@ -1,3 +1,4 @@
+import { AuthLoginStageError, type AuthLoginFailureStage } from "./authDiagnostics";
 import type { AuthenticatedCodeArchiveSession, CodeArchiveAuthProvider } from "./solutionSync";
 
 interface ApiEnvelope<T> {
@@ -126,6 +127,14 @@ function normalizeBaseUrl(value: string): string {
   return url.origin;
 }
 
+async function atLoginStage<T>(stage: AuthLoginFailureStage, action: () => Promise<T> | T): Promise<T> {
+  try {
+    return await action();
+  } catch {
+    throw new AuthLoginStageError(stage);
+  }
+}
+
 export class CodeArchiveAuthService implements CodeArchiveAuthProvider {
   private readonly apiBaseUrl: string;
 
@@ -162,21 +171,34 @@ export class CodeArchiveAuthService implements CodeArchiveAuthProvider {
     if (!this.isConfigured()) return { status: "unavailable" };
     if (this.loginDelegate) return this.loginDelegate();
 
-    const login = await parseSuccess<LoginStart>(await this.fetcher(`${this.apiBaseUrl}/api/v1/auth/github/extension-login`, { method: "GET" }));
-    const callbackUrl = await this.identity.launchWebAuthFlow({ url: login.authorizationUrl, interactive: true });
-    const expected = new URL(this.identity.getRedirectURL("codearchive-auth"));
-    const callback = new URL(callbackUrl);
-    if (callback.origin !== expected.origin || callback.pathname !== expected.pathname) throw new Error("Unexpected auth completion URL.");
-    const exchangeCode = new URLSearchParams(callback.hash.replace(/^#/, "")).get("code");
-    if (!exchangeCode) throw new Error("Auth exchange code is missing.");
+    const login = await atLoginStage("login_start", async () =>
+      parseSuccess<LoginStart>(await this.fetcher(`${this.apiBaseUrl}/api/v1/auth/github/extension-login`, { method: "GET" })),
+    );
 
-    const issued = await parseSuccess<IssuedSession>(await this.fetcher(`${this.apiBaseUrl}/api/v1/auth/exchange`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: exchangeCode }),
-    }));
-    if (!issued.accessToken || !issued.expiresAt) throw new Error("Auth session is invalid.");
-    const user = await this.fetchMe(issued.accessToken);
+    const callbackUrl = await atLoginStage("web_auth_launch", () =>
+      this.identity.launchWebAuthFlow({ url: login.authorizationUrl, interactive: true }),
+    );
+
+    const exchangeCode = await atLoginStage("callback_validation", () => {
+      const expected = new URL(this.identity.getRedirectURL("codearchive-auth"));
+      const callback = new URL(callbackUrl);
+      if (callback.origin !== expected.origin || callback.pathname !== expected.pathname) throw new Error("callback mismatch");
+      const code = new URLSearchParams(callback.hash.replace(/^#/, "")).get("code");
+      if (!code) throw new Error("callback code missing");
+      return code;
+    });
+
+    const issued = await atLoginStage("exchange", async () => {
+      const session = await parseSuccess<IssuedSession>(await this.fetcher(`${this.apiBaseUrl}/api/v1/auth/exchange`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: exchangeCode }),
+      }));
+      if (!session.accessToken || !session.expiresAt) throw new Error("issued session invalid");
+      return session;
+    });
+
+    const user = await atLoginStage("me", () => this.fetchMe(issued.accessToken));
     await this.store.save({ accessToken: issued.accessToken, expiresAt: issued.expiresAt, user });
     return { status: "authenticated", user, expiresAt: issued.expiresAt };
   }
