@@ -116,10 +116,15 @@ describe("CodeArchiveAuthService", () => {
     };
     const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), bridge, successfulFetcher());
 
-    const error = await service.login().catch((caught) => caught as AuthLoginStageError);
-    expect(error).toBeInstanceOf(AuthLoginStageError);
-    expect(error.stage).toBe("web_auth_launch");
-    expect(JSON.stringify({ name: error.name, message: error.message, stage: error.stage })).not.toMatch(/state=|code=|token|github\.com\/login/i);
+    try {
+      await service.login();
+      throw new Error("expected login failure");
+    } catch (caught) {
+      expect(caught).toBeInstanceOf(AuthLoginStageError);
+      const error = caught as AuthLoginStageError;
+      expect(error.stage).toBe("web_auth_launch");
+      expect(JSON.stringify({ name: error.name, message: error.message, stage: error.stage })).not.toMatch(/state=|code=|token|github\.com\/login/i);
+    }
   });
 
   it("clears expired or rejected sessions without touching solution storage", async () => {
