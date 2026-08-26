@@ -1,5 +1,6 @@
 package com.codearchive.api.auth;
 
+import java.net.URI;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
@@ -23,9 +24,13 @@ import com.codearchive.api.auth.user.CodeArchiveUser;
 import com.codearchive.api.auth.user.UserService;
 import com.codearchive.api.common.exception.CodeArchiveException;
 import com.codearchive.api.common.exception.ErrorCode;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 @Service
 public class AuthService {
+
+    private static final String CHROMIUM_APP_SUFFIX =
+            ".chromiumapp.org";
 
     private final AuthProperties authProperties;
     private final GitHubProviderClient githubProviderClient;
@@ -79,6 +84,17 @@ public class AuthService {
     }
 
     public LoginStart beginGitHubLogin() {
+        return beginGitHubLogin(OAuthState.FlowType.GENERIC);
+    }
+
+    public LoginStart beginGitHubExtensionLogin() {
+        requireExtensionRedirectUri();
+        return beginGitHubLogin(OAuthState.FlowType.EXTENSION);
+    }
+
+    private LoginStart beginGitHubLogin(
+            OAuthState.FlowType flowType
+    ) {
         ensureProviderConfigured();
 
         Instant now = clock.instant();
@@ -90,6 +106,7 @@ public class AuthService {
         oauthStateRepository.save(
                 OAuthState.create(
                         tokenCodec.hash(rawState),
+                        flowType,
                         expiresAt,
                         now
                 )
@@ -131,6 +148,18 @@ public class AuthService {
 
         Instant now = clock.instant();
         String stateHash = tokenCodec.hash(rawState);
+        OAuthState oauthState = oauthStateRepository
+                .findByStateHash(stateHash)
+                .orElseThrow(() -> new CodeArchiveException(
+                        ErrorCode.AUTH_FLOW_INVALID
+                ));
+
+        String completionRedirectUri = null;
+        if (oauthState.getFlowType()
+                == OAuthState.FlowType.EXTENSION) {
+            completionRedirectUri =
+                    requireExtensionRedirectUri();
+        }
 
         if (oauthStateRepository.consumeActive(
                 stateHash,
@@ -163,7 +192,12 @@ public class AuthService {
 
         return new CallbackExchange(
                 rawExchangeCode,
-                expiresAt
+                expiresAt,
+                completionRedirectUri == null
+                        ? null
+                        : completionRedirectUri
+                                + "#code="
+                                + rawExchangeCode
         );
     }
 
@@ -276,6 +310,49 @@ public class AuthService {
         return userService.getById(principal.userId());
     }
 
+    private String requireExtensionRedirectUri() {
+        String configured =
+                authProperties.getExtensionRedirectUri();
+        if (isBlank(configured)) {
+            throw new CodeArchiveException(
+                    ErrorCode.AUTH_PROVIDER_UNAVAILABLE
+            );
+        }
+
+        String redirectUri = configured.trim();
+        URI uri;
+        try {
+            uri = URI.create(redirectUri);
+        } catch (IllegalArgumentException exception) {
+            throw new CodeArchiveException(
+                    ErrorCode.AUTH_PROVIDER_UNAVAILABLE
+            );
+        }
+
+        String host = uri.getHost();
+        boolean valid = "https".equalsIgnoreCase(
+                uri.getScheme()
+        )
+                && host != null
+                && host.endsWith(CHROMIUM_APP_SUFFIX)
+                && host.length() > CHROMIUM_APP_SUFFIX.length()
+                && !redirectUri.contains("*")
+                && uri.getUserInfo() == null
+                && uri.getPort() == -1
+                && uri.getRawQuery() == null
+                && uri.getRawFragment() == null
+                && uri.getRawPath() != null
+                && !uri.getRawPath().isBlank()
+                && !"/".equals(uri.getRawPath());
+
+        if (!valid) {
+            throw new CodeArchiveException(
+                    ErrorCode.AUTH_PROVIDER_UNAVAILABLE
+            );
+        }
+        return redirectUri;
+    }
+
     private void ensureProviderConfigured() {
         AuthProperties.Github github =
                 authProperties.getGithub();
@@ -301,8 +378,15 @@ public class AuthService {
 
     public record CallbackExchange(
             String exchangeCode,
-            Instant expiresAt
+            Instant expiresAt,
+            @JsonIgnore String completionRedirectUri
     ) {
+        public CallbackExchange(
+                String exchangeCode,
+                Instant expiresAt
+        ) {
+            this(exchangeCode, expiresAt, null);
+        }
     }
 
     public record IssuedSession(
