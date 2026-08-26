@@ -13,6 +13,7 @@ public class AuthProperties {
     private Duration sessionTtl = Duration.ofDays(30);
     private Duration stateTtl = Duration.ofMinutes(10);
     private Duration exchangeTtl = Duration.ofMinutes(2);
+    private String extensionRedirectUri = "";
 
     public Github getGithub() {
         return github;
@@ -40,6 +41,16 @@ public class AuthProperties {
 
     public void setExchangeTtl(Duration exchangeTtl) {
         this.exchangeTtl = exchangeTtl;
+    }
+
+    public String getExtensionRedirectUri() {
+        return extensionRedirectUri;
+    }
+
+    public void setExtensionRedirectUri(
+            String extensionRedirectUri
+    ) {
+        this.extensionRedirectUri = extensionRedirectUri;
     }
 
     public static class Github {

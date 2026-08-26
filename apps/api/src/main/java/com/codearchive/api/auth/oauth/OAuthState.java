@@ -8,6 +8,8 @@ import org.hibernate.type.SqlTypes;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
@@ -15,12 +17,21 @@ import jakarta.persistence.Table;
 @Table(name = "oauth_states")
 public class OAuthState {
 
+    public enum FlowType {
+        GENERIC,
+        EXTENSION
+    }
+
     @Id
     private UUID id;
 
     @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "state_hash", nullable = false, unique = true, length = 64)
     private String stateHash;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "flow_type", nullable = false, length = 16)
+    private FlowType flowType;
 
     @Column(name = "expires_at", nullable = false)
     private Instant expiresAt;
@@ -37,11 +48,13 @@ public class OAuthState {
     private OAuthState(
             UUID id,
             String stateHash,
+            FlowType flowType,
             Instant expiresAt,
             Instant createdAt
     ) {
         this.id = id;
         this.stateHash = stateHash;
+        this.flowType = flowType;
         this.expiresAt = expiresAt;
         this.createdAt = createdAt;
     }
@@ -51,9 +64,24 @@ public class OAuthState {
             Instant expiresAt,
             Instant createdAt
     ) {
+        return create(
+                stateHash,
+                FlowType.GENERIC,
+                expiresAt,
+                createdAt
+        );
+    }
+
+    public static OAuthState create(
+            String stateHash,
+            FlowType flowType,
+            Instant expiresAt,
+            Instant createdAt
+    ) {
         return new OAuthState(
                 UUID.randomUUID(),
                 stateHash,
+                flowType,
                 expiresAt,
                 createdAt
         );
@@ -61,6 +89,10 @@ public class OAuthState {
 
     public String getStateHash() {
         return stateHash;
+    }
+
+    public FlowType getFlowType() {
+        return flowType;
     }
 
     public Instant getExpiresAt() {

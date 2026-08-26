@@ -34,6 +34,7 @@ public class SecurityConfig {
                                 .requestMatchers(
                                         "/api/v1/status",
                                         "/api/v1/auth/github/login",
+                                        "/api/v1/auth/github/extension-login",
                                         "/api/v1/auth/github/callback",
                                         "/api/v1/auth/exchange",
                                         "/actuator/health",
