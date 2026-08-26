@@ -1,6 +1,6 @@
 # CodeArchive
 
-CodeArchive는 코딩테스트 풀이를 자동으로 수집하고 로컬에 안전하게 보관한 뒤, 서버 동기화와 AI 보조 기능으로 확장하는 **local-first 풀이 아카이브**입니다.
+CodeArchive는 코딩테스트 풀이를 자동으로 수집하고 로컬에 우선 보관한 뒤, 서버 동기화와 AI 보조 기능으로 확장하는 **local-first 풀이 아카이브**입니다.
 
 현재 목표는 약 20명이 사용할 수 있는 SWEA 베타입니다.
 
@@ -61,6 +61,18 @@ pnpm --filter @codearchive/extension build
 
 빌드 결과는 `apps/extension/dist`에 생성됩니다. Chrome의 `chrome://extensions`에서 개발자 모드를 켠 뒤 **압축해제된 확장 프로그램을 로드합니다**로 해당 폴더를 선택합니다.
 
+### 로컬 인프라
+
+Main API를 실행하기 전에 PostgreSQL과 Redis를 시작합니다.
+
+```bash
+cp infra/.env.example infra/.env
+pnpm infra:up
+pnpm infra:ps
+```
+
+사용을 마치면 `pnpm infra:down`으로 종료합니다. 비밀번호와 토큰이 포함된 `infra/.env`는 저장소에 커밋하지 않습니다.
+
 ### Main API
 
 ```bash
@@ -70,7 +82,7 @@ export DB_PASSWORD=change-me
 ./gradlew bootRun
 ```
 
-Windows PowerShell에서는 `$env:DB_PASSWORD="change-me"`를 설정하고 `./gradlew.bat`을 사용할 수 있습니다. 로컬 GitHub OAuth 값과 데이터베이스 연결 정보는 `apps/api/.env.example`을 참고하되, 실제 secret은 커밋하지 않습니다.
+Windows PowerShell에서는 `$env:DB_PASSWORD="change-me"`를 설정하고 `./gradlew.bat`을 사용할 수 있습니다. 로컬 GitHub OAuth 값과 데이터베이스 연결 정보는 `apps/api/.env.example`을 참고하되, 실제 secret은 커밋하지 않습니다. OAuth 값이 비어 있으면 GitHub 로그인 기능만 비활성화됩니다.
 
 ### Analysis API
 
@@ -83,18 +95,7 @@ uvicorn app.main:app --reload --port 8000
 
 기본 개발·베타 provider는 `fake`입니다. `OPENAI_API_KEY` 설정과 live OpenAI 활성화는 별도 승인 없이는 수행하지 않습니다.
 
-### 로컬 인프라
-
-```bash
-cp infra/.env.example infra/.env
-pnpm infra:up
-pnpm infra:ps
-pnpm infra:down
-```
-
-비밀번호와 토큰이 포함된 `infra/.env`는 저장소에 커밋하지 않습니다.
-
-## 브랜치와 배포 정책
+## 브랜치와 배포 목표 정책
 
 ```text
 feature/*, fix/*, chore/*
@@ -109,13 +110,20 @@ feature/*, fix/*, chore/*
 ```
 
 - `develop`: 통합 개발 브랜치
-- `master`: 배포 가능한 브랜치
+- `master`: 배포 가능한 목표 브랜치
 - `master`에 직접 기능을 개발하거나 직접 push하지 않습니다.
 - Render 자동 배포는 계속 비활성화합니다.
 - release 병합 승인은 배포 승인을 대신하지 않습니다.
-- `master` 대상 PR은 `Master Release Source / require-develop` 검사를 필수로 사용합니다.
+- `master` 보호 규칙을 활성화한 뒤에는 `Master Release Source / require-develop` 검사를 필수로 사용합니다.
 
-세부 정책은 [Issue #67](https://github.com/devkimhongjin/codeArchive/issues/67)과 [작업 Skill 워크플로](docs/work-skill-workflow.md)를 따릅니다.
+이 정책은 [Issue #67](https://github.com/devkimhongjin/codeArchive/issues/67)과 PR #68에서 도입 중입니다. 최초 승격 전에는 원격 `master`와 정확한 `develop` commit을 확인하고, 승인된 `develop → master` release PR을 병합한 직후 다음 보호 규칙을 활성화·검증해야 합니다.
+
+- Pull Request 없이 `master` 갱신 금지
+- 직접 push와 우회 허용 금지
+- `Master Release Source / require-develop` 필수
+- 같은 저장소의 `develop`만 통과하고 fork 또는 다른 branch는 실패하는지 확인
+
+보호 규칙 활성화와 Render source branch 전환은 저장소 파일 변경과 별개의 외부 승인 단계입니다. 세부 절차는 [작업 Skill 워크플로](docs/work-skill-workflow.md)를 따릅니다.
 
 ## 멀티에이전트 작업 방식
 
