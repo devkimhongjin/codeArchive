@@ -1,6 +1,8 @@
 import { AuthLoginStageError, type AuthLoginFailureStage } from "./authDiagnostics";
 import type { AuthenticatedCodeArchiveSession, CodeArchiveAuthProvider } from "./solutionSync";
 
+const LOGIN_START_FETCH_PROBE_TIMEOUT_MS = 5_000;
+
 interface ApiEnvelope<T> {
   success: boolean;
   data: T | null;
@@ -190,9 +192,12 @@ export class CodeArchiveAuthService implements CodeArchiveAuthProvider {
       if (!hasHostAccess) throw new AuthLoginStageError("login_start_host_access");
     }
 
-    const loginResponse = await atLoginStage("login_start_fetch", () =>
-      this.fetcher(`${this.apiBaseUrl}/api/v1/auth/github/extension-login`, { method: "GET" }),
-    );
+    let loginResponse: Response;
+    try {
+      loginResponse = await this.fetcher(`${this.apiBaseUrl}/api/v1/auth/github/extension-login`, { method: "GET" });
+    } catch {
+      throw new AuthLoginStageError(await this.classifyLoginStartFetchFailure());
+    }
     if (!loginResponse.ok) throw new AuthLoginStageError("login_start_http");
 
     const loginBody = await atLoginStage("login_start_json", () => loginResponse.json());
@@ -254,6 +259,32 @@ export class CodeArchiveAuthService implements CodeArchiveAuthProvider {
         return response;
       },
     };
+  }
+
+  private async classifyLoginStartFetchFailure(): Promise<AuthLoginFailureStage> {
+    const controller = new AbortController();
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      await Promise.race([
+        this.fetcher(`${this.apiBaseUrl}/actuator/health`, {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal,
+        }),
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            controller.abort();
+            reject(new Error("login-start fetch probe timed out"));
+          }, LOGIN_START_FETCH_PROBE_TIMEOUT_MS);
+        }),
+      ]);
+      return "login_start_fetch_request";
+    } catch {
+      return "login_start_fetch_origin";
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
   }
 
   private async loadValidStoredSession(): Promise<StoredSession | null> {
