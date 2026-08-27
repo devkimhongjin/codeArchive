@@ -111,7 +111,11 @@ describe("CodeArchiveAuthService", () => {
 
     await expectStage(service.login(), "login_start_fetch_origin");
     expect(fetcher).toHaveBeenNthCalledWith(1, "https://api.example.com/api/v1/auth/github/extension-login", { method: "GET" });
-    expect(fetcher).toHaveBeenNthCalledWith(2, "https://api.example.com/actuator/health", { method: "GET", cache: "no-store" });
+    expect(fetcher).toHaveBeenNthCalledWith(2, "https://api.example.com/actuator/health", {
+      method: "GET",
+      cache: "no-store",
+      signal: expect.any(AbortSignal),
+    });
     expect(bridge.launchWebAuthFlow).not.toHaveBeenCalled();
   });
 
@@ -124,8 +128,34 @@ describe("CodeArchiveAuthService", () => {
     const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), bridge, fetcher);
 
     await expectStage(service.login(), "login_start_fetch_request");
-    expect(fetcher).toHaveBeenNthCalledWith(2, "https://api.example.com/actuator/health", { method: "GET", cache: "no-store" });
+    expect(fetcher).toHaveBeenNthCalledWith(2, "https://api.example.com/actuator/health", {
+      method: "GET",
+      cache: "no-store",
+      signal: expect.any(AbortSignal),
+    });
     expect(bridge.launchWebAuthFlow).not.toHaveBeenCalled();
+  });
+
+  it("bounds a health probe that never settles after login-start rejection", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn(async (url: string | URL | Request) => {
+        if (new URL(String(url)).pathname.endsWith("/extension-login")) throw new Error("network detail");
+        return new Promise<Response>(() => undefined);
+      }) as typeof fetch;
+      const bridge: ChromeIdentityBridge = { ...identity, launchWebAuthFlow: vi.fn() };
+      const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), bridge, fetcher);
+
+      const login = service.login();
+      const expectedStage = expectStage(login, "login_start_fetch_origin");
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expectedStage;
+      expect(bridge.launchWebAuthFlow).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("classifies extension-login HTTP non-success separately", async () => {

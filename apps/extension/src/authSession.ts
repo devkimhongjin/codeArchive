@@ -1,6 +1,8 @@
 import { AuthLoginStageError, type AuthLoginFailureStage } from "./authDiagnostics";
 import type { AuthenticatedCodeArchiveSession, CodeArchiveAuthProvider } from "./solutionSync";
 
+const LOGIN_START_FETCH_PROBE_TIMEOUT_MS = 5_000;
+
 interface ApiEnvelope<T> {
   success: boolean;
   data: T | null;
@@ -260,11 +262,28 @@ export class CodeArchiveAuthService implements CodeArchiveAuthProvider {
   }
 
   private async classifyLoginStartFetchFailure(): Promise<AuthLoginFailureStage> {
+    const controller = new AbortController();
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
     try {
-      await this.fetcher(`${this.apiBaseUrl}/actuator/health`, { method: "GET", cache: "no-store" });
+      await Promise.race([
+        this.fetcher(`${this.apiBaseUrl}/actuator/health`, {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal,
+        }),
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            controller.abort();
+            reject(new Error("login-start fetch probe timed out"));
+          }, LOGIN_START_FETCH_PROBE_TIMEOUT_MS);
+        }),
+      ]);
       return "login_start_fetch_request";
     } catch {
       return "login_start_fetch_origin";
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
   }
 
