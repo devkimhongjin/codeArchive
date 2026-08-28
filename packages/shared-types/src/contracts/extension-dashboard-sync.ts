@@ -107,11 +107,13 @@ export interface CodeArchiveCapturePageData {
 
 /**
  * Receipt only. ACK does not delete local capture data.
+ * `acknowledgedAt` is the local receipt time that may back the Extension's importedAt metadata.
  * The runtime must also reject IDs that were not offered by this capability.
  */
 export interface CodeArchiveCaptureAckReceipt {
   readonly protocolVersion: CodeArchiveBridgeProtocolVersion;
   readonly importBatchId: ImportBatchId;
+  readonly acknowledgedAt: string;
   readonly acknowledgedClientRecordIds: readonly ClientRecordId[];
 }
 
@@ -171,13 +173,11 @@ export interface MainApiSolutionBulkUpsertRequest {
 export interface MainApiBulkUpsertImportedResult {
   readonly clientRecordId: ClientRecordId;
   readonly status: "imported";
-  readonly solutionId: string;
 }
 
 export interface MainApiBulkUpsertSameUserDuplicateResult {
   readonly clientRecordId: ClientRecordId;
   readonly status: "same_authenticated_user_duplicate";
-  readonly solutionId: string;
 }
 
 export type MainApiBulkUpsertRejectionCode =
