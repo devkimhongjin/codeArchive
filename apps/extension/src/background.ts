@@ -4,7 +4,7 @@ import type { CodeArchiveAuthService } from "./authSession";
 import { backgroundCodeArchiveAuthService } from "./backgroundAuthRuntime";
 import { notifyDashboardCaptureChanged } from "./dashboardCaptureBridge";
 import { SAVE_SWEA_ACCEPTED, type SaveResponse, type SweaAcceptedCapture } from "./sweaAutoCapture";
-import { indexedDbSolutionRepository, saveSweaAcceptedCapture } from "./solutionRepository";
+import { saveSweaAcceptedCapture } from "./solutionRepository";
 import { syncSolutionRecord, type SolutionSyncDependencies } from "./solutionSync";
 
 type BackgroundResponse = SaveResponse | AuthLoginResponse;
@@ -19,7 +19,8 @@ export function valid(value: unknown): value is SweaAcceptedCapture {
 
 interface CaptureSyncDependencies {
   saveCapture(capture: SweaAcceptedCapture): Promise<SaveResponse>;
-  sync: SolutionSyncDependencies;
+  /** Legacy direct-sync injection retained only as rollback/reference until cleanup #86. */
+  sync?: SolutionSyncDependencies;
   onCaptureCommitted?: () => Promise<void>;
 }
 
@@ -28,7 +29,7 @@ export async function saveThenSyncAcceptedCapture(capture: SweaAcceptedCapture, 
   if (localResult.status === "saved") {
     void dependencies.onCaptureCommitted?.().catch(() => undefined);
   }
-  if (localResult.status === "saved" || localResult.status === "duplicate") {
+  if (dependencies.sync && (localResult.status === "saved" || localResult.status === "duplicate")) {
     void syncSolutionRecord(localResult.solutionId, dependencies.sync).catch(() => undefined);
   }
   return localResult;
@@ -44,10 +45,6 @@ export async function runBackgroundLogin(authService: Pick<CodeArchiveAuthServic
 
 const defaultDependencies: CaptureSyncDependencies = {
   saveCapture: saveSweaAcceptedCapture,
-  sync: {
-    repository: indexedDbSolutionRepository,
-    authProvider: backgroundCodeArchiveAuthService,
-  },
   onCaptureCommitted: notifyDashboardCaptureChanged,
 };
 
