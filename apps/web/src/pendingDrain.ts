@@ -116,13 +116,15 @@ export function createPendingDrainApiClient(
   };
 }
 
+export const dashboardPendingDrainApiClient = createPendingDrainApiClient();
+
 export function secureImportBatchId(): string {
   return globalThis.crypto.randomUUID();
 }
 
 export function createPendingDrainController(
   bridge: DashboardExtensionConnection,
-  api: PendingDrainApiClient = createPendingDrainApiClient(),
+  api: PendingDrainApiClient = dashboardPendingDrainApiClient,
   generateImportBatchId: () => string = secureImportBatchId,
   isEligible: (syncSessionId: string) => boolean = () => true,
 ): PendingDrainController {
