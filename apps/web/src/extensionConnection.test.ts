@@ -22,8 +22,20 @@ async function flush(): Promise<void> {
   await Promise.resolve();
 }
 
+async function connectBridge() {
+  const port = new FakePort();
+  const states: ExtensionConnectionState[] = [];
+  const connection = createDashboardExtensionConnection({ connect: () => port });
+  connection.start((state) => states.push(state));
+  port.receive({ ok: true, data: { protocolVersion: 1 } });
+  await flush();
+  port.receive({ ok: true, data: { protocolVersion: 1, pendingCount: 2, allCount: 5, revision: 8 } });
+  await flush();
+  return { port, states, connection };
+}
+
 describe("Dashboard Extension connection", () => {
-  it("uses the exact beta Extension ID and requests metadata only", async () => {
+  it("uses the exact beta Extension ID and requests metadata only before consent eligibility", async () => {
     const port = new FakePort();
     const connect = vi.fn(() => port);
     const states: ExtensionConnectionState[] = [];
@@ -40,17 +52,49 @@ describe("Dashboard Extension connection", () => {
     port.receive({ ok: true, data: { protocolVersion: 1, pendingCount: 2, allCount: 5, revision: 8 } });
     await flush();
 
-    expect(states.at(-1)).toEqual({
-      status: "connected",
-      summary: { protocolVersion: 1, pendingCount: 2, allCount: 5, revision: 8 },
-    });
+    expect(states.at(-1)).toEqual({ status: "connected", summary: { protocolVersion: 1, pendingCount: 2, allCount: 5, revision: 8 } });
     expect(JSON.stringify(port.sent)).not.toMatch(/SESSION_START|IMPORT_BEGIN|CAPTURE_PAGE|CAPTURE_ACK|capability|clientRecordId|records/i);
     stop();
   });
 
+  it("emits only safe START/END lifecycle payloads for an eligible session", async () => {
+    const { port, connection } = await connectBridge();
+    const started = connection.startSyncSession("secure-session-id");
+    expect(port.sent.at(-1)).toEqual({
+      type: "CODEARCHIVE_SYNC_SESSION_START",
+      protocolVersion: 1,
+      syncSessionId: "secure-session-id",
+      authenticated: true,
+      autoSyncConsent: true,
+    });
+    expect(JSON.stringify(port.sent.at(-1))).not.toMatch(/user|account|email|token|cookie|oauth/i);
+    port.receive({ ok: true, data: { protocolVersion: 1, syncSessionId: "secure-session-id" } });
+    await expect(started).resolves.toBe(true);
+
+    const ended = connection.endSyncSession("secure-session-id");
+    expect(port.sent.at(-1)).toEqual({
+      type: "CODEARCHIVE_SYNC_SESSION_END",
+      protocolVersion: 1,
+      syncSessionId: "secure-session-id",
+    });
+    port.receive({ ok: true, data: { protocolVersion: 1, syncSessionId: "secure-session-id" } });
+    await ended;
+
+    expect(JSON.stringify(port.sent)).not.toMatch(/IMPORT_BEGIN|CAPTURE_PAGE|CAPTURE_ACK|clientRecordId|records/i);
+  });
+
+  it("ignores metadata change events while awaiting a lifecycle response", async () => {
+    const { port, connection } = await connectBridge();
+    const started = connection.startSyncSession("secure-session-id");
+    port.receive({ type: "CODEARCHIVE_CAPTURE_CHANGED", protocolVersion: 1, pendingCount: 3, revision: 9 });
+    port.receive({ ok: true, data: { protocolVersion: 1, syncSessionId: "secure-session-id" } });
+    await expect(started).resolves.toBe(true);
+  });
+
   it("reports unavailable without the Chrome external runtime", () => {
     const states: ExtensionConnectionState[] = [];
-    createDashboardExtensionConnection(null).start((state) => states.push(state));
+    const connection = createDashboardExtensionConnection(null);
+    connection.start((state) => states.push(state));
     expect(states).toEqual([{ status: "unavailable" }]);
   });
 
