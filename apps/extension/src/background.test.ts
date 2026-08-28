@@ -4,7 +4,12 @@ import type { SolutionRecord, SolutionSyncMetadata } from "./solution";
 import type { SolutionRepository } from "./solutionRepository";
 
 function setupChrome(): void {
-  (globalThis as any).chrome = { runtime: { onMessage: { addListener: () => undefined } } };
+  (globalThis as any).chrome = {
+    runtime: {
+      onMessage: { addListener: () => undefined },
+      onConnectExternal: { addListener: () => undefined },
+    },
+  };
 }
 
 const record: SolutionRecord = {

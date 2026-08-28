@@ -2,14 +2,20 @@ import { AuthLoginStageError } from "./authDiagnostics";
 import { AUTH_LOGIN, type AuthLoginResponse } from "./authMessages";
 import type { CodeArchiveAuthService } from "./authSession";
 import { backgroundCodeArchiveAuthService } from "./backgroundAuthRuntime";
-import { notifyDashboardCaptureChanged } from "./dashboardCaptureBridge";
+import { notifyDashboardCaptureChanged, registerExternalDashboardBridge, type ExternalDashboardPort } from "./dashboardCaptureBridge";
+import { CODEARCHIVE_DASHBOARD_ORIGIN } from "./dashboardConfig";
 import { SAVE_SWEA_ACCEPTED, type SaveResponse, type SweaAcceptedCapture } from "./sweaAutoCapture";
 import { saveSweaAcceptedCapture } from "./solutionRepository";
 import { syncSolutionRecord, type SolutionSyncDependencies } from "./solutionSync";
 
 type BackgroundResponse = SaveResponse | AuthLoginResponse;
 
-declare const chrome: { runtime: { onMessage: { addListener(listener: (message: unknown, sender: unknown, sendResponse: (response: BackgroundResponse) => void) => boolean | void): void } } };
+declare const chrome: {
+  runtime: {
+    onMessage: { addListener(listener: (message: unknown, sender: unknown, sendResponse: (response: BackgroundResponse) => void) => boolean | void): void };
+    onConnectExternal: { addListener(listener: (port: ExternalDashboardPort) => void): void };
+  };
+};
 
 export function valid(value: unknown): value is SweaAcceptedCapture {
   if (!value || typeof value !== "object") return false;
@@ -47,6 +53,8 @@ const defaultDependencies: CaptureSyncDependencies = {
   saveCapture: saveSweaAcceptedCapture,
   onCaptureCommitted: notifyDashboardCaptureChanged,
 };
+
+registerExternalDashboardBridge(chrome.runtime, CODEARCHIVE_DASHBOARD_ORIGIN);
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const request = message as { type?: string; capture?: unknown };
