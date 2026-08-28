@@ -22,11 +22,11 @@ async function flush(): Promise<void> {
   await Promise.resolve();
 }
 
-async function connectBridge() {
+async function connectBridge(onCaptureChanged?: (event: never) => void) {
   const port = new FakePort();
   const states: ExtensionConnectionState[] = [];
   const connection = createDashboardExtensionConnection({ connect: () => port });
-  connection.start((state) => states.push(state));
+  connection.start((state) => states.push(state), onCaptureChanged as never);
   port.receive({ ok: true, data: { protocolVersion: 1 } });
   await flush();
   port.receive({ ok: true, data: { protocolVersion: 1, pendingCount: 2, allCount: 5, revision: 8 } });
@@ -79,8 +79,60 @@ describe("Dashboard Extension connection", () => {
     });
     port.receive({ ok: true, data: { protocolVersion: 1, syncSessionId: "secure-session-id" } });
     await ended;
+  });
 
-    expect(JSON.stringify(port.sent)).not.toMatch(/IMPORT_BEGIN|CAPTURE_PAGE|CAPTURE_ACK|clientRecordId|records/i);
+  it("uses IMPORT_BEGIN capability for pending PAGE <=25 and ACK with retained batch id", async () => {
+    const { port, connection } = await connectBridge();
+
+    const begin = connection.beginImport!("session-a");
+    expect(port.sent.at(-1)).toEqual({ type: "CODEARCHIVE_IMPORT_BEGIN", protocolVersion: 1, syncSessionId: "session-a" });
+    port.receive({ ok: true, data: { protocolVersion: 1, capability: "cap-a" } });
+    await expect(begin).resolves.toBe("cap-a");
+
+    const pendingPage = connection.readPendingPage!("cap-a", "cursor-a");
+    expect(port.sent.at(-1)).toEqual({
+      type: "CODEARCHIVE_CAPTURE_PAGE",
+      protocolVersion: 1,
+      capability: "cap-a",
+      cursor: "cursor-a",
+      limit: 25,
+      scope: "pending",
+    });
+    const pageResponse = { ok: true, data: { protocolVersion: 1, scope: "pending", records: [], revision: 9 } };
+    port.receive(pageResponse);
+    await expect(pendingPage).resolves.toEqual(pageResponse);
+
+    const ack = connection.ackImported!("cap-a", "batch-a", ["record-a"]);
+    expect(port.sent.at(-1)).toEqual({
+      type: "CODEARCHIVE_CAPTURE_ACK",
+      protocolVersion: 1,
+      capability: "cap-a",
+      importBatchId: "batch-a",
+      clientRecordIds: ["record-a"],
+    });
+    port.receive({ ok: true, data: { protocolVersion: 1, importBatchId: "batch-a", acknowledgedAt: "2026-08-28T00:00:00Z", acknowledgedClientRecordIds: ["record-a"] } });
+    await expect(ack).resolves.toBe(true);
+  });
+
+  it("delivers metadata CAPTURE_CHANGED without consuming an in-flight request response", async () => {
+    const changed = vi.fn();
+    const { port, connection } = await connectBridge(changed as never);
+    const begin = connection.beginImport!("session-a");
+    port.receive({ type: "CODEARCHIVE_CAPTURE_CHANGED", protocolVersion: 1, pendingCount: 4, revision: 10 });
+    expect(changed).toHaveBeenCalledWith({ type: "CODEARCHIVE_CAPTURE_CHANGED", protocolVersion: 1, pendingCount: 4, revision: 10 });
+    port.receive({ ok: true, data: { protocolVersion: 1, capability: "cap-a" } });
+    await expect(begin).resolves.toBe("cap-a");
+  });
+
+  it("fails closed on malformed IMPORT_BEGIN and ACK responses", async () => {
+    const { port, connection } = await connectBridge();
+    const begin = connection.beginImport!("session-a");
+    port.receive({ ok: true, data: { protocolVersion: 1, capability: "" } });
+    await expect(begin).resolves.toBeNull();
+
+    const ack = connection.ackImported!("cap-a", "batch-a", ["record-a"]);
+    port.receive({ ok: true, data: { protocolVersion: 1, importBatchId: "other", acknowledgedAt: "now", acknowledgedClientRecordIds: ["record-a"] } });
+    await expect(ack).resolves.toBe(false);
   });
 
   it("ignores metadata change events while awaiting a lifecycle response", async () => {
