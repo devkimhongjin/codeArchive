@@ -18,8 +18,16 @@ h1 { font-size: 26px; }
 h2 { font-size: 20px; }
 .subtitle, .future-note { color: #64748b; font-size: 13px; }
 .subtitle { margin: 7px 0 0; }
-.status-strip { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; max-width: 460px; }
-.status-strip span, .badge { padding: 6px 9px; border-radius: 999px; background: #eef1ff; color: #4658c9; font-size: 12px; font-weight: 750; }
+.connection-status { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; max-width: 470px; padding: 10px 12px; border: 1px solid #dce2ef; border-radius: 9px; background: white; }
+.connection-status div { display: grid; gap: 2px; }
+.connection-status strong { font-size: 13px; }
+.connection-status small { color: #64748b; font-size: 11px; line-height: 1.4; }
+.connection-status button { padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; background: white; color: #334155; font-size: 11px; }
+.connection-dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
+.connection-dot.connected { background: #16855b; }
+.connection-dot.error { background: #b42318; }
+.connection-dot.connecting { background: #d69719; }
+.badge { padding: 6px 9px; border-radius: 999px; background: #eef1ff; color: #4658c9; font-size: 12px; font-weight: 750; }
 .toolbar { align-items: end; margin: 24px 0 14px; }
 .toolbar label { display: grid; gap: 5px; width: min(420px, 100%); color: #475569; font-size: 12px; font-weight: 700; }
 .toolbar input { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 9px; background: white; color: #172033; }
@@ -49,7 +57,7 @@ h2 { font-size: 20px; }
 
 @media (max-width: 760px) {
   .topbar, .toolbar { align-items: stretch; flex-direction: column; }
-  .status-strip { justify-content: flex-start; }
+  .connection-status { max-width: none; }
   .archive-layout { grid-template-columns: 1fr; }
   .detail-panel { position: static; }
 }

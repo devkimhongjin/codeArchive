@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
 import type { DashboardArchiveDataSource } from "./archiveTypes";
+import type { DashboardExtensionConnection } from "./extensionConnection";
 
 const records = [
   {
@@ -29,6 +30,25 @@ const records = [
 ];
 
 describe("Dashboard archive shell", () => {
+  it("shows metadata-only Extension connection status and supports retry", async () => {
+    let attempts = 0;
+    const extensionConnection: DashboardExtensionConnection = {
+      start(onState) {
+        attempts += 1;
+        onState(attempts === 1
+          ? { status: "unavailable" }
+          : { status: "connected", summary: { protocolVersion: 1, pendingCount: 2, allCount: 5, revision: 7 } });
+        return () => undefined;
+      },
+    };
+    render(<App dataSource={{ listSolutions: async () => [] }} extensionConnection={extensionConnection} />);
+
+    expect(screen.getByText("Extension을 찾을 수 없음")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "다시 확인" }));
+    expect(await screen.findByText("Extension 연결됨")).toBeInTheDocument();
+    expect(screen.getByText("동기화 대기 2건 · 로컬 전체 5건")).toBeInTheDocument();
+  });
+
   it("loads archive records through the replaceable data source and selects a detail", async () => {
     const dataSource: DashboardArchiveDataSource = { listSolutions: async () => records };
     render(<App dataSource={dataSource} />);
