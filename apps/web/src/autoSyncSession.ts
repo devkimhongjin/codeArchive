@@ -66,12 +66,15 @@ export function createAutoSyncSessionController(
       && (!desiredEligible || activeAuthContextKey !== desiredAuthContextKey)
     ) {
       const endingSessionId = activeSessionId;
-      activeSessionId = null;
-      activeAuthContextKey = "";
       try {
         await transport.endSyncSession(endingSessionId);
       } catch {
         // Port disconnect/error still invalidates the in-memory Web session.
+      } finally {
+        if (activeSessionId === endingSessionId) {
+          activeSessionId = null;
+          activeAuthContextKey = "";
+        }
       }
     }
 
