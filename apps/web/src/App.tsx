@@ -6,9 +6,15 @@ import {
   type DashboardSolution,
 } from "./archiveTypes";
 import "./styles.css";
+import {
+  dashboardExtensionConnection,
+  type DashboardExtensionConnection,
+  type ExtensionConnectionState,
+} from "./extensionConnection";
 
 interface AppProps {
   dataSource?: DashboardArchiveDataSource;
+  extensionConnection?: DashboardExtensionConnection;
 }
 
 function formatDate(value: string | null): string {
@@ -19,12 +25,22 @@ function sourceLabel(source: DashboardSolution["source"]): string {
   return source === "captured" ? "자동 수집" : "수동 기록";
 }
 
-export function App({ dataSource = bootstrapArchiveDataSource }: AppProps) {
+export function App({
+  dataSource = bootstrapArchiveDataSource,
+  extensionConnection = dashboardExtensionConnection,
+}: AppProps) {
   const [records, setRecords] = useState<readonly DashboardSolution[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
+  const [extensionState, setExtensionState] = useState<ExtensionConnectionState>({ status: "connecting" });
+
+  useEffect(
+    () => extensionConnection.start(setExtensionState),
+    [extensionConnection, connectionAttempt],
+  );
 
   useEffect(() => {
     let active = true;
@@ -70,10 +86,23 @@ export function App({ dataSource = bootstrapArchiveDataSource }: AppProps) {
           <h1>전체 풀이</h1>
           <p className="subtitle">가볍게 탐색하는 풀이 아카이브</p>
         </div>
-        <div className="status-strip" aria-label="향후 연결 상태">
-          <span>로그인 필요</span>
-          <span>Extension 연결 안 됨</span>
-          <span>동기화 준비 중</span>
+        <div className="connection-status" aria-live="polite">
+          <span className={`connection-dot ${extensionState.status}`} aria-hidden="true" />
+          <div>
+            <strong>
+              {extensionState.status === "connected" ? "Extension 연결됨" :
+                extensionState.status === "connecting" ? "Extension 연결 확인 중" :
+                  extensionState.status === "unavailable" ? "Extension을 찾을 수 없음" : "Extension 연결 오류"}
+            </strong>
+            <small>
+              {extensionState.status === "connected"
+                ? `동기화 대기 ${extensionState.summary.pendingCount}건 · 로컬 전체 ${extensionState.summary.allCount}건`
+                : "로그인과 자동 동기화 전에는 코드가 전송되지 않습니다."}
+            </small>
+          </div>
+          {(extensionState.status === "unavailable" || extensionState.status === "error") && (
+            <button type="button" onClick={() => setConnectionAttempt((value) => value + 1)}>다시 확인</button>
+          )}
         </div>
       </header>
 
