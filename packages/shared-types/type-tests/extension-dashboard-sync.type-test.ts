@@ -62,6 +62,16 @@ type _BulkResultIncludesFailed = Assert<
   >
 >;
 
+type _FailedAckEligibleTrueIsImpossible = Assert<
+  Equal<
+    Extract<
+      MainApiBulkUpsertRecordResult,
+      { readonly outcome: "FAILED"; readonly ackEligible: true }
+    >,
+    never
+  >
+>;
+
 type _SuccessDataHasOnlyResults = Assert<
   Equal<keyof MainApiSolutionBulkUpsertSuccessData, "results">
 >;
@@ -112,13 +122,3 @@ selectAckableClientRecordIds([
     errorCode: null,
   },
 ]);
-
-// @ts-expect-error FAILED can never be ACK-eligible in the typed runtime contract.
-const invalidTypedResult: MainApiBulkUpsertRecordResult = {
-  clientRecordId: "invalid-id",
-  outcome: "FAILED",
-  ackEligible: true,
-  errorCode: null,
-};
-
-void invalidTypedResult;
