@@ -114,7 +114,8 @@ describe("CodeArchiveAuthService", () => {
       method: "GET",
       cache: "no-store",
     });
-    expect(fetcher).toHaveBeenNthCalledWith(2, "https://api.example.com/actuator/health", {
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(fetcher).toHaveBeenNthCalledWith(4, "https://api.example.com/actuator/health", {
       method: "GET",
       cache: "no-store",
       signal: expect.any(AbortSignal),
@@ -131,12 +132,31 @@ describe("CodeArchiveAuthService", () => {
     const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), bridge, fetcher);
 
     await expectStage(service.login(), "login_start_fetch_request");
-    expect(fetcher).toHaveBeenNthCalledWith(2, "https://api.example.com/actuator/health", {
+    expect(fetcher).toHaveBeenNthCalledWith(4, "https://api.example.com/actuator/health", {
       method: "GET",
       cache: "no-store",
       signal: expect.any(AbortSignal),
     });
     expect(bridge.launchWebAuthFlow).not.toHaveBeenCalled();
+  });
+
+  it("continues OAuth when a transient login-start fetch rejection recovers", async () => {
+    let loginAttempts = 0;
+    const fetcher = vi.fn(async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith("/extension-login") && ++loginAttempts < 3) throw new Error("transient network rejection");
+      if (path.endsWith("/extension-login")) {
+        return response({ success: true, data: { authorizationUrl: "https://github.com/login/oauth/authorize?state=fixture", expiresAt: "2026-08-26T01:00:00Z" } });
+      }
+      if (path.endsWith("/exchange")) return response({ success: true, data: { accessToken: "access", expiresAt: "2026-08-27T00:00:00Z" } });
+      return response({ success: true, data: me });
+    }) as typeof fetch;
+    const bridge: ChromeIdentityBridge = { ...identity, launchWebAuthFlow: vi.fn(identity.launchWebAuthFlow) };
+    const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), bridge, fetcher);
+
+    await expect(service.login()).resolves.toMatchObject({ status: "authenticated" });
+    expect(loginAttempts).toBe(3);
+    expect(bridge.launchWebAuthFlow).toHaveBeenCalledOnce();
   });
 
   it("bounds a health probe that never settles after login-start rejection", async () => {

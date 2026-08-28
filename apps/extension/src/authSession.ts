@@ -2,6 +2,7 @@ import { AuthLoginStageError, type AuthLoginFailureStage } from "./authDiagnosti
 import type { AuthenticatedCodeArchiveSession, CodeArchiveAuthProvider } from "./solutionSync";
 
 const LOGIN_START_FETCH_PROBE_TIMEOUT_MS = 5_000;
+const LOGIN_START_FETCH_ATTEMPTS = 3;
 
 interface ApiEnvelope<T> {
   success: boolean;
@@ -192,13 +193,8 @@ export class CodeArchiveAuthService implements CodeArchiveAuthProvider {
       if (!hasHostAccess) throw new AuthLoginStageError("login_start_host_access");
     }
 
-    let loginResponse: Response;
-    try {
-      loginResponse = await this.fetcher(`${this.apiBaseUrl}/api/v1/auth/github/extension-login`, {
-        method: "GET",
-        cache: "no-store",
-      });
-    } catch {
+    const loginResponse = await this.fetchLoginStart();
+    if (!loginResponse) {
       throw new AuthLoginStageError(await this.classifyLoginStartFetchFailure());
     }
     if (!loginResponse.ok) throw new AuthLoginStageError("login_start_http");
@@ -232,6 +228,21 @@ export class CodeArchiveAuthService implements CodeArchiveAuthProvider {
     const user = await atLoginStage("me", () => this.fetchMe(issued.accessToken));
     await this.store.save({ accessToken: issued.accessToken, expiresAt: issued.expiresAt, user });
     return { status: "authenticated", user, expiresAt: issued.expiresAt };
+  }
+
+  private async fetchLoginStart(): Promise<Response | null> {
+    for (let attempt = 0; attempt < LOGIN_START_FETCH_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.fetcher(`${this.apiBaseUrl}/api/v1/auth/github/extension-login`, {
+          method: "GET",
+          cache: "no-store",
+        });
+      } catch {
+        // Chrome extension service workers can observe a transient network rejection
+        // while the same deployed origin is already reachable. Retry before diagnosing.
+      }
+    }
+    return null;
   }
 
   async logout(): Promise<void> {
