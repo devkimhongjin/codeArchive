@@ -1,7 +1,10 @@
 package com.codearchive.api.auth;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 
@@ -10,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import com.codearchive.api.auth.config.AuthProperties;
+import com.codearchive.api.auth.config.DashboardOriginValidator;
 import com.codearchive.api.auth.oauth.AuthExchangeCode;
 import com.codearchive.api.auth.oauth.AuthExchangeCodeRepository;
 import com.codearchive.api.auth.oauth.GitHubProviderClient;
@@ -84,15 +88,39 @@ public class AuthService {
     }
 
     public LoginStart beginGitHubLogin() {
-        return beginGitHubLogin(OAuthState.FlowType.GENERIC);
+        LoginMaterial material = beginGitHubLogin(
+                OAuthState.FlowType.GENERIC
+        );
+        return new LoginStart(
+                material.authorizationUrl(),
+                material.expiresAt()
+        );
     }
 
     public LoginStart beginGitHubExtensionLogin() {
         requireExtensionRedirectUri();
-        return beginGitHubLogin(OAuthState.FlowType.EXTENSION);
+        LoginMaterial material = beginGitHubLogin(
+                OAuthState.FlowType.EXTENSION
+        );
+        return new LoginStart(
+                material.authorizationUrl(),
+                material.expiresAt()
+        );
     }
 
-    private LoginStart beginGitHubLogin(
+    public DashboardLoginStart beginGitHubDashboardLogin() {
+        requireDashboardOriginRoot();
+        LoginMaterial material = beginGitHubLogin(
+                OAuthState.FlowType.DASHBOARD
+        );
+        return new DashboardLoginStart(
+                material.authorizationUrl(),
+                material.rawState(),
+                material.expiresAt()
+        );
+    }
+
+    private LoginMaterial beginGitHubLogin(
             OAuthState.FlowType flowType
     ) {
         ensureProviderConfigured();
@@ -127,8 +155,9 @@ public class AuthService {
                 .encode()
                 .toUriString();
 
-        return new LoginStart(
+        return new LoginMaterial(
                 authorizationUrl,
+                rawState,
                 expiresAt
         );
     }
@@ -136,6 +165,18 @@ public class AuthService {
     public CallbackExchange completeGitHubCallback(
             String authorizationCode,
             String rawState
+    ) {
+        return completeGitHubCallback(
+                authorizationCode,
+                rawState,
+                null
+        );
+    }
+
+    public CallbackExchange completeGitHubCallback(
+            String authorizationCode,
+            String rawState,
+            String preAuthStateCookie
     ) {
         ensureProviderConfigured();
 
@@ -157,6 +198,21 @@ public class AuthService {
         if (flowType == OAuthState.FlowType.EXTENSION) {
             completionRedirectUri =
                     requireExtensionRedirectUri();
+        } else if (flowType == OAuthState.FlowType.DASHBOARD) {
+            completionRedirectUri =
+                    requireDashboardOriginRoot();
+
+            if (isBlank(preAuthStateCookie)
+                    || !constantTimeStateMatch(
+                            stateHash,
+                            tokenCodec.hash(
+                                    preAuthStateCookie
+                            )
+                    )) {
+                throw new CodeArchiveException(
+                        ErrorCode.AUTH_FLOW_INVALID
+                );
+            }
         }
 
         if (oauthStateRepository.consumeActive(
@@ -173,6 +229,19 @@ public class AuthService {
                         authorizationCode
                 );
         CodeArchiveUser user = userService.upsert(profile);
+
+        if (flowType == OAuthState.FlowType.DASHBOARD) {
+            IssuedSession session = issueSession(
+                    user,
+                    now
+            );
+            return new CallbackExchange(
+                    null,
+                    session.expiresAt(),
+                    completionRedirectUri,
+                    session
+            );
+        }
 
         String rawExchangeCode = tokenCodec.generate();
         Instant expiresAt = now.plus(
@@ -195,7 +264,8 @@ public class AuthService {
                         ? null
                         : completionRedirectUri
                                 + "#code="
-                                + rawExchangeCode
+                                + rawExchangeCode,
+                null
         );
     }
 
@@ -232,6 +302,13 @@ public class AuthService {
                 exchangeCode.getUserId()
         );
 
+        return issueSession(user, now);
+    }
+
+    private IssuedSession issueSession(
+            CodeArchiveUser user,
+            Instant now
+    ) {
         String rawAccessToken = tokenCodec.generate();
         Instant expiresAt = now.plus(
                 authProperties.getSessionTtl()
@@ -308,6 +385,14 @@ public class AuthService {
         return userService.getById(principal.userId());
     }
 
+    public Duration oauthStateTtl() {
+        return authProperties.getStateTtl();
+    }
+
+    public Duration sessionTtl() {
+        return authProperties.getSessionTtl();
+    }
+
     private String requireExtensionRedirectUri() {
         String configured =
                 authProperties.getExtensionRedirectUri();
@@ -351,6 +436,27 @@ public class AuthService {
         return redirectUri;
     }
 
+    private String requireDashboardOriginRoot() {
+        return DashboardOriginValidator
+                .normalize(authProperties.getDashboardOrigin())
+                .map(origin -> origin + "/")
+                .orElseThrow(() ->
+                        new CodeArchiveException(
+                                ErrorCode.AUTH_PROVIDER_UNAVAILABLE
+                        )
+                );
+    }
+
+    private boolean constantTimeStateMatch(
+            String expectedHash,
+            String actualHash
+    ) {
+        return MessageDigest.isEqual(
+                expectedHash.getBytes(StandardCharsets.UTF_8),
+                actualHash.getBytes(StandardCharsets.UTF_8)
+        );
+    }
+
     private void ensureProviderConfigured() {
         AuthProperties.Github github =
                 authProperties.getGithub();
@@ -368,8 +474,22 @@ public class AuthService {
         return value == null || value.isBlank();
     }
 
+    private record LoginMaterial(
+            String authorizationUrl,
+            String rawState,
+            Instant expiresAt
+    ) {
+    }
+
     public record LoginStart(
             String authorizationUrl,
+            Instant expiresAt
+    ) {
+    }
+
+    public record DashboardLoginStart(
+            @JsonIgnore String authorizationUrl,
+            @JsonIgnore String rawState,
             Instant expiresAt
     ) {
     }
@@ -377,13 +497,27 @@ public class AuthService {
     public record CallbackExchange(
             String exchangeCode,
             Instant expiresAt,
-            @JsonIgnore String completionRedirectUri
+            @JsonIgnore String completionRedirectUri,
+            @JsonIgnore IssuedSession dashboardSession
     ) {
         public CallbackExchange(
                 String exchangeCode,
                 Instant expiresAt
         ) {
-            this(exchangeCode, expiresAt, null);
+            this(exchangeCode, expiresAt, null, null);
+        }
+
+        public CallbackExchange(
+                String exchangeCode,
+                Instant expiresAt,
+                String completionRedirectUri
+        ) {
+            this(
+                    exchangeCode,
+                    expiresAt,
+                    completionRedirectUri,
+                    null
+            );
         }
     }
 

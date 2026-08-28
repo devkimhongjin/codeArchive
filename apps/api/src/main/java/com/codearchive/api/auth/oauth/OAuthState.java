@@ -19,7 +19,8 @@ public class OAuthState {
 
     public enum FlowType {
         GENERIC,
-        EXTENSION
+        EXTENSION,
+        DASHBOARD
     }
 
     @Id
