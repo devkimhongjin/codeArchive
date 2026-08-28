@@ -1,18 +1,36 @@
-# Extension → Dashboard 수집 인계 설계
+# Extension → Dashboard 자동 동기화 설계
 
 ## 결정
 
-CodeArchive의 브라우저 확장은 코딩 플랫폼의 풀이를 감지하고 로컬 IndexedDB에 보존하는 수집기다. 사용자 인증, Main API 통신, 서버 동기화, 기록 관리, AI 및 외부 연동은 Web Dashboard가 전담한다.
+CodeArchive의 Chrome Extension은 **코딩 플랫폼에서 정답 풀이를 자동 감지하고 로컬 IndexedDB에 보존하는 capture-only 수집기**다.
 
-확장은 GitHub OAuth를 시작하지 않고 CodeArchive access/refresh token을 저장하지 않으며 Main API를 직접 호출하지 않는다. 서버 또는 대시보드 장애가 수집을 막아서는 안 된다.
+사용자 인증, 서버 동기화, 기록 관리, AI, GitHub/Notion 등 외부 연동은 Web Dashboard가 전담한다.
+
+Extension은 GitHub OAuth를 시작하지 않고 CodeArchive/GitHub access token 또는 refresh token을 저장하지 않으며 Main API를 직접 호출하지 않는다. Dashboard/API 장애나 로그아웃 상태에서도 수집은 계속되어야 한다.
+
+사용자가 Dashboard에서 자동 동기화를 활성화한 뒤에는 다음 동작을 기본 UX로 한다.
+
+```text
+SWEA PASS
+→ Extension이 자동 capture
+→ IndexedDB 즉시 저장
+→ 연결된 Dashboard에 capture 변경 알림
+→ Dashboard가 pending record 자동 pull
+→ Dashboard session으로 Main API bulk upsert
+→ 성공/동일사용자중복 record만 Extension ACK
+```
+
+Dashboard가 닫혀 있거나 로그아웃/연결 해제 상태면 서버 전송은 일어나지 않는다. 그동안의 기록은 IndexedDB에 계속 쌓이고, 다음 eligible Dashboard 연결 시 pending 기록을 자동으로 catch-up 한다.
 
 ## 책임 경계
 
 | 구성 요소 | 책임 | 금지 사항 |
 | --- | --- | --- |
-| Extension | 플랫폼 감지, 코드·결과 수집, 로컬 CRUD·내보내기, 대시보드 요청에 대한 로컬 기록 제공 | OAuth, 백엔드 토큰 저장, Main API 호출, AI·GitHub·Notion 호출 |
-| Web Dashboard | GitHub 로그인, 확장 설치 감지, 로컬 기록 가져오기, 검토·중복 해결, API 저장, 전체 관리 | 플랫폼 DOM 직접 수집, 확장 저장소에 대한 무단 삭제 |
-| Main API | 웹 세션, 사용자별 풀이 upsert, 중복 방지, 관리·연동 API | 확장을 신뢰된 사용자 세션으로 간주 |
+| Extension | 플랫폼 감지, 정답 코드 자동 수집, IndexedDB 로컬 CRUD/내보내기, exact-origin Dashboard bridge, local capture 변경 알림, page/ack 처리 | OAuth, 사용자 계정 소유권 판단, 백엔드 토큰 저장, Main API 호출, AI·GitHub·Notion 호출 |
+| Web Dashboard | GitHub 로그인, Extension 연결, 사용자 auto-sync consent, pending 자동 drain, API 저장, 상태/오류 표시, 기록 관리, AI/외부 연동 | 플랫폼 DOM 직접 수집, Extension 로컬 원본 무단 삭제 |
+| Main API | 웹 세션, 사용자별 풀이 idempotent upsert, 중복 방지, 관리/연동 API | Extension을 인증된 사용자 세션으로 간주 |
+
+Extension bridge는 서버 동기화 엔진이 아니다. Extension은 로컬 데이터를 제공하고 ACK receipt를 기록할 뿐이며, **어느 사용자 계정으로 언제 서버에 저장할지는 Dashboard가 자신의 인증 세션에서 결정한다.**
 
 ## 데이터 흐름
 
@@ -21,95 +39,298 @@ SWEA page
   → Extension content script
   → Extension background validation
   → Extension IndexedDB (authoritative local capture)
+  → CAPTURE_CHANGED (metadata only, active Dashboard port가 있을 때)
 
-Signed-in Dashboard
-  → installed Extension에 import page 요청
-  ← capture records + cursor
-  → 사용자 검토/선택
+Signed-in Dashboard + auto-sync enabled
+  → exact-origin external Port 연결
+  → IMPORT_BEGIN / ephemeral capability
+  → pending CAPTURE_PAGE 반복 pull
+  → schema validation / optional UI status
   → Main API bulk upsert (Dashboard session)
-  ← per-record imported/duplicate/rejected result
-  → Extension에 성공한 clientRecordId만 acknowledge
-  → Extension은 importedAt/importBatchId 메타데이터만 기록
+  ← per-record imported / duplicate / rejected
+  → successful-or-same-user-duplicate clientRecordId만 CAPTURE_ACK
+  → Extension은 importedAt/importBatchId receipt만 기록
 ```
 
-대시보드가 열려 있지 않으면 서버 전송은 일어나지 않는다. 수집은 계속되며 다음 대시보드 방문 때 가져온다.
+Dashboard가 연결되는 순간에도 `pendingCount > 0`이면 신규 이벤트를 기다리지 않고 즉시 catch-up을 시작한다.
 
-## 브라우저 브리지
+## 자동 동기화 사용자 경험
 
-MVP는 Chrome의 외부 메시지 채널을 사용한다. Extension manifest의 `externally_connectable.matches`는 배포된 대시보드의 정확한 HTTPS origin만 허용한다. 대시보드는 안정화된 Extension ID로 메시지를 보내고, background worker는 `sender.origin`, `sender.url`, `sender.tab.id`를 다시 검사한다.
+### 최초 활성화
 
-`PING`과 코드가 없는 요약 외에는 Extension 팝업에서 사용자가 **현재 CodeArchive Dashboard 탭으로 가져오기 허용**을 누른 뒤에만 사용할 수 있다. background worker는 현재 활성 탭과 exact origin에 묶인 암호학적 난수 import-session capability를 메모리에 생성한다. 세션은 마지막 정상 요청 후 2분 동안 활동이 없거나 생성 후 15분이 지나거나, 탭 이동·종료 또는 terminal acknowledge가 완료되면 폐기한다. 정상 pagination과 최종 acknowledge까지는 같은 세션을 반복 사용하지만, 폐기 후 replay는 거부한다. service worker가 재시작되면 다시 승인을 받아야 한다.
+자동 동기화는 사용자 코드가 Dashboard를 통해 서버로 전송되는 기능이므로 **Dashboard에서 명시적인 사용자 동작으로 한 번 활성화**한다.
 
-브리지는 로그인 정보나 서버 토큰을 전달하지 않는다. 허용 메시지는 다음 다섯 가지로 제한한다.
+Dashboard는 다음을 표시해야 한다.
+
+- 현재 로그인한 CodeArchive/GitHub 계정
+- 연결된 Extension 상태
+- 자동 동기화 on/off
+- 마지막 성공 동기화 시각
+- pending/failed 개수
+
+Extension popup이 OAuth나 서버 동기화 UI를 소유하지 않는다. 필요하다면 로컬 capture 상태나 Dashboard 연결 가능 여부만 표시할 수 있다.
+
+### 활성 상태
+
+사용자가 자동 동기화를 활성화하고 authenticated Dashboard가 Extension과 연결되어 있으면:
+
+1. Dashboard가 Port를 유지한다.
+2. Extension에서 새 정답 capture가 IndexedDB에 commit된다.
+3. Extension은 Port로 코드 없는 `CAPTURE_CHANGED` 이벤트만 보낸다.
+4. Dashboard는 debounce 후 pending page를 pull한다.
+5. Dashboard가 Main API에 저장한다.
+6. 성공 또는 동일 사용자 중복으로 확정된 record만 ACK한다.
+
+한 번에 여러 capture 이벤트가 와도 record별 push를 하지 않고 **pending drain**으로 합쳐 처리한다.
+
+### Dashboard가 닫힌 경우
+
+- Extension은 정상적으로 로컬 capture를 계속한다.
+- 외부 네트워크 요청은 없다.
+- 다음 Dashboard 접속 시 연결 직후 pending summary를 확인하고 자동 drain 한다.
+
+따라서 자동 동기화의 의미는 "Extension이 항상 서버에 push"가 아니라 **"eligible Dashboard가 있을 때 Dashboard가 자동으로 local pending을 drain"**하는 것이다.
+
+### 로그아웃/계정 전환
+
+- Dashboard logout 또는 authenticated account 변경 시 현재 Port/capability를 즉시 폐기한다.
+- 새 계정 컨텍스트에서는 source transfer 전에 auto-sync가 다시 eligible 상태인지 Dashboard가 확인해야 한다.
+- Extension은 GitHub user id, CodeArchive user id, email 등 계정 식별자를 저장하지 않는다.
+- 이미 ACK된 기록은 새 계정에 자동 재전송하지 않는다.
+- 과거 기록을 다른 계정으로 다시 가져오려면 Dashboard에서 명시적인 `all`/re-import 동작과 대상 계정 확인이 필요하다.
+
+## Chrome 브라우저 브리지
+
+MVP는 Chrome external messaging의 long-lived Port를 사용한다.
+
+Dashboard 웹 페이지가 stable Extension ID를 대상으로 연결을 시작한다. Extension은 임의 웹 페이지를 찾아가 연결하지 않는다.
+
+Extension manifest의 `externally_connectable.matches`는 승인된 Dashboard의 **정확한 HTTPS origin**만 허용한다. Background worker는 연결 시에도 `sender.origin`, `sender.url`, `sender.tab.id`를 다시 검사한다.
+
+Bridge의 source-code 접근은 ephemeral capability로 제한한다. capability는 현재 external Port/tab/origin에 묶이고 background worker 메모리에만 존재한다.
+
+폐기 조건:
+
+- Port disconnect
+- Dashboard logout/account context change
+- tab navigation 또는 tab close
+- exact origin 불일치
+- 마지막 정상 요청 후 2분 inactivity
+- 생성 후 15분 absolute expiry
+- terminal sync-session 종료
+- Extension service worker restart
+
+폐기 후 replay는 거부한다.
+
+### 허용 메시지
 
 ```ts
 type DashboardBridgeRequest =
   | { type: "CODEARCHIVE_PING"; protocolVersion: 1 }
   | { type: "CODEARCHIVE_CAPTURE_SUMMARY"; protocolVersion: 1 }
   | { type: "CODEARCHIVE_IMPORT_BEGIN"; protocolVersion: 1 }
-  | { type: "CODEARCHIVE_CAPTURE_PAGE"; protocolVersion: 1; capability: string; cursor?: string; limit: number; scope: "pending" | "all" }
-  | { type: "CODEARCHIVE_CAPTURE_ACK"; protocolVersion: 1; capability: string; importBatchId: string; clientRecordIds: string[] };
+  | {
+      type: "CODEARCHIVE_CAPTURE_PAGE";
+      protocolVersion: 1;
+      capability: string;
+      cursor?: string;
+      limit: number;
+      scope: "pending" | "all";
+    }
+  | {
+      type: "CODEARCHIVE_CAPTURE_ACK";
+      protocolVersion: 1;
+      capability: string;
+      importBatchId: string;
+      clientRecordIds: string[];
+    };
+
+type ExtensionBridgeEvent =
+  | {
+      type: "CODEARCHIVE_CAPTURE_CHANGED";
+      protocolVersion: 1;
+      pendingCount: number;
+      revision: number;
+    };
 ```
 
-`CAPTURE_SUMMARY`는 코드·제목·URL 없이 pending/all 개수와 protocol version만 반환한다. `IMPORT_BEGIN`은 활성 사용자 승인 grant가 있을 때만 capability를 반환한다. `limit`은 최대 25개, 응답 payload는 최대 1 MiB, 한 import session의 page 요청은 최대 100회로 강제한다. background worker는 세션에서 실제 제공한 `clientRecordId` 집합을 추적하고, ACK 목록을 그 부분집합으로 제한한다. 응답은 고정된 envelope와 오류 코드만 사용하고 내부 예외, OAuth 값, 쿠키 또는 토큰을 포함하지 않는다. 대용량 기록은 cursor 기반 페이지로 나누며, capability가 없거나 만료·폐기 후 replay·다른 탭에서 제출된 요청은 코드 접근 전에 거부한다.
+`CAPTURE_CHANGED`에는 source, title, problem URL, account data를 포함하지 않는다. Dashboard는 이 이벤트를 신호로만 사용하고 실제 record는 capability가 필요한 `CAPTURE_PAGE`로 pull한다.
+
+`CAPTURE_SUMMARY`는 코드·제목·URL 없이 pending/all count, revision, protocol version만 반환한다.
+
+`IMPORT_BEGIN`은 다음 조건이 모두 만족될 때만 capability를 반환한다.
+
+- sender exact origin 검증 성공
+- Dashboard가 authenticated/auto-sync eligible handshake를 완료
+- Port가 현재 tab과 연결되어 있음
+- protocol version 지원
+
+MVP 제한:
+
+- page `limit <= 25`
+- response payload `<= 1 MiB`
+- 한 sync capability의 page request `<= 100`
+- ACK는 해당 capability/session에서 실제 제공한 `clientRecordId`의 부분집합만 허용
+- response/error는 고정 envelope와 안전한 오류 코드만 사용
+- 내부 exception, OAuth 값, cookie, token, provider/API raw body는 반환하지 않음
 
 ## 기록 수명 주기
 
 ```text
-captured_local → offered_to_dashboard → imported_to_server
-       │                    │
-       └──── export ────────┘
+captured_local
+     │
+     ├─ Dashboard 없음 ───────────────┐
+     │                                │
+     ▼                                │
+pending_for_dashboard ◄──────────────┘
+     │
+     │ eligible Dashboard auto-drain
+     ▼
+offered_in_sync_session
+     │
+     ├─ API rejected/transient failure → pending 유지
+     │
+     ▼
+imported_to_server
+     │
+     ▼
+acknowledged_local_receipt
 ```
 
-- `clientRecordId`는 확장에서 생성한 불변 UUID이며 API idempotency key로 사용한다.
-- API는 `(userId, clientRecordId)`를 고유하게 처리한다.
-- acknowledge는 API가 성공 또는 동일 사용자 중복으로 확정한 ID에만 보낸다. 이 receipt는 사용자 소유권이 아니라 “어느 계정엔가 한 번 전달 확인됨”을 뜻한다.
-- acknowledge 실패는 서버 저장을 롤백하지 않는다. 다음 가져오기에서 API idempotency로 중복을 흡수한다.
-- 가져오기 완료 후에도 로컬 기록은 기본적으로 삭제하지 않는다. 삭제는 별도 사용자 동작이다.
-- 기본 `pending` 범위는 전달 확인 receipt가 없는 기록만 제공한다. `all` 범위는 이미 전달된 기록도 포함하며 Dashboard에서 사용자가 **전체 로컬 기록 다시 가져오기**를 명시적으로 선택한 경우에만 요청한다.
-- 다른 대시보드 계정으로 가져올 때는 사용자에게 대상 계정을 명확히 표시한다. 이미 전달된 기록은 자동으로 다시 제공하지 않으며, 사용자가 `all` 범위와 대상 계정을 확인해야 한다. 확장은 계정 식별자나 소유권을 저장하지 않는다.
+- `clientRecordId`는 Extension이 capture 시 생성한 불변 UUID다.
+- API idempotency boundary는 `(userId, clientRecordId)`다.
+- `importBatchId`는 관찰/추적용이며 idempotency key 자체가 아니다.
+- ACK는 API가 성공 또는 **동일한 authenticated user에 이미 존재**한다고 확정한 ID에만 보낸다.
+- ACK 실패는 서버 저장을 롤백하지 않는다. 다음 sync에서 API idempotency가 중복을 흡수한다.
+- sync 완료 후에도 로컬 record는 기본 삭제하지 않는다.
+- `pending`은 local ACK receipt가 없는 record만 제공한다.
+- `all`은 명시적인 사용자 re-import 동작에만 사용한다.
+
+## 동시성 및 재시도
+
+Dashboard는 하나의 Extension connection에 대해 하나의 active drain만 실행한다.
+
+- `CAPTURE_CHANGED`가 drain 중 도착하면 `revision`을 기억하고 현재 drain 완료 후 summary를 다시 조회한다.
+- API transient failure는 Dashboard에서 bounded retry/backoff 한다.
+- Extension은 API retry를 수행하지 않는다.
+- partial API result에서는 성공/동일사용자중복 ID만 ACK한다.
+- rejected record는 Dashboard에서 이유를 안전하게 표시하고 pending 상태를 유지하거나 사용자 조치 대상으로 둔다.
+- 동일 record가 reconnect/race로 다시 전송되어도 API idempotency로 중복 row를 만들지 않는다.
 
 ## 인증과 보안
 
 - GitHub OAuth callback은 Web Dashboard/Main API 흐름에서만 사용한다.
-- 확장에서 `identity` permission과 Main API `host_permissions`를 제거하는 것이 목표 상태다.
-- Dashboard origin을 `externally_connectable`에 추가하는 manifest 변경은 브라우저 보안 경계 변경이므로 구현·배포 전에 승인을 받는다.
-- 대시보드 세션만 Main API에 인증된다. 브리지에서 받은 데이터는 신뢰하지 않고 shared schema와 API에서 다시 검증한다.
-- 문제 원문, 플랫폼 쿠키·로그인 정보, 브라우저 세션, OAuth token은 브리지 payload에 포함하지 않는다.
-- 외부 메시지 요청 횟수, page limit, payload 크기에 상한을 둔다.
-- 승인되지 않은 page/ack 요청, capability의 다른 탭 사용, idle/absolute 만료, terminal ACK 후 replay, 제공되지 않은 ID의 ACK, limit/payload 초과를 거부하는 보안 테스트를 배포 차단 조건으로 둔다.
+- Extension에서 `identity` permission과 Main API `host_permissions`를 제거하는 것이 목표 상태다.
+- Dashboard exact origin을 `externally_connectable`에 추가하는 manifest 변경은 브라우저 보안 경계 변경이므로 구현 직전 별도 owner approval gate를 거친다.
+- Dashboard session만 Main API에 인증된다.
+- Bridge record는 untrusted input으로 보고 shared schema와 Main API에서 다시 검증한다.
+- 문제 원문, 플랫폼 cookie/login 정보, 브라우저 session, OAuth token은 bridge payload에 포함하지 않는다.
+- Source code는 product 기능상 필요한 capture record에만 포함하고, Dashboard auto-sync 활성화 전에는 외부로 전송하지 않는다.
+- exact-origin 허용만으로 계정 전환을 자동 승인한 것으로 보지 않는다. logout/account change는 기존 capability를 끝낸다.
+
+배포 차단 보안 테스트:
+
+- 비허용 origin connection 거부
+- unsupported protocol 거부
+- capability 없는 page/ack 거부
+- 다른 tab/Port에서 capability replay 거부
+- idle/absolute expiry 후 replay 거부
+- 제공되지 않은 clientRecordId ACK 거부
+- page/request count/payload limit 초과 거부
+- logout/account-context change 후 기존 capability 사용 거부
+- `CAPTURE_CHANGED`가 source/code/title/URL을 노출하지 않음
+- Extension에서 Main API/OAuth/token 경로가 cleanup 후 완전히 제거됨
 
 ## 실패 처리
 
 | 상황 | 동작 |
 | --- | --- |
-| 확장 미설치/비활성 | 대시보드에서 설치 안내 및 JSON 가져오기 제공 |
-| 대시보드 로그아웃 | 로컬 수집 유지, 서버 가져오기 비활성 |
-| 브리지 버전 불일치 | 업데이트 안내, 데이터 변경 없음 |
-| API 일부 실패 | 성공 ID만 acknowledge, 실패 항목은 재시도 가능 |
-| 대시보드 탭 종료 | 로컬 기록 유지, 다음 방문에 재개 |
+| Extension 미설치/비활성 | Dashboard에서 설치 안내 및 JSON 수동 가져오기 제공 |
+| Dashboard 닫힘 | Extension local capture 유지, 다음 연결에서 자동 catch-up |
+| Dashboard 로그아웃 | Port/capability 종료, local capture 유지 |
+| account 전환 | 이전 sync session 종료, 새 account에서 eligibility 재확인 |
+| bridge version 불일치 | 업데이트 안내, 데이터 변경 없음 |
+| API 일부 실패 | 성공/동일사용자중복 ID만 ACK, 실패 record pending 유지 |
+| Dashboard tab 종료 | capability 폐기, local capture 유지 |
 | 중복 가져오기 | `(userId, clientRecordId)` idempotent upsert |
+| ACK 전 Port 종료 | 다음 연결에서 재전송 가능, API idempotency로 중복 흡수 |
 
-## 구현 순서와 완료 조건
+## Dashboard 상태 모델
 
-1. 공유 capture/import schema와 protocol version을 정의한다.
-2. 기존 OAuth/direct-sync 경로를 유지한 채 Extension에 사용자 승인 capability와 외부 read/ack 브리지를 추가한다.
-3. Dashboard를 초기화하고 웹 GitHub OAuth 및 확장 연결 상태를 구현한다.
-4. Dashboard import preview, 선택, API bulk upsert, 성공 acknowledge를 구현한다.
-5. 실제 Chrome에서 offline capture → dashboard login → 사용자 승인 → import → 재가져오기 중복 없음까지 검증한다.
-6. E2E 통과 후 별도 cleanup PR에서 Extension OAuth·API sync UI/runtime/권한을 제거한다.
+Dashboard는 최소한 다음 상태를 구분한다.
 
-MVP 완료 조건:
+```text
+extension_missing
+extension_connected_sync_off
+extension_connected_sync_ready
+syncing
+sync_idle
+sync_degraded
+signed_out
+```
 
-- 로그인·API 장애 중에도 SWEA 정답 코드가 로컬에 저장된다.
-- 로그인된 대시보드가 확장 기록을 페이지 단위로 가져와 사용자별 서버 기록으로 표시한다.
-- 확장에는 OAuth UI, CodeArchive 토큰, Main API 직접 요청이 없다.
-- 부분 실패와 반복 가져오기로 데이터가 손실되거나 중복 생성되지 않는다.
-- 사용자 승인 capability 없이 외부 페이지가 로컬 코드 page를 읽거나 acknowledge할 수 없다.
-- 계정 전환 시 acknowledged 기록은 자동 재전송되지 않고 명시적 `all` 범위 확인을 거친다.
+사용자에게는 technical bridge label 대신 다음처럼 설명한다.
 
-## 전환 계획
+- 자동 동기화 켜짐
+- 로컬 기록 동기화 중
+- 모두 동기화됨
+- 로컬 기록 N개 대기 중
+- 일부 기록 동기화 실패
+- Extension 연결 필요
+- 로그인 필요
 
-- 기존 Extension OAuth와 direct sync 코드는 새 브리지 인수 테스트가 통과할 때까지 한 PR에서 즉시 삭제하지 않는다.
-- 먼저 새 경로를 구현하고 검증한 뒤, 별도 cleanup PR에서 `identity`, Main API host permission, auth/session/sync UI와 런타임을 제거한다.
-- 기존 서버 인증·solution API는 대시보드가 재사용한다. Extension 전용 login/exchange endpoint와 exact extension CORS allowlist는 사용처 제거 후 별도 cleanup 대상으로 남긴다.
+## 구현 순서
+
+1. shared capture/import schema, `clientRecordId`, protocol version, bulk-upsert result contract를 동결한다.
+2. Extension에 exact-origin Port bridge, capability, paginated pending read, ACK, metadata-only `CAPTURE_CHANGED`를 추가한다. 기존 OAuth/direct-sync 경로는 아직 제거하지 않는다.
+3. Dashboard를 초기화하고 Web GitHub OAuth/session 및 Extension 연결 상태를 구현한다.
+4. Dashboard auto-sync opt-in, connection lifecycle, pending catch-up/drain, API bulk upsert, partial ACK를 구현한다.
+5. Main API에서 `(userId, clientRecordId)` idempotent bulk upsert와 per-record result를 검증/보강한다.
+6. 개발/베타 환경에서 real Chrome E2E를 수행한다.
+7. replacement E2E 통과 후 별도 cleanup PR에서 Extension OAuth, auth/session/sync UI/runtime, `identity`, Main API host permission, Extension 전용 API/CORS 사용처를 제거한다.
+8. cleanup 후 다시 real Chrome regression을 수행한다.
+
+## Real Chrome E2E 완료 조건
+
+- Dashboard/API가 없어도 SWEA 정답 코드가 IndexedDB에 저장된다.
+- Dashboard login 후 auto-sync를 켜면 기존 pending 기록이 자동으로 서버에 저장된다.
+- Dashboard가 열린 상태에서 새 SWEA PASS가 발생하면 별도 수동 import 버튼 없이 서버 기록으로 반영된다.
+- Dashboard를 닫은 동안 capture한 기록이 다음 연결 시 자동 catch-up된다.
+- partial failure에서 성공한 record만 ACK된다.
+- reconnect/retry 후 duplicate server record가 생성되지 않는다.
+- logout/account switch 후 이전 capability로 추가 source transfer가 되지 않는다.
+- Extension은 CodeArchive/GitHub token을 저장하지 않는다.
+- Extension은 Main API를 직접 호출하지 않는다.
+- Extension local record는 sync 성공 후에도 유지된다.
+
+## 개발/베타와 Production 환경
+
+브랜치와 배포 환경은 분리한다.
+
+```text
+feature/fix branch
+  → PR
+  → develop
+  → development/beta deployment + real-browser acceptance
+  → develop → master release PR
+  → master
+  → Production deployment
+```
+
+- `develop`은 통합 개발 브랜치이며 development/beta runtime의 배포 소스다.
+- development/beta 배포는 정확한 reviewed `develop` commit을 사용한다.
+- `master`는 Production 배포 소스다.
+- Production을 `develop`에서 배포하지 않는다.
+- routine development를 `master`에서 하지 않는다.
+- development/beta 배포 승인과 Production 배포 승인은 서로 다른 gate다.
+- `develop → master` merge 승인도 Production 배포 승인을 대신하지 않는다.
+- provider auto-deploy는 별도 owner 결정이 있기 전까지 비활성 상태를 유지한다.
+- 현재 provider 자원이 beta 용도라면 beta 자원으로 유지한다. 별도 Production 자원 생성/전환은 이후 비용·운영 설계 및 승인 대상이다.
+
+## 기존 OAuth/direct-sync 경로 전환
+
+- 새 bridge/auto-sync 경로가 real Chrome에서 검증되기 전에는 기존 Extension OAuth/direct-sync 코드를 한 PR에서 즉시 삭제하지 않는다.
+- 새 경로가 검증된 뒤 별도 cleanup PR로 legacy client code와 권한을 제거한다.
+- 기존 Main API user/session/solution 기반은 Dashboard가 재사용한다.
+- Extension 전용 login/exchange endpoint와 exact Extension CORS allowlist는 사용처 제거가 확인된 뒤 service cleanup 대상으로 분리한다.
+- 기존 Extension OAuth 문제를 추적하던 issue는 새 설계 merge 시 자동으로 계속 수행하지 않는다. Integrator가 각각 `superseded`, `re-scope`, 또는 Dashboard/API에 여전히 필요한 운영 문제인지 분류한다.
