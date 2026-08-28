@@ -14,6 +14,7 @@ const BULK_UPSERT_URL = `${MAIN_API_ORIGIN}/api/v1/solutions/bulk-upsert`;
 const PLATFORMS = new Set(["SWEA", "PROGRAMMERS", "JUNGOL", "LEETCODE"]);
 const LANGUAGES = new Set(["JAVA", "PYTHON", "C", "CPP", "JAVASCRIPT", "TYPESCRIPT", "KOTLIN", "CSHARP", "GO", "RUST", "SWIFT"]);
 const RESULTS = new Set(["ACCEPTED", "WRONG_ANSWER", "TIME_LIMIT_EXCEEDED", "MEMORY_LIMIT_EXCEEDED", "RUNTIME_ERROR", "COMPILE_ERROR", "OUTPUT_FORMAT_ERROR", "PARTIAL_SCORE", "UNKNOWN"]);
+const BULK_UPSERT_FAILURE_CODES = new Set(["INVALID_RECORD", "PERSISTENCE_FAILED"]);
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -86,12 +87,35 @@ export function parsePendingPage(value: unknown): ValidPendingPage | null {
   };
 }
 
+function isValidBulkUpsertResult(value: unknown): value is Record<string, unknown> {
+  if (!isObject(value)) return false;
+  if (typeof value.clientRecordId !== "string" || value.clientRecordId.length === 0) return false;
+
+  if (value.outcome === "IMPORTED" || value.outcome === "EXISTING") {
+    return value.ackEligible === true && value.errorCode === null;
+  }
+
+  if (value.outcome === "FAILED") {
+    return value.ackEligible === false
+      && typeof value.errorCode === "string"
+      && BULK_UPSERT_FAILURE_CODES.has(value.errorCode);
+  }
+
+  return false;
+}
+
 function parseAckableApiIds(value: unknown, offeredIds: readonly string[]): readonly string[] | null {
   if (!isObject(value) || value.success !== true || value.error !== null || !isObject(value.data)) return null;
   if (typeof value.requestId !== "string" || !Array.isArray(value.data.results)) return null;
+
+  const results = value.data.results;
+  if (!results.every(isValidBulkUpsertResult)) return null;
+
+  const resultIds = results.map((result) => result.clientRecordId as string);
+  if (new Set(resultIds).size !== resultIds.length) return null;
+
   const offered = new Set(offeredIds);
-  const selected = selectAckableClientRecordIds(value.data.results).filter((id) => offered.has(id));
-  return [...new Set(selected)];
+  return selectAckableClientRecordIds(results).filter((id) => offered.has(id));
 }
 
 export function createPendingDrainApiClient(
