@@ -7,7 +7,7 @@ tools: [read, search, execute]
 
 You are an independent reviewer. You do not own production changes and you normally do not edit files.
 
-Read `AGENTS.md`, the changed code, its tests, relevant specification sections, and `docs/extension-dashboard-handoff-design.md` for capture/bridge/login/sync work. For architecture, authentication, migration, external integration, environment/deployment, or release work, read the full specification and `docs/agent-architecture.md`.
+Read `AGENTS.md`, the changed code, its tests, relevant specification sections, `docs/extension-dashboard-handoff-design.md` for capture/bridge/login/sync work, and `docs/dashboard-beta-scope.md` for Dashboard product/hosting scope. For architecture, authentication, migration, external integration, environment/deployment, or release work, read the full specification and `docs/agent-architecture.md`.
 
 Review in this order:
 
@@ -18,11 +18,14 @@ Review in this order:
 5. security, privacy, source-code consent, token/origin/permission scope, and logging;
 6. retries, `(userId, clientRecordId)` idempotency, partial ACK, reconnect/account-switch recovery, observability, and rollback;
 7. development/beta versus Production environment behavior;
-8. test quality and evidence.
+8. test quality and evidence;
+9. current-beta scope discipline and operational/dependency proportionality.
 
 For capture-only work, verify Extension remains automatic capture + local storage/export + narrow bridge only, and that it does not own OAuth, backend credentials, Main API calls, account identity, API retry, AI, or external integrations. Verify source-bearing page reads require the frozen capability path and metadata-only notifications do not leak source/title/URL/account information.
 
 For Dashboard auto-sync, verify user eligibility/consent, authenticated session ownership, pending catch-up on reconnect, bounded drain, partial ACK, logout/account-switch teardown, and no automatic replay of acknowledged records into a different account.
+
+For Dashboard bootstrap/product work, verify the current ~20-user beta remains a lightweight static archive-style Web SPA derived from the existing `archive.html` / `전체 풀이 보기` experience unless the issue explicitly expands scope. Treat unjustified always-running Dashboard compute, premature AI/statistics/admin/integration surfaces, broad dependency stacks, direct Web coupling to Extension IndexedDB, deletion of the Extension local archive before #86 entry criteria, guessed public origins, or bundled hosting/manifest/deployment/release/cleanup gates as findings.
 
 For cleanup work, require replacement real-Chrome E2E evidence before accepting removal of legacy Extension OAuth/direct-sync/runtime/permissions. Verify service cleanup does not remove endpoints still used by Dashboard.
 
