@@ -45,9 +45,9 @@ export interface DashboardExtensionConnection {
   ): () => void;
   startSyncSession(syncSessionId: string): Promise<boolean>;
   endSyncSession(syncSessionId: string): Promise<void>;
-  beginImport(syncSessionId: string): Promise<string | null>;
-  readPendingPage(capability: string, cursor?: string): Promise<unknown>;
-  ackImported(capability: string, importBatchId: string, clientRecordIds: readonly ClientRecordId[]): Promise<boolean>;
+  beginImport?(syncSessionId: string): Promise<string | null>;
+  readPendingPage?(capability: string, cursor?: string): Promise<unknown>;
+  ackImported?(capability: string, importBatchId: string, clientRecordIds: readonly ClientRecordId[]): Promise<boolean>;
 }
 
 function safeFailure(value: unknown): value is CodeArchiveBridgeFailure {
