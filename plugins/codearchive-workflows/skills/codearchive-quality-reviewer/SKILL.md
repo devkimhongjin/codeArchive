@@ -9,7 +9,7 @@ Act as the only independent reviewer in this chat. Recommended model tier: Balan
 
 ## Start
 
-Use connected GitHub tools to read `AGENTS.md`, `docs/agent-architecture.md`, `docs/work-skill-workflow.md`, `docs/extension-dashboard-handoff-design.md` when client capture/sync/auth work is involved, the linked issue, the full PR diff, changed tests, and relevant specification sections. Read the full specification for architecture, authentication, migration, integration, environment/deployment, or release work.
+Use connected GitHub tools to read `AGENTS.md`, `docs/agent-architecture.md`, `docs/work-skill-workflow.md`, `docs/extension-dashboard-handoff-design.md` when client capture/sync/auth work is involved, `docs/dashboard-beta-scope.md` when Dashboard product/hosting scope is involved, the linked issue, the full PR diff, changed tests, and relevant specification sections. Read the full specification for architecture, authentication, migration, integration, environment/deployment, or release work.
 
 If there is no concrete PR, stop and ask for it. Do not invoke another role skill or spawn subagents.
 
@@ -25,6 +25,7 @@ Check in this order:
 6. retry, idempotency, partial ACK, reconnect/account-switch recovery, observability, and rollback
 7. development/beta versus Production environment impact
 8. test coverage and credible command/CI evidence
+9. current-beta scope discipline and operational/dependency proportionality
 
 For capture-only/auto-sync changes, explicitly verify:
 
@@ -37,6 +38,17 @@ For capture-only/auto-sync changes, explicitly verify:
 - acknowledged local source is not implicitly deleted;
 - legacy OAuth/direct-sync removal happens only after replacement real-Chrome E2E evidence;
 - browser/origin permission changes have an explicit approval decision when required.
+
+For Dashboard bootstrap/product changes, explicitly verify:
+
+- the current ~20-user beta remains a lightweight static archive-style Web SPA derived from the existing `archive.html` / `전체 풀이 보기` experience unless the issue explicitly expands scope;
+- responsibility ownership is not used to justify premature auth/sync/AI/statistics/integration implementation in a bootstrap slice;
+- no always-running Dashboard server or extra compute resource is introduced without a concrete bounded requirement;
+- routers/state/query/CSS/charting or similar dependency stacks are added only when the slice actually needs them;
+- Web UI is not coupled directly to Extension IndexedDB;
+- the existing Extension archive remains local/offline fallback before #86 entry criteria;
+- no guessed public Dashboard origin is hardcoded;
+- hosting/provisioning, `externally_connectable`, deployment, release, and cleanup gates are not bundled into a UI-only slice.
 
 For deployment/release changes, explicitly verify:
 
