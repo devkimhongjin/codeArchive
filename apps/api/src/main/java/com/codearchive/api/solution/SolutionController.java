@@ -7,6 +7,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -30,9 +31,31 @@ import jakarta.validation.constraints.Size;
 public class SolutionController {
 
     private final SolutionService solutionService;
+    private final CaptureBulkUpsertService captureBulkUpsertService;
 
-    public SolutionController(SolutionService solutionService) {
+    public SolutionController(
+            SolutionService solutionService,
+            CaptureBulkUpsertService captureBulkUpsertService
+    ) {
         this.solutionService = solutionService;
+        this.captureBulkUpsertService = captureBulkUpsertService;
+    }
+
+    @PostMapping("/bulk-upsert")
+    public ApiResponse<CaptureBulkUpsertResponse> bulkUpsert(
+            @AuthenticationPrincipal CodeArchivePrincipal principal,
+            @Valid @RequestBody CaptureBulkUpsertRequest request,
+            @RequestAttribute(
+                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
+            ) String requestId
+    ) {
+        return ApiResponse.success(
+                captureBulkUpsertService.bulkUpsert(
+                        principal,
+                        request
+                ),
+                requestId
+        );
     }
 
     @PutMapping("/by-client-id/{clientRecordId}")

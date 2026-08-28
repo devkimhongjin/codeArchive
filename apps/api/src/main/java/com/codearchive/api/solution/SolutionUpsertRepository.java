@@ -13,41 +13,49 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class SolutionUpsertRepository {
 
+    private static final String INSERT_COLUMNS = """
+            id,
+            user_id,
+            client_record_id,
+            platform,
+            problem_number,
+            title,
+            language,
+            code,
+            result,
+            solved_at,
+            observed_at,
+            execution_time,
+            memory_usage,
+            ai_usage,
+            created_at,
+            updated_at
+            """;
+
+    private static final String INSERT_VALUES = """
+            :id,
+            :userId,
+            :clientRecordId,
+            :platform,
+            :problemNumber,
+            :title,
+            :language,
+            :code,
+            :result,
+            :solvedAt,
+            :observedAt,
+            :executionTime,
+            :memoryUsage,
+            :aiUsage,
+            :createdAt,
+            :updatedAt
+            """;
+
     private static final String UPSERT_SQL = """
             INSERT INTO solutions (
-                id,
-                user_id,
-                client_record_id,
-                platform,
-                problem_number,
-                title,
-                language,
-                code,
-                result,
-                solved_at,
-                observed_at,
-                execution_time,
-                memory_usage,
-                ai_usage,
-                created_at,
-                updated_at
+            """ + INSERT_COLUMNS + """
             ) VALUES (
-                :id,
-                :userId,
-                :clientRecordId,
-                :platform,
-                :problemNumber,
-                :title,
-                :language,
-                :code,
-                :result,
-                :solvedAt,
-                :observedAt,
-                :executionTime,
-                :memoryUsage,
-                :aiUsage,
-                :createdAt,
-                :updatedAt
+            """ + INSERT_VALUES + """
             )
             ON CONFLICT (user_id, client_record_id)
             DO UPDATE SET
@@ -66,6 +74,16 @@ public class SolutionUpsertRepository {
             RETURNING id
             """;
 
+    private static final String INSERT_IF_ABSENT_SQL = """
+            INSERT INTO solutions (
+            """ + INSERT_COLUMNS + """
+            ) VALUES (
+            """ + INSERT_VALUES + """
+            )
+            ON CONFLICT (user_id, client_record_id)
+            DO NOTHING
+            """;
+
     private final NamedParameterJdbcTemplate jdbcTemplate;
 
     public SolutionUpsertRepository(
@@ -80,9 +98,35 @@ public class SolutionUpsertRepository {
             Values values,
             Instant now
     ) {
-        UUID candidateId = UUID.randomUUID();
-        MapSqlParameterSource parameters = new MapSqlParameterSource()
-                .addValue("id", candidateId)
+        return Objects.requireNonNull(
+                jdbcTemplate.queryForObject(
+                        UPSERT_SQL,
+                        parameters(userId, clientRecordId, values, now),
+                        UUID.class
+                )
+        );
+    }
+
+    public int insertIfAbsent(
+            UUID userId,
+            String clientRecordId,
+            Values values,
+            Instant now
+    ) {
+        return jdbcTemplate.update(
+                INSERT_IF_ABSENT_SQL,
+                parameters(userId, clientRecordId, values, now)
+        );
+    }
+
+    private MapSqlParameterSource parameters(
+            UUID userId,
+            String clientRecordId,
+            Values values,
+            Instant now
+    ) {
+        return new MapSqlParameterSource()
+                .addValue("id", UUID.randomUUID())
                 .addValue("userId", userId)
                 .addValue("clientRecordId", clientRecordId)
                 .addValue("platform", values.platform())
@@ -98,14 +142,6 @@ public class SolutionUpsertRepository {
                 .addValue("aiUsage", values.aiUsage())
                 .addValue("createdAt", toOffsetDateTime(now))
                 .addValue("updatedAt", toOffsetDateTime(now));
-
-        return Objects.requireNonNull(
-                jdbcTemplate.queryForObject(
-                        UPSERT_SQL,
-                        parameters,
-                        UUID.class
-                )
-        );
     }
 
     private OffsetDateTime toOffsetDateTime(Instant value) {
