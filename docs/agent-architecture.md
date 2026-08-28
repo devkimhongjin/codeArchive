@@ -12,6 +12,8 @@ Key constraints:
 - `packages/shared-types`, root configuration, CI, and documentation affect multiple components;
 - user code, OAuth tokens, AI transmission, and external uploads create security/privacy approval points;
 - platform DOM adapters require regression fixtures and rapid maintenance;
+- the Extension is a capture-only trust boundary: it must not own OAuth, backend credentials, direct Main API synchronization, AI, or external integrations;
+- Extension → Dashboard import is a shared client contract even though both implementations live under client-builder ownership;
 - implementation and specification may drift and must not be silently reconciled;
 - current `README.md` is empty and the repository contains placeholder packages;
 - the specification says Spring Boot 3 while the current Gradle file declares Spring Boot 4.1.0.
@@ -63,6 +65,7 @@ Default sequence:
 
 - Use the integrator alone for small, tightly coupled, cross-boundary diagnosis or planning.
 - Use the client builder for the current Phase 2 and Phase 3 flow.
+- Route Extension capture/bridge and Dashboard login/import as separate bounded slices. Freeze the bridge protocol before implementation and do not remove the legacy path until the replacement E2E passes.
 - Use the service builder only for explicitly scheduled service/infra work until the local prototype is complete.
 - Use the reviewer for changes involving contracts, security, persistence, external integrations, releases, or a substantial feature slice.
 - Use the repo maintainer only when inputs, output paths, and checks are deterministic.

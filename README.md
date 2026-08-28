@@ -1,32 +1,33 @@
 # CodeArchive
 
-CodeArchive는 코딩테스트 풀이를 자동으로 수집하고 로컬에 우선 보관한 뒤, 서버 동기화와 AI 보조 기능으로 확장하는 **local-first 풀이 아카이브**입니다.
+CodeArchive는 Chrome Extension으로 코딩테스트 풀이를 자동 수집해 로컬에 보관하고, Web Dashboard에서 로그인·가져오기·관리·AI 기능을 제공하는 **local-first 풀이 아카이브**입니다.
 
 현재 목표는 약 20명이 사용할 수 있는 SWEA 베타입니다.
 
 ```text
-GitHub 로그인
-→ SWEA PASS 감지
+SWEA PASS 감지
 → Extension IndexedDB 자동 저장
-→ 인증된 Main API 동기화
+→ Web Dashboard GitHub 로그인
+→ Dashboard가 Extension 기록 가져오기
+→ Dashboard 세션으로 Main API 저장
 → 사용자별 PostgreSQL 영구 저장
 → AI 보조 결과 생성·조회
 ```
 
-로그인, API, 데이터베이스 또는 분석 서비스가 사용할 수 없는 상황에서도 로컬 저장·조회·수정·내보내기·삭제 기능은 계속 동작해야 합니다.
+대시보드, 로그인, API, 데이터베이스 또는 분석 서비스가 사용할 수 없는 상황에서도 Extension의 로컬 수집·조회·수정·내보내기·삭제 기능은 계속 동작해야 합니다. Extension은 OAuth나 Main API 직접 동기화를 담당하지 않습니다.
 
 ## 현재 베타 상태
 
 - Main API: `https://codearchive-api.onrender.com`
 - Analysis API: `https://codearchive-analysis.onrender.com`
 - 안정화된 Extension ID: `oohlcmihldmfninmdcmanddfmhoonmdl`
-- Extension Main API 권한: `https://codearchive-api.onrender.com/*`만 허용
+- Extension의 목표 권한: Main API host 권한과 `identity` 권한 없음
 - PostgreSQL: Neon, Flyway V1–V5 적용
 - Analysis provider: `fake`
 - live OpenAI: 비활성화
 - Render 서비스: Free 플랜, 자동 배포 비활성화
 
-Main API와 Analysis API health, Analysis 내부 API의 미인증 `401`, GitHub 로그인 시작 URL 생성까지 확인했습니다. 실제 unpacked Chrome에서 OAuth 복귀·일회용 코드 교환·인증된 `/api/v1/me` 검증은 [Issue #66](https://github.com/devkimhongjin/codeArchive/issues/66)의 남은 작업입니다.
+Main API와 Analysis API의 배포 상태 및 사용자별 서버 기반은 마련되어 있습니다. 현재 전환 목표는 Extension OAuth/direct sync를 중단하고, Web Dashboard 로그인과 Extension → Dashboard 가져오기 경계를 구현하는 것입니다. 세부 설계는 [Extension → Dashboard 수집 인계 설계](docs/extension-dashboard-handoff-design.md)를 따릅니다.
 
 ## 저장소 구성
 
@@ -145,13 +146,14 @@ ChatGPT Work에서는 한 대화에 CodeArchive 역할 Skill 하나만 명시적
 
 - OAuth secret, API key, token, cookie와 전체 사용자 코드를 로그·Issue·PR에 남기지 않습니다.
 - 로그인 단계에서 GitHub repository 권한을 요청하지 않습니다.
-- Extension 권한은 승인된 정확한 Main API origin 이상으로 넓히지 않습니다.
+- Extension은 Main API host 권한과 OAuth identity 권한을 목표 상태에서 제거합니다. Dashboard origin 브리지 허용은 정확한 HTTPS origin만 사용하며 구현·배포 전 승인합니다.
 - live AI, 유료 인프라, 외부 업로드와 권한 확대는 명시적인 승인 없이는 진행하지 않습니다.
 - 문제 본문 전체, 공식 해설, 비공개 테스트 데이터와 플랫폼 로그인 정보는 수집하지 않습니다.
 
 ## 문서
 
 - [개발 명세서](docs/codearchive-development-spec.md)
+- [Extension → Dashboard 수집 인계 설계](docs/extension-dashboard-handoff-design.md)
 - [에이전트 구조](docs/agent-architecture.md)
 - [저장소 에이전트 규칙](AGENTS.md)
 - [ChatGPT Work Skill 워크플로](docs/work-skill-workflow.md)

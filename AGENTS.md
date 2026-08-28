@@ -9,20 +9,20 @@
 
 ## Current delivery priority
 
-Issue #31 (`[MVP] SWEA archive + GitHub login + backend sync + AI assistance (~20-user beta)`) overrides the broader section 23.0 sequencing until the SWEA MVP beta is complete.
+Issue #31 (`[MVP] SWEA archive + GitHub login + backend sync + AI assistance (~20-user beta)`) remains the umbrella, but the owner decision recorded on 2026-08-28 changes the client boundary: the Extension is capture-only; Web Dashboard owns login, Extension import, backend synchronization, management, AI, and external integrations. This decision overrides older issue wording and section 23.0 where they require Extension OAuth or direct API sync.
 
 The current delivery goal is one end-to-end SWEA beta that can be distributed to roughly 20 testers. Authentication and user-scoped persistence are now part of the MVP because server-side records and AI artifacts must not mix across users. Follow this order unless the project integrator records a new decision:
 
-1. #43 — GitHub App login + CodeArchive user/session identity foundation.
-2. #33 — authenticated user-scoped Spring Main API + PostgreSQL solution persistence.
-3. #34 — local-first Extension record → authenticated deployed Main API synchronization.
-4. #35 — user-scoped FastAPI/OpenAI AI artifact backend with a minimal beta cost/abuse guard.
-5. #36 — Extension GitHub login, sync state, AI buttons, and artifact UI.
-6. #37 — deployed HTTPS beta + multi-user real Chrome acceptance.
+1. Preserve and harden SWEA capture → Extension IndexedDB without login or server availability.
+2. Implement GitHub login in Web Dashboard using the existing user/session foundation.
+3. Freeze the Extension → Dashboard paginated import/ack contract in `docs/extension-dashboard-handoff-design.md` and shared types.
+4. Implement Dashboard-owned authenticated bulk import into the deployed Main API.
+5. Remove Extension OAuth, backend tokens, direct API sync, AI/external-integration UI, and unnecessary browser permissions after the replacement path passes real-Chrome acceptance.
+6. Continue user-scoped AI artifacts and deployed multi-user beta acceptance from the Dashboard.
 
 Already completed for this MVP: SWEA capture/local archive UX through #40. Issue #32 automatic SWEA performance collection was intentionally discontinued; execution time and memory remain optional manual fields. GitHub repository upload (#44) and public sharing/leaderboards (#45) are post-MVP work and must not block the sequence above.
 
-Preserve the local-first invariant throughout the MVP: SWEA capture, IndexedDB persistence, browsing, editing, export, and delete must still work when login, API, database, or AI service is unavailable. Do not begin another coding platform while Issue #31 is open unless the project integrator explicitly reprioritizes it.
+Preserve the local-first invariant throughout the MVP: SWEA capture, IndexedDB persistence, browsing, editing, export, and delete must still work when the Dashboard, login, API, database, or AI service is unavailable. The Extension must not authenticate users, store CodeArchive tokens, or call the Main API. Do not begin another coding platform while Issue #31 is open unless the project integrator explicitly reprioritizes it.
 
 ## Ownership
 

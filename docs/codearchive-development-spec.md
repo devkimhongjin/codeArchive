@@ -1,8 +1,8 @@
 # CodeArchive 개발 명세서
 
 > 코딩테스트 풀이 자동 기록·분석·외부 연동 서비스  
-> 문서 버전: 2.0  
-> 기준 상태: 설계 및 초기 구현 전  
+> 문서 버전: 2.1
+> 기준 상태: SWEA local-first 베타 구현 및 Extension capture-only 구조 전환 중
 > 문서 성격: 기능·기술·운영·유지보수 구현 명세서
 
 ---
@@ -118,13 +118,19 @@ Chrome Extension
 - Platform Adapter
 - Submission Observer
 - Popup
-- Local Queue
+- Local Capture Store
         │
         ├──────────────► Local Export
         │                - Source File
         │                - Markdown
         │                - JSON
         │                - ZIP
+        │
+        ▼ (사용자가 로그인된 Dashboard에서 가져오기 실행)
+Web Dashboard
+- GitHub Login
+- Extension Import Bridge
+- Import Preview / Management
         │
         ▼
 Main API Server
@@ -150,8 +156,8 @@ Main API Server
 
 | 서비스 | 역할 | 권장 기술 |
 |---|---|---|
-| Browser Extension | 플랫폼 감지, 코드·결과 수집, 빠른 저장 | Manifest V3, TypeScript, React, Vite |
-| Web Dashboard | 기록 조회, 통계, 설정, 외부 연동 관리 | React, TypeScript, React Router, Zustand, TanStack Query |
+| Browser Extension | 플랫폼 감지, 코드·결과 수집, 로컬 저장·내보내기 | Manifest V3, TypeScript, React, Vite |
+| Web Dashboard | 로그인, Extension 기록 가져오기, 서버 동기화, 기록·통계·설정·외부 연동 관리 | React, TypeScript, React Router, Zustand, TanStack Query |
 | Main API | 인증, CRUD, 연동, 파일 생성 요청 | Java 21, Spring Boot 3 |
 | Analysis API | AI 리뷰, 통계 분석, 문제 추천 | Python, FastAPI |
 | Worker | 장시간 작업과 재시도 | Celery 또는 RQ |
@@ -206,7 +212,7 @@ extension/src/
 │   └── baekjoon/
 ├── capture/
 ├── storage/
-├── sync/
+├── dashboard-bridge/
 ├── export/
 ├── feedback/
 ├── common/
@@ -275,16 +281,16 @@ interface PlatformAdapter {
 
 동적으로 표시되는 결과는 `MutationObserver`로 감지한다.
 
-### 4.6 로컬 임시 저장
+### 4.6 로컬 원본 저장
 
-서버 연결 실패 또는 비로그인 상태에서도 수집 기록을 보존해야 한다.
+Extension은 로그인이나 서버 상태와 무관하게 수집 기록을 IndexedDB에 보존한다. 이 저장소는 Dashboard 가져오기 전후 모두 사용 가능한 로컬 원본이다.
 
-- IndexedDB에 임시 저장
-- 동기화 상태 저장
-- 네트워크 복구 시 재전송
-- 동일 제출 중복 전송 방지
-- 최대 재시도 횟수 설정
-- 사용자가 실패 기록을 수동 재전송 가능
+- IndexedDB에 즉시 저장
+- 불변 `clientRecordId`와 코드 해시로 로컬 중복 방지
+- Dashboard에 제공한 상태와 성공 acknowledge 시각 저장
+- 서버 가져오기 성공 후에도 기본적으로 로컬 기록 보존
+- Source·Markdown·JSON·ZIP 로컬 내보내기 지원
+- Extension은 Main API를 호출하거나 CodeArchive 인증 토큰을 저장하지 않음
 
 ### 4.7 확장 프로그램 상태 표시
 
@@ -294,9 +300,8 @@ interface PlatformAdapter {
 - 문제 페이지 감지 여부
 - 코드 수집 성공 여부
 - 제출 결과 감지 여부
-- 서버 연결 상태
-- 미동기화 기록 수
-- 마지막 동기화 시각
+- Dashboard로 가져오지 않은 기록 수
+- 마지막 Dashboard 가져오기 확인 시각
 - 어댑터 오류 여부
 
 ---
@@ -320,7 +325,9 @@ interface PlatformAdapter {
 | GitHub | OAuth App 또는 GitHub App |
 | Notion | OAuth 2.0 |
 | AI Provider | 사용자 API Key 또는 서버 프록시 |
-| Chrome Extension | 웹 로그인 세션 연동 또는 Extension용 토큰 발급 |
+| Chrome Extension | 인증하지 않음. 로그인된 Web Dashboard가 로컬 수집 기록을 가져감 |
+
+GitHub OAuth와 CodeArchive 사용자 세션은 Web Dashboard와 Main API 사이에서만 처리한다. Extension에는 OAuth UI, access/refresh token, GitHub token을 두지 않는다.
 
 ### 5.3 보안 요구사항
 
@@ -772,8 +779,18 @@ recommendationScore =
 - 데이터 내보내기
 - 피드백 등록
 - 서비스 상태
+- Extension 연결 및 로컬 기록 가져오기
+- 가져오기 미리보기·선택·부분 실패 재시도
 
-### 13.3 문제 목록 필터
+### 13.3 Extension 기록 가져오기
+
+- 로그인된 사용자만 서버 가져오기를 실행할 수 있다.
+- Dashboard는 허용된 외부 메시지 계약으로 설치된 Extension에서 cursor 기반 페이지를 읽는다.
+- API 저장 결과 중 성공·동일 사용자 중복 항목만 Extension에 acknowledge한다.
+- Extension 미설치 또는 브리지 장애 시 JSON 가져오기를 대체 경로로 제공한다.
+- Dashboard는 가져오기 대상 계정, 기록 수, 중복·실패 결과를 명확히 표시한다.
+
+### 13.4 문제 목록 필터
 
 - 플랫폼
 - 난이도
@@ -817,6 +834,7 @@ GET    /api/v1/problems/{id}
 POST   /api/v1/problems
 
 POST   /api/v1/solutions
+POST   /api/v1/solutions/import
 GET    /api/v1/solutions/{id}
 PATCH  /api/v1/solutions/{id}
 DELETE /api/v1/solutions/{id}
@@ -959,8 +977,8 @@ GET    /api/v1/service-status
 |---|---|
 | Unit Test | 파서, 서비스, 점수 계산, 파일명 생성 |
 | Integration Test | DB, Redis, 외부 API Adapter |
-| Contract Test | Extension ↔ API, Main API ↔ Analysis API |
-| E2E Test | 자동 수집부터 GitHub 업로드까지 |
+| Contract Test | Extension ↔ Dashboard, Dashboard ↔ Main API, Main API ↔ Analysis API |
+| E2E Test | 자동 수집 → Dashboard 가져오기 → 사용자별 서버 저장 → GitHub 업로드 |
 | Regression Test | 기존 플랫폼 선택자와 핵심 기능 |
 | Security Test | 인증, 권한, 토큰 노출 |
 | Performance Test | 대량 기록 조회, 통계 집계, ZIP 생성 |
@@ -1351,7 +1369,7 @@ Semantic Versioning을 적용한다.
 - 로그인 성공률
 - 자동 수집 성공률
 - 플랫폼별 파싱 실패율
-- 동기화 실패 수
+- Dashboard 가져오기·서버 저장 실패 수
 - GitHub API 실패율
 - Notion API 실패율
 - AI 요청 실패율
@@ -1408,7 +1426,7 @@ Semantic Versioning을 적용한다.
 
 - 일반 목록 API: P95 500ms 이하
 - 상세 조회 API: P95 700ms 이하
-- 확장 프로그램 자동 수집: 제출 결과 표시 후 2초 이내 저장 시도
+- 확장 프로그램 자동 수집: 제출 결과 표시 후 2초 이내 로컬 저장 시도
 - 대시보드 초기 로딩: 3초 이내
 - 통계 요약: 캐시 사용 시 1초 이내
 - ZIP 생성: 비동기 처리
@@ -1478,9 +1496,9 @@ Semantic Versioning을 적용한다.
 6. SWEA 문제 페이지 감지 및 문제 정보 수집
 7. 제출 코드와 결과 감지
 8. 자동 수집 기록을 로컬 저장소에 통합
-9. Web Dashboard 프로토타입
-10. Main API·PostgreSQL 동기화
-11. 인증 및 외부 서비스 연동
+9. Web Dashboard 로그인·관리 프로토타입
+10. Extension → Dashboard 기록 가져오기
+11. Dashboard → Main API·PostgreSQL 동기화 및 외부 서비스 연동
 12. AI 리뷰·통계·추천
 
 프로토타입 단계에서는 서버 연결 실패나 서버 미실행 상태에서도 핵심 기록·조회·내보내기 기능이 동작해야 한다. API, 데이터베이스, 인증은 로컬 사용자 흐름이 검증된 이후 연결한다.
@@ -1524,8 +1542,7 @@ Semantic Versioning을 적용한다.
 - 문제 정보 수집
 - 코드 수집
 - 제출 결과 감지
-- 로컬 큐
-- 서버 동기화
+- 로컬 원본 저장
 - 어댑터 테스트
 
 완료 기준:
@@ -1544,18 +1561,19 @@ Semantic Versioning을 적용한다.
 
 - 두 플랫폼에서 동일한 내부 데이터 모델로 저장됨
 
-### Phase 5. 인증 및 서버 저장
+### Phase 5. Dashboard 인증 및 서버 저장
 
-- 사용자 인증
-- Extension 인증
+- Web Dashboard 사용자 인증
+- Extension 기록 가져오기 UI
+- Extension ↔ Dashboard paginated read/ack bridge contract 및 구현
 - Solution·Submission API
 - DB 마이그레이션
-- 동기화 충돌 처리
+- Dashboard import 중복·부분 실패 처리
 - 데이터 백업
 
 완료 기준:
 
-- 여러 브라우저 세션에서 동일 기록 조회 가능
+- Extension이 로그인 없이 계속 수집하고, 로그인된 Dashboard가 기록을 가져온 뒤 여러 웹 브라우저 세션에서 동일 기록을 조회할 수 있음
 
 ### Phase 6. GitHub·Notion 연동
 
@@ -1634,6 +1652,7 @@ Semantic Versioning을 적용한다.
 
 - SWEA, 프로그래머스
 - Chrome Extension 자동 수집
+- Web Dashboard GitHub 로그인 및 Extension 기록 가져오기
 - 수동 기록
 - 문제 목록·상세
 - Source·Markdown·JSON 다운로드

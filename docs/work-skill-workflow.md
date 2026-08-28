@@ -73,6 +73,8 @@ Every Skill finishes with:
 
 The default is sequential execution. Run client and service chats in parallel only after the Integrator freezes their shared contract and assigns disjoint paths in the issue. Never let two chats edit the same path concurrently.
 
+For the capture-only client transition, use separate sequential client slices for Extension bridge work and Dashboard login/import work. Treat `docs/extension-dashboard-handoff-design.md` plus approved shared types as the frozen interface. Do not ask an Extension implementation chat to add OAuth or direct Main API synchronization.
+
 ## Approval gates
 
 The user must approve immediately before merging, production deployment, destructive migration or deletion, OAuth/browser permission expansion, secret rotation, cost-bearing external action, or external publication of user code.
