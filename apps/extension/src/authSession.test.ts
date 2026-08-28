@@ -110,7 +110,10 @@ describe("CodeArchiveAuthService", () => {
     const service = new CodeArchiveAuthService("https://api.example.com", memoryStore(), bridge, fetcher);
 
     await expectStage(service.login(), "login_start_fetch_origin");
-    expect(fetcher).toHaveBeenNthCalledWith(1, "https://api.example.com/api/v1/auth/github/extension-login", { method: "GET" });
+    expect(fetcher).toHaveBeenNthCalledWith(1, "https://api.example.com/api/v1/auth/github/extension-login", {
+      method: "GET",
+      cache: "no-store",
+    });
     expect(fetcher).toHaveBeenNthCalledWith(2, "https://api.example.com/actuator/health", {
       method: "GET",
       cache: "no-store",

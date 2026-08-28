@@ -194,7 +194,10 @@ export class CodeArchiveAuthService implements CodeArchiveAuthProvider {
 
     let loginResponse: Response;
     try {
-      loginResponse = await this.fetcher(`${this.apiBaseUrl}/api/v1/auth/github/extension-login`, { method: "GET" });
+      loginResponse = await this.fetcher(`${this.apiBaseUrl}/api/v1/auth/github/extension-login`, {
+        method: "GET",
+        cache: "no-store",
+      });
     } catch {
       throw new AuthLoginStageError(await this.classifyLoginStartFetchFailure());
     }
