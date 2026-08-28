@@ -128,7 +128,23 @@ Bridge의 source-code 접근은 ephemeral capability로 제한한다. capability
 type DashboardBridgeRequest =
   | { type: "CODEARCHIVE_PING"; protocolVersion: 1 }
   | { type: "CODEARCHIVE_CAPTURE_SUMMARY"; protocolVersion: 1 }
-  | { type: "CODEARCHIVE_IMPORT_BEGIN"; protocolVersion: 1 }
+  | {
+      type: "CODEARCHIVE_SYNC_SESSION_START";
+      protocolVersion: 1;
+      syncSessionId: string;
+      authenticated: true;
+      autoSyncConsent: true;
+    }
+  | {
+      type: "CODEARCHIVE_SYNC_SESSION_END";
+      protocolVersion: 1;
+      syncSessionId: string;
+    }
+  | {
+      type: "CODEARCHIVE_IMPORT_BEGIN";
+      protocolVersion: 1;
+      syncSessionId: string;
+    }
   | {
       type: "CODEARCHIVE_CAPTURE_PAGE";
       protocolVersion: 1;
@@ -164,6 +180,16 @@ type ExtensionBridgeEvent =
 - Dashboard가 authenticated/auto-sync eligible handshake를 완료
 - Port가 현재 tab과 연결되어 있음
 - protocol version 지원
+
+Dashboard는 자체 서버 세션에서 로그인과 명시적 자동 동기화 동의를 확인한 뒤에만
+`SYNC_SESSION_START`를 보낸다. `syncSessionId`는 계정·사용자 ID·토큰이 아닌 예측 불가능한
+auth-context별 nonce이며, 로그인/동의 상태 또는 계정이 바뀔 때 재사용하지 않는다.
+로그아웃, 동의 철회, 계정 전환 전에 `SYNC_SESSION_END`를 보내야 하며 Extension은 해당
+세션의 capability를 즉시 폐기한다. 새 session start 역시 이전 capability를 폐기한다.
+
+Extension은 Dashboard 서버의 로그인 상태를 독립적으로 검증하거나 계정 정보를 보관하지
+않는다. exact-origin Dashboard가 이 상태를 assertion하는 것이 신뢰 경계다. 따라서 동일
+origin 내 script 실행 권한 탈취는 Dashboard의 CSP, dependency 통제, 세션 보안으로 방어한다.
 
 MVP 제한:
 

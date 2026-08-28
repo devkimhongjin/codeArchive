@@ -8,6 +8,7 @@ import {
 import type { CaptureBridgePage, CaptureBridgeRepository, CaptureBridgeSummary } from "./solutionRepository";
 
 const ORIGIN = "https://dashboard.example.com";
+const SYNC_SESSION_ID = "sync-session-a";
 
 function record(id: string, code = `source-${id}`): CaptureImportRecord {
   return {
@@ -110,7 +111,19 @@ class FakePort implements ExternalDashboardPort {
 }
 
 async function begin(port: FakePort): Promise<string> {
-  const response = await port.send({ type: "CODEARCHIVE_IMPORT_BEGIN", protocolVersion: 1 });
+  const session = await port.send({
+    type: "CODEARCHIVE_SYNC_SESSION_START",
+    protocolVersion: 1,
+    syncSessionId: SYNC_SESSION_ID,
+    authenticated: true,
+    autoSyncConsent: true,
+  });
+  expect(session.ok).toBe(true);
+  const response = await port.send({
+    type: "CODEARCHIVE_IMPORT_BEGIN",
+    protocolVersion: 1,
+    syncSessionId: SYNC_SESSION_ID,
+  });
   expect(response.ok).toBe(true);
   return response.data.capability as string;
 }
@@ -143,6 +156,44 @@ describe("ExtensionDashboardCaptureBridge", () => {
     await expect(port.send({})).resolves.toEqual({ ok: false, error: { code: "INVALID_REQUEST", retryable: false } });
     await expect(port.send({ type: "CODEARCHIVE_PING", protocolVersion: 2 })).resolves.toEqual({ ok: false, error: { code: "UNSUPPORTED_PROTOCOL", retryable: false } });
     await expect(port.send({ type: "CODEARCHIVE_CAPTURE_PAGE", protocolVersion: 1, limit: 1, scope: "pending" })).resolves.toEqual({ ok: false, error: { code: "CAPABILITY_REQUIRED", retryable: false } });
+  });
+
+  it("refuses source capability before an authenticated, consented sync session", async () => {
+    const bridge = new ExtensionDashboardCaptureBridge(new MemoryRepository([]));
+    const port = new FakePort();
+    bridge.connect(port, ORIGIN);
+
+    await expect(port.send({
+      type: "CODEARCHIVE_IMPORT_BEGIN",
+      protocolVersion: 1,
+      syncSessionId: SYNC_SESSION_ID,
+    })).resolves.toEqual({ ok: false, error: { code: "SYNC_NOT_ELIGIBLE", retryable: false } });
+    await expect(port.send({
+      type: "CODEARCHIVE_SYNC_SESSION_START",
+      protocolVersion: 1,
+      syncSessionId: SYNC_SESSION_ID,
+      authenticated: true,
+      autoSyncConsent: false,
+    })).resolves.toEqual({ ok: false, error: { code: "SYNC_NOT_ELIGIBLE", retryable: false } });
+  });
+
+  it("invalidates eligibility and capability on logout, consent withdrawal, or account switch", async () => {
+    const bridge = new ExtensionDashboardCaptureBridge(new MemoryRepository([record("a")]), () => 0, () => "cap-a");
+    const port = new FakePort();
+    bridge.connect(port, ORIGIN);
+    const capability = await begin(port);
+
+    await expect(port.send({
+      type: "CODEARCHIVE_SYNC_SESSION_END",
+      protocolVersion: 1,
+      syncSessionId: SYNC_SESSION_ID,
+    })).resolves.toEqual({ ok: true, data: { protocolVersion: 1, syncSessionId: SYNC_SESSION_ID } });
+    await expect(page(port, capability)).resolves.toEqual({ ok: false, error: { code: "CAPABILITY_INVALID", retryable: false } });
+    await expect(port.send({
+      type: "CODEARCHIVE_IMPORT_BEGIN",
+      protocolVersion: 1,
+      syncSessionId: SYNC_SESSION_ID,
+    })).resolves.toEqual({ ok: false, error: { code: "SYNC_NOT_ELIGIBLE", retryable: false } });
   });
 
   it("keeps summary and capture-changed strictly metadata-only and does not auto-push source", async () => {

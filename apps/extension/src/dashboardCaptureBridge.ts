@@ -13,6 +13,7 @@ import {
   type CodeArchiveCaptureSummaryData,
   type CodeArchiveImportBeginData,
   type CodeArchivePingData,
+  type CodeArchiveSyncSessionData,
   type DashboardBridgeRequest,
 } from "../../../packages/shared-types/src";
 import {
@@ -56,6 +57,7 @@ interface PortSession {
   origin: string;
   url: string;
   tabId: number;
+  syncSessionId?: string;
   capability?: CapabilityState;
 }
 
@@ -90,7 +92,13 @@ function parseRequest(value: unknown): DashboardBridgeRequest | CodeArchiveBridg
   switch (value.type) {
     case "CODEARCHIVE_PING":
     case "CODEARCHIVE_CAPTURE_SUMMARY":
+      return value as unknown as DashboardBridgeRequest;
+    case "CODEARCHIVE_SYNC_SESSION_START":
+      if (!stringField(value.syncSessionId) || value.authenticated !== true || value.autoSyncConsent !== true) return failure("SYNC_NOT_ELIGIBLE");
+      return value as unknown as DashboardBridgeRequest;
+    case "CODEARCHIVE_SYNC_SESSION_END":
     case "CODEARCHIVE_IMPORT_BEGIN":
+      if (!stringField(value.syncSessionId)) return failure("INVALID_REQUEST");
       return value as unknown as DashboardBridgeRequest;
     case "CODEARCHIVE_CAPTURE_PAGE": {
       if (!stringField(value.capability)) return failure("CAPABILITY_REQUIRED");
@@ -232,7 +240,27 @@ export class ExtensionDashboardCaptureBridge {
         };
         return success(data);
       }
+      case "CODEARCHIVE_SYNC_SESSION_START": {
+        delete session.capability;
+        session.syncSessionId = request.syncSessionId;
+        const data: CodeArchiveSyncSessionData = {
+          protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+          syncSessionId: request.syncSessionId,
+        };
+        return success(data);
+      }
+      case "CODEARCHIVE_SYNC_SESSION_END": {
+        if (session.syncSessionId !== request.syncSessionId) return failure("SYNC_NOT_ELIGIBLE");
+        delete session.capability;
+        delete session.syncSessionId;
+        const data: CodeArchiveSyncSessionData = {
+          protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+          syncSessionId: request.syncSessionId,
+        };
+        return success(data);
+      }
       case "CODEARCHIVE_IMPORT_BEGIN": {
+        if (!session.syncSessionId || session.syncSessionId !== request.syncSessionId) return failure("SYNC_NOT_ELIGIBLE");
         const at = this.now();
         const capability: CapabilityState = {
           value: this.uuid(),

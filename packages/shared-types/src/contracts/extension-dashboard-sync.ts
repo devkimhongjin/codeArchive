@@ -10,6 +10,7 @@ export type CodeArchiveBridgeProtocolVersion =
 
 export type ClientRecordId = string;
 export type ImportBatchId = string;
+export type SyncSessionId = string;
 
 /**
  * `pending` is the only automatic-sync scope.
@@ -41,9 +42,29 @@ export interface CodeArchiveCaptureSummaryRequest
   readonly type: "CODEARCHIVE_CAPTURE_SUMMARY";
 }
 
+/**
+ * Dashboard assertion made only after its own authenticated session and explicit
+ * automatic-sync consent have both been verified. `syncSessionId` is an opaque,
+ * random, per-auth-context nonce; it is never a user/account identifier or token.
+ */
+export interface CodeArchiveSyncSessionStartRequest
+  extends CodeArchiveBridgeRequestBase {
+  readonly type: "CODEARCHIVE_SYNC_SESSION_START";
+  readonly syncSessionId: SyncSessionId;
+  readonly authenticated: true;
+  readonly autoSyncConsent: true;
+}
+
+export interface CodeArchiveSyncSessionEndRequest
+  extends CodeArchiveBridgeRequestBase {
+  readonly type: "CODEARCHIVE_SYNC_SESSION_END";
+  readonly syncSessionId: SyncSessionId;
+}
+
 export interface CodeArchiveImportBeginRequest
   extends CodeArchiveBridgeRequestBase {
   readonly type: "CODEARCHIVE_IMPORT_BEGIN";
+  readonly syncSessionId: SyncSessionId;
 }
 
 export interface CodeArchiveCapturePageRequest
@@ -66,6 +87,8 @@ export interface CodeArchiveCaptureAckRequest
 export type DashboardBridgeRequest =
   | CodeArchivePingRequest
   | CodeArchiveCaptureSummaryRequest
+  | CodeArchiveSyncSessionStartRequest
+  | CodeArchiveSyncSessionEndRequest
   | CodeArchiveImportBeginRequest
   | CodeArchiveCapturePageRequest
   | CodeArchiveCaptureAckRequest;
@@ -95,6 +118,11 @@ export interface CodeArchiveCaptureSummaryData {
 export interface CodeArchiveImportBeginData {
   readonly protocolVersion: CodeArchiveBridgeProtocolVersion;
   readonly capability: string;
+}
+
+export interface CodeArchiveSyncSessionData {
+  readonly protocolVersion: CodeArchiveBridgeProtocolVersion;
+  readonly syncSessionId: SyncSessionId;
 }
 
 export interface CodeArchiveCapturePageData {
@@ -153,6 +181,10 @@ export type CodeArchivePingResponse =
   CodeArchiveBridgeResponse<CodeArchivePingData>;
 export type CodeArchiveCaptureSummaryResponse =
   CodeArchiveBridgeResponse<CodeArchiveCaptureSummaryData>;
+export type CodeArchiveSyncSessionStartResponse =
+  CodeArchiveBridgeResponse<CodeArchiveSyncSessionData>;
+export type CodeArchiveSyncSessionEndResponse =
+  CodeArchiveBridgeResponse<CodeArchiveSyncSessionData>;
 export type CodeArchiveImportBeginResponse =
   CodeArchiveBridgeResponse<CodeArchiveImportBeginData>;
 export type CodeArchiveCapturePageResponse =
