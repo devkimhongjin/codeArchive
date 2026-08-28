@@ -129,10 +129,10 @@ function normalizedHttpsOrigin(value: string): string | null {
   }
 }
 
-function senderMatchesExactOrigin(sender: ExternalDashboardSender | undefined, allowedOrigin: string): sender is Required<Pick<ExternalDashboardSender, "origin" | "url">> & { tab: { id: number } } {
+function senderMatchesExactOrigin(sender: ExternalDashboardSender | undefined, allowedOrigin: string): sender is { origin: string; url: string; tab: { id: number } } {
   if (!sender || typeof sender.origin !== "string" || typeof sender.url !== "string" || !Number.isInteger(sender.tab?.id)) return false;
   const senderOrigin = normalizedHttpsOrigin(sender.origin);
-  let urlOrigin: string | null = null;
+  let urlOrigin: string;
   try { urlOrigin = new URL(sender.url).origin; } catch { return false; }
   return senderOrigin === allowedOrigin && urlOrigin === allowedOrigin;
 }
@@ -148,7 +148,8 @@ export class ExtensionDashboardCaptureBridge {
 
   connect(port: ExternalDashboardPort, allowedOriginValue: string): boolean {
     const allowedOrigin = normalizedHttpsOrigin(allowedOriginValue);
-    if (!allowedOrigin || !senderMatchesExactOrigin(port.sender, allowedOrigin)) {
+    const sender = port.sender;
+    if (!allowedOrigin || !senderMatchesExactOrigin(sender, allowedOrigin)) {
       port.disconnect();
       return false;
     }
@@ -156,8 +157,8 @@ export class ExtensionDashboardCaptureBridge {
     const session: PortSession = {
       port,
       origin: allowedOrigin,
-      url: port.sender.url,
-      tabId: port.sender.tab.id,
+      url: sender.url,
+      tabId: sender.tab.id,
     };
     this.sessions.set(port, session);
     port.onMessage.addListener((message) => { void this.handleMessage(session, message); });
@@ -255,7 +256,6 @@ export class ExtensionDashboardCaptureBridge {
         capability.pageRequests += 1;
         capability.lastActivityAt = this.now();
         const page = await this.repository.page(request.scope as CaptureSyncScope, request.cursor, request.limit);
-        for (const record of page.records) capability.offeredClientRecordIds.add(record.clientRecordId);
         const data: CodeArchiveCapturePageData = {
           protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
           scope: request.scope,
@@ -263,7 +263,10 @@ export class ExtensionDashboardCaptureBridge {
           ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
           revision: page.revision,
         };
-        return success(data);
+        const response = success(data);
+        if (responseBytes(response) > CODEARCHIVE_BRIDGE_MAX_RESPONSE_BYTES) return failure("PAYLOAD_LIMIT_EXCEEDED");
+        for (const record of page.records) capability.offeredClientRecordIds.add(record.clientRecordId);
+        return response;
       }
       case "CODEARCHIVE_CAPTURE_ACK": {
         const capabilityResult = this.requireCapability(session, request.capability);
