@@ -22,7 +22,7 @@ class DashboardOriginValidatorTest {
     }
 
     @Test
-    void rejectsUnsafeOrNonOriginValues() {
+    void rejectsUnsafeOrUnapprovedOriginValues() {
         assertThat(DashboardOriginValidator.normalize(null))
                 .isEmpty();
         assertThat(DashboardOriginValidator.normalize(""))
@@ -47,6 +47,9 @@ class DashboardOriginValidatorTest {
         )).isEmpty();
         assertThat(DashboardOriginValidator.normalize(
                 "https://codearchive-dashboard-beta.onrender.com:443"
+        )).isEmpty();
+        assertThat(DashboardOriginValidator.normalize(
+                "https://unapproved.example"
         )).isEmpty();
     }
 }
