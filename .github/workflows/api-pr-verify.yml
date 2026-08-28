@@ -1,0 +1,49 @@
+name: API PR Verify
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - master
+    paths:
+      - 'apps/api/**'
+      - 'infra/**'
+      - '.github/workflows/api-pr-verify.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  api-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+          cache-dependency-path: apps/api/**/*.gradle*
+
+      - name: Validate compose configuration
+        env:
+          POSTGRES_DB: codearchive
+          POSTGRES_USER: codearchive
+          POSTGRES_PASSWORD: ci-only-not-secret
+          POSTGRES_PORT: '5432'
+          REDIS_PORT: '6379'
+        run: docker compose -f infra/compose.yaml config
+
+      - name: Run API tests
+        working-directory: apps/api
+        env:
+          DB_PASSWORD: test-only
+        run: |
+          chmod +x ./gradlew
+          ./gradlew test --no-daemon

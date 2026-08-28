@@ -1,0 +1,68 @@
+spring:
+  application:
+    name: codearchive-api
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:codearchive}
+    username: ${DB_USERNAME:codearchive}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${DB_MAX_POOL_SIZE:5}
+      minimum-idle: ${DB_MIN_IDLE:1}
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:30000}
+      idle-timeout: ${DB_IDLE_TIMEOUT_MS:600000}
+      max-lifetime: ${DB_MAX_LIFETIME_MS:1800000}
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2s
+
+codearchive:
+  auth:
+    github:
+      client-id: ${GITHUB_CLIENT_ID:}
+      client-secret: ${GITHUB_CLIENT_SECRET:}
+      callback-url: ${GITHUB_CALLBACK_URL:http://localhost:8080/api/v1/auth/github/callback}
+      authorize-url: ${GITHUB_AUTHORIZE_URL:https://github.com/login/oauth/authorize}
+      token-url: ${GITHUB_TOKEN_URL:https://github.com/login/oauth/access_token}
+      user-url: ${GITHUB_USER_URL:https://api.github.com/user}
+    extension-redirect-uri: ${CODEARCHIVE_EXTENSION_REDIRECT_URI:}
+    session-ttl: ${CODEARCHIVE_SESSION_TTL:30d}
+    state-ttl: ${CODEARCHIVE_OAUTH_STATE_TTL:10m}
+    exchange-ttl: ${CODEARCHIVE_EXCHANGE_TTL:2m}
+  ai:
+    daily-request-limit: ${AI_DAILY_REQUEST_LIMIT:20}
+  analysis:
+    base-url: ${ANALYSIS_BASE_URL:http://localhost:8000}
+    internal-token: ${ANALYSIS_INTERNAL_TOKEN:}
+    request-timeout: ${ANALYSIS_REQUEST_TIMEOUT:15s}
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include:
+          - health
+          - info
+
+  endpoint:
+    health:
+      show-details: never

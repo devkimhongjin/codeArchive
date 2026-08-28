@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+pydantic
+pytest
+httpx
+openai==3.2.0

@@ -1,0 +1,10 @@
+export type SubmissionResult =
+  | "ACCEPTED"
+  | "WRONG_ANSWER"
+  | "TIME_LIMIT_EXCEEDED"
+  | "MEMORY_LIMIT_EXCEEDED"
+  | "RUNTIME_ERROR"
+  | "COMPILE_ERROR"
+  | "OUTPUT_FORMAT_ERROR"
+  | "PARTIAL_SCORE"
+  | "UNKNOWN";

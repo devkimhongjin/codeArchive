@@ -1,0 +1,22 @@
+{
+  "name": "codearchive",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev:web": "pnpm --filter @codearchive/web dev",
+    "dev:extension": "pnpm --filter @codearchive/extension dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+
+    "infra:up": "docker compose --env-file ./infra/.env -f ./infra/compose.yaml up -d",
+    "infra:down": "docker compose --env-file ./infra/.env -f ./infra/compose.yaml down",
+    "infra:ps": "docker compose --env-file ./infra/.env -f ./infra/compose.yaml ps",
+    "infra:logs": "docker compose --env-file ./infra/.env -f ./infra/compose.yaml logs -f"
+  },
+  "packageManager": "pnpm@10.15.0",
+  "engines": {
+    "node": ">=20"
+  }
+}

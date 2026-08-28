@@ -1,0 +1,6 @@
+interface:
+  display_name: "CodeArchive Service Builder"
+  short_description: "Build Spring, FastAPI, data, and infrastructure"
+  default_prompt: "Use $codearchive-service-builder to implement the assigned service task."
+policy:
+  allow_implicit_invocation: false

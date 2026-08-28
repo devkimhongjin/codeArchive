@@ -1,0 +1,234 @@
+name: Extension PR Verify
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - master
+    paths:
+      - "apps/extension/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/extension-pr-verify.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm 10.15.0
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+          node --version | tee node-version.log
+          pnpm --version | tee pnpm-version.log
+
+      - name: Install with frozen lockfile
+        run: pnpm install --frozen-lockfile 2>&1 | tee install-frozen.log
+
+      - name: Typecheck extension
+        run: pnpm --filter @codearchive/extension typecheck 2>&1 | tee typecheck.log
+
+      - name: Test extension
+        run: pnpm --filter @codearchive/extension test 2>&1 | tee test.log
+
+      - name: Build extension
+        run: pnpm --filter @codearchive/extension build 2>&1 | tee build.log
+
+      - name: Inspect production output
+        run: |
+          test -f apps/extension/dist/manifest.json
+          test -f apps/extension/dist/popup.html
+          test -f apps/extension/dist/content/swea.js
+          test -f apps/extension/dist/background.js
+          grep -q '"manifest_version": 3' apps/extension/dist/manifest.json
+          test -n "$(find apps/extension/dist -type f -name '*.js' -print -quit)"
+          test -n "$(find apps/extension/dist -type f -name '*.css' -print -quit)"
+          find apps/extension/dist -maxdepth 3 -type f | sort | tee dist-files.log
+          cat apps/extension/dist/manifest.json | tee dist-manifest.log
+          python3 - <<'PY'
+          import json
+          with open("apps/extension/dist/manifest.json", encoding="utf-8") as f:
+              manifest = json.load(f)
+          assert manifest["manifest_version"] == 3
+          assert manifest.get("permissions") == ["identity"], (
+              f"unexpected extension permissions: {manifest.get('permissions')}"
+          )
+          expected_host_permissions = ["https://codearchive-api.onrender.com/*"]
+          host_permissions = manifest.get("host_permissions")
+          assert host_permissions == expected_host_permissions, (
+              f"unexpected host_permissions: {host_permissions}"
+          )
+          for key in ("optional_permissions", "optional_host_permissions"):
+              assert key not in manifest, f"unexpected manifest key: {key}"
+          forbidden_host_permissions = {
+              "https://codearchive-analysis.onrender.com/*",
+              "<all_urls>",
+              "http://*/*",
+              "https://*/*",
+          }
+          assert not forbidden_host_permissions.intersection(host_permissions), (
+              f"forbidden host permission present: {host_permissions}"
+          )
+          assert all(
+              "localhost" not in permission and "127.0.0.1" not in permission
+              for permission in host_permissions
+          ), f"local host permission present: {host_permissions}"
+          assert manifest.get("background") == {
+              "service_worker": "background.js",
+              "type": "module",
+          }
+          scripts = manifest.get("content_scripts")
+          assert isinstance(scripts, list) and len(scripts) == 1
+          script = scripts[0]
+          assert script.get("matches") == [
+              "https://swexpertacademy.com/main/code/problem/problemDetail.do*",
+              "https://swexpertacademy.com/main/code/contestProblem/contestProblemDetail.do*",
+              "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do*",
+              "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do*",
+          ]
+          assert script.get("js") == ["content/swea.js"]
+          assert script.get("run_at") == "document_idle"
+          PY
+
+      - name: Verify unpacked popup in stable Chrome for Testing
+        run: |
+          EXT_DIR="$PWD/apps/extension/dist"
+          CFT_DIR="$RUNNER_TEMP/chrome-for-testing"
+          VENV="$RUNNER_TEMP/chrome-smoke-venv"
+          PROFILE="$RUNNER_TEMP/codearchive-chrome-profile"
+          mkdir -p "$CFT_DIR"
+
+          CFT_URL="$(python3 - <<'PY'
+          import json, urllib.request
+          url = "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json"
+          with urllib.request.urlopen(url) as response:
+              data = json.load(response)
+          stable = data["channels"]["Stable"]
+          print(next(item["url"] for item in stable["downloads"]["chrome"] if item["platform"] == "linux64"))
+          PY
+          )"
+
+          curl --fail --location --silent --show-error "$CFT_URL" --output "$RUNNER_TEMP/chrome-for-testing.zip"
+          unzip -q "$RUNNER_TEMP/chrome-for-testing.zip" -d "$CFT_DIR"
+          CHROME_BIN="$CFT_DIR/chrome-linux64/chrome"
+          "$CHROME_BIN" --version | tee chrome-version.log
+
+          python3 -m venv "$VENV"
+          "$VENV/bin/pip" install --quiet playwright
+
+          Xvfb :99 -screen 0 1280x720x24 >xvfb.log 2>&1 &
+          XVFB_PID=$!
+          export DISPLAY=:99
+
+          X_READY=0
+          for _ in $(seq 1 30); do
+            if [[ -S /tmp/.X11-unix/X99 ]]; then
+              X_READY=1
+              break
+            fi
+            sleep 1
+          done
+          test "$X_READY" -eq 1
+
+          "$CHROME_BIN" \
+            --no-sandbox \
+            --enable-unsafe-extension-debugging \
+            --user-data-dir="$PROFILE" \
+            --remote-debugging-port=9222 \
+            --no-first-run \
+            --no-default-browser-check \
+            about:blank >chrome-load.log 2>&1 &
+          CHROME_PID=$!
+
+          cleanup() {
+            kill "$CHROME_PID" 2>/dev/null || true
+            kill "$XVFB_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          READY=0
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9222/json/version >/dev/null; then
+              READY=1
+              break
+            fi
+            sleep 1
+          done
+          test "$READY" -eq 1
+
+          cat >"$RUNNER_TEMP/verify_extension.py" <<'PY'
+          import json
+          import pathlib
+          import sys
+          from playwright.sync_api import sync_playwright
+
+          extension_dir = str(pathlib.Path(sys.argv[1]).resolve())
+
+          with sync_playwright() as p:
+              browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+              if not browser.contexts:
+                  raise RuntimeError("Chrome default browser context not found")
+              context = browser.contexts[0]
+              cdp = browser.new_browser_cdp_session()
+              result = cdp.send("Extensions.loadUnpacked", {"path": extension_dir})
+              extension_id = result["id"]
+              pathlib.Path("extension-id.log").write_text(extension_id + "\n", encoding="utf-8")
+
+              page = context.new_page()
+              page.goto(f"chrome-extension://{extension_id}/popup.html", wait_until="networkidle")
+              heading = page.get_by_role("heading", name="내 풀이 기록")
+              status = page.get_by_role("status")
+              assert heading.count() == 1
+              assert "IndexedDB 로컬 저장" in status.inner_text()
+
+              body_text = " ".join(page.locator("body").inner_text().split())
+              pathlib.Path("popup-dom.log").write_text(body_text + "\n", encoding="utf-8")
+              page.screenshot(path="popup.png")
+              print(json.dumps({"extension_id": extension_id, "body_text": body_text}, ensure_ascii=False))
+              browser.close()
+          PY
+
+          timeout 60s "$VENV/bin/python" "$RUNNER_TEMP/verify_extension.py" "$EXT_DIR" 2>&1 | tee chrome-smoke.log
+
+          if grep -qiE "Failed to load extension|Manifest file is missing|Cannot load extension" chrome-load.log; then
+            cat chrome-load.log
+            exit 1
+          fi
+
+      - name: Upload verification artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-pr-verification
+          path: |
+            pnpm-lock.yaml
+            node-version.log
+            pnpm-version.log
+            install-frozen.log
+            typecheck.log
+            test.log
+            build.log
+            dist-files.log
+            dist-manifest.log
+            chrome-version.log
+            chrome-load.log
+            chrome-smoke.log
+            xvfb.log
+            extension-id.log
+            popup-dom.log
+            popup.png
+            apps/extension/dist

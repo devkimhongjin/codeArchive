@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Agent Architect"
+  short_description: "프로젝트에 맞는 에이전트 구조와 모델을 설계합니다"
+  default_prompt: "Use $project-agent-architect to design the agent structure and model routing for this project."
