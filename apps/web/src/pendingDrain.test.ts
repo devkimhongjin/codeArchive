@@ -35,6 +35,13 @@ const page = (records: readonly CaptureImportRecord[], nextCursor?: string) => (
   },
 });
 
+const apiEnvelope = (results: readonly unknown[], requestId = "req-test") => ({
+  success: true,
+  data: { results },
+  error: null,
+  requestId,
+});
+
 function bridge(overrides: Partial<DashboardExtensionConnection> = {}): DashboardExtensionConnection {
   return {
     start: () => () => undefined,
@@ -65,12 +72,9 @@ describe("pending page validation", () => {
 
 describe("Main API pending upsert client", () => {
   it("posts exact bulk-upsert request with credentials and no ownership field", async () => {
-    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
-      success: true,
-      data: { results: [{ clientRecordId: "one", outcome: "IMPORTED", ackEligible: true, errorCode: null }] },
-      error: null,
-      requestId: "req-1",
-    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(apiEnvelope([
+      { clientRecordId: "one", outcome: "IMPORTED", ackEligible: true, errorCode: null },
+    ], "req-1")), { status: 200, headers: { "Content-Type": "application/json" } }));
     const client = createPendingDrainApiClient(fetcher);
     expect(await client.upsert("batch-a", [record("one")])).toEqual(["one"]);
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -83,21 +87,46 @@ describe("Main API pending upsert client", () => {
     expect(JSON.stringify(body)).not.toMatch(/userId|accountId|owner/i);
   });
 
-  it("ACK-selects only confirmed IMPORTED/EXISTING offered IDs", async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
-      success: true,
-      data: { results: [
-        { clientRecordId: "one", outcome: "IMPORTED", ackEligible: true, errorCode: null },
-        { clientRecordId: "two", outcome: "EXISTING", ackEligible: true, errorCode: null },
-        { clientRecordId: "three", outcome: "FAILED", ackEligible: false, errorCode: "PERSISTENCE_FAILED" },
-        { clientRecordId: "not-offered", outcome: "IMPORTED", ackEligible: true, errorCode: null },
-        { clientRecordId: "one", outcome: "FAILED", ackEligible: false, errorCode: "INVALID_RECORD" },
-      ] },
-      error: null,
-      requestId: "req-2",
-    }), { status: 200 }));
+  it("accepts unique valid results and ACK-selects only offered IMPORTED/EXISTING IDs", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(apiEnvelope([
+      { clientRecordId: "one", outcome: "IMPORTED", ackEligible: true, errorCode: null },
+      { clientRecordId: "two", outcome: "EXISTING", ackEligible: true, errorCode: null },
+      { clientRecordId: "three", outcome: "FAILED", ackEligible: false, errorCode: "PERSISTENCE_FAILED" },
+      { clientRecordId: "not-offered", outcome: "IMPORTED", ackEligible: true, errorCode: null },
+    ], "req-2")), { status: 200 }));
     const client = createPendingDrainApiClient(fetcher);
     expect(await client.upsert("batch-a", [record("one"), record("two"), record("three")])).toEqual(["one", "two"]);
+  });
+
+  it("fails closed on duplicate IMPORTED result IDs", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(apiEnvelope([
+      { clientRecordId: "one", outcome: "IMPORTED", ackEligible: true, errorCode: null },
+      { clientRecordId: "one", outcome: "IMPORTED", ackEligible: true, errorCode: null },
+    ])), { status: 200 }));
+    expect(await createPendingDrainApiClient(fetcher).upsert("batch-a", [record("one")])).toBeNull();
+  });
+
+  it("fails closed on duplicate IDs with IMPORTED plus FAILED", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(apiEnvelope([
+      { clientRecordId: "one", outcome: "IMPORTED", ackEligible: true, errorCode: null },
+      { clientRecordId: "one", outcome: "FAILED", ackEligible: false, errorCode: "INVALID_RECORD" },
+    ])), { status: 200 }));
+    expect(await createPendingDrainApiClient(fetcher).upsert("batch-a", [record("one")])).toBeNull();
+  });
+
+  it("fails closed when a malformed sibling appears beside a valid result", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(apiEnvelope([
+      { clientRecordId: "one", outcome: "IMPORTED", ackEligible: true, errorCode: null },
+      { clientRecordId: "two", outcome: "FAILED", ackEligible: true, errorCode: "INVALID_RECORD" },
+    ])), { status: 200 }));
+    expect(await createPendingDrainApiClient(fetcher).upsert("batch-a", [record("one"), record("two")])).toBeNull();
+  });
+
+  it("never returns an ACKable ID that was not offered by the current page", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(apiEnvelope([
+      { clientRecordId: "not-offered", outcome: "EXISTING", ackEligible: true, errorCode: null },
+    ])), { status: 200 }));
+    expect(await createPendingDrainApiClient(fetcher).upsert("batch-a", [record("one")])).toEqual([]);
   });
 
   it("returns no ACK evidence for network, non-success, or malformed envelopes", async () => {
