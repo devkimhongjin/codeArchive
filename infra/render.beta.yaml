@@ -7,6 +7,19 @@ projects:
       - name: beta
         services:
           - type: web
+            name: codearchive-dashboard-beta
+            runtime: static
+            branch: develop
+            repo: https://github.com/devkimhongjin/codeArchive
+            autoDeployTrigger: "off"
+            buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @codearchive/web build
+            staticPublishPath: ./apps/web/dist
+            routes:
+              - type: rewrite
+                source: /*
+                destination: /index.html
+
+          - type: web
             name: codearchive-api
             runtime: docker
             plan: free
