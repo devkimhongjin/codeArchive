@@ -6,10 +6,14 @@ class FakePort {
   readonly sent: unknown[] = [];
   readonly messageListeners: Array<(message: unknown) => void> = [];
   readonly disconnectListeners: Array<() => void> = [];
+  disconnected = false;
   readonly onMessage = { addListener: (listener: (message: unknown) => void) => this.messageListeners.push(listener) };
   readonly onDisconnect = { addListener: (listener: () => void) => this.disconnectListeners.push(listener) };
   postMessage(message: unknown) { this.sent.push(message); }
-  disconnect() { this.disconnectListeners.forEach((listener) => listener()); }
+  disconnect() {
+    this.disconnected = true;
+    this.disconnectListeners.forEach((listener) => listener());
+  }
   receive(message: unknown) { this.messageListeners.forEach((listener) => listener(message)); }
 }
 
@@ -57,5 +61,29 @@ describe("Dashboard Extension connection", () => {
     port.receive({ ok: false, error: { code: "UNSUPPORTED_PROTOCOL", retryable: false } });
     await flush();
     expect(states.at(-1)).toEqual({ status: "error" });
+    expect(port.disconnected).toBe(true);
+  });
+
+  it("rejects malformed success responses and closes the Port", async () => {
+    const port = new FakePort();
+    const states: ExtensionConnectionState[] = [];
+    createDashboardExtensionConnection({ connect: () => port }).start((state) => states.push(state));
+    port.receive({ ok: true, data: { protocolVersion: 1 } });
+    await flush();
+    port.receive({ ok: true, data: { protocolVersion: 1, pendingCount: "secret", allCount: 5 } });
+    await flush();
+    expect(states.at(-1)).toEqual({ status: "error" });
+    expect(port.disconnected).toBe(true);
+  });
+
+  it("times out an unresponsive bridge and closes the Port", async () => {
+    vi.useFakeTimers();
+    const port = new FakePort();
+    const states: ExtensionConnectionState[] = [];
+    createDashboardExtensionConnection({ connect: () => port }).start((state) => states.push(state));
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(states.at(-1)).toEqual({ status: "error" });
+    expect(port.disconnected).toBe(true);
+    vi.useRealTimers();
   });
 });

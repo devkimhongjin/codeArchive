@@ -37,6 +37,24 @@ function safeFailure(value: unknown): value is CodeArchiveBridgeFailure {
   return candidate.ok === false && typeof candidate.error?.code === "string";
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isPingResponse(value: unknown): value is CodeArchivePingResponse {
+  if (!isObject(value) || value.ok !== true || !isObject(value.data)) return false;
+  return value.data.protocolVersion === CODEARCHIVE_BRIDGE_PROTOCOL_VERSION;
+}
+
+function isSummaryResponse(value: unknown): value is CodeArchiveCaptureSummaryResponse {
+  if (!isObject(value) || value.ok !== true || !isObject(value.data)) return false;
+  const data = value.data;
+  return data.protocolVersion === CODEARCHIVE_BRIDGE_PROTOCOL_VERSION
+    && Number.isInteger(data.pendingCount) && (data.pendingCount as number) >= 0
+    && Number.isInteger(data.allCount) && (data.allCount as number) >= 0
+    && Number.isInteger(data.revision) && (data.revision as number) >= 0;
+}
+
 function runtimeFromPage(): ChromeRuntime | null {
   const candidate = (globalThis as { chrome?: { runtime?: ChromeRuntime } }).chrome?.runtime;
   return candidate && typeof candidate.connect === "function" ? candidate : null;
@@ -95,13 +113,22 @@ export function createDashboardExtensionConnection(
         }
       });
 
+      const terminalError = () => {
+        if (!active) return;
+        active = false;
+        pending.splice(0).forEach((resolve) => resolve(null));
+        port.disconnect();
+        onState({ status: "error" });
+      };
+
       void (async () => {
         const ping = await request<CodeArchivePingResponse>({
           type: "CODEARCHIVE_PING",
           protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
         });
-        if (!active || !ping || safeFailure(ping) || !ping.ok) {
-          if (active) onState({ status: "error" });
+        if (!active) return;
+        if (!ping || safeFailure(ping) || !isPingResponse(ping)) {
+          terminalError();
           return;
         }
 
@@ -109,8 +136,9 @@ export function createDashboardExtensionConnection(
           type: "CODEARCHIVE_CAPTURE_SUMMARY",
           protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
         });
-        if (!active || !summary || safeFailure(summary) || !summary.ok) {
-          if (active) onState({ status: "error" });
+        if (!active) return;
+        if (!summary || safeFailure(summary) || !isSummaryResponse(summary)) {
+          terminalError();
           return;
         }
         onState({ status: "connected", summary: summary.data });
