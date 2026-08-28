@@ -195,63 +195,99 @@ export type CodeArchiveCaptureAckResponse =
 /**
  * Dashboard-authenticated Main API request. There is deliberately no userId:
  * the server derives user ownership from the authenticated Dashboard session.
- * importBatchId is trace/receipt metadata, never the idempotency key.
+ * importBatchId is trace/receipt metadata, never the idempotency key. Dashboard
+ * retains it for the later Extension ACK; the API does not echo it.
  */
 export interface MainApiSolutionBulkUpsertRequest {
   readonly importBatchId: ImportBatchId;
   readonly records: readonly CaptureImportRecord[];
 }
 
+export type MainApiBulkUpsertOutcome =
+  | "IMPORTED"
+  | "EXISTING"
+  | "FAILED";
+
+export type MainApiBulkUpsertFailureCode =
+  | "INVALID_RECORD"
+  | "PERSISTENCE_FAILED";
+
 export interface MainApiBulkUpsertImportedResult {
   readonly clientRecordId: ClientRecordId;
-  readonly status: "imported";
+  readonly outcome: "IMPORTED";
+  readonly ackEligible: true;
+  readonly errorCode: null;
 }
 
-export interface MainApiBulkUpsertSameUserDuplicateResult {
+export interface MainApiBulkUpsertExistingResult {
   readonly clientRecordId: ClientRecordId;
-  readonly status: "same_authenticated_user_duplicate";
+  readonly outcome: "EXISTING";
+  readonly ackEligible: true;
+  readonly errorCode: null;
 }
 
-export type MainApiBulkUpsertRejectionCode =
-  | "INVALID_RECORD"
-  | "UNSUPPORTED_VALUE"
-  | "PAYLOAD_TOO_LARGE"
-  | "TEMPORARY_FAILURE";
-
-export interface MainApiBulkUpsertRejectedResult {
+export interface MainApiBulkUpsertFailedResult {
   readonly clientRecordId: ClientRecordId;
-  readonly status: "rejected";
-  readonly code: MainApiBulkUpsertRejectionCode;
-  readonly retryable: boolean;
+  readonly outcome: "FAILED";
+  readonly ackEligible: false;
+  readonly errorCode: MainApiBulkUpsertFailureCode;
 }
 
 export type MainApiBulkUpsertRecordResult =
   | MainApiBulkUpsertImportedResult
-  | MainApiBulkUpsertSameUserDuplicateResult
-  | MainApiBulkUpsertRejectedResult;
+  | MainApiBulkUpsertExistingResult
+  | MainApiBulkUpsertFailedResult;
 
-export interface MainApiSolutionBulkUpsertResponse {
-  readonly importBatchId: ImportBatchId;
+export interface MainApiSolutionBulkUpsertSuccessData {
   readonly results: readonly MainApiBulkUpsertRecordResult[];
 }
 
-/** Only these outcomes are permitted to become Extension ACKs. */
-export type AckableMainApiBulkUpsertResult = Extract<
-  MainApiBulkUpsertRecordResult,
-  { readonly status: "imported" | "same_authenticated_user_duplicate" }
->;
+export interface MainApiError {
+  readonly code: string;
+  readonly message: string;
+  readonly details: Readonly<Record<string, unknown>>;
+}
+
+export interface MainApiSuccessEnvelope<T> {
+  readonly success: true;
+  readonly data: T;
+  readonly error: null;
+  readonly requestId: string;
+}
+
+export interface MainApiFailureEnvelope {
+  readonly success: false;
+  readonly data: null;
+  readonly error: MainApiError;
+  readonly requestId: string;
+}
+
+export type MainApiSolutionBulkUpsertResponse =
+  | MainApiSuccessEnvelope<MainApiSolutionBulkUpsertSuccessData>
+  | MainApiFailureEnvelope;
+
+/** Only runtime-confirmed imported/existing results may become Extension ACKs. */
+export type AckableMainApiBulkUpsertResult =
+  | MainApiBulkUpsertImportedResult
+  | MainApiBulkUpsertExistingResult;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 
 export function isAckableMainApiBulkUpsertResult(
-  result: MainApiBulkUpsertRecordResult,
+  result: unknown,
 ): result is AckableMainApiBulkUpsertResult {
-  return (
-    result.status === "imported" ||
-    result.status === "same_authenticated_user_duplicate"
-  );
+  if (!isRecord(result)) return false;
+  if (typeof result.clientRecordId !== "string" || result.clientRecordId.length === 0) {
+    return false;
+  }
+  if (result.ackEligible !== true || result.errorCode !== null) return false;
+  return result.outcome === "IMPORTED" || result.outcome === "EXISTING";
 }
 
 export function selectAckableClientRecordIds(
-  results: readonly MainApiBulkUpsertRecordResult[],
+  results: readonly unknown[],
 ): readonly ClientRecordId[] {
   return results
     .filter(isAckableMainApiBulkUpsertResult)
