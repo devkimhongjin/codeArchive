@@ -1,9 +1,13 @@
 import {
   CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+  CODEARCHIVE_CAPTURE_PAGE_MAX_LIMIT,
+  type ClientRecordId,
   type CodeArchiveBridgeFailure,
+  type CodeArchiveCaptureAckResponse,
   type CodeArchiveCaptureChangedEvent,
   type CodeArchiveCaptureSummaryData,
   type CodeArchiveCaptureSummaryResponse,
+  type CodeArchiveImportBeginResponse,
   type CodeArchivePingResponse,
   type CodeArchiveSyncSessionEndResponse,
   type CodeArchiveSyncSessionStartResponse,
@@ -35,9 +39,15 @@ export type ExtensionConnectionState =
   | { readonly status: "error" };
 
 export interface DashboardExtensionConnection {
-  start(onState: (state: ExtensionConnectionState) => void): () => void;
+  start(
+    onState: (state: ExtensionConnectionState) => void,
+    onCaptureChanged?: (event: CodeArchiveCaptureChangedEvent) => void,
+  ): () => void;
   startSyncSession(syncSessionId: string): Promise<boolean>;
   endSyncSession(syncSessionId: string): Promise<void>;
+  beginImport(syncSessionId: string): Promise<string | null>;
+  readPendingPage(capability: string, cursor?: string): Promise<unknown>;
+  ackImported(capability: string, importBatchId: string, clientRecordIds: readonly ClientRecordId[]): Promise<boolean>;
 }
 
 function safeFailure(value: unknown): value is CodeArchiveBridgeFailure {
@@ -76,7 +86,29 @@ function isSyncSessionResponse(
 function isCaptureChangedEvent(value: unknown): value is CodeArchiveCaptureChangedEvent {
   if (!isObject(value)) return false;
   return value.type === "CODEARCHIVE_CAPTURE_CHANGED"
-    && value.protocolVersion === CODEARCHIVE_BRIDGE_PROTOCOL_VERSION;
+    && value.protocolVersion === CODEARCHIVE_BRIDGE_PROTOCOL_VERSION
+    && Number.isInteger(value.pendingCount) && (value.pendingCount as number) >= 0
+    && Number.isInteger(value.revision) && (value.revision as number) >= 0;
+}
+
+function isImportBeginResponse(value: unknown): value is CodeArchiveImportBeginResponse {
+  if (!isObject(value) || value.ok !== true || !isObject(value.data)) return false;
+  return value.data.protocolVersion === CODEARCHIVE_BRIDGE_PROTOCOL_VERSION
+    && typeof value.data.capability === "string"
+    && value.data.capability.length > 0;
+}
+
+function isAckResponse(value: unknown, importBatchId: string, requestedIds: readonly string[]): value is CodeArchiveCaptureAckResponse {
+  if (!isObject(value) || value.ok !== true || !isObject(value.data)) return false;
+  const data = value.data;
+  if (
+    data.protocolVersion !== CODEARCHIVE_BRIDGE_PROTOCOL_VERSION
+    || data.importBatchId !== importBatchId
+    || typeof data.acknowledgedAt !== "string"
+    || !Array.isArray(data.acknowledgedClientRecordIds)
+  ) return false;
+  const requested = new Set(requestedIds);
+  return data.acknowledgedClientRecordIds.every((id) => typeof id === "string" && requested.has(id));
 }
 
 function runtimeFromPage(): ChromeRuntime | null {
@@ -91,7 +123,7 @@ export function createDashboardExtensionConnection(
   let activeBridge: ActiveBridge | null = null;
 
   return {
-    start(onState) {
+    start(onState, onCaptureChanged) {
       if (!runtime) {
         activeBridge = null;
         onState({ status: "unavailable" });
@@ -135,7 +167,10 @@ export function createDashboardExtensionConnection(
       activeBridge = bridge;
 
       port.onMessage.addListener((message) => {
-        if (isCaptureChangedEvent(message)) return;
+        if (isCaptureChangedEvent(message)) {
+          onCaptureChanged?.(message);
+          return;
+        }
         pending.shift()?.(message);
       });
       port.onDisconnect.addListener(() => {
@@ -197,11 +232,7 @@ export function createDashboardExtensionConnection(
         authenticated: true,
         autoSyncConsent: true,
       });
-      return Boolean(
-        response
-        && !safeFailure(response)
-        && isSyncSessionResponse(response, syncSessionId),
-      );
+      return Boolean(response && !safeFailure(response) && isSyncSessionResponse(response, syncSessionId));
     },
 
     async endSyncSession(syncSessionId) {
@@ -212,6 +243,46 @@ export function createDashboardExtensionConnection(
         protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
         syncSessionId,
       });
+    },
+
+    async beginImport(syncSessionId) {
+      const bridge = activeBridge;
+      if (!bridge) return null;
+      const response = await bridge.request<CodeArchiveImportBeginResponse>({
+        type: "CODEARCHIVE_IMPORT_BEGIN",
+        protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+        syncSessionId,
+      });
+      return response && !safeFailure(response) && isImportBeginResponse(response)
+        ? response.data.capability
+        : null;
+    },
+
+    async readPendingPage(capability, cursor) {
+      const bridge = activeBridge;
+      if (!bridge) return null;
+      return bridge.request<unknown>({
+        type: "CODEARCHIVE_CAPTURE_PAGE",
+        protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+        capability,
+        ...(cursor ? { cursor } : {}),
+        limit: CODEARCHIVE_CAPTURE_PAGE_MAX_LIMIT,
+        scope: "pending",
+      });
+    },
+
+    async ackImported(capability, importBatchId, clientRecordIds) {
+      if (clientRecordIds.length === 0) return true;
+      const bridge = activeBridge;
+      if (!bridge) return false;
+      const response = await bridge.request<CodeArchiveCaptureAckResponse>({
+        type: "CODEARCHIVE_CAPTURE_ACK",
+        protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+        capability,
+        importBatchId,
+        clientRecordIds,
+      });
+      return Boolean(response && !safeFailure(response) && isAckResponse(response, importBatchId, clientRecordIds));
     },
   };
 }
