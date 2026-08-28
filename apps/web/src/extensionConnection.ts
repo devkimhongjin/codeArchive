@@ -1,9 +1,12 @@
 import {
   CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
   type CodeArchiveBridgeFailure,
+  type CodeArchiveCaptureChangedEvent,
   type CodeArchiveCaptureSummaryData,
   type CodeArchiveCaptureSummaryResponse,
   type CodeArchivePingResponse,
+  type CodeArchiveSyncSessionEndResponse,
+  type CodeArchiveSyncSessionStartResponse,
 } from "../../../packages/shared-types/src";
 import { CODEARCHIVE_EXTENSION_ID } from "./extensionConfig";
 
@@ -21,6 +24,10 @@ interface ChromeRuntime {
   connect(extensionId: string, connectInfo: { name: string }): RuntimePort;
 }
 
+interface ActiveBridge {
+  request<T>(message: unknown): Promise<T | null>;
+}
+
 export type ExtensionConnectionState =
   | { readonly status: "unavailable" }
   | { readonly status: "connecting" }
@@ -29,6 +36,8 @@ export type ExtensionConnectionState =
 
 export interface DashboardExtensionConnection {
   start(onState: (state: ExtensionConnectionState) => void): () => void;
+  startSyncSession(syncSessionId: string): Promise<boolean>;
+  endSyncSession(syncSessionId: string): Promise<void>;
 }
 
 function safeFailure(value: unknown): value is CodeArchiveBridgeFailure {
@@ -55,6 +64,21 @@ function isSummaryResponse(value: unknown): value is CodeArchiveCaptureSummaryRe
     && Number.isInteger(data.revision) && (data.revision as number) >= 0;
 }
 
+function isSyncSessionResponse(
+  value: unknown,
+  syncSessionId: string,
+): value is CodeArchiveSyncSessionStartResponse | CodeArchiveSyncSessionEndResponse {
+  if (!isObject(value) || value.ok !== true || !isObject(value.data)) return false;
+  return value.data.protocolVersion === CODEARCHIVE_BRIDGE_PROTOCOL_VERSION
+    && value.data.syncSessionId === syncSessionId;
+}
+
+function isCaptureChangedEvent(value: unknown): value is CodeArchiveCaptureChangedEvent {
+  if (!isObject(value)) return false;
+  return value.type === "CODEARCHIVE_CAPTURE_CHANGED"
+    && value.protocolVersion === CODEARCHIVE_BRIDGE_PROTOCOL_VERSION;
+}
+
 function runtimeFromPage(): ChromeRuntime | null {
   const candidate = (globalThis as { chrome?: { runtime?: ChromeRuntime } }).chrome?.runtime;
   return candidate && typeof candidate.connect === "function" ? candidate : null;
@@ -64,9 +88,12 @@ export function createDashboardExtensionConnection(
   runtime: ChromeRuntime | null = runtimeFromPage(),
   extensionId = CODEARCHIVE_EXTENSION_ID,
 ): DashboardExtensionConnection {
+  let activeBridge: ActiveBridge | null = null;
+
   return {
     start(onState) {
       if (!runtime) {
+        activeBridge = null;
         onState({ status: "unavailable" });
         return () => undefined;
       }
@@ -79,19 +106,10 @@ export function createDashboardExtensionConnection(
       try {
         port = runtime.connect(extensionId, { name: "codearchive-dashboard" });
       } catch {
+        activeBridge = null;
         onState({ status: "error" });
         return () => undefined;
       }
-
-      port.onMessage.addListener((message) => {
-        pending.shift()?.(message);
-      });
-      port.onDisconnect.addListener(() => {
-        if (!active) return;
-        active = false;
-        pending.splice(0).forEach((resolve) => resolve(null));
-        onState({ status: runtime.lastError ? "error" : "unavailable" });
-      });
 
       const request = <T>(message: unknown) => new Promise<T | null>((resolve) => {
         const complete = (response: unknown) => {
@@ -113,9 +131,25 @@ export function createDashboardExtensionConnection(
         }
       });
 
+      const bridge: ActiveBridge = { request };
+      activeBridge = bridge;
+
+      port.onMessage.addListener((message) => {
+        if (isCaptureChangedEvent(message)) return;
+        pending.shift()?.(message);
+      });
+      port.onDisconnect.addListener(() => {
+        if (!active) return;
+        active = false;
+        if (activeBridge === bridge) activeBridge = null;
+        pending.splice(0).forEach((resolve) => resolve(null));
+        onState({ status: runtime.lastError ? "error" : "unavailable" });
+      });
+
       const terminalError = () => {
         if (!active) return;
         active = false;
+        if (activeBridge === bridge) activeBridge = null;
         pending.splice(0).forEach((resolve) => resolve(null));
         port.disconnect();
         onState({ status: "error" });
@@ -147,9 +181,37 @@ export function createDashboardExtensionConnection(
       return () => {
         if (!active) return;
         active = false;
+        if (activeBridge === bridge) activeBridge = null;
         pending.splice(0).forEach((resolve) => resolve(null));
         port.disconnect();
       };
+    },
+
+    async startSyncSession(syncSessionId) {
+      const bridge = activeBridge;
+      if (!bridge) return false;
+      const response = await bridge.request<CodeArchiveSyncSessionStartResponse>({
+        type: "CODEARCHIVE_SYNC_SESSION_START",
+        protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+        syncSessionId,
+        authenticated: true,
+        autoSyncConsent: true,
+      });
+      return Boolean(
+        response
+        && !safeFailure(response)
+        && isSyncSessionResponse(response, syncSessionId),
+      );
+    },
+
+    async endSyncSession(syncSessionId) {
+      const bridge = activeBridge;
+      if (!bridge) return;
+      await bridge.request<CodeArchiveSyncSessionEndResponse>({
+        type: "CODEARCHIVE_SYNC_SESSION_END",
+        protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+        syncSessionId,
+      });
     },
   };
 }
