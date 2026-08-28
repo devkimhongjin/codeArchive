@@ -2,6 +2,7 @@ import { AuthLoginStageError } from "./authDiagnostics";
 import { AUTH_LOGIN, type AuthLoginResponse } from "./authMessages";
 import type { CodeArchiveAuthService } from "./authSession";
 import { backgroundCodeArchiveAuthService } from "./backgroundAuthRuntime";
+import { notifyDashboardCaptureChanged } from "./dashboardCaptureBridge";
 import { SAVE_SWEA_ACCEPTED, type SaveResponse, type SweaAcceptedCapture } from "./sweaAutoCapture";
 import { indexedDbSolutionRepository, saveSweaAcceptedCapture } from "./solutionRepository";
 import { syncSolutionRecord, type SolutionSyncDependencies } from "./solutionSync";
@@ -13,16 +14,20 @@ declare const chrome: { runtime: { onMessage: { addListener(listener: (message: 
 export function valid(value: unknown): value is SweaAcceptedCapture {
   if (!value || typeof value !== "object") return false;
   const c = value as Record<string, unknown>;
-  return c.platform === "SWEA" && c.result === "ACCEPTED" && ["captureId", "problemNumber", "title", "language", "code", "observedAt", "solvedAt"].every((k) => typeof c[k] === "string" && (c[k] as string).trim());
+  return c.platform === "SWEA" && c.result === "ACCEPTED" && ["captureId", "problemNumber", "title", "language", "code", "observedAt", "solvedAt"].every((k) => typeof c[k] === "string" && (c[k] as string).trim()) && (c.problemUrl === undefined || typeof c.problemUrl === "string");
 }
 
 interface CaptureSyncDependencies {
   saveCapture(capture: SweaAcceptedCapture): Promise<SaveResponse>;
   sync: SolutionSyncDependencies;
+  onCaptureCommitted?: () => Promise<void>;
 }
 
 export async function saveThenSyncAcceptedCapture(capture: SweaAcceptedCapture, dependencies: CaptureSyncDependencies): Promise<SaveResponse> {
   const localResult = await dependencies.saveCapture(capture);
+  if (localResult.status === "saved") {
+    void dependencies.onCaptureCommitted?.().catch(() => undefined);
+  }
   if (localResult.status === "saved" || localResult.status === "duplicate") {
     void syncSolutionRecord(localResult.solutionId, dependencies.sync).catch(() => undefined);
   }
@@ -43,6 +48,7 @@ const defaultDependencies: CaptureSyncDependencies = {
     repository: indexedDbSolutionRepository,
     authProvider: backgroundCodeArchiveAuthService,
   },
+  onCaptureCommitted: notifyDashboardCaptureChanged,
 };
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
