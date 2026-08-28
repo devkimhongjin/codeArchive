@@ -126,11 +126,11 @@ Chrome Extension
         │                - JSON
         │                - ZIP
         │
-        ▼ (사용자가 로그인된 Dashboard에서 가져오기 실행)
+        ▼ (인증된 Dashboard에서 사용자가 auto-sync를 명시적으로 활성화한 뒤 자동 연결)
 Web Dashboard
-- GitHub Login
-- Extension Import Bridge
-- Import Preview / Management
+- GitHub Login / Session
+- Extension Auto-Sync Bridge
+- Sync Status / Management
         │
         ▼
 Main API Server
@@ -156,8 +156,8 @@ Main API Server
 
 | 서비스 | 역할 | 권장 기술 |
 |---|---|---|
-| Browser Extension | 플랫폼 감지, 코드·결과 수집, 로컬 저장·내보내기 | Manifest V3, TypeScript, React, Vite |
-| Web Dashboard | 로그인, Extension 기록 가져오기, 서버 동기화, 기록·통계·설정·외부 연동 관리 | React, TypeScript, React Router, Zustand, TanStack Query |
+| Browser Extension | 플랫폼 감지, 코드·결과 수집, 로컬 저장·내보내기, exact-origin Dashboard bridge | Manifest V3, TypeScript, React, Vite |
+| Web Dashboard | 로그인, Extension 자동 동기화, 인증된 서버 저장, 기록·통계·설정·외부 연동 관리 | React, TypeScript, React Router, Zustand, TanStack Query |
 | Main API | 인증, CRUD, 연동, 파일 생성 요청 | Java 21, Spring Boot 3 |
 | Analysis API | AI 리뷰, 통계 분석, 문제 추천 | Python, FastAPI |
 | Worker | 장시간 작업과 재시도 | Celery 또는 RQ |
@@ -283,12 +283,12 @@ interface PlatformAdapter {
 
 ### 4.6 로컬 원본 저장
 
-Extension은 로그인이나 서버 상태와 무관하게 수집 기록을 IndexedDB에 보존한다. 이 저장소는 Dashboard 가져오기 전후 모두 사용 가능한 로컬 원본이다.
+Extension은 로그인이나 서버 상태와 무관하게 수집 기록을 IndexedDB에 보존한다. 이 저장소는 Dashboard 자동 동기화 전후 모두 사용 가능한 로컬 원본이다.
 
 - IndexedDB에 즉시 저장
 - 불변 `clientRecordId`와 코드 해시로 로컬 중복 방지
 - Dashboard에 제공한 상태와 성공 acknowledge 시각 저장
-- 서버 가져오기 성공 후에도 기본적으로 로컬 기록 보존
+- 서버 동기화 성공 후에도 기본적으로 로컬 기록 보존
 - Source·Markdown·JSON·ZIP 로컬 내보내기 지원
 - Extension은 Main API를 호출하거나 CodeArchive 인증 토큰을 저장하지 않음
 
@@ -300,8 +300,8 @@ Extension은 로그인이나 서버 상태와 무관하게 수집 기록을 Inde
 - 문제 페이지 감지 여부
 - 코드 수집 성공 여부
 - 제출 결과 감지 여부
-- Dashboard로 가져오지 않은 기록 수
-- 마지막 Dashboard 가져오기 확인 시각
+- Dashboard에 아직 acknowledge되지 않은 기록 수
+- 마지막 Dashboard 동기화 확인 시각
 - 어댑터 오류 여부
 
 ---
@@ -325,7 +325,7 @@ Extension은 로그인이나 서버 상태와 무관하게 수집 기록을 Inde
 | GitHub | OAuth App 또는 GitHub App |
 | Notion | OAuth 2.0 |
 | AI Provider | 사용자 API Key 또는 서버 프록시 |
-| Chrome Extension | 인증하지 않음. 로그인된 Web Dashboard가 로컬 수집 기록을 가져감 |
+| Chrome Extension | 인증하지 않음. 인증된 Web Dashboard가 사용자의 명시적 auto-sync 활성화 후 로컬 수집 기록을 동기화함 |
 
 GitHub OAuth와 CodeArchive 사용자 세션은 Web Dashboard와 Main API 사이에서만 처리한다. Extension에는 OAuth UI, access/refresh token, GitHub token을 두지 않는다.
 
@@ -779,16 +779,20 @@ recommendationScore =
 - 데이터 내보내기
 - 피드백 등록
 - 서비스 상태
-- Extension 연결 및 로컬 기록 가져오기
-- 가져오기 미리보기·선택·부분 실패 재시도
+- Extension 연결 및 자동 동기화 상태
+- 자동 동기화 실패·재시도·부분 성공 상태
 
-### 13.3 Extension 기록 가져오기
+### 13.3 Extension 자동 동기화
 
-- 로그인된 사용자만 서버 가져오기를 실행할 수 있다.
-- Dashboard는 허용된 외부 메시지 계약으로 설치된 Extension에서 cursor 기반 페이지를 읽는다.
-- API 저장 결과 중 성공·동일 사용자 중복 항목만 Extension에 acknowledge한다.
-- Extension 미설치 또는 브리지 장애 시 JSON 가져오기를 대체 경로로 제공한다.
-- Dashboard는 가져오기 대상 계정, 기록 수, 중복·실패 결과를 명확히 표시한다.
+- 로그인된 사용자가 대상 계정을 확인하고 auto-sync를 명시적으로 활성화해야 source-bearing 동기화를 시작할 수 있다. 활성화 후 정상 경로에는 수동 가져오기 버튼이 필요하지 않다.
+- Dashboard는 exact HTTPS origin에서 Extension과 Port 연결을 수립하고, source-bearing cursor page를 읽을 때 active Port/tab/origin에 묶인 ephemeral capability를 사용한다.
+- Dashboard 연결 또는 재연결 시 `pending` 기록을 자동으로 catch-up하며, 연결 중 Extension의 metadata-only `CAPTURE_CHANGED` 알림을 받으면 pending drain을 자동 실행한다.
+- Dashboard의 인증된 세션으로 Main API bulk upsert를 호출하고 안전한 retry/backoff를 소유한다. API 저장 결과 중 성공 또는 동일 인증 사용자 중복으로 확정된 항목만 Extension에 부분 acknowledge한다.
+- acknowledge는 로컬 수집 기록을 삭제하지 않는다. 재연결·재시도에서 동일 `(userId, clientRecordId)`는 idempotent하게 처리한다.
+- 로그아웃 또는 계정 전환 시 기존 source-transfer capability/connection을 먼저 폐기하고, 새 인증 계정에서 auto-sync eligibility가 다시 성립하기 전에는 추가 source transfer를 하지 않는다.
+- Extension 미설치 또는 브리지 장애 시에만 JSON 수동 가져오기를 fallback으로 제공한다. JSON import는 정상 자동 동기화 경로를 대체하지 않는다.
+- 이미 acknowledge된 기록을 다시 전송하는 `scope: "all"`은 자동 동기화에 사용하지 않는다. 복구 또는 사용자가 명시적으로 전체 로컬 기록 재동기화를 선택한 경우에만 대상 계정을 표시·확인한 뒤 실행한다.
+- Dashboard는 현재 동기화 대상 계정, pending 수, 성공·중복·실패 결과와 재시도 상태를 명확히 표시한다.
 
 ### 13.4 문제 목록 필터
 
@@ -978,7 +982,7 @@ GET    /api/v1/service-status
 | Unit Test | 파서, 서비스, 점수 계산, 파일명 생성 |
 | Integration Test | DB, Redis, 외부 API Adapter |
 | Contract Test | Extension ↔ Dashboard, Dashboard ↔ Main API, Main API ↔ Analysis API |
-| E2E Test | 자동 수집 → Dashboard 사용자 승인 가져오기 → 사용자별 서버 저장 |
+| E2E Test | 자동 수집 → 인증된 Dashboard auto-sync 활성화 → 연결/재연결 및 `CAPTURE_CHANGED` 기반 자동 pending drain → 사용자별 서버 저장·부분 ACK |
 | Regression Test | 기존 플랫폼 선택자와 핵심 기능 |
 | Security Test | 인증, 권한, 토큰 노출 |
 | Performance Test | 대량 기록 조회, 통계 집계, ZIP 생성 |
@@ -1369,7 +1373,7 @@ Semantic Versioning을 적용한다.
 - 로그인 성공률
 - 자동 수집 성공률
 - 플랫폼별 파싱 실패율
-- Dashboard 가져오기·서버 저장 실패 수
+- Dashboard 자동 동기화·서버 저장 실패 수
 - GitHub API 실패율
 - Notion API 실패율
 - AI 요청 실패율
@@ -1497,8 +1501,8 @@ Semantic Versioning을 적용한다.
 7. 제출 코드와 결과 감지
 8. 자동 수집 기록을 로컬 저장소에 통합
 9. Web Dashboard 로그인·관리 프로토타입
-10. Extension → Dashboard 기록 가져오기
-11. Dashboard → Main API·PostgreSQL 동기화 및 외부 서비스 연동
+10. Extension → Dashboard exact-origin/capability bridge 및 auto-sync 연결·pending catch-up
+11. Dashboard → Main API·PostgreSQL 인증 동기화, `CAPTURE_CHANGED` 자동 drain, idempotent bulk upsert·부분 ACK 및 외부 서비스 연동
 12. AI 리뷰·통계·추천
 
 프로토타입 단계에서는 서버 연결 실패나 서버 미실행 상태에서도 핵심 기록·조회·내보내기 기능이 동작해야 한다. API, 데이터베이스, 인증은 로컬 사용자 흐름이 검증된 이후 연결한다.
@@ -1561,19 +1565,21 @@ Semantic Versioning을 적용한다.
 
 - 두 플랫폼에서 동일한 내부 데이터 모델로 저장됨
 
-### Phase 5. Dashboard 인증 및 서버 저장
+### Phase 5. Dashboard 인증 및 자동 서버 동기화
 
 - Web Dashboard 사용자 인증
-- Extension 기록 가져오기 UI
-- Extension ↔ Dashboard paginated read/ack bridge contract 및 구현
-- Solution·Submission API
+- 사용자 명시적 auto-sync 활성화 및 동기화 상태 UI
+- Extension ↔ Dashboard exact-origin/capability-protected Port, paginated read/ACK, metadata-only `CAPTURE_CHANGED` contract 및 구현
+- Dashboard 연결/재연결 pending catch-up과 새 capture 자동 drain
+- Solution·Submission bulk upsert API와 `(userId, clientRecordId)` idempotency
 - DB 마이그레이션
-- Dashboard import 중복·부분 실패 처리
+- Dashboard retry/backoff, 동일 사용자 중복 처리, partial ACK, logout/account-switch teardown
+- 브리지 불가 시 JSON 수동 import fallback 및 명시적 `scope: "all"` recovery 동작
 - 데이터 백업
 
 완료 기준:
 
-- Extension이 로그인 없이 계속 수집하고, 로그인된 Dashboard가 기록을 가져온 뒤 여러 웹 브라우저 세션에서 동일 기록을 조회할 수 있음
+- Extension이 로그인/API 없이 계속 수집하고, 인증된 Dashboard에서 사용자가 auto-sync를 한 번 활성화하면 연결/재연결과 새 `CAPTURE_CHANGED` 이벤트에 따라 pending 기록이 수동 import 버튼 없이 자동으로 사용자별 서버 기록에 반영되며 반복·부분 실패에서도 데이터 손실이나 중복 생성이 없음
 
 ### Phase 6. GitHub·Notion 연동
 
@@ -1652,7 +1658,7 @@ Semantic Versioning을 적용한다.
 
 - SWEA, 프로그래머스
 - Chrome Extension 자동 수집
-- Web Dashboard GitHub 로그인 및 Extension 기록 가져오기
+- Web Dashboard GitHub 로그인 및 Extension 자동 동기화
 - 수동 기록
 - 문제 목록·상세
 - Source·Markdown·JSON 다운로드
