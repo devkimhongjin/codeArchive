@@ -978,7 +978,7 @@ GET    /api/v1/service-status
 | Unit Test | 파서, 서비스, 점수 계산, 파일명 생성 |
 | Integration Test | DB, Redis, 외부 API Adapter |
 | Contract Test | Extension ↔ Dashboard, Dashboard ↔ Main API, Main API ↔ Analysis API |
-| E2E Test | 자동 수집 → Dashboard 가져오기 → 사용자별 서버 저장 → GitHub 업로드 |
+| E2E Test | 자동 수집 → Dashboard 사용자 승인 가져오기 → 사용자별 서버 저장 |
 | Regression Test | 기존 플랫폼 선택자와 핵심 기능 |
 | Security Test | 인증, 권한, 토큰 노출 |
 | Performance Test | 대량 기록 조회, 통계 집계, ZIP 생성 |
