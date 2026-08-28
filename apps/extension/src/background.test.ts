@@ -8,7 +8,7 @@ function setupChrome(): void {
 }
 
 const record: SolutionRecord = {
-  id: "swea-auto:capture-1", platform: "SWEA", problemNumber: "1234", title: "Test", language: "Java", code: "class Solution {}",
+  id: "swea-auto:capture-1", clientRecordId: "capture-client-1", platform: "SWEA", problemNumber: "1234", title: "Test", language: "Java", code: "class Solution {}",
   solvedAt: "2026-08-25", aiUsage: "unknown", createdAt: "2026-08-25T06:00:00Z", updatedAt: "2026-08-25T06:00:00Z",
   autoCapture: { source: "SWEA_AUTO", result: "ACCEPTED", observedAt: "2026-08-25T06:01:00Z" },
 };
@@ -33,13 +33,14 @@ describe("background capture validation", () => {
     expect(valid({ captureId: "x", platform: "SWEA", result: "ACCEPTED" })).toBe(false);
   });
 
-  it("completes the local commit before any auth or network sync attempt", async () => {
+  it("completes the local commit before bridge notification or legacy sync", async () => {
     setupChrome();
     const { saveThenSyncAcceptedCapture } = await import("./background");
     const order: string[] = [];
 
     const response = await saveThenSyncAcceptedCapture(capture, {
       saveCapture: vi.fn(async () => { order.push("local-commit"); return { status: "saved" as const, solutionId: record.id, savedAt: record.createdAt }; }),
+      onCaptureCommitted: vi.fn(async () => { order.push("capture-changed"); }),
       sync: {
         repository: repository(),
         authProvider: { getAuthenticatedSession: vi.fn(async () => { order.push("auth"); return null; }) },
@@ -49,9 +50,12 @@ describe("background capture validation", () => {
 
     expect(response.status).toBe("saved");
     expect(order[0]).toBe("local-commit");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toContain("capture-changed");
   });
 
-  it("acknowledges the local save while sync is still pending and ignores later sync failure", async () => {
+  it("keeps local save successful when bridge notification or later legacy sync fails", async () => {
     setupChrome();
     const { saveThenSyncAcceptedCapture } = await import("./background");
     let rejectAuth!: (reason?: unknown) => void;
@@ -59,6 +63,7 @@ describe("background capture validation", () => {
 
     const acknowledgement = saveThenSyncAcceptedCapture(capture, {
       saveCapture: vi.fn(async () => ({ status: "saved" as const, solutionId: record.id, savedAt: record.createdAt })),
+      onCaptureCommitted: vi.fn(async () => { throw new Error("dashboard unavailable"); }),
       sync: {
         repository: repository(),
         authProvider: { getAuthenticatedSession: vi.fn(() => pendingAuth) },
