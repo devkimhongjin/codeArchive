@@ -18,7 +18,19 @@ h1 { font-size: 26px; }
 h2 { font-size: 20px; }
 .subtitle, .future-note { color: #64748b; font-size: 13px; }
 .subtitle { margin: 7px 0 0; }
-.connection-status { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; max-width: 470px; padding: 10px 12px; border: 1px solid #dce2ef; border-radius: 9px; background: white; }
+.header-statuses { display: grid; gap: 8px; width: min(470px, 100%); }
+.auth-status, .connection-status { padding: 10px 12px; border: 1px solid #dce2ef; border-radius: 9px; background: white; }
+.auth-status { display: flex; justify-content: flex-end; align-items: center; min-height: 46px; color: #64748b; font-size: 12px; }
+.primary-button { border: 0; border-radius: 7px; background: #4658c9; color: white; padding: 8px 11px; font-weight: 750; }
+.account-summary, .retry-status { display: flex; align-items: center; gap: 9px; width: 100%; }
+.account-summary img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+.account-summary div { display: grid; gap: 1px; margin-right: auto; }
+.account-summary strong { color: #172033; font-size: 12px; }
+.account-summary small { color: #64748b; font-size: 11px; }
+.account-summary button, .retry-status button { padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; background: white; color: #334155; font-size: 11px; }
+.account-summary button:disabled { opacity: .55; cursor: wait; }
+.retry-status span { margin-right: auto; }
+.connection-status { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
 .connection-status div { display: grid; gap: 2px; }
 .connection-status strong { font-size: 13px; }
 .connection-status small { color: #64748b; font-size: 11px; line-height: 1.4; }
@@ -57,7 +69,7 @@ h2 { font-size: 20px; }
 
 @media (max-width: 760px) {
   .topbar, .toolbar { align-items: stretch; flex-direction: column; }
-  .connection-status { max-width: none; }
+  .header-statuses { width: 100%; }
   .archive-layout { grid-template-columns: 1fr; }
   .detail-panel { position: static; }
 }
