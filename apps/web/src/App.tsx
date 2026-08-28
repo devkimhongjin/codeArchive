@@ -6,6 +6,13 @@ import {
   type DashboardSolution,
 } from "./archiveTypes";
 import {
+  createAutoSyncSessionController,
+  dashboardAutoSyncConsentStore,
+  isExactDashboardOrigin,
+  secureSyncSessionId,
+  type AutoSyncConsentStore,
+} from "./autoSyncSession";
+import {
   dashboardAuthClient,
   type DashboardAuthClient,
   type DashboardUser,
@@ -22,6 +29,9 @@ interface AppProps {
   extensionConnection?: DashboardExtensionConnection;
   authClient?: DashboardAuthClient;
   beforeLogout?: () => Promise<void> | void;
+  consentStore?: AutoSyncConsentStore;
+  dashboardOrigin?: string;
+  syncSessionIdGenerator?: () => string;
 }
 
 type AuthState =
@@ -43,6 +53,9 @@ export function App({
   extensionConnection = dashboardExtensionConnection,
   authClient = dashboardAuthClient,
   beforeLogout,
+  consentStore = dashboardAutoSyncConsentStore,
+  dashboardOrigin = globalThis.location.origin,
+  syncSessionIdGenerator = secureSyncSessionId,
 }: AppProps) {
   const [records, setRecords] = useState<readonly DashboardSolution[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -54,6 +67,13 @@ export function App({
   const [authAttempt, setAuthAttempt] = useState(0);
   const [authState, setAuthState] = useState<AuthState>({ status: "loading" });
   const [logoutPending, setLogoutPending] = useState(false);
+  const [consentPending, setConsentPending] = useState(false);
+  const [autoSyncConsent, setAutoSyncConsent] = useState(() => consentStore.read());
+
+  const syncController = useMemo(
+    () => createAutoSyncSessionController(extensionConnection, syncSessionIdGenerator),
+    [extensionConnection, syncSessionIdGenerator],
+  );
 
   useEffect(
     () => extensionConnection.start(setExtensionState),
@@ -69,6 +89,30 @@ export function App({
     });
     return () => { active = false; };
   }, [authClient, authAttempt]);
+
+  useEffect(() => {
+    const authenticated = authState.status === "authenticated";
+    const connected = extensionState.status === "connected";
+    const exactOrigin = isExactDashboardOrigin(dashboardOrigin);
+    const eligible = authenticated
+      && autoSyncConsent
+      && exactOrigin
+      && connected
+      && !logoutPending
+      && !consentPending;
+    const authContextKey = authenticated ? authState.user.githubLogin : "";
+    void syncController.setEligibility(eligible, authContextKey);
+  }, [
+    authState,
+    autoSyncConsent,
+    consentPending,
+    dashboardOrigin,
+    extensionState.status,
+    logoutPending,
+    syncController,
+  ]);
+
+  useEffect(() => () => { void syncController.teardown(); }, [syncController]);
 
   useEffect(() => {
     let active = true;
@@ -90,9 +134,26 @@ export function App({
     return () => { active = false; };
   }, [dataSource]);
 
+  async function setConsent(enabled: boolean) {
+    if (enabled) {
+      consentStore.write(true);
+      setAutoSyncConsent(true);
+      return;
+    }
+
+    setConsentPending(true);
+    await syncController.teardown();
+    consentStore.write(false);
+    setAutoSyncConsent(false);
+    setConsentPending(false);
+  }
+
   async function logout() {
     setLogoutPending(true);
-    const ok = await authClient.logout(beforeLogout);
+    const ok = await authClient.logout(async () => {
+      await syncController.teardown();
+      await beforeLogout?.();
+    });
     setLogoutPending(false);
     setAuthState(ok ? { status: "signed_out" } : { status: "unavailable" });
   }
@@ -126,14 +187,28 @@ export function App({
               <button className="primary-button" type="button" onClick={() => authClient.login()}>GitHub로 로그인</button>
             )}
             {authState.status === "authenticated" && (
-              <div className="account-summary">
-                {authState.user.avatarUrl && <img src={authState.user.avatarUrl} alt="" referrerPolicy="no-referrer" />}
-                <div>
-                  <strong>{authState.user.displayName || authState.user.githubLogin}</strong>
-                  <small>@{authState.user.githubLogin}</small>
+              <>
+                <div className="account-summary">
+                  {authState.user.avatarUrl && <img src={authState.user.avatarUrl} alt="" referrerPolicy="no-referrer" />}
+                  <div>
+                    <strong>{authState.user.displayName || authState.user.githubLogin}</strong>
+                    <small>@{authState.user.githubLogin}</small>
+                  </div>
+                  <button type="button" disabled={logoutPending} onClick={() => void logout()}>{logoutPending ? "로그아웃 중" : "로그아웃"}</button>
                 </div>
-                <button type="button" disabled={logoutPending} onClick={() => void logout()}>{logoutPending ? "로그아웃 중" : "로그아웃"}</button>
-              </div>
+                <label className="auto-sync-consent">
+                  <input
+                    type="checkbox"
+                    checked={autoSyncConsent}
+                    disabled={logoutPending || consentPending}
+                    onChange={(event) => void setConsent(event.target.checked)}
+                  />
+                  <span>
+                    <strong>자동 동기화</strong>
+                    <small>{autoSyncConsent ? "사용자 동의됨 · 연결 조건 충족 시 세션 준비" : "꺼짐 · 로그인만으로는 시작되지 않음"}</small>
+                  </span>
+                </label>
+              </>
             )}
             {authState.status === "unavailable" && (
               <div className="retry-status">
@@ -153,7 +228,7 @@ export function App({
               <small>
                 {extensionState.status === "connected"
                   ? `동기화 대기 ${extensionState.summary.pendingCount}건 · 로컬 전체 ${extensionState.summary.allCount}건`
-                  : "로그인과 자동 동기화 전에는 코드가 전송되지 않습니다."}
+                  : "로그인과 자동 동기화 동의 전에는 코드가 전송되지 않습니다."}
               </small>
             </div>
             {(extensionState.status === "unavailable" || extensionState.status === "error") && (
