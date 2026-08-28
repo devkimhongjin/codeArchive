@@ -1,11 +1,7 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
 import type { DashboardArchiveDataSource } from "./archiveTypes";
-
-function source(records: Parameters<DashboardArchiveDataSource["listSolutions"]>[0] = undefined as never): never {
-  throw new Error(String(records));
-}
 
 const records = [
   {
@@ -38,19 +34,19 @@ describe("Dashboard archive shell", () => {
     render(<App dataSource={dataSource} />);
 
     expect(screen.getByText("풀이 목록을 불러오는 중입니다.")).toBeInTheDocument();
-    expect(await screen.findByText("중위순회")).toBeInTheDocument();
-    expect(screen.getByText("class Solution {}")).toBeInTheDocument();
+    expect(await screen.findByText("class Solution {}")).toBeInTheDocument();
     expect(screen.getByText("2건 · 2문제")).toBeInTheDocument();
   });
 
   it("filters the archive without adding routing or global state", async () => {
     const dataSource: DashboardArchiveDataSource = { listSolutions: async () => records };
     render(<App dataSource={dataSource} />);
-    await screen.findByText("중위순회");
+    await screen.findByText("2건 · 2문제");
 
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "1954" } });
-    expect(screen.getByText("달팽이 숫자")).toBeInTheDocument();
-    expect(screen.queryByText("중위순회")).not.toBeInTheDocument();
+    const archiveList = screen.getByLabelText("전체 풀이 목록");
+    expect(within(archiveList).getByText("달팽이 숫자")).toBeInTheDocument();
+    expect(within(archiveList).queryByText("중위순회")).not.toBeInTheDocument();
     expect(screen.getByText("1건 · 1문제")).toBeInTheDocument();
   });
 
