@@ -316,7 +316,7 @@ export function App({
                   </button>
                 ))}</div>
               </article>
-            ))}</div>
+            ))}
           </section>
 
           <section className="detail-panel" aria-label="풀이 상세">
