@@ -117,13 +117,9 @@ export function App({
               },
             }
           : current);
-        const sessionId = drainEligibilityRef.current.activeSyncSessionId;
-        if (event.pendingCount > 0 && drainEligibilityRef.current.eligible && sessionId) {
-          pendingDrainController.schedule(sessionId);
-        }
       },
     ),
-    [extensionConnection, connectionAttempt, pendingDrainController],
+    [extensionConnection, connectionAttempt],
   );
 
   useEffect(() => {
@@ -320,7 +316,7 @@ export function App({
                   </button>
                 ))}</div>
               </article>
-            ))}
+            ))}</div>
           </section>
 
           <section className="detail-panel" aria-label="풀이 상세">
