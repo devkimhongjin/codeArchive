@@ -136,14 +136,18 @@ export function createPendingDrainController(
     generation === runGeneration && isEligible(sessionId);
 
   const drain = async (sessionId: string, runGeneration: number) => {
+    const beginImport = bridge.beginImport;
+    const readPendingPage = bridge.readPendingPage;
+    const ackImported = bridge.ackImported;
+    if (!beginImport || !readPendingPage || !ackImported) return;
     if (!stillEligible(sessionId, runGeneration)) return;
-    const capability = await bridge.beginImport(sessionId);
+    const capability = await beginImport(sessionId);
     if (!capability || !stillEligible(sessionId, runGeneration)) return;
 
     let cursor: string | undefined;
     for (let pageCount = 0; pageCount < CODEARCHIVE_SYNC_MAX_PAGE_REQUESTS; pageCount += 1) {
       if (!stillEligible(sessionId, runGeneration)) return;
-      const rawPage = await bridge.readPendingPage(capability, cursor);
+      const rawPage = await readPendingPage(capability, cursor);
       if (!stillEligible(sessionId, runGeneration)) return;
       const page = parsePendingPage(rawPage);
       if (!page) return;
@@ -155,7 +159,7 @@ export function createPendingDrainController(
         if (!stillEligible(sessionId, runGeneration)) return;
         if (ackableIds === null) return;
         if (ackableIds.length > 0) {
-          await bridge.ackImported(capability, importBatchId, ackableIds);
+          await ackImported(capability, importBatchId, ackableIds);
           if (!stillEligible(sessionId, runGeneration)) return;
         }
       }
