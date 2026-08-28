@@ -48,6 +48,8 @@ describe("Dashboard archive shell", () => {
     expect(within(archiveList).getByText("달팽이 숫자")).toBeInTheDocument();
     expect(within(archiveList).queryByText("중위순회")).not.toBeInTheDocument();
     expect(screen.getByText("1건 · 1문제")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("풀이 상세")).getByText("달팽이 숫자")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("풀이 상세")).queryByText("중위순회")).not.toBeInTheDocument();
   });
 
   it("renders empty and safe error states", async () => {

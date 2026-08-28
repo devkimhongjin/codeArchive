@@ -60,7 +60,7 @@ export function App({ dataSource = bootstrapArchiveDataSource }: AppProps) {
   }, [query, records]);
 
   const groups = useMemo(() => groupDashboardSolutions(filtered), [filtered]);
-  const selected = records.find((record) => record.id === selectedId) ?? null;
+  const selected = filtered.find((record) => record.id === selectedId) ?? filtered[0] ?? null;
 
   return (
     <main className="dashboard-shell">
@@ -116,7 +116,7 @@ export function App({ dataSource = bootstrapArchiveDataSource }: AppProps) {
                       <button
                         type="button"
                         key={record.id}
-                        className={record.id === selectedId ? "submission selected" : "submission"}
+                        className={record.id === selected?.id ? "submission selected" : "submission"}
                         onClick={() => setSelectedId(record.id)}
                       >
                         <span>{sourceLabel(record.source)} · {record.language}</span>
