@@ -149,7 +149,10 @@ describe("automatic pending drain", () => {
       .mockResolvedValueOnce(page([record("one")], "cursor-2"))
       .mockResolvedValueOnce(page([record("two")]));
     const ackImported = vi.fn(async () => true);
-    const api: PendingDrainApiClient = { upsert: vi.fn(async (_batch, records) => records.map((item) => item.clientRecordId)) };
+    const api: PendingDrainApiClient = {
+      upsert: vi.fn(async (_batch: string, records: readonly CaptureImportRecord[]) =>
+        records.map((item: CaptureImportRecord) => item.clientRecordId)),
+    };
     const ids = ["batch-1", "batch-2"];
     const connection = bridge({ readPendingPage, ackImported });
     createPendingDrainController(connection, api, () => ids.shift()!, () => true).schedule("session-a");
@@ -189,7 +192,8 @@ describe("automatic pending drain", () => {
     let finishApi!: (ids: readonly string[] | null) => void;
     const ackImported = vi.fn(async () => true);
     const api: PendingDrainApiClient = {
-      upsert: vi.fn(() => new Promise((resolve) => { finishApi = resolve; })),
+      upsert: vi.fn((_batch: string, _records: readonly CaptureImportRecord[]) =>
+        new Promise<readonly string[] | null>((resolve) => { finishApi = resolve; })),
     };
     const connection = bridge({ ackImported });
     const controller = createPendingDrainController(connection, api, () => "batch-a", () => eligible);
