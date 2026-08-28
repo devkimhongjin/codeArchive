@@ -65,7 +65,7 @@ describe("pending page validation", () => {
 
 describe("Main API pending upsert client", () => {
   it("posts exact bulk-upsert request with credentials and no ownership field", async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
       success: true,
       data: { results: [{ clientRecordId: "one", outcome: "IMPORTED", ackEligible: true, errorCode: null }] },
       error: null,
