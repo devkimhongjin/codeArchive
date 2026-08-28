@@ -15,9 +15,10 @@ Use connected GitHub tools to read:
 2. `docs/agent-architecture.md`
 3. `docs/work-skill-workflow.md`
 4. `docs/extension-dashboard-handoff-design.md` for capture/bridge/login/sync work
-5. the assigned issue
-6. relevant client code and shared types
-7. specification sections relevant to the assigned slice
+5. `docs/dashboard-beta-scope.md` for Dashboard UI/product/hosting work
+6. the assigned issue
+7. relevant client code and shared types
+8. specification sections relevant to the assigned slice
 
 If the issue does not define scope, acceptance criteria, owned paths, target branch, and target environment, stop and request an Integrator handoff.
 
@@ -43,11 +44,19 @@ Do not invoke another role skill or spawn subagents.
 ### Dashboard slice
 
 - Dashboard owns GitHub login/session UI and authenticated synchronization.
+- For the current ~20-user beta, treat the Dashboard UI as the lightweight static Web successor to the existing Extension `archive.html` / `전체 풀이 보기` experience. Preserve the simple problem-group → submissions → detail mental model where it remains useful.
+- Responsibility ownership is not permission to implement every future feature in the current slice. A bootstrap Dashboard should stay archive-management focused and add auth/sync/AI/statistics/integrations only when the assigned issue explicitly requires them.
+- Prefer static SPA delivery. Do not add a Dashboard Node/server runtime merely to serve the client.
+- Keep Web data access replaceable; do not couple the Web Dashboard directly to Extension IndexedDB.
+- Introduce routers, global state libraries, query libraries, CSS frameworks, charting libraries, or other broad dependencies only when the current bounded slice has a concrete need.
+- Preserve the existing Extension archive page as local/offline fallback during replacement work; do not remove or redirect it before Issue #86 entry criteria.
+- Dashboard owns GitHub login/session UI and authenticated synchronization when those slices are assigned.
 - Automatic sync is user-enabled behavior. Do not silently transfer source code merely because an Extension is installed.
 - Once eligible, Dashboard owns the external Port, pending catch-up, `CAPTURE_CHANGED` handling, bounded drain/debounce, schema validation, API bulk upsert, retry/backoff, partial ACK, status UI, and logout/account-switch teardown.
 - Dashboard must catch up local pending records on reconnect without requiring a manual import button when auto-sync remains eligible.
 - Do not automatically re-import previously acknowledged records into a different account. Explicit re-import must use the frozen `all` flow with visible target-account confirmation.
 - Do not bypass API authentication by trusting Extension identity or bridge state.
+- Do not hardcode or guess a public Dashboard origin. Use only an Integrator-approved exact origin backed by real provider evidence.
 
 ### Shared contract and service boundary
 
@@ -60,7 +69,7 @@ Do not invoke another role skill or spawn subagents.
 - Work on the assigned branch and open or update one PR linked to the issue.
 - Run the narrowest available typecheck, tests, build, manifest/Chrome smoke checks, and relevant browser-contract tests. Report actual results.
 
-Stop and escalate on cross-component contract changes, permission/origin changes, ambiguous source-code consent, environment-policy changes, conflicting requirements, or two failed attempts.
+Stop and escalate on cross-component contract changes, permission/origin changes, ambiguous source-code consent, environment-policy changes, conflicting requirements, unjustified Dashboard scope/compute expansion, or two failed attempts.
 
 ## Finish
 

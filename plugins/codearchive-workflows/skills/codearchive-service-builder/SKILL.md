@@ -9,7 +9,7 @@ Act as the only service implementation role in this chat. Recommended model tier
 
 ## Start
 
-Use connected GitHub tools to read `AGENTS.md`, `docs/agent-architecture.md`, `docs/work-skill-workflow.md`, `docs/extension-dashboard-handoff-design.md` when capture/import/auth persistence is relevant, the assigned issue, affected code, and relevant specification sections. If the issue lacks scope, acceptance criteria, owned paths, target branch, and target environment, stop and request an Integrator handoff.
+Use connected GitHub tools to read `AGENTS.md`, `docs/agent-architecture.md`, `docs/work-skill-workflow.md`, `docs/extension-dashboard-handoff-design.md` when capture/import/auth persistence is relevant, `docs/dashboard-beta-scope.md` when Dashboard hosting/infrastructure is relevant, the assigned issue, affected code, and relevant specification sections. If the issue lacks scope, acceptance criteria, owned paths, target branch, and target environment, stop and request an Integrator handoff.
 
 Do not invoke another role skill or spawn subagents.
 
@@ -28,10 +28,13 @@ Do not invoke another role skill or spawn subagents.
 - Treat Extension-specific OAuth login/exchange endpoints and exact Extension-origin CORS as legacy until replacement E2E passes; do not delete them early. After replacement acceptance, remove them only in a dedicated cleanup issue and only after confirming Dashboard does not reuse the endpoint/contract.
 - Keep `develop` changes compatible with development/beta runtime validation. Do not change Production provider/resource policy inside ordinary implementation work.
 - Do not create/convert Production resources or change beta/Production routing without an explicit Integrator decision and owner approval gate.
+- For the current ~20-user Dashboard beta, default infrastructure work to static-site hosting for the Web client. Do not introduce an always-running Dashboard server or additional compute resource unless a bounded requirement and Integrator decision justify it.
+- Never fabricate or pre-bind a Dashboard public origin. Record the exact HTTPS origin only from real provider evidence after the separately approved provisioning/deployment action.
+- Treat provider provisioning/deployment, provider branch/source changes, cost changes, and Extension origin binding as separate approval gates. Static-site preference does not authorize any external mutation.
 - Work on the assigned branch and open or update one linked PR.
-- Run Gradle tests, pytest, or Compose validation as relevant and record actual output.
+- Run Gradle tests, pytest, or Compose/provider config checks as relevant and record actual output.
 
-Stop and escalate on authentication/security choices, destructive migrations, external token scope, shared contracts, production/environment actions, user-code transmission policy, or two failed attempts.
+Stop and escalate on authentication/security choices, destructive migrations, external token scope, shared contracts, production/environment actions, Dashboard compute/topology expansion, user-code transmission policy, or two failed attempts.
 
 ## Finish
 

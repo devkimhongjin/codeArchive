@@ -4,6 +4,7 @@
 
 - Read `docs/codearchive-development-spec.md` before planning cross-component work.
 - Use `docs/extension-dashboard-handoff-design.md` as the normative client trust-boundary and Extension → Dashboard synchronization contract while the capture-only transition is active.
+- Use `docs/dashboard-beta-scope.md` as the current product/deployment-scope decision for the ~20-user Dashboard beta. It clarifies current implementation priority without deleting long-term development-spec goals.
 - Use `docs/agent-architecture.md` for role ownership, handoffs, model routing, and escalation.
 - Treat the implementation as the current state and the development specification as the target state. Report drift instead of silently changing either one.
 - Current Main API MVP runtime baseline: **Java 21 + Spring Boot 3.5.16 + Gradle 8.14.3**. This supersedes the former Issue #31 Spring Boot 4.1.0 freeze by explicit owner decision during Issue #33 / PR #47. Do not mix a framework/runtime major upgrade into feature work; any future baseline change requires an explicit Integrator decision and dedicated stabilization evidence.
@@ -12,15 +13,19 @@
 
 Issue #31 (`[MVP] SWEA archive + GitHub login + backend sync + AI assistance (~20-user beta)`) remains the umbrella, but the owner decision recorded on 2026-08-28 changes the client boundary: the Extension is capture-only; Web Dashboard owns login, synchronization, authenticated Main API persistence, management, AI, and external integrations. This decision overrides older issue wording and specification sections where they require Extension OAuth or direct API synchronization.
 
+Dashboard responsibility ownership is broader than the current Dashboard implementation slice. For this beta, treat Dashboard as the lightweight static Web successor to the existing Extension `archive.html` / `전체 풀이 보기` UX. Start from archive/problem-group/submission/detail management and add auth, synchronization, AI, statistics, and integrations only through bounded work when required. Do not infer a large admin portal, a new always-running Dashboard server, or an unnecessary dependency stack merely because Dashboard ultimately owns those capabilities. Preserve the existing Extension archive page as local/offline fallback through replacement E2E and Issue #86 sequencing.
+
 The current delivery goal is one end-to-end SWEA beta that can be distributed to roughly 20 testers. Follow this order unless the project integrator records a new decision:
 
 1. Preserve and harden SWEA PASS capture → Extension IndexedDB without Dashboard, login, or server availability.
-2. Implement GitHub login in Web Dashboard using the existing user/session foundation.
-3. Freeze the exact-origin Extension → Dashboard bridge, capture schema, cursor/ack protocol, and auto-sync lifecycle in `docs/extension-dashboard-handoff-design.md` plus approved shared types.
-4. Implement Dashboard-owned automatic synchronization: while a signed-in Dashboard has user-enabled auto-sync and an active Extension connection, newly captured records are pulled, validated, bulk-upserted through the Dashboard session, and acknowledged automatically. When the Dashboard is closed/disconnected/logged out, records remain local and are caught up automatically on the next eligible connection.
-5. Verify offline capture → Dashboard reconnect/login → automatic pending drain → idempotent server persistence in real Chrome.
-6. Only after replacement E2E passes, remove Extension OAuth, CodeArchive tokens, direct API sync, AI/external-integration UI, and unnecessary browser permissions in a separate cleanup slice.
-7. Continue user-scoped AI artifacts and deployed multi-user beta acceptance from the Dashboard.
+2. Freeze the exact-origin Extension → Dashboard bridge, capture schema, cursor/ack protocol, and auto-sync lifecycle in `docs/extension-dashboard-handoff-design.md` plus approved shared types.
+3. Implement the Extension bridge/capability/pending page/ACK runtime without binding an unapproved or fabricated Dashboard origin.
+4. Bootstrap the lightweight archive-style static Web Dashboard, then obtain its real development/beta HTTPS origin only through a separately approved provider provisioning/deployment gate.
+5. After that exact origin is known and separately approved for `externally_connectable`, finish the Extension origin binding and independently review the bridge.
+6. Implement GitHub login/session, Extension connection, and Dashboard-owned automatic synchronization: while a signed-in Dashboard has user-enabled auto-sync and an active Extension connection, newly captured records are pulled, validated, bulk-upserted through the Dashboard session, and acknowledged automatically. When the Dashboard is closed/disconnected/logged out, records remain local and are caught up automatically on the next eligible connection.
+7. Verify offline capture → Dashboard reconnect/login → automatic pending drain → idempotent server persistence in real Chrome.
+8. Only after replacement E2E passes, remove Extension OAuth, CodeArchive tokens, direct API sync, AI/external-integration UI, and unnecessary browser permissions in a separate cleanup slice.
+9. Continue user-scoped AI artifacts and deployed multi-user beta acceptance from the Dashboard.
 
 Already completed for this MVP: SWEA capture/local archive UX through #40. Issue #32 automatic SWEA performance collection was intentionally discontinued; execution time and memory remain optional manual fields. GitHub repository upload (#44) and public sharing/leaderboards (#45) are post-MVP work and must not block the sequence above.
 
@@ -55,6 +60,7 @@ Preserve the local-first invariant throughout the MVP: SWEA capture, IndexedDB p
 7. Treat transmission of captured source code from Extension to Dashboard as an explicit product consent boundary. Do not silently enable it for a new authenticated account context.
 8. External uploads, development/beta deployment, production deployment, destructive migrations, token-scope changes, browser/origin permission expansion, secret rotation, and cost-bearing external actions require explicit user approval immediately before execution.
 9. When a lower-tier agent encounters a cross-component decision, security boundary, schema migration, conflicting requirement, environment-policy change, or two failed attempts, stop and escalate to the project integrator.
+10. For the current Dashboard beta, distinguish responsibility ownership from slice scope. Prefer the smallest static archive-style client and introduce extra frameworks, compute resources, analytics/admin surfaces, or integration features only when a bounded requirement justifies them.
 
 ## Branch and deployment flow
 
