@@ -2,8 +2,10 @@ package com.codearchive.api.auth;
 
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -37,6 +39,8 @@ class SecurityFilterChainMockMvcTest {
 
     private static final String REQUEST_ID =
             "security-filter-chain-test";
+    private static final String BETA_EXTENSION_ORIGIN =
+            "chrome-extension://oohlcmihldmfninmdcmanddfmhoonmdl";
 
     @Autowired
     private MockMvc mockMvc;
@@ -246,5 +250,69 @@ class SecurityFilterChainMockMvcTest {
                                 )
                 )
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void betaExtensionOriginCanPreflightCurrentAuthRequests()
+            throws Exception {
+        mockMvc.perform(
+                        options("/api/v1/auth/exchange")
+                                .header(
+                                        HttpHeaders.ORIGIN,
+                                        BETA_EXTENSION_ORIGIN
+                                )
+                                .header(
+                                        HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD,
+                                        "POST"
+                                )
+                                .header(
+                                        HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS,
+                                        "authorization, content-type"
+                                )
+                )
+                .andExpect(status().isOk())
+                .andExpect(header().string(
+                        HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN,
+                        BETA_EXTENSION_ORIGIN
+                ))
+                .andExpect(header().doesNotExist(
+                        HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS
+                ))
+                .andExpect(header().string(
+                        HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS,
+                        org.hamcrest.Matchers.containsString("POST")
+                ))
+                .andExpect(header().string(
+                        HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS,
+                        org.hamcrest.Matchers.containsString(
+                                "authorization"
+                        )
+                ))
+                .andExpect(header().string(
+                        HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS,
+                        org.hamcrest.Matchers.containsString(
+                                "content-type"
+                        )
+                ));
+    }
+
+    @Test
+    void unrelatedExtensionOriginIsRejectedByCors()
+            throws Exception {
+        mockMvc.perform(
+                        options("/api/v1/auth/github/extension-login")
+                                .header(
+                                        HttpHeaders.ORIGIN,
+                                        "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                                )
+                                .header(
+                                        HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD,
+                                        "GET"
+                                )
+                )
+                .andExpect(status().isForbidden())
+                .andExpect(header().doesNotExist(
+                        HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN
+                ));
     }
 }
