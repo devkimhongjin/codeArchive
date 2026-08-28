@@ -53,12 +53,20 @@ export function isExactDashboardOrigin(origin: string): boolean {
 export function createAutoSyncSessionController(
   transport: AutoSyncSessionTransport,
   generateSyncSessionId: () => string = secureSyncSessionId,
+  onActiveSessionChange: (syncSessionId: string | null) => void = () => undefined,
 ): AutoSyncSessionController {
   let desiredEligible = false;
   let desiredAuthContextKey = "";
   let activeSessionId: string | null = null;
   let activeAuthContextKey = "";
   let transition = Promise.resolve();
+
+  const clearActive = (expectedSessionId: string) => {
+    if (activeSessionId !== expectedSessionId) return;
+    activeSessionId = null;
+    activeAuthContextKey = "";
+    onActiveSessionChange(null);
+  };
 
   const reconcile = async () => {
     if (
@@ -71,10 +79,7 @@ export function createAutoSyncSessionController(
       } catch {
         // Port disconnect/error still invalidates the in-memory Web session.
       } finally {
-        if (activeSessionId === endingSessionId) {
-          activeSessionId = null;
-          activeAuthContextKey = "";
-        }
+        clearActive(endingSessionId);
       }
     }
 
@@ -101,6 +106,7 @@ export function createAutoSyncSessionController(
 
     activeSessionId = syncSessionId;
     activeAuthContextKey = startingContextKey;
+    onActiveSessionChange(syncSessionId);
   };
 
   const schedule = () => {
