@@ -6,6 +6,9 @@ import java.util.Optional;
 
 public final class DashboardOriginValidator {
 
+    private static final String APPROVED_BETA_DASHBOARD_ORIGIN =
+            "https://codearchive-dashboard-beta.onrender.com";
+
     private DashboardOriginValidator() {
     }
 
@@ -42,9 +45,12 @@ public final class DashboardOriginValidator {
             return Optional.empty();
         }
 
-        return Optional.of(
-                "https://"
-                        + uri.getHost().toLowerCase(Locale.ROOT)
-        );
+        String normalized = "https://"
+                + uri.getHost().toLowerCase(Locale.ROOT);
+        if (!APPROVED_BETA_DASHBOARD_ORIGIN.equals(normalized)) {
+            return Optional.empty();
+        }
+
+        return Optional.of(normalized);
     }
 }
