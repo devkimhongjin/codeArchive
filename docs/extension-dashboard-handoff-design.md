@@ -38,7 +38,7 @@ Signed-in Dashboard
 
 MVP는 Chrome의 외부 메시지 채널을 사용한다. Extension manifest의 `externally_connectable.matches`는 배포된 대시보드의 정확한 HTTPS origin만 허용한다. 대시보드는 안정화된 Extension ID로 메시지를 보내고, background worker는 `sender.origin`, `sender.url`, `sender.tab.id`를 다시 검사한다.
 
-`PING`과 코드가 없는 요약 외에는 Extension 팝업에서 사용자가 **현재 CodeArchive Dashboard 탭으로 가져오기 허용**을 누른 뒤에만 사용할 수 있다. background worker는 현재 활성 탭과 exact origin에 묶인 암호학적 난수 capability를 메모리에 생성한다. capability는 60초 후, 탭 이동·종료 시, 또는 acknowledge 완료 시 폐기하며 재사용할 수 없다. service worker가 재시작되면 다시 승인을 받아야 한다.
+`PING`과 코드가 없는 요약 외에는 Extension 팝업에서 사용자가 **현재 CodeArchive Dashboard 탭으로 가져오기 허용**을 누른 뒤에만 사용할 수 있다. background worker는 현재 활성 탭과 exact origin에 묶인 암호학적 난수 import-session capability를 메모리에 생성한다. 세션은 마지막 정상 요청 후 2분 동안 활동이 없거나 생성 후 15분이 지나거나, 탭 이동·종료 또는 terminal acknowledge가 완료되면 폐기한다. 정상 pagination과 최종 acknowledge까지는 같은 세션을 반복 사용하지만, 폐기 후 replay는 거부한다. service worker가 재시작되면 다시 승인을 받아야 한다.
 
 브리지는 로그인 정보나 서버 토큰을 전달하지 않는다. 허용 메시지는 다음 다섯 가지로 제한한다.
 
@@ -51,7 +51,7 @@ type DashboardBridgeRequest =
   | { type: "CODEARCHIVE_CAPTURE_ACK"; protocolVersion: 1; capability: string; importBatchId: string; clientRecordIds: string[] };
 ```
 
-`CAPTURE_SUMMARY`는 코드·제목·URL 없이 pending/all 개수와 protocol version만 반환한다. `IMPORT_BEGIN`은 활성 사용자 승인 grant가 있을 때만 capability를 반환한다. `limit`은 최대 25개, 응답 payload는 최대 1 MiB, 한 capability의 page 요청은 최대 100회로 강제한다. 응답은 고정된 envelope와 오류 코드만 사용하고 내부 예외, OAuth 값, 쿠키 또는 토큰을 포함하지 않는다. 대용량 기록은 cursor 기반 페이지로 나누며, capability가 없거나 만료·재사용·다른 탭에서 제출된 요청은 코드 접근 전에 거부한다.
+`CAPTURE_SUMMARY`는 코드·제목·URL 없이 pending/all 개수와 protocol version만 반환한다. `IMPORT_BEGIN`은 활성 사용자 승인 grant가 있을 때만 capability를 반환한다. `limit`은 최대 25개, 응답 payload는 최대 1 MiB, 한 import session의 page 요청은 최대 100회로 강제한다. background worker는 세션에서 실제 제공한 `clientRecordId` 집합을 추적하고, ACK 목록을 그 부분집합으로 제한한다. 응답은 고정된 envelope와 오류 코드만 사용하고 내부 예외, OAuth 값, 쿠키 또는 토큰을 포함하지 않는다. 대용량 기록은 cursor 기반 페이지로 나누며, capability가 없거나 만료·폐기 후 replay·다른 탭에서 제출된 요청은 코드 접근 전에 거부한다.
 
 ## 기록 수명 주기
 
@@ -77,7 +77,7 @@ captured_local → offered_to_dashboard → imported_to_server
 - 대시보드 세션만 Main API에 인증된다. 브리지에서 받은 데이터는 신뢰하지 않고 shared schema와 API에서 다시 검증한다.
 - 문제 원문, 플랫폼 쿠키·로그인 정보, 브라우저 세션, OAuth token은 브리지 payload에 포함하지 않는다.
 - 외부 메시지 요청 횟수, page limit, payload 크기에 상한을 둔다.
-- 승인되지 않은 page/ack 요청, capability의 다른 탭 사용, 만료·재사용, limit/payload 초과를 거부하는 보안 테스트를 배포 차단 조건으로 둔다.
+- 승인되지 않은 page/ack 요청, capability의 다른 탭 사용, idle/absolute 만료, terminal ACK 후 replay, 제공되지 않은 ID의 ACK, limit/payload 초과를 거부하는 보안 테스트를 배포 차단 조건으로 둔다.
 
 ## 실패 처리
 
