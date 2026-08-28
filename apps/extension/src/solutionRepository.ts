@@ -78,7 +78,8 @@ export function migrateCaptureIdentity(record: SolutionRecord): SolutionRecord {
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
+      const oldVersion = event.oldVersion;
       const db = request.result;
       const transaction = request.transaction;
       if (!transaction) return;
@@ -91,7 +92,7 @@ function openDatabase(): Promise<IDBDatabase> {
       const metaStore = db.objectStoreNames.contains(META_STORE_NAME)
         ? transaction.objectStore(META_STORE_NAME)
         : db.createObjectStore(META_STORE_NAME);
-      if (request.oldVersion < 2) {
+      if (oldVersion < 2) {
         metaStore.put(0, REVISION_KEY);
         const cursorRequest = solutionStore.openCursor();
         cursorRequest.onsuccess = () => {
