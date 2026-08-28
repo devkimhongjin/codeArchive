@@ -10,7 +10,7 @@ describe("captureAccepted", () => {
     const send = vi.fn<(message: unknown) => Promise<any>>(async () => ({ status: "saved" as const, solutionId: "swea-auto:uuid", savedAt: "2026-08-24T12:00:01.000Z" }));
     await expect(captureAccepted(doc(), url, accepted, send, () => "uuid", () => ({ status: "synced" }))).resolves.toMatchObject({ status: "saved", solutionId: "swea-auto:uuid" });
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send.mock.calls[0][0]).toMatchObject({ type: SAVE_SWEA_ACCEPTED, capture: { captureId: "uuid", code: "latest", result: "ACCEPTED" } });
+    expect(send.mock.calls[0][0]).toMatchObject({ type: SAVE_SWEA_ACCEPTED, capture: { captureId: "uuid", code: "latest", result: "ACCEPTED", problemUrl: url.href } });
   });
   it("fails closed for unknown, untrusted metadata, stale sync, and channel loss", async () => {
     const send = vi.fn();
