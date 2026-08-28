@@ -14,6 +14,7 @@ public class AuthProperties {
     private Duration stateTtl = Duration.ofMinutes(10);
     private Duration exchangeTtl = Duration.ofMinutes(2);
     private String extensionRedirectUri = "";
+    private String dashboardOrigin = "";
 
     public Github getGithub() {
         return github;
@@ -51,6 +52,14 @@ public class AuthProperties {
             String extensionRedirectUri
     ) {
         this.extensionRedirectUri = extensionRedirectUri;
+    }
+
+    public String getDashboardOrigin() {
+        return dashboardOrigin;
+    }
+
+    public void setDashboardOrigin(String dashboardOrigin) {
+        this.dashboardOrigin = dashboardOrigin;
     }
 
     public static class Github {
