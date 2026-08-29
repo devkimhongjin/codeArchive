@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { bootstrapArchiveDataSource } from "./archiveDataSource";
+import { mainApiArchiveDataSource } from "./archiveDataSource";
 import {
   groupDashboardSolutions,
   type DashboardArchiveDataSource,
@@ -57,7 +57,7 @@ function sourceLabel(source: DashboardSolution["source"]): string {
 }
 
 export function App({
-  dataSource = bootstrapArchiveDataSource,
+  dataSource = mainApiArchiveDataSource,
   extensionConnection = dashboardExtensionConnection,
   authClient = dashboardAuthClient,
   beforeLogout,
@@ -72,6 +72,7 @@ export function App({
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [archiveRefreshAttempt, setArchiveRefreshAttempt] = useState(0);
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const [extensionState, setExtensionState] = useState<ExtensionConnectionState>({ status: "connecting" });
   const [authAttempt, setAuthAttempt] = useState(0);
@@ -99,6 +100,7 @@ export function App({
       importBatchIdGenerator,
       (syncSessionId) => drainEligibilityRef.current.eligible
         && drainEligibilityRef.current.activeSyncSessionId === syncSessionId,
+      () => setArchiveRefreshAttempt((value) => value + 1),
     ),
     [extensionConnection, importBatchIdGenerator, pendingDrainApiClient],
   );
@@ -182,7 +184,7 @@ export function App({
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, [dataSource]);
+  }, [archiveRefreshAttempt, dataSource]);
 
   async function setConsent(enabled: boolean) {
     if (enabled) {
@@ -301,7 +303,10 @@ export function App({
       {loading ? (
         <p className="state-card" role="status">풀이 목록을 불러오는 중입니다.</p>
       ) : error ? (
-        <p className="state-card error" role="alert">{error}</p>
+        <div className="state-card error" role="alert">
+          <p>{error}</p>
+          <button type="button" onClick={() => setArchiveRefreshAttempt((value) => value + 1)}>다시 불러오기</button>
+        </div>
       ) : records.length === 0 ? (
         <p className="state-card">아직 표시할 풀이가 없습니다.</p>
       ) : (
@@ -325,7 +330,7 @@ export function App({
                 <div className="detail-heading"><div><p className="eyebrow">{selected.platform} · {selected.problemNumber}</p><h2>{selected.title}</h2></div><span className="badge">{sourceLabel(selected.source)}</span></div>
                 <dl className="metadata"><div><dt>언어</dt><dd>{selected.language}</dd></div><div><dt>풀이 날짜</dt><dd>{formatDate(selected.solvedAt)}</dd></div><div><dt>실행시간</dt><dd>{selected.executionTime ?? "미입력"}</dd></div><div><dt>메모리</dt><dd>{selected.memoryUsage ?? "미입력"}</dd></div></dl>
                 <pre className="code-view"><code>{selected.code}</code></pre>
-                <p className="future-note">이 상세 화면은 인증된 Main API 데이터와 자동 동기화된 결과를 표시하도록 확장할 수 있습니다.</p>
+                <p className="future-note">Main API에 보관된 풀이입니다.</p>
               </article>
             )}
           </section>

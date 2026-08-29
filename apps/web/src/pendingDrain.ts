@@ -197,6 +197,7 @@ export function createPendingDrainController(
   api: PendingDrainApiClient = dashboardPendingDrainApiClient,
   generateImportBatchId: () => string = secureImportBatchId,
   isEligible: (syncSessionId: string) => boolean = () => true,
+  onServerRecordsChanged: () => void = () => undefined,
 ): PendingDrainController {
   let generation = 0;
   let running = false;
@@ -233,6 +234,7 @@ export function createPendingDrainController(
         if (!stillEligible(sessionId, runGeneration)) return;
         if (ackableIds === null) return;
         if (ackableIds.length > 0) {
+          onServerRecordsChanged();
           await ackImported(capability, importBatchId, ackableIds);
           if (!stillEligible(sessionId, runGeneration)) return;
         }
