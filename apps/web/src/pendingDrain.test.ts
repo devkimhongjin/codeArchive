@@ -71,19 +71,41 @@ describe("pending page validation", () => {
 });
 
 describe("Main API pending upsert client", () => {
-  it("posts exact bulk-upsert request with credentials and no ownership field", async () => {
+  it("posts the exact flat Spring bulk-upsert request with credentials and no ownership field", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(apiEnvelope([
       { clientRecordId: "one", outcome: "IMPORTED", ackEligible: true, errorCode: null },
     ], "req-1")), { status: 200, headers: { "Content-Type": "application/json" } }));
     const client = createPendingDrainApiClient(fetcher);
-    expect(await client.upsert("batch-a", [record("one")])).toEqual(["one"]);
+    const sourceRecord = {
+      ...record("one"),
+      executionTime: 81,
+      memoryUsage: 32,
+    };
+    expect(await client.upsert("batch-a", [sourceRecord])).toEqual(["one"]);
     expect(fetcher).toHaveBeenCalledTimes(1);
     const [url, init] = fetcher.mock.calls[0];
     expect(url).toBe("https://codearchive-api.onrender.com/api/v1/solutions/bulk-upsert");
     expect(init).toMatchObject({ method: "POST", credentials: "include", headers: { "Content-Type": "application/json" } });
     const body = JSON.parse(String(init?.body));
-    expect(body.importBatchId).toBe("batch-a");
-    expect(body.records[0].clientRecordId).toBe("one");
+    expect(body).toEqual({
+      importBatchId: "batch-a",
+      records: [{
+        clientRecordId: "one",
+        platform: "SWEA",
+        problemNumber: "1234",
+        title: "중위순회",
+        language: "JAVA",
+        code: "class Solution {}",
+        result: "ACCEPTED",
+        solvedAt: "2026-08-28T00:00:00.000Z",
+        observedAt: "2026-08-28T00:00:00.000Z",
+        executionTime: "81",
+        memoryUsage: "32",
+        aiUsage: "unknown",
+      }],
+    });
+    expect(body.records[0]).not.toHaveProperty("problem");
+    expect(body.records[0]).not.toHaveProperty("submittedAt");
     expect(JSON.stringify(body)).not.toMatch(/userId|accountId|owner/i);
   });
 

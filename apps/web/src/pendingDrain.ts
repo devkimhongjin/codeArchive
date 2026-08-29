@@ -3,6 +3,7 @@ import {
   CODEARCHIVE_CAPTURE_PAGE_MAX_LIMIT,
   CODEARCHIVE_SYNC_MAX_PAGE_REQUESTS,
   selectAckableClientRecordIds,
+  toMainApiSolutionBulkUpsertRecord,
   type CaptureImportRecord,
   type MainApiSolutionBulkUpsertRequest,
 } from "../../../packages/shared-types/src";
@@ -123,7 +124,10 @@ export function createPendingDrainApiClient(
 ): PendingDrainApiClient {
   return {
     async upsert(importBatchId, records) {
-      const request: MainApiSolutionBulkUpsertRequest = { importBatchId, records };
+      const request: MainApiSolutionBulkUpsertRequest = {
+        importBatchId,
+        records: records.map(toMainApiSolutionBulkUpsertRecord),
+      };
       try {
         const response = await fetcher(BULK_UPSERT_URL, {
           method: "POST",
