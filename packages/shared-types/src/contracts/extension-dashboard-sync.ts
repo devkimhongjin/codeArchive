@@ -198,9 +198,57 @@ export type CodeArchiveCaptureAckResponse =
  * importBatchId is trace/receipt metadata, never the idempotency key. Dashboard
  * retains it for the later Extension ACK; the API does not echo it.
  */
+export type MainApiAiUsage = "used" | "not_used" | "unknown";
+
+/** Flat wire shape consumed by CaptureBulkUpsertRequest.CaptureItem. */
+export interface MainApiSolutionBulkUpsertRecord {
+  readonly clientRecordId: ClientRecordId;
+  readonly platform: CaptureImportRecord["problem"]["platform"];
+  readonly problemNumber: string;
+  readonly title: string;
+  readonly language: CaptureImportRecord["language"];
+  readonly code: string;
+  readonly result: CaptureImportRecord["result"];
+  readonly solvedAt: string | null;
+  readonly observedAt: string | null;
+  readonly executionTime: string | null;
+  readonly memoryUsage: string | null;
+  readonly aiUsage: MainApiAiUsage;
+}
+
 export interface MainApiSolutionBulkUpsertRequest {
   readonly importBatchId: ImportBatchId;
-  readonly records: readonly CaptureImportRecord[];
+  readonly records: readonly MainApiSolutionBulkUpsertRecord[];
+}
+
+function apiPerformanceValue(value: number | undefined): string | null {
+  return value === undefined ? null : String(value);
+}
+
+/**
+ * Deterministic bridge-to-API mapping for accepted capture records.
+ * `submittedAt` is the capture's accepted-submission event instant, so it is
+ * used for both server timestamps. Unitless bridge performance numbers remain
+ * unitless decimal strings. The bridge has no AI-use assertion, so the request
+ * explicitly sends `unknown`.
+ */
+export function toMainApiSolutionBulkUpsertRecord(
+  record: CaptureImportRecord,
+): MainApiSolutionBulkUpsertRecord {
+  return {
+    clientRecordId: record.clientRecordId,
+    platform: record.problem.platform,
+    problemNumber: record.problem.problemNumber ?? record.problem.platformProblemId,
+    title: record.problem.title,
+    language: record.language,
+    code: record.code,
+    result: record.result,
+    solvedAt: record.submittedAt,
+    observedAt: record.submittedAt,
+    executionTime: apiPerformanceValue(record.executionTime),
+    memoryUsage: apiPerformanceValue(record.memoryUsage),
+    aiUsage: "unknown",
+  };
 }
 
 export type MainApiBulkUpsertOutcome =

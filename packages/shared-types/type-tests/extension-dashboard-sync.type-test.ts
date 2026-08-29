@@ -1,13 +1,16 @@
 import {
   isAckableMainApiBulkUpsertResult,
   selectAckableClientRecordIds,
+  toMainApiSolutionBulkUpsertRecord,
 } from "../src/contracts/extension-dashboard-sync";
 import type {
   AckableMainApiBulkUpsertResult,
+  CaptureImportRecord,
   CodeArchiveBridgeProtocolVersion,
   CodeArchiveCaptureChangedEvent,
   CodeArchiveCaptureSummaryData,
   MainApiBulkUpsertRecordResult,
+  MainApiSolutionBulkUpsertRecord,
   MainApiSolutionBulkUpsertRequest,
   MainApiSolutionBulkUpsertSuccessData,
 } from "../src/contracts/extension-dashboard-sync";
@@ -79,6 +82,62 @@ type _SuccessDataHasOnlyResults = Assert<
 type _RequestHasNoUserId = Assert<
   Equal<"userId" extends keyof MainApiSolutionBulkUpsertRequest ? true : false, false>
 >;
+
+type _RequestRecordHasNoUserId = Assert<
+  Equal<"userId" extends keyof MainApiSolutionBulkUpsertRecord ? true : false, false>
+>;
+
+type _RequestRecordIsFlat = Assert<
+  Equal<"problem" extends keyof MainApiSolutionBulkUpsertRecord ? true : false, false>
+>;
+
+type ExpectedMainApiRecordKeys =
+  | "clientRecordId"
+  | "platform"
+  | "problemNumber"
+  | "title"
+  | "language"
+  | "code"
+  | "result"
+  | "solvedAt"
+  | "observedAt"
+  | "executionTime"
+  | "memoryUsage"
+  | "aiUsage";
+
+type _RequestRecordMatchesSpringCaptureItem = Assert<
+  Equal<keyof MainApiSolutionBulkUpsertRecord, ExpectedMainApiRecordKeys>
+>;
+
+const bridgeRecord = {
+  clientRecordId: "capture-id",
+  problem: {
+    platform: "SWEA",
+    platformProblemId: "1206",
+    title: "View",
+    url: "https://swexpertacademy.com/example",
+    tags: [],
+  },
+  language: "JAVA",
+  code: "class Solution {}",
+  result: "ACCEPTED",
+  executionTime: 81,
+  memoryUsage: 32,
+  submittedAt: "2026-08-29T00:00:00.000Z",
+} satisfies CaptureImportRecord;
+
+const apiRecord = toMainApiSolutionBulkUpsertRecord(bridgeRecord);
+
+type _MapperReturnsFlatSpringCaptureItem = Assert<
+  Equal<typeof apiRecord, MainApiSolutionBulkUpsertRecord>
+>;
+
+const mappedRequest = {
+  importBatchId: "batch-id",
+  records: [apiRecord],
+} satisfies MainApiSolutionBulkUpsertRequest;
+
+void mappedRequest;
 
 const imported = {
   clientRecordId: "imported-id",
