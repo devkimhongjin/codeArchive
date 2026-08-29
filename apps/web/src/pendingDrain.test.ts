@@ -6,6 +6,7 @@ import {
   createPendingDrainController,
   parsePendingPage,
   type PendingDrainApiClient,
+  type PendingDrainRetryPolicy,
 } from "./pendingDrain";
 
 const record = (clientRecordId: string): CaptureImportRecord => ({
@@ -40,6 +41,12 @@ const apiEnvelope = (results: readonly unknown[], requestId = "req-test") => ({
   data: { results },
   error: null,
   requestId,
+});
+
+const immediateRetry = (maxAttempts = 3): PendingDrainRetryPolicy => ({
+  maxAttempts,
+  backoffMs: [10, 20],
+  delay: vi.fn(async () => undefined),
 });
 
 function bridge(overrides: Partial<DashboardExtensionConnection> = {}): DashboardExtensionConnection {
@@ -151,10 +158,61 @@ describe("Main API pending upsert client", () => {
     expect(await createPendingDrainApiClient(fetcher).upsert("batch-a", [record("one")])).toEqual([]);
   });
 
-  it("returns no ACK evidence for network, non-success, or malformed envelopes", async () => {
-    expect(await createPendingDrainApiClient(async () => { throw new Error("offline"); }).upsert("b", [record("one")])).toBeNull();
-    expect(await createPendingDrainApiClient(async () => new Response("x", { status: 503 })).upsert("b", [record("one")])).toBeNull();
+  it("returns no ACK evidence for non-retryable or malformed envelopes", async () => {
+    expect(await createPendingDrainApiClient(async () => new Response("x", { status: 400 }), immediateRetry()).upsert("b", [record("one")])).toBeNull();
     expect(await createPendingDrainApiClient(async () => new Response(JSON.stringify({ success: true, data: {} }), { status: 200 })).upsert("b", [record("one")])).toBeNull();
+  });
+
+  it("retries a network failure with the same batch and records, then returns ACK evidence", async () => {
+    const retryPolicy = immediateRetry();
+    const fetcher = vi.fn()
+      .mockRejectedValueOnce(new TypeError("offline"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(apiEnvelope([
+        { clientRecordId: "one", outcome: "IMPORTED", ackEligible: true, errorCode: null },
+      ])), { status: 200 }));
+
+    expect(await createPendingDrainApiClient(fetcher, retryPolicy).upsert("batch-stable", [record("one")])).toEqual(["one"]);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(retryPolicy.delay).toHaveBeenCalledWith(10);
+    expect(fetcher.mock.calls[0][1]?.body).toBe(fetcher.mock.calls[1][1]?.body);
+    expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toMatchObject({
+      importBatchId: "batch-stable",
+      records: [{ clientRecordId: "one" }],
+    });
+  });
+
+  it("retries 429 and 5xx, but does not retry other 4xx responses", async () => {
+    const transientFetcher = vi.fn()
+      .mockResolvedValueOnce(new Response("", { status: 429 }))
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(apiEnvelope([])), { status: 200 }));
+    expect(await createPendingDrainApiClient(transientFetcher, immediateRetry()).upsert("b", [record("one")])).toEqual([]);
+    expect(transientFetcher).toHaveBeenCalledTimes(3);
+
+    const clientErrorFetcher = vi.fn(async () => new Response("", { status: 422 }));
+    expect(await createPendingDrainApiClient(clientErrorFetcher, immediateRetry()).upsert("b", [record("one")])).toBeNull();
+    expect(clientErrorFetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry malformed success envelopes or result collections", async () => {
+    const malformedEnvelope = vi.fn(async () => new Response(JSON.stringify({ success: true, data: {} }), { status: 200 }));
+    expect(await createPendingDrainApiClient(malformedEnvelope, immediateRetry()).upsert("b", [record("one")])).toBeNull();
+    expect(malformedEnvelope).toHaveBeenCalledTimes(1);
+
+    const malformedResults = vi.fn(async () => new Response(JSON.stringify(apiEnvelope([
+      { clientRecordId: "one", outcome: "IMPORTED", ackEligible: true, errorCode: null },
+      { clientRecordId: "one", outcome: "FAILED", ackEligible: false, errorCode: "INVALID_RECORD" },
+    ])), { status: 200 }));
+    expect(await createPendingDrainApiClient(malformedResults, immediateRetry()).upsert("b", [record("one")])).toBeNull();
+    expect(malformedResults).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds exhausted transient attempts", async () => {
+    const fetcher = vi.fn(async () => new Response("", { status: 500 }));
+    const retryPolicy = immediateRetry(3);
+    expect(await createPendingDrainApiClient(fetcher, retryPolicy).upsert("b", [record("one")])).toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(retryPolicy.delay).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -168,7 +226,7 @@ describe("automatic pending drain", () => {
     await flush();
     expect(connection.beginImport).toHaveBeenCalledWith("session-a");
     expect(connection.readPendingPage).toHaveBeenCalledWith("capability-a", undefined);
-    expect(api.upsert).toHaveBeenCalledWith("batch-a", [record("one")]);
+    expect(api.upsert).toHaveBeenCalledWith("batch-a", [record("one")], expect.any(Function));
     expect(ackImported).toHaveBeenCalledWith("capability-a", "batch-a", ["one"]);
   });
 
@@ -255,6 +313,35 @@ describe("automatic pending drain", () => {
     controller.invalidate();
     finishApi(["one"]);
     await flush();
+    expect(ackImported).not.toHaveBeenCalled();
+  });
+
+  it("invalidation during retry backoff stops further API work and ACK", async () => {
+    let releaseDelay!: () => void;
+    const retryPolicy: PendingDrainRetryPolicy = {
+      maxAttempts: 3,
+      backoffMs: [10, 20],
+      delay: vi.fn(() => new Promise<void>((resolve) => { releaseDelay = resolve; })),
+    };
+    const fetcher = vi.fn(async () => new Response("", { status: 503 }));
+    const ackImported = vi.fn(async () => true);
+    const controller = createPendingDrainController(
+      bridge({ ackImported }),
+      createPendingDrainApiClient(fetcher, retryPolicy),
+      () => "batch-a",
+      () => true,
+    );
+
+    controller.schedule("session-a");
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    controller.invalidate();
+    releaseDelay();
+    await flush();
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
     expect(ackImported).not.toHaveBeenCalled();
   });
 });

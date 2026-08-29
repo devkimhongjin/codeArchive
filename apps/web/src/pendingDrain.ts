@@ -19,8 +19,18 @@ const BULK_UPSERT_FAILURE_CODES = new Set(["INVALID_RECORD", "PERSISTENCE_FAILED
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+export interface PendingDrainRetryPolicy {
+  readonly maxAttempts: number;
+  readonly backoffMs: readonly number[];
+  delay(milliseconds: number): Promise<void>;
+}
+
 export interface PendingDrainApiClient {
-  upsert(importBatchId: string, records: readonly CaptureImportRecord[]): Promise<readonly string[] | null>;
+  upsert(
+    importBatchId: string,
+    records: readonly CaptureImportRecord[],
+    canContinue?: () => boolean,
+  ): Promise<readonly string[] | null>;
 }
 
 export interface PendingDrainController {
@@ -119,27 +129,59 @@ function parseAckableApiIds(value: unknown, offeredIds: readonly string[]): read
   return selectAckableClientRecordIds(results).filter((id) => offered.has(id));
 }
 
+const DEFAULT_RETRY_POLICY: PendingDrainRetryPolicy = {
+  maxAttempts: 3,
+  backoffMs: [250, 1_000],
+  delay: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+};
+
+function isTransientStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
 export function createPendingDrainApiClient(
   fetcher: FetchLike = globalThis.fetch.bind(globalThis),
+  retryPolicy: PendingDrainRetryPolicy = DEFAULT_RETRY_POLICY,
 ): PendingDrainApiClient {
   return {
-    async upsert(importBatchId, records) {
+    async upsert(importBatchId, records, canContinue = () => true) {
       const request: MainApiSolutionBulkUpsertRequest = {
         importBatchId,
         records: records.map(toMainApiSolutionBulkUpsertRecord),
       };
-      try {
-        const response = await fetcher(BULK_UPSERT_URL, {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(request),
-        });
-        if (!response.ok) return null;
-        return parseAckableApiIds(await response.json(), records.map((record) => record.clientRecordId));
-      } catch {
-        return null;
+      const requestBody = JSON.stringify(request);
+      const attempts = Math.max(1, Math.floor(retryPolicy.maxAttempts));
+
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        if (attempt > 0) {
+          if (!canContinue()) return null;
+          const delayIndex = Math.min(attempt - 1, retryPolicy.backoffMs.length - 1);
+          const delayMs = delayIndex >= 0 ? retryPolicy.backoffMs[delayIndex] : 0;
+          await retryPolicy.delay(delayMs);
+          if (!canContinue()) return null;
+        }
+
+        try {
+          const response = await fetcher(BULK_UPSERT_URL, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: requestBody,
+          });
+          if (response.ok) {
+            try {
+              return parseAckableApiIds(await response.json(), records.map((record) => record.clientRecordId));
+            } catch {
+              return null;
+            }
+          }
+          if (!isTransientStatus(response.status)) return null;
+        } catch {
+          // Network failures are transient; retry only within the bounded policy.
+        }
       }
+
+      return null;
     },
   };
 }
@@ -183,7 +225,11 @@ export function createPendingDrainController(
       if (page.records.length > 0) {
         const importBatchId = generateImportBatchId();
         if (!stillEligible(sessionId, runGeneration)) return;
-        const ackableIds = await api.upsert(importBatchId, page.records);
+        const ackableIds = await api.upsert(
+          importBatchId,
+          page.records,
+          () => stillEligible(sessionId, runGeneration),
+        );
         if (!stillEligible(sessionId, runGeneration)) return;
         if (ackableIds === null) return;
         if (ackableIds.length > 0) {
