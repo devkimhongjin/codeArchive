@@ -200,6 +200,31 @@ MVP 제한:
 - response/error는 고정 envelope와 안전한 오류 코드만 사용
 - 내부 exception, OAuth 값, cookie, token, provider/API raw body는 반환하지 않음
 
+## Main API 요청 매핑
+
+Dashboard는 bridge의 중첩 `CaptureImportRecord`를 그대로 전송하지 않고 shared-types의
+`toMainApiSolutionBulkUpsertRecord`를 사용해 Spring
+`CaptureBulkUpsertRequest.CaptureItem`의 평면 wire shape로 변환한다.
+
+| Bridge 값 | Main API 값 | 규칙 |
+| --- | --- | --- |
+| `clientRecordId` | `clientRecordId` | 변경 없이 보존 |
+| `problem.platform` | `platform` | 변경 없이 보존 |
+| `problem.problemNumber` | `problemNumber` | 없으면 필수 `problem.platformProblemId` 사용 |
+| `problem.title` | `title` | 변경 없이 보존 |
+| `language`, `code`, `result` | 같은 이름의 평면 필드 | 변경 없이 보존 |
+| `submittedAt` | `solvedAt`, `observedAt` | ACCEPTED capture의 동일한 제출 관찰 시각으로 둘 다 설정 |
+| 숫자 `executionTime`, `memoryUsage` | 문자열 필드 | 있으면 단위를 추정하지 않고 10진 문자열로 변환, 없으면 `null` |
+| bridge에 없음 | `aiUsage` | 명시적으로 `"unknown"` 전송 |
+
+API 요청에는 중첩 `problem` 객체와 `userId`/account ownership 필드를 넣지 않는다. 소유권은
+인증된 Dashboard 세션에서 서버가 결정한다. 한 batch의 record 수는 1..25이며
+`importBatchId`는 관찰/ACK receipt 상관관계용일 뿐 idempotency key가 아니다.
+
+현재 bridge의 `submittedAt`은 SWEA ACCEPTED 결과를 감지한 event instant이므로 MVP의 두 API
+timestamp를 결정하기에 충분하다. 별도의 사용자 수정 풀이 날짜나 독립 관찰 시각이 필요해지면
+기존 필드 의미를 재해석하지 않고 bridge/API 계약을 별도 버전으로 확장한다.
+
 ## 기록 수명 주기
 
 ```text
