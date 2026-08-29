@@ -1,49 +1,72 @@
 import type { DashboardArchiveDataSource, DashboardSolution } from "./archiveTypes";
+import { MAIN_API_ORIGIN } from "./authClient";
 
-const bootstrapRecords: readonly DashboardSolution[] = [
-  {
-    id: "demo-swea-1234-java",
-    platform: "SWEA",
-    problemNumber: "1234",
-    title: "중위순회",
-    language: "Java",
-    code: "class Solution {\n  public static void main(String[] args) {\n    // Dashboard bootstrap fixture\n  }\n}",
-    solvedAt: "2026-08-27",
-    updatedAt: "2026-08-27T12:40:00.000Z",
-    source: "captured",
-    executionTime: "112 ms",
-    memoryUsage: "24 MB",
-  },
-  {
-    id: "demo-swea-1234-python",
-    platform: "SWEA",
-    problemNumber: "1234",
-    title: "중위순회",
-    language: "Python",
-    code: "def solve():\n    # Dashboard bootstrap fixture\n    pass\n",
-    solvedAt: "2026-08-26",
-    updatedAt: "2026-08-26T09:20:00.000Z",
-    source: "manual",
-  },
-  {
-    id: "demo-swea-1954-java",
-    platform: "SWEA",
-    problemNumber: "1954",
-    title: "달팽이 숫자",
-    language: "Java",
-    code: "class Solution {\n  // Later slices replace this fixture through DashboardArchiveDataSource.\n}",
-    solvedAt: "2026-08-25",
-    updatedAt: "2026-08-25T07:10:00.000Z",
-    source: "captured",
-  },
-];
+const SOLUTIONS_URL = `${MAIN_API_ORIGIN}/api/v1/solutions?limit=50`;
 
-/**
- * Bootstrap-only data source. Later authenticated Main API work replaces this
- * adapter without coupling the Dashboard UI to Extension IndexedDB.
- */
-export const bootstrapArchiveDataSource: DashboardArchiveDataSource = {
-  async listSolutions() {
-    return bootstrapRecords;
-  },
-};
+type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function optionalString(value: unknown): value is string | null | undefined {
+  return value === null || value === undefined || typeof value === "string";
+}
+
+function parseSolution(value: unknown): DashboardSolution | null {
+  if (!isObject(value)) return null;
+  if (
+    typeof value.id !== "string"
+    || typeof value.platform !== "string"
+    || typeof value.problemNumber !== "string"
+    || typeof value.title !== "string"
+    || typeof value.language !== "string"
+    || typeof value.code !== "string"
+    || !optionalString(value.solvedAt)
+    || typeof value.updatedAt !== "string"
+    || !optionalString(value.executionTime)
+    || !optionalString(value.memoryUsage)
+  ) return null;
+
+  return {
+    id: value.id,
+    platform: value.platform,
+    problemNumber: value.problemNumber,
+    title: value.title,
+    language: value.language,
+    code: value.code,
+    solvedAt: value.solvedAt ?? null,
+    updatedAt: value.updatedAt,
+    source: "captured",
+    ...(value.executionTime ? { executionTime: value.executionTime } : {}),
+    ...(value.memoryUsage ? { memoryUsage: value.memoryUsage } : {}),
+  };
+}
+
+function parseSolutionsEnvelope(value: unknown): readonly DashboardSolution[] | null {
+  if (!isObject(value) || value.success !== true || !Array.isArray(value.data)) return null;
+  const records = value.data.map(parseSolution);
+  return records.every((record): record is DashboardSolution => record !== null)
+    ? records
+    : null;
+}
+
+export function createMainApiArchiveDataSource(
+  fetcher: FetchLike = globalThis.fetch.bind(globalThis),
+): DashboardArchiveDataSource {
+  return {
+    async listSolutions() {
+      const response = await fetcher(SOLUTIONS_URL, {
+        method: "GET",
+        credentials: "include",
+      });
+      if (response.status === 401) return [];
+      if (!response.ok) throw new Error("archive request failed");
+      const records = parseSolutionsEnvelope(await response.json());
+      if (!records) throw new Error("archive response invalid");
+      return records;
+    },
+  };
+}
+
+export const mainApiArchiveDataSource = createMainApiArchiveDataSource();

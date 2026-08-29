@@ -219,14 +219,16 @@ describe("Main API pending upsert client", () => {
 describe("automatic pending drain", () => {
   it("eligible scheduling begins import, reads pending page, and partially ACKs with retained batch id", async () => {
     const ackImported = vi.fn(async () => true);
+    const onServerRecordsChanged = vi.fn();
     const connection = bridge({ ackImported });
     const api: PendingDrainApiClient = { upsert: vi.fn(async () => ["one"]) };
-    const controller = createPendingDrainController(connection, api, () => "batch-a", () => true);
+    const controller = createPendingDrainController(connection, api, () => "batch-a", () => true, onServerRecordsChanged);
     controller.schedule("session-a");
     await flush();
     expect(connection.beginImport).toHaveBeenCalledWith("session-a");
     expect(connection.readPendingPage).toHaveBeenCalledWith("capability-a", undefined);
     expect(api.upsert).toHaveBeenCalledWith("batch-a", [record("one")], expect.any(Function));
+    expect(onServerRecordsChanged).toHaveBeenCalledTimes(1);
     expect(ackImported).toHaveBeenCalledWith("capability-a", "batch-a", ["one"]);
   });
 
