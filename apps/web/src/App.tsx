@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { bootstrapArchiveDataSource } from "./archiveDataSource";
 import {
   groupDashboardSolutions,
@@ -23,6 +23,12 @@ import {
   type DashboardExtensionConnection,
   type ExtensionConnectionState,
 } from "./extensionConnection";
+import {
+  createPendingDrainController,
+  dashboardPendingDrainApiClient,
+  secureImportBatchId,
+  type PendingDrainApiClient,
+} from "./pendingDrain";
 
 interface AppProps {
   dataSource?: DashboardArchiveDataSource;
@@ -32,6 +38,8 @@ interface AppProps {
   consentStore?: AutoSyncConsentStore;
   dashboardOrigin?: string;
   syncSessionIdGenerator?: () => string;
+  pendingDrainApiClient?: PendingDrainApiClient;
+  importBatchIdGenerator?: () => string;
 }
 
 type AuthState =
@@ -56,6 +64,8 @@ export function App({
   consentStore = dashboardAutoSyncConsentStore,
   dashboardOrigin = globalThis.location.origin,
   syncSessionIdGenerator = secureSyncSessionId,
+  pendingDrainApiClient = dashboardPendingDrainApiClient,
+  importBatchIdGenerator = secureImportBatchId,
 }: AppProps) {
   const [records, setRecords] = useState<readonly DashboardSolution[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -69,14 +79,46 @@ export function App({
   const [logoutPending, setLogoutPending] = useState(false);
   const [consentPending, setConsentPending] = useState(false);
   const [autoSyncConsent, setAutoSyncConsent] = useState(() => consentStore.read());
+  const [activeSyncSessionId, setActiveSyncSessionId] = useState<string | null>(null);
+
+  const drainEligibilityRef = useRef({ eligible: false, activeSyncSessionId: null as string | null });
 
   const syncController = useMemo(
-    () => createAutoSyncSessionController(extensionConnection, syncSessionIdGenerator),
+    () => createAutoSyncSessionController(
+      extensionConnection,
+      syncSessionIdGenerator,
+      setActiveSyncSessionId,
+    ),
     [extensionConnection, syncSessionIdGenerator],
   );
 
+  const pendingDrainController = useMemo(
+    () => createPendingDrainController(
+      extensionConnection,
+      pendingDrainApiClient,
+      importBatchIdGenerator,
+      (syncSessionId) => drainEligibilityRef.current.eligible
+        && drainEligibilityRef.current.activeSyncSessionId === syncSessionId,
+    ),
+    [extensionConnection, importBatchIdGenerator, pendingDrainApiClient],
+  );
+
   useEffect(
-    () => extensionConnection.start(setExtensionState),
+    () => extensionConnection.start(
+      setExtensionState,
+      (event) => {
+        setExtensionState((current) => current.status === "connected"
+          ? {
+              status: "connected",
+              summary: {
+                ...current.summary,
+                pendingCount: event.pendingCount,
+                revision: event.revision,
+              },
+            }
+          : current);
+      },
+    ),
     [extensionConnection, connectionAttempt],
   );
 
@@ -90,29 +132,37 @@ export function App({
     return () => { active = false; };
   }, [authClient, authAttempt]);
 
+  const authenticated = authState.status === "authenticated";
+  const connected = extensionState.status === "connected";
+  const exactOrigin = isExactDashboardOrigin(dashboardOrigin);
+  const eligible = authenticated
+    && autoSyncConsent
+    && exactOrigin
+    && connected
+    && !logoutPending
+    && !consentPending;
+
+  drainEligibilityRef.current = { eligible, activeSyncSessionId };
+
   useEffect(() => {
-    const authenticated = authState.status === "authenticated";
-    const connected = extensionState.status === "connected";
-    const exactOrigin = isExactDashboardOrigin(dashboardOrigin);
-    const eligible = authenticated
-      && autoSyncConsent
-      && exactOrigin
-      && connected
-      && !logoutPending
-      && !consentPending;
     const authContextKey = authenticated ? authState.user.githubLogin : "";
     void syncController.setEligibility(eligible, authContextKey);
-  }, [
-    authState,
-    autoSyncConsent,
-    consentPending,
-    dashboardOrigin,
-    extensionState.status,
-    logoutPending,
-    syncController,
-  ]);
+  }, [authState, authenticated, eligible, syncController]);
 
-  useEffect(() => () => { void syncController.teardown(); }, [syncController]);
+  useEffect(() => {
+    if (!eligible || !activeSyncSessionId) {
+      pendingDrainController.invalidate();
+      return;
+    }
+    if (extensionState.status === "connected" && extensionState.summary.pendingCount > 0) {
+      pendingDrainController.schedule(activeSyncSessionId);
+    }
+  }, [activeSyncSessionId, eligible, extensionState, pendingDrainController]);
+
+  useEffect(() => () => {
+    pendingDrainController.invalidate();
+    void syncController.teardown();
+  }, [pendingDrainController, syncController]);
 
   useEffect(() => {
     let active = true;
@@ -142,6 +192,7 @@ export function App({
     }
 
     setConsentPending(true);
+    pendingDrainController.invalidate();
     await syncController.teardown();
     consentStore.write(false);
     setAutoSyncConsent(false);
@@ -150,6 +201,7 @@ export function App({
 
   async function logout() {
     setLogoutPending(true);
+    pendingDrainController.invalidate();
     const ok = await authClient.logout(async () => {
       await syncController.teardown();
       await beforeLogout?.();
@@ -205,7 +257,7 @@ export function App({
                   />
                   <span>
                     <strong>자동 동기화</strong>
-                    <small>{autoSyncConsent ? "사용자 동의됨 · 연결 조건 충족 시 세션 준비" : "꺼짐 · 로그인만으로는 시작되지 않음"}</small>
+                    <small>{autoSyncConsent ? "사용자 동의됨 · 연결 조건 충족 시 자동 전송" : "꺼짐 · 로그인만으로는 시작되지 않음"}</small>
                   </span>
                 </label>
               </>
@@ -273,7 +325,7 @@ export function App({
                 <div className="detail-heading"><div><p className="eyebrow">{selected.platform} · {selected.problemNumber}</p><h2>{selected.title}</h2></div><span className="badge">{sourceLabel(selected.source)}</span></div>
                 <dl className="metadata"><div><dt>언어</dt><dd>{selected.language}</dd></div><div><dt>풀이 날짜</dt><dd>{formatDate(selected.solvedAt)}</dd></div><div><dt>실행시간</dt><dd>{selected.executionTime ?? "미입력"}</dd></div><div><dt>메모리</dt><dd>{selected.memoryUsage ?? "미입력"}</dd></div></dl>
                 <pre className="code-view"><code>{selected.code}</code></pre>
-                <p className="future-note">이 상세 화면은 다음 bounded slice에서 인증된 Main API 데이터와 연결할 수 있습니다.</p>
+                <p className="future-note">이 상세 화면은 인증된 Main API 데이터와 자동 동기화된 결과를 표시하도록 확장할 수 있습니다.</p>
               </article>
             )}
           </section>
