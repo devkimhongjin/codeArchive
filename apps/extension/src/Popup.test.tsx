@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Popup } from "./PopupView";
 import type { SolutionRepository } from "./solutionRepository";
 import type { SolutionRecord } from "./solution";
@@ -33,13 +33,37 @@ async function expandAndOpen(title = "A+B"): Promise<void> {
 
 describe("Popup", () => {
   beforeEach(() => localStorage.clear());
+  afterEach(() => vi.restoreAllMocks());
+
+  it("opens the approved Dashboard in an isolated new tab without changing local records", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const repository = createRepository([savedRecord]);
+    render(<Popup repository={repository} />);
+    expect(await screen.findByText("로컬 풀이 1건 · 1문제")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "전체 풀이 보기" }));
+    expect(open).toHaveBeenCalledExactlyOnceWith("https://codearchive-dashboard-beta.onrender.com", "_blank", "noopener,noreferrer");
+    expect(screen.getByText("새 탭으로 열립니다. 자동 동기화는 Dashboard에서 직접 켜야 시작됩니다.")).toBeInTheDocument();
+    expect(repository.create).not.toHaveBeenCalled();
+    expect(repository.update).not.toHaveBeenCalled();
+    expect(repository.delete).not.toHaveBeenCalled();
+    expect(repository.setSyncMetadata).not.toHaveBeenCalled();
+  });
+
+  it("keeps a distinct local archive action available without login", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    render(<Popup repository={createRepository()} />);
+    expect(await screen.findByText("아직 저장된 풀이가 없습니다.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "로컬 풀이 보기" }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(new URL("archive.html", window.location.href).href, "_blank", "noopener,noreferrer");
+    expect(screen.getByText("이 브라우저에 저장된 기록입니다. 로그인 없이 조회·편집·내보내기할 수 있어요.")).toBeInTheDocument();
+  });
 
   it("groups submissions by platform and problemNumber and limits recent problem groups to five", async () => {
     const sameProblemNewest = { ...savedRecord, updatedAt: "2026-08-24T01:00:00.000Z" };
     const sameProblemOlder = { ...sameProblemNewest, id: "older", updatedAt: "2026-08-24T00:00:00.000Z" };
     const otherGroups = Array.from({ length: 5 }, (_, index) => ({ ...savedRecord, id: `other-${index}`, problemNumber: `${2000 + index}`, title: `Other ${index}`, updatedAt: `2026-08-24T0${9 - index}:00:00.000Z` }));
     render(<Popup repository={createRepository([sameProblemNewest, sameProblemOlder, ...otherGroups])} />);
-    expect(await screen.findByText("저장된 풀이 7건 · 6문제")).toBeInTheDocument();
+    expect(await screen.findByText("로컬 풀이 7건 · 6문제")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { expanded: false })).toHaveLength(5);
     expect(screen.queryByText("A+B")).not.toBeInTheDocument();
   });
@@ -94,7 +118,7 @@ describe("Popup", () => {
     expect(await screen.findByRole("heading", { name: "A+B" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "삭제" }));
     await waitFor(() => expect(repository.delete).toHaveBeenCalledWith("solution-1"));
-    expect(await screen.findByText("저장된 풀이 1건 · 1문제")).toBeInTheDocument();
+    expect(await screen.findByText("로컬 풀이 1건 · 1문제")).toBeInTheDocument();
   });
 
   it("does not delete when confirmation is cancelled", async () => {
