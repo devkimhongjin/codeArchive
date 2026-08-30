@@ -9,7 +9,7 @@ const envelope = (data: readonly unknown[]) => ({
 });
 
 describe("Main API archive data source", () => {
-  it("loads authenticated solutions and maps them to the archive model", async () => {
+  it("loads authenticated solutions and retains server fields required for editing", async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify(envelope([{
       id: "c0f0a2d2-eed4-4786-9a28-6a4fcc3e6505",
       clientRecordId: "local-one",
@@ -36,12 +36,17 @@ describe("Main API archive data source", () => {
     );
     expect(records).toEqual([{
       id: "c0f0a2d2-eed4-4786-9a28-6a4fcc3e6505",
+      clientRecordId: "local-one",
       platform: "SWEA",
       problemNumber: "1234",
       title: "중위순회",
       language: "JAVA",
       code: "class Solution {}",
+      result: "ACCEPTED",
       solvedAt: "2026-08-29T00:00:00Z",
+      observedAt: "2026-08-29T00:00:00Z",
+      aiUsage: "unknown",
+      createdAt: "2026-08-29T00:00:00Z",
       updatedAt: "2026-08-29T00:00:00Z",
       source: "captured",
       memoryUsage: "32",

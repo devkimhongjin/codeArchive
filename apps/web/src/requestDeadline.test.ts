@@ -24,7 +24,12 @@ describe("API request deadlines", () => {
     expect(signals.every((signal) => signal.aborted)).toBe(true);
     fetcher.mockImplementationOnce(async () => new Response(null, { status: 401 }));
     expect(await auth.discoverSession()).toEqual({ status: "signed_out" });
-    fetcher.mockImplementationOnce(async () => new Response(JSON.stringify({ success: true, data: [] })));
+    fetcher.mockImplementationOnce(async () => new Response(JSON.stringify({
+      success: true,
+      data: [],
+      error: null,
+      requestId: "req-archive-retry",
+    })));
     expect(await archive.listSolutions()).toEqual([]);
     expect(vi.getTimerCount()).toBe(0);
   });
