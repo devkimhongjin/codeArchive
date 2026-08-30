@@ -1,5 +1,8 @@
 import type { DashboardArchiveDataSource, DashboardSolution } from "./archiveTypes";
 import { MAIN_API_ORIGIN } from "./authClient";
+import { withRequestDeadline } from "./requestDeadline";
+
+export class ArchiveSessionExpiredError extends Error {}
 
 const SOLUTIONS_URL = `${MAIN_API_ORIGIN}/api/v1/solutions?limit=50`;
 
@@ -55,16 +58,19 @@ export function createMainApiArchiveDataSource(
   fetcher: FetchLike = globalThis.fetch.bind(globalThis),
 ): DashboardArchiveDataSource {
   return {
-    async listSolutions() {
-      const response = await fetcher(SOLUTIONS_URL, {
-        method: "GET",
-        credentials: "include",
-      });
-      if (response.status === 401) return [];
-      if (!response.ok) throw new Error("archive request failed");
-      const records = parseSolutionsEnvelope(await response.json());
-      if (!records) throw new Error("archive response invalid");
-      return records;
+    async listSolutions(signal) {
+      return withRequestDeadline(async (requestSignal) => {
+        const response = await fetcher(SOLUTIONS_URL, {
+          method: "GET",
+          credentials: "include",
+          signal: requestSignal,
+        });
+        if (response.status === 401) throw new ArchiveSessionExpiredError("session expired");
+        if (!response.ok) throw new Error("archive request failed");
+        const records = parseSolutionsEnvelope(await response.json());
+        if (!records) throw new Error("archive response invalid");
+        return records;
+      }, signal);
     },
   };
 }

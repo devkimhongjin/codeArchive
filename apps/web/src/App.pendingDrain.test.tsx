@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CodeArchiveCaptureChangedEvent } from "../../../packages/shared-types/src";
 import { App } from "./App";
@@ -67,6 +67,7 @@ describe("Dashboard automatic pending catch-up", () => {
     />);
 
     await screen.findByText("Octo Cat");
+    fireEvent.click(screen.getByRole("checkbox", { name: /자동 동기화/ }));
     await waitFor(() => expect(bridge.beginImport).toHaveBeenCalledWith("session-a"));
     expect(bridge.beginImport).toHaveBeenCalledTimes(1);
   });
@@ -95,6 +96,7 @@ describe("Dashboard automatic pending catch-up", () => {
       dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
       syncSessionIdGenerator={() => "session-a"}
     />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: /자동 동기화/ }));
     await waitFor(() => expect(bridge.beginImport).toHaveBeenCalledTimes(1));
 
     bridge.captureChanged({

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import type { DashboardArchiveDataSource } from "./archiveTypes";
@@ -47,6 +47,55 @@ const authenticatedAuth = () => authClient(async () => ({
 }));
 
 describe("Dashboard archive shell", () => {
+  it("never fetches server records while signed out", async () => {
+    const listSolutions = vi.fn(async () => records);
+    render(<App dataSource={{ listSolutions }} authClient={signedOutAuth()} extensionConnection={extensionConnection()} />);
+    await screen.findByRole("button", { name: "GitHub로 로그인" });
+    expect(listSolutions).not.toHaveBeenCalled();
+    expect(screen.queryByText("class Solution {}")).not.toBeInTheDocument();
+  });
+
+  it("clears detail immediately on logout even while logout is stalled", async () => {
+    const client = authenticatedAuth();
+    client.logout = () => new Promise(() => undefined);
+    render(<App dataSource={{ listSolutions: async () => records }} authClient={client} extensionConnection={extensionConnection()} />);
+    await screen.findByText("class Solution {}");
+    fireEvent.click(screen.getByRole("button", { name: "로그아웃" }));
+    expect(screen.queryByText("class Solution {}")).not.toBeInTheDocument();
+    expect(screen.getByText("0건 · 0문제")).toBeInTheDocument();
+  });
+
+  it("ignores old account results and requires fresh consent for a new account", async () => {
+    let resolveOld!: (value: typeof records) => void;
+    const source = { listSolutions: vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
+      .mockResolvedValue([]) };
+    const start = vi.fn(async () => true);
+    const connection = extensionConnection("connected", start);
+    const store = consentStore(true);
+    const props = { dataSource: source, extensionConnection: connection, consentStore: store, dashboardOrigin: "https://codearchive-dashboard-beta.onrender.com" };
+    const { rerender } = render(<App {...props} authClient={authenticatedAuth()} />);
+    const checkbox = await screen.findByRole("checkbox", { name: /자동 동기화/ });
+    expect(checkbox).not.toBeChecked();
+    expect(start).not.toHaveBeenCalled();
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+    const other = authClient(async () => ({ status: "authenticated", user: { githubLogin: "other", displayName: "Other", avatarUrl: "" } }));
+    rerender(<App {...props} authClient={other} />);
+    await screen.findByText("Other");
+    await act(async () => resolveOld(records));
+    expect(screen.queryByText("class Solution {}")).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /자동 동기화/ })).not.toBeChecked();
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a failed archive read for the current authenticated account", async () => {
+    const source = { listSolutions: vi.fn().mockRejectedValueOnce(new Error("private")).mockResolvedValue(records) };
+    render(<App dataSource={source} authClient={authenticatedAuth()} extensionConnection={extensionConnection()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "다시 불러오기" }));
+    expect(await screen.findByText("class Solution {}")).toBeInTheDocument();
+  });
+
   it("shows metadata-only Extension connection status and supports retry", async () => {
     let attempts = 0;
     const connection: DashboardExtensionConnection = {
@@ -147,10 +196,11 @@ describe("Dashboard archive shell", () => {
       syncSessionIdGenerator={() => "session-a"}
     />);
     const checkbox = await screen.findByRole("checkbox", { name: /자동 동기화/ });
+    fireEvent.click(checkbox);
     await waitFor(() => expect(checkbox).toBeChecked());
     fireEvent.click(checkbox);
     await waitFor(() => expect(endSyncSession).toHaveBeenCalledWith("session-a"));
-    expect(events).toEqual(["end:session-a", "store:false"]);
+    expect(events).toEqual(["store:true", "end:session-a", "store:false"]);
   });
 
   it("logout tears down the bridge session before API logout", async () => {
@@ -174,6 +224,7 @@ describe("Dashboard archive shell", () => {
       syncSessionIdGenerator={() => "session-a"}
     />);
     await screen.findByText("Octo Cat");
+    fireEvent.click(screen.getByRole("checkbox", { name: /자동 동기화/ }));
     await waitFor(() => expect(screen.getByRole("checkbox", { name: /자동 동기화/ })).toBeChecked());
     fireEvent.click(screen.getByRole("button", { name: "로그아웃" }));
     expect(await screen.findByRole("button", { name: "GitHub로 로그인" })).toBeInTheDocument();
@@ -203,15 +254,14 @@ describe("Dashboard archive shell", () => {
 
   it("loads archive records through the replaceable data source and selects a detail", async () => {
     const dataSource: DashboardArchiveDataSource = { listSolutions: async () => records };
-    render(<App dataSource={dataSource} extensionConnection={extensionConnection()} authClient={signedOutAuth()} />);
-    expect(screen.getByText("풀이 목록을 불러오는 중입니다.")).toBeInTheDocument();
+    render(<App dataSource={dataSource} extensionConnection={extensionConnection()} authClient={authenticatedAuth()} />);
     expect(await screen.findByText("class Solution {}")).toBeInTheDocument();
     expect(screen.getByText("2건 · 2문제")).toBeInTheDocument();
   });
 
   it("filters the archive without adding routing or global state", async () => {
     const dataSource: DashboardArchiveDataSource = { listSolutions: async () => records };
-    render(<App dataSource={dataSource} extensionConnection={extensionConnection()} authClient={signedOutAuth()} />);
+    render(<App dataSource={dataSource} extensionConnection={extensionConnection()} authClient={authenticatedAuth()} />);
     await screen.findByText("2건 · 2문제");
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "1954" } });
     const archiveList = screen.getByLabelText("전체 풀이 목록");
@@ -222,7 +272,7 @@ describe("Dashboard archive shell", () => {
   });
 
   it("renders empty and safe error states", async () => {
-    const client = signedOutAuth();
+    const client = authenticatedAuth();
     const connection = extensionConnection();
     const { rerender } = render(<App dataSource={{ listSolutions: async () => [] }} extensionConnection={connection} authClient={client} />);
     expect(await screen.findByText("아직 표시할 풀이가 없습니다.")).toBeInTheDocument();

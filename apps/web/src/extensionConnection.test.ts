@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CODEARCHIVE_EXTENSION_ID } from "./extensionConfig";
 import { createDashboardExtensionConnection, type ExtensionConnectionState } from "./extensionConnection";
 
@@ -35,6 +35,54 @@ async function connectBridge(onCaptureChanged?: (event: never) => void) {
 }
 
 describe("Dashboard Extension connection", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+
+  it("reconnects with metadata only, ignores old port events and cancels on disposal", async () => {
+    const ports: FakePort[] = [];
+    const connect = vi.fn(() => { const port = new FakePort(); ports.push(port); return port; });
+    const changed = vi.fn();
+    const states: ExtensionConnectionState[] = [];
+    const connection = createDashboardExtensionConnection({ connect });
+    const stop = connection.start((state) => states.push(state), changed);
+    ports[0]!.receive({ ok: true, data: { protocolVersion: 1 } });
+    await flush();
+    ports[0]!.receive({ ok: true, data: { protocolVersion: 1, pendingCount: 2, allCount: 5, revision: 8 } });
+    await flush();
+    const pending = connection.startSyncSession("old-session");
+    ports[0]!.disconnect();
+    expect(await pending).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    ports[0]!.receive({ type: "CODEARCHIVE_CAPTURE_CHANGED", protocolVersion: 1, pendingCount: 99, revision: 99 });
+    ports[1]!.receive({ ok: true, data: { protocolVersion: 1 } });
+    await flush();
+    ports[1]!.receive({ ok: true, data: { protocolVersion: 1, pendingCount: 2, allCount: 5, revision: 8 } });
+    await flush();
+    expect(states.at(-1)?.status).toBe("connected");
+    expect(changed).not.toHaveBeenCalled();
+    expect(JSON.stringify(ports[1]!.sent)).not.toMatch(/SESSION_START|IMPORT_BEGIN|CAPTURE_PAGE/);
+    ports[1]!.disconnect();
+    stop();
+    await vi.runAllTimersAsync();
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("exhausts three retries without infinite timers and permits manual restart", async () => {
+    const connect = vi.fn(() => { throw new Error("unavailable"); });
+    const connection = createDashboardExtensionConnection({ connect });
+    const state = vi.fn();
+    connection.start(state);
+    await vi.runAllTimersAsync();
+    expect(connect).toHaveBeenCalledTimes(4);
+    expect(state).toHaveBeenLastCalledWith({ status: "error" });
+    expect(vi.getTimerCount()).toBe(0);
+    const stop = connection.start(state);
+    expect(connect).toHaveBeenCalledTimes(5);
+    stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("uses the exact beta Extension ID and requests metadata only before consent eligibility", async () => {
     const port = new FakePort();
     const connect = vi.fn(() => port);
