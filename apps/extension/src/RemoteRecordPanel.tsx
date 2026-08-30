@@ -18,6 +18,7 @@ interface RemoteRecordPanelProps {
   repository: SolutionRepository;
   authService: CodeArchiveAuthService;
   aiApi?: CodeArchiveAiApi;
+  showLegacySignIn?: boolean;
   onRecordChange?(record: SolutionRecord): void;
 }
 
@@ -29,7 +30,7 @@ function safeAiMessage(error: unknown): string {
   return "AI 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.";
 }
 
-export function RemoteRecordPanel({ record, repository, authService, aiApi = codeArchiveAiApi, onRecordChange }: RemoteRecordPanelProps) {
+export function RemoteRecordPanel({ record, repository, authService, aiApi = codeArchiveAiApi, showLegacySignIn = true, onRecordChange }: RemoteRecordPanelProps) {
   const [auth, setAuth] = useState<AuthViewState>({ status: authService.isConfigured() ? "signed_out" : "unavailable" });
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -134,7 +135,7 @@ export function RemoteRecordPanel({ record, repository, authService, aiApi = cod
 
   return <section className="remote-panel" aria-label="CodeArchive 서버 및 AI">
     <div className="section-heading"><h3>서버 동기화 · AI</h3></div>
-    {auth.status === "unavailable" ? <p className="form-hint">Main API 주소가 아직 설정되지 않아 로컬 기능만 사용합니다.</p> : auth.status === "signed_out" ? <button className="secondary-button" type="button" onClick={login} disabled={busy !== null}>{busy === "login" ? "로그인 중..." : "GitHub로 로그인"}</button> : <div className="auth-user"><div>{auth.user.avatarUrl && <img src={auth.user.avatarUrl} alt="" width="28" height="28" />}<strong>@{auth.user.githubLogin}</strong></div><button className="text-button" type="button" onClick={logout} disabled={busy !== null}>로그아웃</button></div>}
+    {!showLegacySignIn && auth.status !== "authenticated" ? <p className="form-hint">로그인과 서버 관리는 목록의 전체 풀이 보기로 Dashboard에서 진행해주세요.</p> : auth.status === "unavailable" ? <p className="form-hint">Main API 주소가 아직 설정되지 않아 로컬 기능만 사용합니다.</p> : auth.status === "signed_out" ? <button className="secondary-button" type="button" onClick={login} disabled={busy !== null}>{busy === "login" ? "로그인 중..." : "GitHub로 로그인"}</button> : <div className="auth-user"><div>{auth.user.avatarUrl && <img src={auth.user.avatarUrl} alt="" width="28" height="28" />}<strong>@{auth.user.githubLogin}</strong></div><button className="text-button" type="button" onClick={logout} disabled={busy !== null}>로그아웃</button></div>}
 
     <p className="sync-state">동기화 상태: {syncState === "synced" ? "동기화됨" : syncState === "retryable" ? "재시도 필요" : "로컬 전용"}</p>
     {auth.status === "authenticated" && syncState !== "synced" && <button className="secondary-button" type="button" onClick={retrySync} disabled={busy !== null}>{busy === "sync" ? "동기화 중..." : "다시 동기화"}</button>}

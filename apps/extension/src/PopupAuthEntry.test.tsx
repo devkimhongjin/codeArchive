@@ -1,6 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AuthLoginStageError } from "./authDiagnostics";
 import { Popup } from "./PopupView";
 import type { CodeArchiveAuthService } from "./authSession";
 import type { SolutionRepository } from "./solutionRepository";
@@ -31,35 +30,61 @@ function authService(): CodeArchiveAuthService {
 }
 
 describe("Popup auth entry", () => {
-  it("shows GitHub login on the normal popup even with zero saved solutions", async () => {
+  it("guides signed-out users to Dashboard without offering Extension login", async () => {
     const service = authService();
     render(<Popup repository={emptyRepository()} authService={service} />);
 
-    expect(await screen.findByRole("button", { name: "GitHub로 로그인" })).toBeInTheDocument();
+    expect(await screen.findByText(/로그인은 위의 전체 풀이 보기로 Dashboard에서/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "GitHub로 로그인" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "전체 풀이 보기" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "새 풀이 등록" })).toBeInTheDocument();
     expect(screen.getByText("아직 저장된 풀이가 없습니다.")).toBeInTheDocument();
     expect(service.restore).toHaveBeenCalledOnce();
+    expect(service.login).not.toHaveBeenCalled();
   });
 
-  it("shows the current account after login and exposes logout using the same auth service", async () => {
+  it("preserves logout for an existing legacy session without offering sign-in again", async () => {
     const service = authService();
+    service.restore = vi.fn(async () => ({
+      status: "authenticated" as const,
+      user: { id: "user-a", githubLogin: "tester", displayName: "Tester", avatarUrl: null },
+      expiresAt: "2026-08-27T00:00:00Z",
+    }));
     render(<Popup repository={emptyRepository()} authService={service} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "GitHub로 로그인" }));
     expect(await screen.findByText("@tester")).toBeInTheDocument();
-    expect(service.login).toHaveBeenCalledOnce();
+    expect(service.login).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "로그아웃" }));
     await waitFor(() => expect(service.logout).toHaveBeenCalledOnce());
-    expect(await screen.findByRole("button", { name: "GitHub로 로그인" })).toBeInTheDocument();
+    expect(await screen.findByText(/로그인은 위의 전체 풀이 보기로 Dashboard에서/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "GitHub로 로그인" })).not.toBeInTheDocument();
   });
 
-  it("shows only the safe stage when delegated OAuth fails", async () => {
+  it("keeps Dashboard guidance after legacy session restore fails", async () => {
     const service = authService();
-    service.login = vi.fn(async () => { throw new AuthLoginStageError("web_auth_launch"); });
+    service.restore = vi.fn(async () => { throw new Error("unavailable"); });
     render(<Popup repository={emptyRepository()} authService={service} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "GitHub로 로그인" }));
-    const diagnostic = await screen.findByText(/진단 단계: web_auth_launch/);
-    expect(diagnostic.textContent).not.toMatch(/authorization|state=|code=|token|secret|github\.com\/login/i);
+    await waitFor(() => expect(service.restore).toHaveBeenCalledOnce());
+    expect(screen.getByText(/로그인은 위의 전체 풀이 보기로 Dashboard에서/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "GitHub로 로그인" })).not.toBeInTheDocument();
+    expect(service.login).not.toHaveBeenCalled();
+  });
+
+  it("does not reintroduce sign-in when opening local popup detail", async () => {
+    const service = authService();
+    const record = { id: "record-1", platform: "SWEA", problemNumber: "1000", title: "Local test", language: "Java", code: "class Main {}", solvedAt: null, aiUsage: "unknown" as const, createdAt: "2026-08-30T00:00:00Z", updatedAt: "2026-08-30T00:00:00Z" };
+    const repository = emptyRepository();
+    repository.list = vi.fn(async () => [record]);
+    repository.getById = vi.fn(async () => record);
+    render(<Popup repository={repository} authService={service} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Local test/ }));
+    fireEvent.click(screen.getByRole("button", { name: /수동저장/ }));
+    expect(await screen.findByText(/로그인과 서버 관리는 목록의 전체 풀이 보기로 Dashboard에서/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "GitHub로 로그인" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "수정" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Source" })).toBeInTheDocument();
+    expect(service.login).not.toHaveBeenCalled();
   });
 });
