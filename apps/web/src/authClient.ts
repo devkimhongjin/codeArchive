@@ -32,12 +32,12 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function parseUser(value: unknown): DashboardUser | null {
   if (!isObject(value)) return null;
   if (typeof value.githubLogin !== "string" || !value.githubLogin.trim()) return null;
-  if (typeof value.displayName !== "string") return null;
-  if (typeof value.avatarUrl !== "string") return null;
+  if (value.displayName !== null && typeof value.displayName !== "string") return null;
+  if (value.avatarUrl !== null && typeof value.avatarUrl !== "string") return null;
   return {
     githubLogin: value.githubLogin,
-    displayName: value.displayName,
-    avatarUrl: value.avatarUrl,
+    displayName: value.displayName ?? "",
+    avatarUrl: value.avatarUrl ?? "",
   };
 }
 
