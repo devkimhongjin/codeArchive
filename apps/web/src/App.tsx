@@ -30,6 +30,11 @@ import {
   secureImportBatchId,
   type PendingDrainApiClient,
 } from "./pendingDrain";
+import { SolutionDetailActions } from "./DashboardSolutionDetailActions";
+import {
+  mainApiSolutionUpdateClient,
+  type DashboardSolutionUpdateClient,
+} from "./solutionUpdateClient";
 
 interface AppProps {
   dataSource?: DashboardArchiveDataSource;
@@ -41,6 +46,7 @@ interface AppProps {
   syncSessionIdGenerator?: () => string;
   pendingDrainApiClient?: PendingDrainApiClient;
   importBatchIdGenerator?: () => string;
+  solutionUpdateClient?: DashboardSolutionUpdateClient;
 }
 
 type AuthState =
@@ -67,6 +73,7 @@ export function App({
   syncSessionIdGenerator = secureSyncSessionId,
   pendingDrainApiClient = dashboardPendingDrainApiClient,
   importBatchIdGenerator = secureImportBatchId,
+  solutionUpdateClient = mainApiSolutionUpdateClient,
 }: AppProps) {
   const [archive, setArchive] = useState<{ account: string; records: readonly DashboardSolution[] }>({ account: "", records: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -122,10 +129,12 @@ export function App({
     setAuthAttempt((value) => value + 1);
   }), [consentStore, pendingDrainController, syncController]);
 
-  sessionExpiredRef.current = () => {
+  function expireSession() {
     consentController.reset(true);
+    setSelectedId(null);
     setAuthState({ status: "signed_out" });
-  };
+  }
+  sessionExpiredRef.current = expireSession;
 
   useEffect(() => consentController.subscribe(), [consentController]);
 
@@ -379,8 +388,22 @@ export function App({
               <article className="detail-card">
                 <div className="detail-heading"><div><p className="eyebrow">{selected.platform} · {selected.problemNumber}</p><h2>{selected.title}</h2></div><span className="badge">{sourceLabel(selected.source)}</span></div>
                 <dl className="metadata"><div><dt>언어</dt><dd>{selected.language}</dd></div><div><dt>풀이 날짜</dt><dd>{formatDate(selected.solvedAt)}</dd></div><div><dt>실행시간</dt><dd>{selected.executionTime ?? "미입력"}</dd></div><div><dt>메모리</dt><dd>{selected.memoryUsage ?? "미입력"}</dd></div></dl>
+                <SolutionDetailActions
+                  solution={selected}
+                  updateClient={solutionUpdateClient}
+                  onSolutionUpdated={(updated) => {
+                    setArchive((current) => current.account === account
+                      ? {
+                          account: current.account,
+                          records: current.records.map((record) => record.id === updated.id ? updated : record),
+                        }
+                      : current);
+                    setSelectedId(updated.id);
+                  }}
+                  onSessionExpired={expireSession}
+                />
                 <pre className="code-view"><code>{selected.code}</code></pre>
-                <p className="future-note">Main API에 보관된 풀이입니다.</p>
+                <p className="future-note">Main API에 보관된 풀이입니다. 서버 삭제는 지원 계약이 추가될 때 별도 제공됩니다.</p>
               </article>
             )}
           </section>

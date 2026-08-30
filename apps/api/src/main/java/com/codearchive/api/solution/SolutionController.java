@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -80,6 +81,21 @@ public class SolutionController {
         );
     }
 
+    @DeleteMapping("/{id}")
+    public ApiResponse<DeleteResponse> delete(
+            @AuthenticationPrincipal CodeArchivePrincipal principal,
+            @PathVariable UUID id,
+            @RequestAttribute(
+                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
+            ) String requestId
+    ) {
+        solutionService.delete(principal, id);
+        return ApiResponse.success(
+                new DeleteResponse(true),
+                requestId
+        );
+    }
+
     @GetMapping("/{id}")
     public ApiResponse<SolutionResponse> get(
             @AuthenticationPrincipal CodeArchivePrincipal principal,
@@ -109,5 +125,10 @@ public class SolutionController {
                 solutionService.list(principal, limit),
                 requestId
         );
+    }
+
+    public record DeleteResponse(
+            boolean deleted
+    ) {
     }
 }

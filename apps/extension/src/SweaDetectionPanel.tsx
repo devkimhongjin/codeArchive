@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
-import type { DetectedProblemInfo, ProblemDetectionResult } from "./adapters/platformAdapter";
-import type { SweaEditorInfo } from "./adapters/swea/sweaEditor";
-import type { SweaSolvingProblemMeta } from "./adapters/swea/sweaSolvingProblemMeta";
+import type { ProblemDetectionResult } from "./adapters/platformAdapter";
 import { requestCurrentPageContext, type PageContextState } from "./content/pageContextBridge";
 import { formatKstDateTime } from "./displayTime";
 import type { SolutionRecord } from "./solution";
@@ -10,17 +8,11 @@ import { solutionProvenance } from "./solutionPresentation";
 interface SweaDetectionPanelProps {
   requestContext?: () => Promise<PageContextState>;
   savedRecords?: SolutionRecord[];
-  onProblemPrefill(problem: DetectedProblemInfo): void;
-  onEditorPrefill(editor: SweaEditorInfo): void;
-  onSolvingPrefill(problem: SweaSolvingProblemMeta, editor: SweaEditorInfo): void;
 }
 
-function DetectionContent({ result, savedRecords, onProblemPrefill, onEditorPrefill, onSolvingPrefill }: {
+function DetectionContent({ result, savedRecords }: {
   result: ProblemDetectionResult;
   savedRecords: SolutionRecord[];
-  onProblemPrefill(problem: DetectedProblemInfo): void;
-  onEditorPrefill(editor: SweaEditorInfo): void;
-  onSolvingPrefill(problem: SweaSolvingProblemMeta, editor: SweaEditorInfo): void;
 }) {
   if (result.status === "unsupported_page") return <p className="detection-muted">지원되는 SWEA 페이지가 아닙니다.</p>;
 
@@ -60,11 +52,6 @@ function DetectionContent({ result, savedRecords, onProblemPrefill, onEditorPref
             </>
           )}
         </div>
-        {editor.status === "detected" && (
-          <button className="secondary-button" type="button" onClick={() => hasProblemMetadata ? onSolvingPrefill(metadata.problem, editor.editor) : onEditorPrefill(editor.editor)}>
-            등록 폼에 채우기
-          </button>
-        )}
       </div>
     );
   }
@@ -76,19 +63,18 @@ function DetectionContent({ result, savedRecords, onProblemPrefill, onEditorPref
   return (
     <div className="detection-result">
       <div><strong>SWEA 문제 감지</strong><p>{result.problem.problemNumber} · {result.problem.title}</p><span>{result.problem.difficulty ?? "난이도 미확인"}</span></div>
-      <button className="secondary-button" type="button" onClick={() => onProblemPrefill(result.problem)}>등록 폼에 채우기</button>
     </div>
   );
 }
 
-export function SweaDetectionPanel({ requestContext = requestCurrentPageContext, savedRecords = [], onProblemPrefill, onEditorPrefill, onSolvingPrefill }: SweaDetectionPanelProps) {
+export function SweaDetectionPanel({ requestContext = requestCurrentPageContext, savedRecords = [] }: SweaDetectionPanelProps) {
   const [state, setState] = useState<PageContextState>({ status: "loading" });
   useEffect(() => { requestContext().then(setState).catch(() => setState({ status: "unavailable" })); }, [requestContext]);
   return (
     <section className="detection-card" aria-label="현재 페이지 감지">
       {state.status === "loading" && <p className="detection-muted">현재 페이지 확인 중...</p>}
       {state.status === "unavailable" && <p className="detection-muted">Content Script에 연결할 수 없습니다.</p>}
-      {state.status === "connected" && <DetectionContent result={state.result} savedRecords={savedRecords} onProblemPrefill={onProblemPrefill} onEditorPrefill={onEditorPrefill} onSolvingPrefill={onSolvingPrefill} />}
+      {state.status === "connected" && <DetectionContent result={state.result} savedRecords={savedRecords} />}
     </section>
   );
 }
