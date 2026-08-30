@@ -82,6 +82,22 @@ public class SolutionService {
         return SolutionResponse.from(solution);
     }
 
+    @Transactional
+    public void delete(
+            CodeArchivePrincipal principal,
+            UUID id
+    ) {
+        UUID userId = ownerId(principal);
+        if (id == null || solutionRepository.deleteByIdAndUserId(
+                id,
+                userId
+        ) != 1) {
+            throw new CodeArchiveException(
+                    ErrorCode.SOLUTION_NOT_FOUND
+            );
+        }
+    }
+
     @Transactional(readOnly = true)
     public SolutionResponse get(
             CodeArchivePrincipal principal,

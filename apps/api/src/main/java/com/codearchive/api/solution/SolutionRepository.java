@@ -6,6 +6,9 @@ import java.util.UUID;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface SolutionRepository
         extends JpaRepository<Solution, UUID> {
@@ -28,5 +31,14 @@ public interface SolutionRepository
     long countByUserIdAndClientRecordId(
             UUID userId,
             String clientRecordId
+    );
+
+    @Modifying
+    @Query("delete from Solution solution "
+            + "where solution.id = :id "
+            + "and solution.userId = :userId")
+    int deleteByIdAndUserId(
+            @Param("id") UUID id,
+            @Param("userId") UUID userId
     );
 }
