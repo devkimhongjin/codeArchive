@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
+import { SolutionDeleteAction } from "./SolutionDeleteAction";
+import { mainApiSolutionDeleteClient, type DashboardSolutionDeleteClient } from "./solutionDeleteClient";
 import {
   isDashboardServerSolution,
   type DashboardSolution,
@@ -26,6 +28,8 @@ interface SolutionDetailActionsProps {
   updateClient?: DashboardSolutionUpdateClient;
   onSolutionUpdated?: (solution: DashboardSolution) => void;
   onSessionExpired?: () => void;
+  deleteClient?: DashboardSolutionDeleteClient;
+  onSolutionDeleted?: (id: string) => void;
 }
 
 export function SolutionDetailActions({
@@ -35,6 +39,8 @@ export function SolutionDetailActions({
   updateClient = mainApiSolutionUpdateClient,
   onSolutionUpdated = () => undefined,
   onSessionExpired = () => undefined,
+  deleteClient = mainApiSolutionDeleteClient,
+  onSolutionDeleted = () => undefined,
 }: SolutionDetailActionsProps) {
   const [settings, setSettings] = useState<DashboardCopySettings>(() => loadDashboardCopySettings());
   const [feedback, setFeedback] = useState("");
@@ -42,6 +48,7 @@ export function SolutionDetailActions({
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<DashboardSolutionEditInput | null>(null);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     setEditing(false);
@@ -154,12 +161,23 @@ export function SolutionDetailActions({
       </div>
       <div className="solution-tool-actions">
         {isDashboardServerSolution(solution) && (
-          <button type="button" onClick={beginEdit}>수정</button>
+          <button type="button" disabled={saving || deleting} onClick={beginEdit}>수정</button>
         )}
         <button className="primary-button" type="button" onClick={() => void copyCode()}>코드 복사</button>
         <button type="button" onClick={() => download("source")}>Source 다운로드</button>
         <button type="button" onClick={() => download("markdown")}>Markdown 다운로드</button>
       </div>
+      {isDashboardServerSolution(solution) && (
+        <SolutionDeleteAction
+          key={solution.id}
+          solution={solution}
+          client={deleteClient}
+          disabled={editing || saving}
+          onDeleted={onSolutionDeleted}
+          onSessionExpired={onSessionExpired}
+          onPendingChange={setDeleting}
+        />
+      )}
       {editing && editForm && (
         <form className="solution-edit-form" onSubmit={(event) => void saveEdit(event)}>
           <div className="solution-edit-heading">
