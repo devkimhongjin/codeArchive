@@ -1,3 +1,5 @@
+export type DashboardAiUsage = "used" | "not_used" | "unknown";
+
 export interface DashboardSolution {
   id: string;
   platform: string;
@@ -10,6 +12,34 @@ export interface DashboardSolution {
   source: "captured" | "manual";
   executionTime?: string;
   memoryUsage?: string;
+  clientRecordId?: string;
+  result?: string;
+  observedAt?: string | null;
+  aiUsage?: DashboardAiUsage | null;
+  createdAt?: string;
+}
+
+export interface DashboardServerSolution extends DashboardSolution {
+  clientRecordId: string;
+  result: string;
+  observedAt: string | null;
+  aiUsage: DashboardAiUsage | null;
+  createdAt: string;
+}
+
+export function isDashboardServerSolution(
+  solution: DashboardSolution,
+): solution is DashboardServerSolution {
+  return typeof solution.clientRecordId === "string"
+    && solution.clientRecordId.trim().length > 0
+    && typeof solution.result === "string"
+    && solution.result.trim().length > 0
+    && (solution.observedAt === null || typeof solution.observedAt === "string")
+    && (solution.aiUsage === null
+      || solution.aiUsage === "used"
+      || solution.aiUsage === "not_used"
+      || solution.aiUsage === "unknown")
+    && typeof solution.createdAt === "string";
 }
 
 export interface DashboardArchiveDataSource {
