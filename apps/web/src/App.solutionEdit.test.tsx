@@ -79,6 +79,7 @@ describe("Dashboard solution edit integration", () => {
   });
 
   it("uses the existing signed-out teardown when editing receives 401", async () => {
+    const writeConsent = vi.fn();
     const updateClient: DashboardSolutionUpdateClient = {
       updateSolution: vi.fn(async () => { throw new ArchiveSessionExpiredError("session expired"); }),
     };
@@ -88,6 +89,7 @@ describe("Dashboard solution edit integration", () => {
       authClient={authenticatedAuth()}
       extensionConnection={unavailableExtension()}
       solutionUpdateClient={updateClient}
+      consentStore={{ read: () => false, write: writeConsent }}
     />);
 
     await screen.findByText("class Main {}");
@@ -96,5 +98,6 @@ describe("Dashboard solution edit integration", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "GitHub로 로그인" })).toBeInTheDocument());
     expect(screen.queryByText("class Main {}")).not.toBeInTheDocument();
+    expect(writeConsent).toHaveBeenCalledWith(false, undefined);
   });
 });

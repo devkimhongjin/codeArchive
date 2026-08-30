@@ -4,6 +4,7 @@ import type { DashboardExtensionConnection } from "./extensionConnection";
 import {
   createPendingDrainApiClient,
   createPendingDrainController,
+  PendingDrainSessionExpiredError,
   parsePendingPage,
   type PendingDrainApiClient,
   type PendingDrainRetryPolicy,
@@ -78,6 +79,11 @@ describe("pending page validation", () => {
 });
 
 describe("Main API pending upsert client", () => {
+  it("reports 401 expiry without retrying", async () => {
+    const fetcher = vi.fn(async () => new Response("", { status: 401 }));
+    await expect(createPendingDrainApiClient(fetcher).upsert("batch", [record("one")])).rejects.toBeInstanceOf(PendingDrainSessionExpiredError);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it("posts the exact flat Spring bulk-upsert request with credentials and no ownership field", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(apiEnvelope([
       { clientRecordId: "one", outcome: "IMPORTED", ackEligible: true, errorCode: null },
@@ -217,6 +223,20 @@ describe("Main API pending upsert client", () => {
 });
 
 describe("automatic pending drain", () => {
+  it.each([false, true])("only current drain expiry revokes consent; stale=%s", async (stale) => {
+    let reject!: (error: Error) => void;
+    const api = { upsert: vi.fn(() => new Promise<null>((_resolve, rejectPromise) => { reject = rejectPromise; })) };
+    const expired = vi.fn();
+    const connection = bridge();
+    const controller = createPendingDrainController(connection, api, () => "batch", () => true, () => {}, expired);
+    controller.schedule("session");
+    await flush();
+    if (stale) controller.invalidate();
+    reject(new PendingDrainSessionExpiredError());
+    await flush();
+    expect(expired).toHaveBeenCalledTimes(stale ? 0 : 1);
+    expect(connection.ackImported).not.toHaveBeenCalled();
+  });
   it("eligible scheduling begins import, reads pending page, and partially ACKs with retained batch id", async () => {
     const ackImported = vi.fn(async () => true);
     const onServerRecordsChanged = vi.fn();
