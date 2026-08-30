@@ -99,7 +99,8 @@ class DashboardAuthSecurityMockMvcTest {
                                 Matchers.containsString("Max-Age=600"),
                                 Matchers.containsString("Secure"),
                                 Matchers.containsString("HttpOnly"),
-                                Matchers.containsString("SameSite=Lax")
+                                Matchers.containsString("SameSite=Lax"),
+                                Matchers.not(Matchers.containsString("Domain="))
                         )
                 ))
                 .andExpect(content().string(""));
@@ -179,8 +180,9 @@ class DashboardAuthSecurityMockMvcTest {
                                         Matchers.containsString("Secure"),
                                         Matchers.containsString("HttpOnly"),
                                         Matchers.containsString(
-                                                "SameSite=Lax"
-                                        )
+                                                "SameSite=None"
+                                        ),
+                                        Matchers.not(Matchers.containsString("Domain="))
                                 ),
                                 Matchers.allOf(
                                         Matchers.containsString(
@@ -196,7 +198,8 @@ class DashboardAuthSecurityMockMvcTest {
                                         Matchers.containsString("HttpOnly"),
                                         Matchers.containsString(
                                                 "SameSite=Lax"
-                                        )
+                                        ),
+                                        Matchers.not(Matchers.containsString("Domain="))
                                 )
                         )
                 ))
@@ -395,7 +398,8 @@ class DashboardAuthSecurityMockMvcTest {
                                 Matchers.containsString("Max-Age=0"),
                                 Matchers.containsString("Secure"),
                                 Matchers.containsString("HttpOnly"),
-                                Matchers.containsString("SameSite=Lax")
+                                Matchers.containsString("SameSite=None"),
+                                Matchers.not(Matchers.containsString("Domain="))
                         )
                 ));
 
