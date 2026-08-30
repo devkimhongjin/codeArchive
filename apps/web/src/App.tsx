@@ -381,7 +381,7 @@ export function App({
                   onSolutionUpdated={(updated) => {
                     setArchive((current) => current.account === account
                       ? {
-                          ...current,
+                          account: current.account,
                           records: current.records.map((record) => record.id === updated.id ? updated : record),
                         }
                       : current);
