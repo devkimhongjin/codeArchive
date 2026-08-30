@@ -31,6 +31,7 @@ import {
   type PendingDrainApiClient,
 } from "./pendingDrain";
 import { SolutionDetailActions } from "./DashboardSolutionDetailActions";
+import { mainApiSolutionDeleteClient, type DashboardSolutionDeleteClient } from "./solutionDeleteClient";
 import {
   mainApiSolutionUpdateClient,
   type DashboardSolutionUpdateClient,
@@ -47,6 +48,7 @@ interface AppProps {
   pendingDrainApiClient?: PendingDrainApiClient;
   importBatchIdGenerator?: () => string;
   solutionUpdateClient?: DashboardSolutionUpdateClient;
+  solutionDeleteClient?: DashboardSolutionDeleteClient;
 }
 
 type AuthState =
@@ -74,12 +76,14 @@ export function App({
   pendingDrainApiClient = dashboardPendingDrainApiClient,
   importBatchIdGenerator = secureImportBatchId,
   solutionUpdateClient = mainApiSolutionUpdateClient,
+  solutionDeleteClient = mainApiSolutionDeleteClient,
 }: AppProps) {
   const [archive, setArchive] = useState<{ account: string; records: readonly DashboardSolution[] }>({ account: "", records: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [deleteNotice, setDeleteNotice] = useState({ account: "", message: "" });
   const [archiveRefreshAttempt, setArchiveRefreshAttempt] = useState(0);
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const [extensionState, setExtensionState] = useState<ExtensionConnectionState>({ status: "connecting" });
@@ -131,6 +135,7 @@ export function App({
 
   function expireSession() {
     consentController.reset(true);
+    setDeleteNotice({ account: "", message: "" });
     setSelectedId(null);
     setAuthState({ status: "signed_out" });
   }
@@ -161,6 +166,7 @@ export function App({
     let active = true;
     const abort = new AbortController();
     consentController.reset(false);
+    setDeleteNotice({ account: "", message: "" });
     setAuthState({ status: "loading" });
     void authClient.discoverSession(abort.signal).then((result) => {
       if (!active) return;
@@ -256,6 +262,7 @@ export function App({
     accountRef.current = "";
     drainEligibilityRef.current.eligible = false;
     setLogoutPending(true);
+    setDeleteNotice({ account: "", message: "" });
     consentController.reset(true);
     setArchive({ account: "", records: [] });
     setSelectedId(null);
@@ -355,8 +362,12 @@ export function App({
           <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="문제 번호, 제목, 언어" />
         </label>
         <strong>{filtered.length}건 · {groups.length}문제</strong>
+        {account && <button type="button" disabled={loading} onClick={() => setArchiveRefreshAttempt((value) => value + 1)}>목록 새로고침</button>}
       </section>
 
+      {account && deleteNotice.account === account && deleteNotice.message && (
+        <p className="tool-feedback" role="status">{deleteNotice.message}</p>
+      )}
       {!account ? (
         <p className="state-card">로그인 후 서버에 보관된 풀이를 확인할 수 있습니다.</p>
       ) : loading ? (
@@ -389,9 +400,21 @@ export function App({
                 <div className="detail-heading"><div><p className="eyebrow">{selected.platform} · {selected.problemNumber}</p><h2>{selected.title}</h2></div><span className="badge">{sourceLabel(selected.source)}</span></div>
                 <dl className="metadata"><div><dt>언어</dt><dd>{selected.language}</dd></div><div><dt>풀이 날짜</dt><dd>{formatDate(selected.solvedAt)}</dd></div><div><dt>실행시간</dt><dd>{selected.executionTime ?? "미입력"}</dd></div><div><dt>메모리</dt><dd>{selected.memoryUsage ?? "미입력"}</dd></div></dl>
                 <SolutionDetailActions
+                  key={`${account}:${selected.id}`}
                   solution={selected}
                   updateClient={solutionUpdateClient}
+                  deleteClient={solutionDeleteClient}
+                  onSolutionDeleted={(id) => {
+                    if (accountRef.current !== account) return;
+                    setArchive((current) => current.account === account
+                      ? { account, records: current.records.filter((record) => record.id !== id) }
+                      : current);
+                    setSelectedId((current) => current === id ? null : current);
+                    setDeleteNotice({ account, message: "서버 풀이를 삭제했습니다. Extension의 로컬 원본은 유지됩니다." });
+                    setArchiveRefreshAttempt((value) => value + 1);
+                  }}
                   onSolutionUpdated={(updated) => {
+                    if (accountRef.current !== account) return;
                     setArchive((current) => current.account === account
                       ? {
                           account: current.account,
@@ -400,10 +423,10 @@ export function App({
                       : current);
                     setSelectedId(updated.id);
                   }}
-                  onSessionExpired={expireSession}
+                  onSessionExpired={() => { if (accountRef.current === account) expireSession(); }}
                 />
                 <pre className="code-view"><code>{selected.code}</code></pre>
-                <p className="future-note">Main API에 보관된 풀이입니다. 서버 삭제는 지원 계약이 추가될 때 별도 제공됩니다.</p>
+                <p className="future-note">Main API에 보관된 풀이입니다. 서버에서 수정·삭제해도 Extension의 로컬 원본은 유지됩니다.</p>
               </article>
             )}
           </section>

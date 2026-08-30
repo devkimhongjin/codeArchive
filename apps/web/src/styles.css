@@ -49,6 +49,8 @@ h2 { font-size: 20px; }
 .toolbar label { display: grid; gap: 5px; width: min(420px, 100%); color: #475569; font-size: 12px; font-weight: 700; }
 .toolbar input { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 9px; background: white; color: #172033; }
 .toolbar strong { color: #475569; font-size: 13px; }
+.toolbar button { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 7px; background: white; color: #334155; font-size: 12px; }
+.toolbar button:disabled { opacity: .55; cursor: not-allowed; }
 .archive-layout { display: grid; grid-template-columns: minmax(300px, 420px) minmax(0, 1fr); gap: 20px; align-items: start; }
 .archive-list { display: grid; gap: 10px; }
 .problem-group, .detail-card { border: 1px solid #dce2ef; border-radius: 12px; background: white; }
@@ -74,6 +76,12 @@ h2 { font-size: 20px; }
 .solution-tool-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .solution-tool-actions button { border: 1px solid #cbd5e1; border-radius: 7px; background: white; color: #334155; padding: 7px 9px; font-size: 12px; font-weight: 700; }
 .solution-tool-actions .primary-button { border-color: #4658c9; background: #4658c9; color: white; }
+.solution-delete-action { display: grid; justify-items: start; gap: 10px; }
+.danger-button, .solution-tool-actions .danger-button { border: 1px solid #b42318; border-radius: 7px; background: white; color: #b42318; padding: 7px 9px; font-size: 12px; font-weight: 700; }
+.solution-tools button:disabled { opacity: .55; cursor: not-allowed; }
+.solution-delete-confirm { width: 100%; display: grid; gap: 10px; padding: 12px; border: 1px solid #fecaca; border-radius: 9px; background: #fff7f7; overflow-wrap: anywhere; }
+.solution-delete-confirm strong { font-size: 13px; color: #991b1b; }
+.solution-delete-confirm p { margin: 0; font-size: 12px; line-height: 1.5; }
 .solution-edit-form { display: grid; gap: 10px; padding: 12px; border: 1px solid #cdd6f4; border-radius: 9px; background: white; }
 .solution-edit-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .solution-edit-heading strong { font-size: 13px; }
