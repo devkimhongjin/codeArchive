@@ -1,4 +1,5 @@
 import { withRequestDeadline } from "./requestDeadline";
+import { validatedAccountId } from "./accountConsent";
 
 export const MAIN_API_ORIGIN = "https://codearchive-api.onrender.com";
 export const DASHBOARD_LOGIN_URL = `${MAIN_API_ORIGIN}/api/v1/auth/github/dashboard-login`;
@@ -6,6 +7,7 @@ const SESSION_URL = `${MAIN_API_ORIGIN}/api/v1/me`;
 const LOGOUT_URL = `${MAIN_API_ORIGIN}/api/v1/auth/logout`;
 
 export interface DashboardUser {
+  readonly id?: string;
   readonly githubLogin: string;
   readonly displayName: string;
   readonly avatarUrl: string;
@@ -35,6 +37,7 @@ function parseUser(value: unknown): DashboardUser | null {
   if (value.displayName !== null && typeof value.displayName !== "string") return null;
   if (value.avatarUrl !== null && typeof value.avatarUrl !== "string") return null;
   return {
+    ...(validatedAccountId(value.id) ? { id: validatedAccountId(value.id) } : {}),
     githubLogin: value.githubLogin,
     displayName: value.displayName ?? "",
     avatarUrl: value.avatarUrl ?? "",

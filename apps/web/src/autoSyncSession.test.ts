@@ -14,18 +14,21 @@ function transport() {
 }
 
 describe("Dashboard auto-sync session controller", () => {
-  it("defaults persisted consent to false and stores only boolean text", () => {
+  it("stores only a versioned account binding and preference, ignoring legacy boolean", () => {
     const values = new Map<string, string>();
+    values.set("codearchive.autoSyncConsent", "true");
+    const binding = `v1:sha256:${"a".repeat(64)}`;
     const store = createAutoSyncConsentStore({
       getItem: (key) => values.get(key) ?? null,
       setItem: (key, value) => { values.set(key, value); },
+      removeItem: (key) => { values.delete(key); },
     });
-    expect(store.read()).toBe(false);
-    store.write(true);
-    expect(store.read()).toBe(true);
-    expect([...values.values()]).toEqual(["true"]);
+    expect(store.read(binding)).toBe(false);
+    store.write(true, binding);
+    expect(store.read(binding)).toBe(true);
+    expect(JSON.parse(values.get("codearchive.autoSyncConsent.v1")!)).toEqual({ binding, enabled: true });
     store.write(false);
-    expect([...values.values()]).toEqual(["false"]);
+    expect(store.read(binding)).toBe(false);
   });
 
   it("requires the exact beta Dashboard origin", () => {

@@ -182,7 +182,7 @@ describe("Dashboard archive shell", () => {
     expect(startSyncSession).not.toHaveBeenCalled();
   });
 
-  it("consent off ends the active session before persisting false", async () => {
+  it("consent off clears persistence immediately and ends the active session", async () => {
     const events: string[] = [];
     const store = consentStore(true);
     store.write = (enabled) => { events.push(`store:${enabled}`); store.value = enabled; };
@@ -196,11 +196,12 @@ describe("Dashboard archive shell", () => {
       syncSessionIdGenerator={() => "session-a"}
     />);
     const checkbox = await screen.findByRole("checkbox", { name: /자동 동기화/ });
+    events.length = 0;
     fireEvent.click(checkbox);
     await waitFor(() => expect(checkbox).toBeChecked());
     fireEvent.click(checkbox);
     await waitFor(() => expect(endSyncSession).toHaveBeenCalledWith("session-a"));
-    expect(events).toEqual(["store:true", "end:session-a", "store:false"]);
+    expect(events).toEqual(["store:true", "store:false", "end:session-a"]);
   });
 
   it("logout tears down the bridge session before API logout", async () => {
