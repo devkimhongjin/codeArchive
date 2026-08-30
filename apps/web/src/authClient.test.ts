@@ -9,6 +9,44 @@ function response(status: number, body?: unknown): Response {
 }
 
 describe("Dashboard auth client", () => {
+  it.each([
+    { displayName: null, avatarUrl: null },
+    { displayName: null, avatarUrl: "https://avatars.example/octo.png" },
+    { displayName: "Octo Cat", avatarUrl: null },
+  ])("accepts nullable optional profile fields: %j", async (profile) => {
+    const client = createDashboardAuthClient(async () => response(200, {
+      success: true,
+      data: { githubLogin: "octocat", ...profile },
+    }));
+    expect(await client.discoverSession()).toEqual({
+      status: "authenticated",
+      user: {
+        githubLogin: "octocat",
+        displayName: profile.displayName ?? "",
+        avatarUrl: profile.avatarUrl ?? "",
+      },
+    });
+  });
+
+  it.each([
+    { githubLogin: "" },
+    { githubLogin: "   " },
+    { githubLogin: null },
+    { githubLogin: 123 },
+    { displayName: 123 },
+    { displayName: {} },
+    { displayName: undefined },
+    { avatarUrl: false },
+    { avatarUrl: [] },
+    { avatarUrl: undefined },
+  ])("rejects malformed required/non-null profile fields: %j", async (invalid) => {
+    const client = createDashboardAuthClient(async () => response(200, {
+      success: true,
+      data: { githubLogin: "octocat", displayName: null, avatarUrl: null, ...invalid },
+    }));
+    expect(await client.discoverSession()).toEqual({ status: "unavailable" });
+  });
+
   it("discovers /me with cookie credentials and parses safe account data", async () => {
     const fetcher = vi.fn(async () => response(200, {
       success: true,
