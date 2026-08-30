@@ -1,3 +1,5 @@
+import { withRequestDeadline } from "./requestDeadline";
+
 export const MAIN_API_ORIGIN = "https://codearchive-api.onrender.com";
 export const DASHBOARD_LOGIN_URL = `${MAIN_API_ORIGIN}/api/v1/auth/github/dashboard-login`;
 const SESSION_URL = `${MAIN_API_ORIGIN}/api/v1/me`;
@@ -15,7 +17,7 @@ export type SessionDiscovery =
   | { readonly status: "unavailable" };
 
 export interface DashboardAuthClient {
-  discoverSession(): Promise<SessionDiscovery>;
+  discoverSession(signal?: AbortSignal): Promise<SessionDiscovery>;
   login(): void;
   logout(beforeApiLogout?: () => Promise<void> | void): Promise<boolean>;
 }
@@ -49,16 +51,19 @@ export function createDashboardAuthClient(
   navigate: Navigate = (url) => globalThis.location.assign(url),
 ): DashboardAuthClient {
   return {
-    async discoverSession() {
+    async discoverSession(signal) {
       try {
-        const response = await fetcher(SESSION_URL, {
-          method: "GET",
-          credentials: "include",
-        });
-        if (response.status === 401) return { status: "signed_out" };
-        if (!response.ok) return { status: "unavailable" };
-        const user = parseMeEnvelope(await response.json());
-        return user ? { status: "authenticated", user } : { status: "unavailable" };
+        return await withRequestDeadline<SessionDiscovery>(async (requestSignal) => {
+          const response = await fetcher(SESSION_URL, {
+            method: "GET",
+            credentials: "include",
+            signal: requestSignal,
+          });
+          if (response.status === 401) return { status: "signed_out" };
+          if (!response.ok) return { status: "unavailable" };
+          const user = parseMeEnvelope(await response.json());
+          return user ? { status: "authenticated", user } : { status: "unavailable" };
+        }, signal);
       } catch {
         return { status: "unavailable" };
       }
@@ -71,11 +76,14 @@ export function createDashboardAuthClient(
     async logout(beforeApiLogout = () => undefined) {
       try {
         await beforeApiLogout();
-        const response = await fetcher(LOGOUT_URL, {
-          method: "POST",
-          credentials: "include",
+        return await withRequestDeadline(async (signal) => {
+          const response = await fetcher(LOGOUT_URL, {
+            method: "POST",
+            credentials: "include",
+            signal,
         });
         return response.ok;
+        });
       } catch {
         return false;
       }

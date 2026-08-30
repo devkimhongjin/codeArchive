@@ -32,7 +32,7 @@ describe("Main API archive data source", () => {
 
     expect(fetcher).toHaveBeenCalledWith(
       "https://codearchive-api.onrender.com/api/v1/solutions?limit=50",
-      { method: "GET", credentials: "include" },
+      { method: "GET", credentials: "include", signal: expect.any(AbortSignal) },
     );
     expect(records).toEqual([{
       id: "c0f0a2d2-eed4-4786-9a28-6a4fcc3e6505",
@@ -48,9 +48,9 @@ describe("Main API archive data source", () => {
     }]);
   });
 
-  it("shows an empty archive when signed out", async () => {
+  it("reports session expiry instead of pretending the archive is empty", async () => {
     const source = createMainApiArchiveDataSource(async () => new Response("", { status: 401 }));
-    await expect(source.listSolutions()).resolves.toEqual([]);
+    await expect(source.listSolutions()).rejects.toThrow("session expired");
   });
 
   it("fails closed on malformed success payloads", async () => {

@@ -13,7 +13,7 @@ export interface DashboardSolution {
 }
 
 export interface DashboardArchiveDataSource {
-  listSolutions(): Promise<readonly DashboardSolution[]>;
+  listSolutions(signal?: AbortSignal): Promise<readonly DashboardSolution[]>;
 }
 
 export interface DashboardProblemGroup {

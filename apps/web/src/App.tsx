@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { mainApiArchiveDataSource } from "./archiveDataSource";
+import { ArchiveSessionExpiredError, mainApiArchiveDataSource } from "./archiveDataSource";
 import {
   groupDashboardSolutions,
   type DashboardArchiveDataSource,
@@ -67,19 +67,22 @@ export function App({
   pendingDrainApiClient = dashboardPendingDrainApiClient,
   importBatchIdGenerator = secureImportBatchId,
 }: AppProps) {
-  const [records, setRecords] = useState<readonly DashboardSolution[]>([]);
+  const [archive, setArchive] = useState<{ account: string; records: readonly DashboardSolution[] }>({ account: "", records: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [archiveRefreshAttempt, setArchiveRefreshAttempt] = useState(0);
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const [extensionState, setExtensionState] = useState<ExtensionConnectionState>({ status: "connecting" });
   const [authAttempt, setAuthAttempt] = useState(0);
   const [authState, setAuthState] = useState<AuthState>({ status: "loading" });
+  const [verifiedAuthClient, setVerifiedAuthClient] = useState<DashboardAuthClient | null>(null);
   const [logoutPending, setLogoutPending] = useState(false);
   const [consentPending, setConsentPending] = useState(false);
-  const [autoSyncConsent, setAutoSyncConsent] = useState(() => consentStore.read());
+  // The legacy persisted boolean has no account binding. Require fresh consent
+  // for each authenticated session, retaining it only across bridge reconnects.
+  const [autoSyncConsent, setAutoSyncConsent] = useState(false);
   const [activeSyncSessionId, setActiveSyncSessionId] = useState<string | null>(null);
 
   const drainEligibilityRef = useRef({ eligible: false, activeSyncSessionId: null as string | null });
@@ -126,15 +129,24 @@ export function App({
 
   useEffect(() => {
     let active = true;
+    const abort = new AbortController();
+    setAutoSyncConsent(false);
     setAuthState({ status: "loading" });
-    void authClient.discoverSession().then((result) => {
+    void authClient.discoverSession(abort.signal).then((result) => {
       if (!active) return;
+      setVerifiedAuthClient(authClient);
       setAuthState(result);
+    }).catch(() => {
+      if (active) setAuthState({ status: "unavailable" });
     });
-    return () => { active = false; };
+    return () => { active = false; abort.abort(); };
   }, [authClient, authAttempt]);
 
-  const authenticated = authState.status === "authenticated";
+  const authenticated = authState.status === "authenticated" && verifiedAuthClient === authClient && !logoutPending;
+  const account = authenticated ? authState.user.githubLogin : "";
+  const accountRef = useRef(account);
+  accountRef.current = account;
+  const records = account && archive.account === account ? archive.records : [];
   const connected = extensionState.status === "connected";
   const exactOrigin = isExactDashboardOrigin(dashboardOrigin);
   const eligible = authenticated
@@ -168,23 +180,37 @@ export function App({
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const abort = new AbortController();
+    setArchive({ account: "", records: [] });
+    setSelectedId(null);
     setError("");
+    if (!account) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     dataSource
-      .listSolutions()
+      .listSolutions(abort.signal)
       .then((next) => {
-        if (!active) return;
-        setRecords(next);
+        if (!active || accountRef.current !== account) return;
+        setArchive({ account, records: next });
         setSelectedId(next[0]?.id ?? null);
       })
-      .catch(() => {
-        if (active) setError("풀이 목록을 불러오지 못했습니다.");
+      .catch((cause: unknown) => {
+        if (!active || accountRef.current !== account) return;
+        if (cause instanceof ArchiveSessionExpiredError) {
+          drainEligibilityRef.current.eligible = false;
+          pendingDrainController.invalidate();
+          void syncController.teardown();
+          setAutoSyncConsent(false);
+          setAuthState({ status: "signed_out" });
+        } else setError("풀이 목록을 불러오지 못했습니다.");
       })
       .finally(() => {
         if (active) setLoading(false);
       });
-    return () => { active = false; };
-  }, [archiveRefreshAttempt, dataSource]);
+    return () => { active = false; abort.abort(); };
+  }, [account, archiveRefreshAttempt, dataSource, pendingDrainController, syncController]);
 
   async function setConsent(enabled: boolean) {
     if (enabled) {
@@ -194,6 +220,7 @@ export function App({
     }
 
     setConsentPending(true);
+    drainEligibilityRef.current.eligible = false;
     pendingDrainController.invalidate();
     await syncController.teardown();
     consentStore.write(false);
@@ -202,7 +229,13 @@ export function App({
   }
 
   async function logout() {
+    accountRef.current = "";
+    drainEligibilityRef.current.eligible = false;
     setLogoutPending(true);
+    setAutoSyncConsent(false);
+    consentStore.write(false);
+    setArchive({ account: "", records: [] });
+    setSelectedId(null);
     pendingDrainController.invalidate();
     const ok = await authClient.logout(async () => {
       await syncController.teardown();
@@ -300,7 +333,9 @@ export function App({
         <strong>{filtered.length}건 · {groups.length}문제</strong>
       </section>
 
-      {loading ? (
+      {!account ? (
+        <p className="state-card">로그인 후 서버에 보관된 풀이를 확인할 수 있습니다.</p>
+      ) : loading ? (
         <p className="state-card" role="status">풀이 목록을 불러오는 중입니다.</p>
       ) : error ? (
         <div className="state-card error" role="alert">

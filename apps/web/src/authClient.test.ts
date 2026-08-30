@@ -26,6 +26,7 @@ describe("Dashboard auth client", () => {
     expect(fetcher).toHaveBeenCalledWith(`${MAIN_API_ORIGIN}/api/v1/me`, {
       method: "GET",
       credentials: "include",
+      signal: expect.any(AbortSignal),
     });
     expect(result).toEqual({
       status: "authenticated",
@@ -53,7 +54,7 @@ describe("Dashboard auth client", () => {
     const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       order.push("api");
       expect(String(url)).toBe(`${MAIN_API_ORIGIN}/api/v1/auth/logout`);
-      expect(init).toEqual({ method: "POST", credentials: "include" });
+      expect(init).toEqual({ method: "POST", credentials: "include", signal: expect.any(AbortSignal) });
       return response(200, { success: true, data: { revoked: true } });
     });
     const ok = await createDashboardAuthClient(fetcher).logout(async () => { order.push("teardown"); });

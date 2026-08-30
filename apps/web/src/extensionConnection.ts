@@ -15,6 +15,7 @@ import {
 import { CODEARCHIVE_EXTENSION_ID } from "./extensionConfig";
 
 const BRIDGE_RESPONSE_TIMEOUT_MS = 5_000;
+const RECONNECT_DELAYS_MS = [1_000, 3_000, 10_000] as const;
 
 interface RuntimePort {
   postMessage(message: unknown): void;
@@ -121,105 +122,136 @@ export function createDashboardExtensionConnection(
   extensionId = CODEARCHIVE_EXTENSION_ID,
 ): DashboardExtensionConnection {
   let activeBridge: ActiveBridge | null = null;
+  let stopPrevious: (() => void) | undefined;
 
   return {
     start(onState, onCaptureChanged) {
+      stopPrevious?.();
       if (!runtime) {
         activeBridge = null;
         onState({ status: "unavailable" });
         return () => undefined;
       }
 
-      onState({ status: "connecting" });
-      let active = true;
-      let port: RuntimePort;
-      const pending: Array<(message: unknown) => void> = [];
+      let disposed = false;
+      let retries = 0;
+      let retryTimer: ReturnType<typeof setTimeout> | undefined;
+      let stopAttempt = () => undefined;
+      const retry = () => {
+        if (disposed || retries >= RECONNECT_DELAYS_MS.length) return;
+        retryTimer = globalThis.setTimeout(() => {
+          retryTimer = undefined;
+          if (!disposed) connect();
+        }, RECONNECT_DELAYS_MS[retries++]);
+      };
+      const connect = () => {
+        onState({ status: "connecting" });
+        let active = true;
+        let port: RuntimePort;
+        const pending: Array<(message: unknown) => void> = [];
 
-      try {
-        port = runtime.connect(extensionId, { name: "codearchive-dashboard" });
-      } catch {
-        activeBridge = null;
-        onState({ status: "error" });
-        return () => undefined;
-      }
-
-      const request = <T>(message: unknown) => new Promise<T | null>((resolve) => {
-        const complete = (response: unknown) => {
-          globalThis.clearTimeout(timeout);
-          resolve(response as T | null);
-        };
-        const timeout = globalThis.setTimeout(() => {
-          const index = pending.indexOf(complete);
-          if (index >= 0) pending.splice(index, 1);
-          resolve(null);
-        }, BRIDGE_RESPONSE_TIMEOUT_MS);
-        pending.push(complete);
         try {
-          port.postMessage(message);
+          port = runtime.connect(extensionId, { name: "codearchive-dashboard" });
         } catch {
-          const index = pending.indexOf(complete);
-          if (index >= 0) pending.splice(index, 1);
-          complete(null);
-        }
-      });
-
-      const bridge: ActiveBridge = { request };
-      activeBridge = bridge;
-
-      port.onMessage.addListener((message) => {
-        if (isCaptureChangedEvent(message)) {
-          onCaptureChanged?.(message);
+          activeBridge = null;
+          onState({ status: "error" });
+          retry();
           return;
         }
-        pending.shift()?.(message);
-      });
-      port.onDisconnect.addListener(() => {
-        if (!active) return;
-        active = false;
-        if (activeBridge === bridge) activeBridge = null;
-        pending.splice(0).forEach((resolve) => resolve(null));
-        onState({ status: runtime.lastError ? "error" : "unavailable" });
-      });
 
-      const terminalError = () => {
-        if (!active) return;
-        active = false;
-        if (activeBridge === bridge) activeBridge = null;
-        pending.splice(0).forEach((resolve) => resolve(null));
-        port.disconnect();
-        onState({ status: "error" });
-      };
-
-      void (async () => {
-        const ping = await request<CodeArchivePingResponse>({
-          type: "CODEARCHIVE_PING",
-          protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+        const request = <T>(message: unknown) => new Promise<T | null>((resolve) => {
+          if (!active) { resolve(null); return; }
+          const complete = (response: unknown) => {
+            globalThis.clearTimeout(timeout);
+            resolve(response as T | null);
+          };
+          const timeout = globalThis.setTimeout(() => {
+            const index = pending.indexOf(complete);
+            if (index >= 0) pending.splice(index, 1);
+            resolve(null);
+            terminalError();
+          }, BRIDGE_RESPONSE_TIMEOUT_MS);
+          pending.push(complete);
+          try {
+            port.postMessage(message);
+          } catch {
+            const index = pending.indexOf(complete);
+            if (index >= 0) pending.splice(index, 1);
+            complete(null);
+            terminalError();
+          }
         });
-        if (!active) return;
-        if (!ping || safeFailure(ping) || !isPingResponse(ping)) {
-          terminalError();
-          return;
-        }
 
-        const summary = await request<CodeArchiveCaptureSummaryResponse>({
-          type: "CODEARCHIVE_CAPTURE_SUMMARY",
-          protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+        const bridge: ActiveBridge = { request };
+        activeBridge = bridge;
+
+        port.onMessage.addListener((message) => {
+          if (!active || disposed) return;
+          if (isCaptureChangedEvent(message)) {
+            onCaptureChanged?.(message);
+            return;
+          }
+          pending.shift()?.(message);
         });
-        if (!active) return;
-        if (!summary || safeFailure(summary) || !isSummaryResponse(summary)) {
-          terminalError();
-          return;
-        }
-        onState({ status: "connected", summary: summary.data });
-      })();
+        port.onDisconnect.addListener(() => {
+          if (!active) return;
+          active = false;
+          if (activeBridge === bridge) activeBridge = null;
+          pending.splice(0).forEach((resolve) => resolve(null));
+          onState({ status: runtime.lastError ? "error" : "unavailable" });
+          retry();
+        });
 
-      return () => {
-        if (!active) return;
-        active = false;
-        if (activeBridge === bridge) activeBridge = null;
-        pending.splice(0).forEach((resolve) => resolve(null));
-        port.disconnect();
+        const terminalError = () => {
+          if (!active) return;
+          active = false;
+          if (activeBridge === bridge) activeBridge = null;
+          pending.splice(0).forEach((resolve) => resolve(null));
+          port.disconnect();
+          onState({ status: "error" });
+          retry();
+        };
+
+        void (async () => {
+          const ping = await request<CodeArchivePingResponse>({
+            type: "CODEARCHIVE_PING",
+            protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+          });
+          if (!active) return;
+          if (!ping || safeFailure(ping) || !isPingResponse(ping)) {
+            terminalError();
+            return;
+          }
+
+          const summary = await request<CodeArchiveCaptureSummaryResponse>({
+            type: "CODEARCHIVE_CAPTURE_SUMMARY",
+            protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+          });
+          if (!active) return;
+          if (!summary || safeFailure(summary) || !isSummaryResponse(summary)) {
+            terminalError();
+            return;
+          }
+          onState({ status: "connected", summary: summary.data });
+        })();
+
+        stopAttempt = () => {
+          if (!active) return;
+          active = false;
+          if (activeBridge === bridge) activeBridge = null;
+          pending.splice(0).forEach((resolve) => resolve(null));
+          port.disconnect();
+        };
       };
+      connect();
+      const stop = () => {
+        disposed = true;
+        globalThis.clearTimeout(retryTimer);
+        stopAttempt();
+        if (stopPrevious === stop) stopPrevious = undefined;
+      };
+      stopPrevious = stop;
+      return stop;
     },
 
     async startSyncSession(syncSessionId) {
