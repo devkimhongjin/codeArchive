@@ -1,10 +1,6 @@
+import { createAutoSyncConsentStore } from "./accountConsent";
+export { createAutoSyncConsentStore, type AutoSyncConsentStore } from "./accountConsent";
 export const DASHBOARD_BETA_ORIGIN = "https://codearchive-dashboard-beta.onrender.com";
-const AUTO_SYNC_CONSENT_KEY = "codearchive.autoSyncConsent";
-
-export interface AutoSyncConsentStore {
-  read(): boolean;
-  write(enabled: boolean): void;
-}
 
 export interface AutoSyncSessionTransport {
   startSyncSession(syncSessionId: string): Promise<boolean>;
@@ -15,31 +11,6 @@ export interface AutoSyncSessionController {
   setEligibility(eligible: boolean, authContextKey: string): Promise<void>;
   teardown(): Promise<void>;
   hasActiveSession(): boolean;
-}
-
-type StorageLike = Pick<Storage, "getItem" | "setItem">;
-
-export function createAutoSyncConsentStore(
-  storage: StorageLike | null = typeof globalThis.localStorage === "undefined" ? null : globalThis.localStorage,
-): AutoSyncConsentStore {
-  return {
-    read() {
-      if (!storage) return false;
-      try {
-        return storage.getItem(AUTO_SYNC_CONSENT_KEY) === "true";
-      } catch {
-        return false;
-      }
-    },
-    write(enabled) {
-      if (!storage) return;
-      try {
-        storage.setItem(AUTO_SYNC_CONSENT_KEY, enabled ? "true" : "false");
-      } catch {
-        // Consent persistence is optional; keep the in-memory choice usable.
-      }
-    },
-  };
 }
 
 export function secureSyncSessionId(): string {

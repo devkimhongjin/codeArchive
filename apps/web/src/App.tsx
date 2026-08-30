@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createAccountConsentController } from "./accountConsent";
 import { ArchiveSessionExpiredError, mainApiArchiveDataSource } from "./archiveDataSource";
 import {
   groupDashboardSolutions,
@@ -87,12 +88,12 @@ export function App({
   const [verifiedAuthClient, setVerifiedAuthClient] = useState<DashboardAuthClient | null>(null);
   const [logoutPending, setLogoutPending] = useState(false);
   const [consentPending, setConsentPending] = useState(false);
-  // The legacy persisted boolean has no account binding. Require fresh consent
-  // for each authenticated session, retaining it only across bridge reconnects.
+  // Restored only after /me verification and matching immutable account binding.
   const [autoSyncConsent, setAutoSyncConsent] = useState(false);
   const [activeSyncSessionId, setActiveSyncSessionId] = useState<string | null>(null);
 
   const drainEligibilityRef = useRef({ eligible: false, activeSyncSessionId: null as string | null });
+  const sessionExpiredRef = useRef(() => {});
 
   const syncController = useMemo(
     () => createAutoSyncSessionController(
@@ -111,18 +112,31 @@ export function App({
       (syncSessionId) => drainEligibilityRef.current.eligible
         && drainEligibilityRef.current.activeSyncSessionId === syncSessionId,
       () => setArchiveRefreshAttempt((value) => value + 1),
+      () => sessionExpiredRef.current(),
     ),
     [extensionConnection, importBatchIdGenerator, pendingDrainApiClient],
   );
 
+  const consentController = useMemo(() => createAccountConsentController(consentStore, (enabled) => {
+    if (!enabled) {
+      drainEligibilityRef.current.eligible = false;
+      pendingDrainController.invalidate();
+      void syncController.teardown();
+    }
+    setAutoSyncConsent(enabled);
+  }, undefined, () => {
+    setAuthState({ status: "loading" });
+    setAuthAttempt((value) => value + 1);
+  }), [consentStore, pendingDrainController, syncController]);
+
   function expireSession() {
-    drainEligibilityRef.current.eligible = false;
-    pendingDrainController.invalidate();
-    void syncController.teardown();
-    setAutoSyncConsent(false);
+    consentController.reset(true);
     setSelectedId(null);
     setAuthState({ status: "signed_out" });
   }
+  sessionExpiredRef.current = expireSession;
+
+  useEffect(() => consentController.subscribe(), [consentController]);
 
   useEffect(
     () => extensionConnection.start(
@@ -146,20 +160,22 @@ export function App({
   useEffect(() => {
     let active = true;
     const abort = new AbortController();
-    setAutoSyncConsent(false);
+    consentController.reset(false);
     setAuthState({ status: "loading" });
     void authClient.discoverSession(abort.signal).then((result) => {
       if (!active) return;
       setVerifiedAuthClient(authClient);
       setAuthState(result);
+      if (result.status === "authenticated") void consentController.verify(result.user.id);
+      else consentController.reset(result.status === "signed_out");
     }).catch(() => {
       if (active) setAuthState({ status: "unavailable" });
     });
     return () => { active = false; abort.abort(); };
-  }, [authClient, authAttempt]);
+  }, [authClient, authAttempt, consentController]);
 
   const authenticated = authState.status === "authenticated" && verifiedAuthClient === authClient && !logoutPending;
-  const account = authenticated ? authState.user.githubLogin : "";
+  const account = authenticated ? authState.user.id ?? authState.user.githubLogin : "";
   const accountRef = useRef(account);
   accountRef.current = account;
   const records = account && archive.account === account ? archive.records : [];
@@ -175,9 +191,9 @@ export function App({
   drainEligibilityRef.current = { eligible, activeSyncSessionId };
 
   useEffect(() => {
-    const authContextKey = authenticated ? authState.user.githubLogin : "";
+    const authContextKey = account;
     void syncController.setEligibility(eligible, authContextKey);
-  }, [authState, authenticated, eligible, syncController]);
+  }, [account, eligible, syncController]);
 
   useEffect(() => {
     if (!eligible || !activeSyncSessionId) {
@@ -214,8 +230,9 @@ export function App({
       })
       .catch((cause: unknown) => {
         if (!active || accountRef.current !== account) return;
-        if (cause instanceof ArchiveSessionExpiredError) expireSession();
-        else setError("풀이 목록을 불러오지 못했습니다.");
+        if (cause instanceof ArchiveSessionExpiredError) {
+          sessionExpiredRef.current();
+        } else setError("풀이 목록을 불러오지 못했습니다.");
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -225,17 +242,13 @@ export function App({
 
   async function setConsent(enabled: boolean) {
     if (enabled) {
-      consentStore.write(true);
-      setAutoSyncConsent(true);
+      if (authenticated) await consentController.choose(true);
       return;
     }
 
     setConsentPending(true);
-    drainEligibilityRef.current.eligible = false;
-    pendingDrainController.invalidate();
+    await consentController.choose(false);
     await syncController.teardown();
-    consentStore.write(false);
-    setAutoSyncConsent(false);
     setConsentPending(false);
   }
 
@@ -243,8 +256,7 @@ export function App({
     accountRef.current = "";
     drainEligibilityRef.current.eligible = false;
     setLogoutPending(true);
-    setAutoSyncConsent(false);
-    consentStore.write(false);
+    consentController.reset(true);
     setArchive({ account: "", records: [] });
     setSelectedId(null);
     pendingDrainController.invalidate();
@@ -303,7 +315,8 @@ export function App({
                   />
                   <span>
                     <strong>자동 동기화</strong>
-                    <small>{autoSyncConsent ? "사용자 동의됨 · 연결 조건 충족 시 자동 전송" : "꺼짐 · 로그인만으로는 시작되지 않음"}</small>
+                    <small>{autoSyncConsent ? "사용자 동의됨 · 연결 조건 충족 시 자동 전송" : "꺼짐 · 직접 켜야 시작됨"}</small>
+                    <small>이 브라우저에서 같은 계정으로 다시 접속하면 동의를 기억합니다. 로그아웃·계정 변경·끄기 시 해제됩니다.</small>
                   </span>
                 </label>
               </>

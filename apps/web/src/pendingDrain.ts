@@ -11,6 +11,7 @@ import type { DashboardExtensionConnection } from "./extensionConnection";
 import { MAIN_API_ORIGIN } from "./authClient";
 
 const BULK_UPSERT_URL = `${MAIN_API_ORIGIN}/api/v1/solutions/bulk-upsert`;
+export class PendingDrainSessionExpiredError extends Error {}
 
 const PLATFORMS = new Set(["SWEA", "PROGRAMMERS", "JUNGOL", "LEETCODE"]);
 const LANGUAGES = new Set(["JAVA", "PYTHON", "C", "CPP", "JAVASCRIPT", "TYPESCRIPT", "KOTLIN", "CSHARP", "GO", "RUST", "SWIFT"]);
@@ -168,6 +169,7 @@ export function createPendingDrainApiClient(
             headers: { "Content-Type": "application/json" },
             body: requestBody,
           });
+          if (response.status === 401) throw new PendingDrainSessionExpiredError();
           if (response.ok) {
             try {
               return parseAckableApiIds(await response.json(), records.map((record) => record.clientRecordId));
@@ -176,7 +178,8 @@ export function createPendingDrainApiClient(
             }
           }
           if (!isTransientStatus(response.status)) return null;
-        } catch {
+        } catch (error) {
+          if (error instanceof PendingDrainSessionExpiredError) throw error;
           // Network failures are transient; retry only within the bounded policy.
         }
       }
@@ -198,6 +201,7 @@ export function createPendingDrainController(
   generateImportBatchId: () => string = secureImportBatchId,
   isEligible: (syncSessionId: string) => boolean = () => true,
   onServerRecordsChanged: () => void = () => undefined,
+  onSessionExpired: () => void = () => undefined,
 ): PendingDrainController {
   let generation = 0;
   let running = false;
@@ -226,11 +230,13 @@ export function createPendingDrainController(
       if (page.records.length > 0) {
         const importBatchId = generateImportBatchId();
         if (!stillEligible(sessionId, runGeneration)) return;
-        const ackableIds = await api.upsert(
-          importBatchId,
-          page.records,
-          () => stillEligible(sessionId, runGeneration),
-        );
+        let ackableIds: readonly string[] | null;
+        try {
+          ackableIds = await api.upsert(importBatchId, page.records, () => stillEligible(sessionId, runGeneration));
+        } catch (error) {
+          if (error instanceof PendingDrainSessionExpiredError && stillEligible(sessionId, runGeneration)) onSessionExpired();
+          return;
+        }
         if (!stillEligible(sessionId, runGeneration)) return;
         if (ackableIds === null) return;
         if (ackableIds.length > 0) {

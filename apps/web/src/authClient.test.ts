@@ -9,6 +9,19 @@ function response(status: number, body?: unknown): Response {
 }
 
 describe("Dashboard auth client", () => {
+  it.each(["550e8400-e29b-41d4-a716-446655440000", "550E8400-E29B-41D4-A716-446655440000"])("retains only a validated immutable UUID: %s", async (id) => {
+    const result = await createDashboardAuthClient(async () => response(200, {
+      success: true, data: { id, githubLogin: "octocat", displayName: null, avatarUrl: null },
+    })).discoverSession();
+    expect(result).toEqual({ status: "authenticated", user: { id: id.toLowerCase(), githubLogin: "octocat", displayName: "", avatarUrl: "" } });
+  });
+
+  it.each([undefined, null, "not-a-uuid", 123])("keeps auth rendering backward-compatible without a valid binding ID: %s", async (id) => {
+    const result = await createDashboardAuthClient(async () => response(200, {
+      success: true, data: { id, githubLogin: "octocat", displayName: null, avatarUrl: null },
+    })).discoverSession();
+    expect(result).toEqual({ status: "authenticated", user: { githubLogin: "octocat", displayName: "", avatarUrl: "" } });
+  });
   it.each([
     { displayName: null, avatarUrl: null },
     { displayName: null, avatarUrl: "https://avatars.example/octo.png" },
