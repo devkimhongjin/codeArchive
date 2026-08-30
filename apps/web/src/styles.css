@@ -6,7 +6,7 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
-button, input { font: inherit; }
+button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 
 .dashboard-shell { max-width: 1180px; margin: 0 auto; padding: 28px 20px 40px; }
@@ -74,6 +74,17 @@ h2 { font-size: 20px; }
 .solution-tool-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .solution-tool-actions button { border: 1px solid #cbd5e1; border-radius: 7px; background: white; color: #334155; padding: 7px 9px; font-size: 12px; font-weight: 700; }
 .solution-tool-actions .primary-button { border-color: #4658c9; background: #4658c9; color: white; }
+.solution-edit-form { display: grid; gap: 10px; padding: 12px; border: 1px solid #cdd6f4; border-radius: 9px; background: white; }
+.solution-edit-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.solution-edit-heading strong { font-size: 13px; }
+.solution-edit-heading button { border: 0; background: transparent; color: #64748b; font-size: 11px; }
+.solution-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.solution-edit-form label { display: grid; gap: 5px; color: #475569; font-size: 11px; font-weight: 700; }
+.solution-edit-form label span { color: #b42318; }
+.solution-edit-form input, .solution-edit-form textarea, .solution-edit-form select { width: 100%; padding: 8px 9px; border: 1px solid #cbd5e1; border-radius: 7px; background: white; color: #172033; }
+.solution-edit-form textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.5; }
+.solution-edit-hint { margin: 0; color: #64748b; font-size: 11px; line-height: 1.45; }
+.solution-edit-save { justify-self: start; }
 .copy-settings { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 0; padding: 9px 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: white; }
 .copy-settings legend { padding: 0 4px; color: #64748b; font-size: 11px; font-weight: 700; }
 .copy-settings label { display: inline-flex; align-items: center; gap: 5px; color: #475569; font-size: 11px; }
@@ -92,4 +103,5 @@ h2 { font-size: 20px; }
   .detail-panel { position: static; }
   .solution-tool-heading { align-items: flex-start; flex-direction: column; }
   .solution-tool-heading span { text-align: left; }
+  .solution-edit-grid { grid-template-columns: 1fr; }
 }
