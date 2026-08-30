@@ -67,6 +67,19 @@ h2 { font-size: 20px; }
 .metadata div { display: grid; gap: 3px; }
 .metadata dt { color: #64748b; font-size: 11px; }
 .metadata dd { margin: 0; color: #334155; font-size: 13px; }
+.solution-tools { display: grid; gap: 10px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 9px; background: #fbfcff; }
+.solution-tool-heading { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.solution-tool-heading strong { font-size: 13px; }
+.solution-tool-heading span { color: #64748b; font-size: 11px; text-align: right; }
+.solution-tool-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.solution-tool-actions button { border: 1px solid #cbd5e1; border-radius: 7px; background: white; color: #334155; padding: 7px 9px; font-size: 12px; font-weight: 700; }
+.solution-tool-actions .primary-button { border-color: #4658c9; background: #4658c9; color: white; }
+.copy-settings { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 0; padding: 9px 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: white; }
+.copy-settings legend { padding: 0 4px; color: #64748b; font-size: 11px; font-weight: 700; }
+.copy-settings label { display: inline-flex; align-items: center; gap: 5px; color: #475569; font-size: 11px; }
+.tool-feedback, .tool-error { margin: 0; font-size: 11px; }
+.tool-feedback { color: #16855b; }
+.tool-error { color: #b42318; }
 .code-view { max-height: 520px; margin: 0; padding: 14px; overflow: auto; border-radius: 9px; background: #111827; color: #f8fafc; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .future-note { margin: 0; padding-top: 2px; }
 .state-card { margin: 18px 0; padding: 24px 14px; border: 1px dashed #cbd5e1; border-radius: 10px; background: white; color: #64748b; text-align: center; font-size: 13px; }
@@ -77,4 +90,6 @@ h2 { font-size: 20px; }
   .header-statuses { width: 100%; }
   .archive-layout { grid-template-columns: 1fr; }
   .detail-panel { position: static; }
+  .solution-tool-heading { align-items: flex-start; flex-direction: column; }
+  .solution-tool-heading span { text-align: left; }
 }
