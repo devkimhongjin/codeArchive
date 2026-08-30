@@ -7,10 +7,11 @@ import { clearForeignSyncOwnership } from "./syncOwnership";
 interface PopupAuthPanelProps {
   authService: CodeArchiveAuthService;
   repository: SolutionRepository;
+  showLegacySignIn?: boolean;
   onRecordsChange?(): Promise<void> | void;
 }
 
-export function PopupAuthPanel({ authService, repository, onRecordsChange }: PopupAuthPanelProps) {
+export function PopupAuthPanel({ authService, repository, showLegacySignIn = true, onRecordsChange }: PopupAuthPanelProps) {
   const [auth, setAuth] = useState<AuthViewState>({ status: authService.isConfigured() ? "signed_out" : "unavailable" });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -66,7 +67,9 @@ export function PopupAuthPanel({ authService, repository, onRecordsChange }: Pop
 
   return <section className="remote-panel popup-auth-panel" aria-label="CodeArchive 계정">
     <div className="section-heading"><h2>CodeArchive 계정</h2></div>
-    {auth.status === "unavailable" ? (
+    {!showLegacySignIn && auth.status !== "authenticated" ? (
+      <p className="form-hint">로그인은 위의 전체 풀이 보기로 Dashboard에서 진행해주세요. 로컬 저장은 로그인 없이 사용할 수 있습니다.</p>
+    ) : auth.status === "unavailable" ? (
       <p className="form-hint">Main API를 사용할 수 없어 로컬 기능만 사용합니다.</p>
     ) : auth.status === "signed_out" ? (
       <button className="secondary-button" type="button" onClick={login} disabled={busy}>
