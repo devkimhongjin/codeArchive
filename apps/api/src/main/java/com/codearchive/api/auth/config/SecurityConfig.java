@@ -124,7 +124,7 @@ public class SecurityConfig {
                 List.of(allowedOrigin)
         );
         configuration.setAllowedMethods(
-                List.of("GET", "POST", "OPTIONS")
+                List.of("GET", "POST", "DELETE", "OPTIONS")
         );
         configuration.setAllowedHeaders(
                 List.of("Authorization", "Content-Type")
