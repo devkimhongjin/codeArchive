@@ -17,6 +17,8 @@ test/
 
 node_modules/
 dist/
+# Local beta candidates; never commit archives or captured user data.
+artifacts/beta/
 npm-debug.log
 yarn-error.log
 
