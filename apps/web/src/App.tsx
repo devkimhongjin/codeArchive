@@ -31,6 +31,7 @@ import {
   type PendingDrainApiClient,
 } from "./pendingDrain";
 import { SolutionDetailActions } from "./DashboardSolutionDetailActions";
+import { mainApiAiArtifactClient, type DashboardAiArtifactClient } from "./aiArtifactClient";
 import { mainApiSolutionDeleteClient, type DashboardSolutionDeleteClient } from "./solutionDeleteClient";
 import {
   mainApiSolutionUpdateClient,
@@ -49,6 +50,7 @@ interface AppProps {
   importBatchIdGenerator?: () => string;
   solutionUpdateClient?: DashboardSolutionUpdateClient;
   solutionDeleteClient?: DashboardSolutionDeleteClient;
+  aiArtifactClient?: DashboardAiArtifactClient;
 }
 
 type AuthState =
@@ -77,6 +79,7 @@ export function App({
   importBatchIdGenerator = secureImportBatchId,
   solutionUpdateClient = mainApiSolutionUpdateClient,
   solutionDeleteClient = mainApiSolutionDeleteClient,
+  aiArtifactClient = mainApiAiArtifactClient,
 }: AppProps) {
   const [archive, setArchive] = useState<{ account: string; records: readonly DashboardSolution[] }>({ account: "", records: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -404,6 +407,7 @@ export function App({
                   solution={selected}
                   updateClient={solutionUpdateClient}
                   deleteClient={solutionDeleteClient}
+                  aiClient={aiArtifactClient}
                   onSolutionDeleted={(id) => {
                     if (accountRef.current !== account) return;
                     setArchive((current) => current.account === account

@@ -113,3 +113,10 @@ h2 { font-size: 20px; }
   .solution-tool-heading span { text-align: left; }
   .solution-edit-grid { grid-template-columns: 1fr; }
 }
+.solution-ai { border-top: 1px solid var(--border, #dce2eb); margin-top: 1rem; padding-top: 1rem; }
+.solution-ai > p, .ai-confirm p, .ai-results p { font-size: .875rem; line-height: 1.6; overflow-wrap: anywhere; }
+.solution-ai .solution-tool-actions { margin-top: .75rem; }
+.ai-confirm { margin-top: .75rem; padding: 1rem; border: 1px solid #a6bad8; border-radius: .75rem; background: #f1f6ff; }
+.ai-results details { margin-top: .75rem; padding: .75rem; border: 1px solid #dce2eb; border-radius: .5rem; }
+.ai-results summary { cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+.ai-content { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 32rem; overflow: auto; font-size: .875rem; line-height: 1.6; }

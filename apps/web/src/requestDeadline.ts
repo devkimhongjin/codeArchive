@@ -1,7 +1,7 @@
 export const API_REQUEST_TIMEOUT_MS = 20_000;
 
 // Include body decoding in the deadline, not just response headers.
-export async function withRequestDeadline<T>(operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+export async function withRequestDeadline<T>(operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, timeoutMs = API_REQUEST_TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
   let cancel: () => void = () => undefined;
   const aborted = new Promise<never>((_, reject) => {
@@ -10,7 +10,7 @@ export async function withRequestDeadline<T>(operation: (signal: AbortSignal) =>
       reject(new Error("request unavailable"));
     };
   });
-  const timer = globalThis.setTimeout(cancel, API_REQUEST_TIMEOUT_MS);
+  const timer = globalThis.setTimeout(cancel, timeoutMs);
   signal?.addEventListener("abort", cancel, { once: true });
   try {
     if (signal?.aborted) cancel();
