@@ -1,6 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useLayoutEffect, useState, type FormEvent } from "react";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
 import { SolutionDeleteAction } from "./SolutionDeleteAction";
+import { SolutionAiArtifacts } from "./SolutionAiArtifacts";
+import { mainApiAiArtifactClient, type DashboardAiArtifactClient } from "./aiArtifactClient";
 import { mainApiSolutionDeleteClient, type DashboardSolutionDeleteClient } from "./solutionDeleteClient";
 import {
   isDashboardServerSolution,
@@ -30,6 +32,7 @@ interface SolutionDetailActionsProps {
   onSessionExpired?: () => void;
   deleteClient?: DashboardSolutionDeleteClient;
   onSolutionDeleted?: (id: string) => void;
+  aiClient?: DashboardAiArtifactClient;
 }
 
 export function SolutionDetailActions({
@@ -41,6 +44,7 @@ export function SolutionDetailActions({
   onSessionExpired = () => undefined,
   deleteClient = mainApiSolutionDeleteClient,
   onSolutionDeleted = () => undefined,
+  aiClient = mainApiAiArtifactClient,
 }: SolutionDetailActionsProps) {
   const [settings, setSettings] = useState<DashboardCopySettings>(() => loadDashboardCopySettings());
   const [feedback, setFeedback] = useState("");
@@ -49,8 +53,10 @@ export function SolutionDetailActions({
   const [editForm, setEditForm] = useState<DashboardSolutionEditInput | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
-  useEffect(() => {
+  // Reset before the controls become interactive, never after a user's first click.
+  useLayoutEffect(() => {
     setEditing(false);
     setEditForm(null);
     setFeedback("");
@@ -161,7 +167,7 @@ export function SolutionDetailActions({
       </div>
       <div className="solution-tool-actions">
         {isDashboardServerSolution(solution) && (
-          <button type="button" disabled={saving || deleting} onClick={beginEdit}>수정</button>
+          <button type="button" disabled={saving || deleting || generating} onClick={beginEdit}>수정</button>
         )}
         <button className="primary-button" type="button" onClick={() => void copyCode()}>코드 복사</button>
         <button type="button" onClick={() => download("source")}>Source 다운로드</button>
@@ -172,7 +178,7 @@ export function SolutionDetailActions({
           key={solution.id}
           solution={solution}
           client={deleteClient}
-          disabled={editing || saving}
+          disabled={editing || saving || generating}
           onDeleted={onSolutionDeleted}
           onSessionExpired={onSessionExpired}
           onPendingChange={setDeleting}
@@ -208,6 +214,14 @@ export function SolutionDetailActions({
       </fieldset>
       {feedback && <p className="tool-feedback" role="status">{feedback}</p>}
       {error && <p className="tool-error" role="alert">{error}</p>}
+      {isDashboardServerSolution(solution) && <SolutionAiArtifacts
+        key={`${solution.id}:${solution.updatedAt}`}
+        solution={solution}
+        client={aiClient}
+        disabled={editing || saving || deleting}
+        onSessionExpired={onSessionExpired}
+        onPendingChange={setGenerating}
+      />}
     </section>
   );
 }
