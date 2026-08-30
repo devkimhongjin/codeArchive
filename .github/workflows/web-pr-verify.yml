@@ -1,0 +1,49 @@
+name: Web PR Verify
+
+on:
+  pull_request:
+    branches: [develop, master]
+    paths:
+      - "apps/web/**"
+      - "packages/shared-types/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/web-pr-verify.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Setup repository pnpm version
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck Dashboard
+        run: pnpm --filter @codearchive/web run typecheck
+      - name: Test Dashboard
+        run: pnpm --filter @codearchive/web run test
+      - name: Build static Dashboard
+        run: pnpm --filter @codearchive/web run build
+      - name: Verify static entry
+        run: test -f apps/web/dist/index.html
+      - name: Save verified static build
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-static-${{ github.sha }}
+          path: apps/web/dist/
+          if-no-files-found: error
+          retention-days: 7
