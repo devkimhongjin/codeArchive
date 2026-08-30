@@ -131,7 +131,7 @@ public class AuthController {
                     )
                     .httpOnly(true)
                     .secure(true)
-                    .sameSite("Lax")
+                    .sameSite("None")
                     .path("/")
                     .maxAge(authService.sessionTtl())
                     .build();
@@ -227,7 +227,7 @@ public class AuthController {
                     )
                     .httpOnly(true)
                     .secure(true)
-                    .sameSite("Lax")
+                    .sameSite("None")
                     .path("/")
                     .maxAge(Duration.ZERO)
                     .build();
