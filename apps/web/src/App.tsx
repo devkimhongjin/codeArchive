@@ -29,7 +29,7 @@ import {
   secureImportBatchId,
   type PendingDrainApiClient,
 } from "./pendingDrain";
-import { SolutionDetailActions } from "./SolutionDetailActions";
+import { SolutionDetailActions } from "./DashboardSolutionDetailActions";
 
 interface AppProps {
   dataSource?: DashboardArchiveDataSource;
