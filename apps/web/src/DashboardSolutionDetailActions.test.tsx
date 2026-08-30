@@ -83,18 +83,18 @@ describe("SolutionDetailActions", () => {
     />);
 
     fireEvent.click(screen.getByRole("button", { name: "수정" }));
-    expect(screen.getByLabelText(/플랫폼/)).toHaveValue("SWEA");
-    expect(screen.getByLabelText(/문제 번호/)).toHaveValue("1206");
-    expect(screen.getByLabelText(/제목/)).toHaveValue("View");
-    expect(screen.getByLabelText(/언어/)).toHaveValue("Java");
-    expect(screen.getByLabelText(/코드/)).toHaveValue("class Main {}");
-    expect(screen.getByLabelText("실행시간")).toHaveValue("123");
-    expect(screen.getByLabelText("메모리")).toHaveValue("45678");
-    expect(screen.getByLabelText("AI 활용")).toHaveValue("unknown");
+    expect(screen.getByRole("textbox", { name: /^플랫폼 \*$/ })).toHaveValue("SWEA");
+    expect(screen.getByRole("textbox", { name: /^문제 번호 \*$/ })).toHaveValue("1206");
+    expect(screen.getByRole("textbox", { name: /^제목 \*$/ })).toHaveValue("View");
+    expect(screen.getByRole("textbox", { name: /^언어 \*$/ })).toHaveValue("Java");
+    expect(screen.getByRole("textbox", { name: /^코드 \*$/ })).toHaveValue("class Main {}");
+    expect(screen.getByRole("textbox", { name: "실행시간" })).toHaveValue("123");
+    expect(screen.getByRole("textbox", { name: "메모리" })).toHaveValue("45678");
+    expect(screen.getByRole("combobox", { name: "AI 활용" })).toHaveValue("unknown");
 
-    fireEvent.change(screen.getByLabelText(/제목/), { target: { value: "View revised" } });
-    fireEvent.change(screen.getByLabelText(/코드/), { target: { value: "class Main { int revised; }" } });
-    fireEvent.change(screen.getByLabelText("AI 활용"), { target: { value: "not_used" } });
+    fireEvent.change(screen.getByRole("textbox", { name: /^제목 \*$/ }), { target: { value: "View revised" } });
+    fireEvent.change(screen.getByRole("textbox", { name: /^코드 \*$/ }), { target: { value: "class Main { int revised; }" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "AI 활용" }), { target: { value: "not_used" } });
     fireEvent.click(screen.getByRole("button", { name: "수정 저장" }));
 
     await waitFor(() => expect(updateSolution).toHaveBeenCalledWith(
