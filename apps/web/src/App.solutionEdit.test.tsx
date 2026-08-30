@@ -69,8 +69,8 @@ describe("Dashboard solution edit integration", () => {
 
     expect(await screen.findByText("class Main {}")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "수정" }));
-    fireEvent.change(screen.getByLabelText(/제목/), { target: { value: "View revised" } });
-    fireEvent.change(screen.getByLabelText(/코드/), { target: { value: "class Main { int revised; }" } });
+    fireEvent.change(screen.getByRole("textbox", { name: /^제목 \*$/ }), { target: { value: "View revised" } });
+    fireEvent.change(screen.getByRole("textbox", { name: /^코드 \*$/ }), { target: { value: "class Main { int revised; }" } });
     fireEvent.click(screen.getByRole("button", { name: "수정 저장" }));
 
     expect(await screen.findByRole("heading", { name: "View revised" })).toBeInTheDocument();
