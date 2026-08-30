@@ -45,7 +45,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
         "codearchive.auth.github.client-id=mock-client-id",
         "codearchive.auth.github.client-secret=mock-client-secret",
         "codearchive.auth.github.callback-url=https://api.codearchive.test/api/v1/auth/github/callback",
-        "codearchive.auth.extension-redirect-uri=https://abcdefghijklmnopabcdefghijklmnop.chromiumapp.org/codearchive-auth"
+        "codearchive.auth.extension-redirect-uri=https://abcdefghijklmnopabcdefghijklmnop.chromiumapp.org/codearchive-auth",
+        "codearchive.auth.dashboard-origin=https://codearchive-dashboard-beta.onrender.com"
 })
 @AutoConfigureMockMvc
 @Testcontainers
@@ -114,6 +115,17 @@ class AuthExtensionBridgeIntegrationTest {
         assertThat(POSTGRES.isRunning()).isTrue();
         assertThat(applied).isEqualTo(1);
         assertThat(flowTypeColumn).isEqualTo("flow_type");
+    }
+
+    @Test
+    void dashboardLoginPersistsDashboardFlowOnRealPostgres() throws Exception {
+        mockMvc.perform(get("/api/v1/auth/github/dashboard-login"))
+                .andExpect(status().isFound());
+
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT flow_type FROM oauth_states", String.class
+        )).containsExactly("DASHBOARD");
+        verify(githubProviderClient, never()).fetchUser(anyString());
     }
 
     @Test
