@@ -43,7 +43,7 @@ describe("remembered account consent integration", () => {
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     await act(async () => finish(session(ID, "renamed")));
     await waitFor(() => expect(screen.getByRole("checkbox", { name: /자동 동기화/ })).toBeChecked());
-    expect(next.start).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(next.start).toHaveBeenCalledTimes(1));
   });
 
   it.each([OTHER_ID, undefined])("never restores for different/missing immutable ID: %s", async (id) => {
@@ -63,6 +63,8 @@ describe("remembered account consent integration", () => {
     client.logout = vi.fn(async (before) => { await before?.(); return false; });
     render(<App {...props} authClient={client} />);
     await waitFor(() => expect(screen.getByRole("checkbox", { name: /자동 동기화/ })).toBeChecked());
+    // Restored consent renders before the asynchronous bridge session starts.
+    await waitFor(() => expect(props.start).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "로그아웃" }));
     expect(localStorage.getItem(ACCOUNT_CONSENT_KEY)).toBeNull();
     await screen.findByText("로그인 상태를 확인할 수 없습니다.");

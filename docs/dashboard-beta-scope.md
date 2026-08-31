@@ -6,6 +6,8 @@ For the current CodeArchive MVP beta (roughly 20 users), the Web Dashboard is a 
 
 This document defines the current product and deployment scope for Dashboard work. It does not change the frozen Extension ↔ Dashboard synchronization/security contract in `docs/extension-dashboard-handoff-design.md`.
 
+The [product roadmap](product-roadmap.md) records the 2026-08-31 next slice and post-beta platform/community/analytics priorities, including the owner's two-account sync and local-retention confirmation. It does not waive the remaining real-Chrome acceptance or Issue #86 entry criteria.
+
 ## Responsibility ownership is not implementation priority
 
 The Dashboard continues to own these responsibilities when their bounded slices are implemented:
