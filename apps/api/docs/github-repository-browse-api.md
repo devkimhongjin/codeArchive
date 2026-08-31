@@ -14,7 +14,9 @@ After ownership validation, the server mints a token with exactly metadata:read 
 restricted by repository_ids to the single selected repository. It then resolves the accessible
 repository list with that token, requiring exactly one repository and matching ID/owner/type.
 Only this verified server owner/name is used to construct subsequent fixed-host GitHub URLs.
-Other, renamed/transferred, removed, revoked, or organization installations/repositories fail closed.
+Other owners, removed/revoked access, and organization installations/repositories fail closed.
+Renaming the same owned repository is supported through ID resolution; redirects during browsing
+are rejected, and a transfer to another owner cannot inherit the previous access.
 No cached selection or token survives requests/accounts.
 
 The existing metadata-only repository list remains metadata-only. Its token parser now accepts
@@ -71,7 +73,7 @@ No placeholder is created for an empty/new folder.
 
 - Repository/installation IDs: positive signed 64-bit integers.
 - Branch: maximum 255 UTF-8 bytes; conservative Git branch syntax, no traversal/ref operators,
-  wildcard/control/whitespace/backslash/percent encodings. Unsupported values are rejected, not normalized.
+  wildcard/control/format/whitespace/backslash/percent encodings. Unsupported values are rejected, not normalized.
 - Path: relative, at most 1024 UTF-8 bytes, 8 segments, 255 bytes per segment.
   Reject leading/trailing/double slash, dot/dot-dot, .git, backslash, colon, percent encodings,
   control/format characters, wildcard/quote/angle-bracket/pipe, trailing dot/space.

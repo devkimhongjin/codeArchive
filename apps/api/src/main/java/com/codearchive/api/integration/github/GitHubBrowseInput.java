@@ -29,7 +29,7 @@ final class GitHubBrowseInput {
         if (branch == null || branch.isEmpty() || bytes(branch) > 255 || branch.startsWith("-")
                 || branch.equals("@") || branch.contains("..") || branch.contains("@{")
                 || branch.endsWith(".") || branch.codePoints().anyMatch(c ->
-                        Character.isISOControl(c) || Character.isWhitespace(c)
+                        Character.isISOControl(c) || Character.isWhitespace(c) || Character.getType(c) == Character.FORMAT
                                 || "~^:?*[\\%".indexOf(c) >= 0)) return false;
         return Arrays.stream(branch.split("/", -1)).allMatch(segment ->
                 !segment.isEmpty() && !segment.startsWith(".") && !segment.endsWith(".lock"));

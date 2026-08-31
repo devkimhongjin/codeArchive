@@ -276,7 +276,7 @@ class GitHubIntegrationControllerTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"", "../main", "a//b", "a.lock", "a~1", "a^", "a:b", "a?b", "a*b",
-            "@{1}", "-main", "/main", "main/", "a\\b", "a b", "a%2fb"})
+            "@{1}", "-main", "/main", "main/", "a\\b", "a b", "a%2fb", "a\u202Eb"})
     void unsafeBranchReferencesAreRejectedBeforeProviderCalls(String branch) throws Exception {
         mvc.perform(request("/701/repositories/801/tree", "alice-session")
                         .queryParam("branch", branch).queryParam("expectedCommitSha", "a".repeat(40)))
