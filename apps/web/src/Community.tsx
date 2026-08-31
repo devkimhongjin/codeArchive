@@ -24,7 +24,7 @@ export function CommunitySharing({ solution, account, client = mainApiCommunityC
       <p><strong>{status.publicSolution ? "공개 중" : "비공개"}</strong> · 성공 수집 기록 기준이며 플랫폼 공식 검증은 아닙니다.</p>
       {!status.canPublish && <p>성공 수집 출처를 확인할 수 없습니다. 기존·수정·수동 기록은 자동으로 자격을 얻지 않습니다. SWEA에서 성공 풀이를 다시 수집하고 Dashboard에 동기화해 주세요.</p>}
       {!status.publicSolution && status.canPublish && <>
-        <p>아래의 코드, 문제·제목·언어와 GitHub 계정명이 같은 문제의 정답 공개자에게 표시됩니다. AI 결과와 개인 성능 메모는 공개하지 않습니다.</p>
+        <p>현재 선택한 코드, 문제·제목·언어와 GitHub 계정명이 같은 문제의 정답 공개자에게 표시됩니다. AI 결과와 개인 성능 메모는 공개하지 않습니다.</p>
         <label className="community-consent"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />공개할 코드와 정보를 확인했으며 공유에 동의합니다</label>
         <button type="button" disabled={!consent || sharing.busy} onClick={() => {
           void sharing.mutate((signal) => client.publish(solution.id, true, signal), () => { setConsent(false); invalidateCommunity(); });
