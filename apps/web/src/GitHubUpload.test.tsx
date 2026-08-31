@@ -56,6 +56,7 @@ describe("GitHub upload Dashboard", () => {
     expect(screen.queryByText("private provider details")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "전송 결과 확인" }));
     await screen.findByText("커밋 완료", { selector: "strong" }); expect(client.commit).toHaveBeenCalledTimes(1); expect(client.result).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("브랜치", { exact: true })).toHaveValue("");
   });
   it("requires extra public consent and clears it when the target changes", async () => {
     const client = githubTestClient(); vi.mocked(client.prepare).mockResolvedValue({ ...githubTestConfirmation, preview: { ...githubTestConfirmation.preview, target: { ...githubTestConfirmation.preview.target, privateRepository: false } } });

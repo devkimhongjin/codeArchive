@@ -129,6 +129,13 @@ class GitHubAutoCommitIntegrationTest {
         assertThat(service.status(a.principal(),late).state()).isEqualTo("OFF");
     }
 
+    @Test void currentStatusPrefersAStillLiveRunOverANewerOffTombstone() {
+        var a=actor();allow(a,true);UUID run=enable(a);
+        service.stop(a.principal(),UUID.randomUUID());
+        assertThat(service.status(a.principal(),null).runId()).isEqualTo(run);
+        assertThat(service.status(a.principal(),null).state()).isEqualTo("ACTIVE");
+    }
+
     @Test void publicConsentAndRenamedOrChangedVisibilityFailClosed() {
         var a=actor();allow(a,false);
         var publicRequest=enableRequest(a,false);

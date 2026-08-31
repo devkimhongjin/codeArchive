@@ -61,7 +61,10 @@ public class GitHubAutoCommitStore {
                 .orElseThrow(()->new CodeArchiveException(ErrorCode.GITHUB_AUTO_STOPPED));
     }
     UUID current(CodeArchivePrincipal p) {
-        return db.query("SELECT id FROM github_auto_runs WHERE user_id=? ORDER BY created_at DESC,id LIMIT 1",(r,i)->r.getObject(1,UUID.class),p.userId())
+        return db.query("""
+                SELECT id FROM github_auto_runs WHERE user_id=?
+                ORDER BY (state IN ('STARTING','ACTIVE') AND lease_until>clock_timestamp()) DESC,created_at DESC,id LIMIT 1
+                """,(r,i)->r.getObject(1,UUID.class),p.userId())
                 .stream().findFirst().orElse(null);
     }
     Run requireLive(CodeArchivePrincipal p, UUID id, boolean lock, String state) {
