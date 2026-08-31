@@ -33,6 +33,8 @@ spring:
       timeout: 2s
 
 codearchive:
+  beta-access:
+    password: ${CODEARCHIVE_BETA_ACCESS_PASSWORD:}
   auth:
     github:
       client-id: ${GITHUB_CLIENT_ID:}

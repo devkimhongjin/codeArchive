@@ -4,6 +4,44 @@ CodeArchive는 Chrome Extension으로 코딩테스트 정답 풀이를 자동 �
 
 현재 목표는 약 20명이 사용할 수 있는 SWEA 베타입니다.
 
+## 처음 사용하는 분께
+
+**출시 전 초대형 베타입니다.** 설치 후보와 가이드는 준비되어 있어도 실제 두 계정 동기화·데이터 보존 검증까지 끝난 정식 배포본은 아닙니다. 운영자가 사용 가능하다고 확인한 패키지만 설치하고, 중요한 원본 코드는 별도로 보관하세요.
+
+- [웹 Dashboard 열기](https://codearchive-dashboard-beta.onrender.com)
+- [설치·업데이트 안내](docs/beta-install.md) — 처음 설치하는 분과 기존 사용자의 절차가 다릅니다.
+- [사용 가이드](docs/dashboard-beta-tester-guide.md) — 수집 → 로그인 → 동기화 → 풀이 관리
+- [문제 해결·오류 제보](docs/beta-troubleshooting.md)
+
+테스터는 Node.js·Java·Docker를 설치하거나 이 저장소를 빌드할 필요가 없습니다. 운영자에게 **Extension ZIP, SHA-256 확인값, 테스트 안내**를 받으면 됩니다. GitHub의 `Code → Download ZIP`은 소스 코드이며 설치용 패키지가 아닙니다. 아직 확정된 공개 다운로드 링크는 없습니다.
+
+### 빠른 시작
+
+1. 받은 ZIP을 압축 해제하고 Chrome에서 그 안의 `extension` 폴더를 로드합니다. [자세한 설치 순서](docs/beta-install.md)
+2. 본인 소유의 테스트 풀이를 SWEA에서 정답 제출하고 팝업의 **로컬 풀이 보기**에서 저장을 확인합니다.
+3. **전체 풀이 보기**로 Dashboard를 열고 초대 비밀번호를 한 번 입력한 뒤 **GitHub로 로그인**합니다. 계정과 **Extension 연결됨** 상태를 확인합니다.
+4. 전송할 대기 기록을 먼저 확인한 뒤 **자동 동기화**를 켭니다. 선택한 한 건이 아니라 **대기 중인 기록 전체가 대상**입니다.
+5. Dashboard에서 풀이를 찾아 복사·다운로드·수정합니다. AI는 작업별 별도 동의가 필요하며 현재 `fake` 결과는 테스트용입니다.
+
+로그인·동기화를 원하지 않으면 로컬 풀이 보기만 사용할 수 있습니다. Extension을 제거하거나 Chrome 데이터를 지우면 로컬 기록을 잃을 수 있으므로 문제 해결을 위해 재설치부터 하지 마세요.
+
+### 지금 가능한 것과 제한
+
+| 가능한 것 | 현재 제한 |
+| --- | --- |
+| SWEA 정답 자동 수집, 로컬 조회·편집·풀이별 내보내기 | 다른 플랫폼 자동 수집·실행시간/메모리 자동 수집은 미지원 |
+| Dashboard 로그인, 동의 기반 동기화, 서버 풀이 관리 | Dashboard가 닫힌 동안 서버 전송은 멈추고 로컬에 쌓임 |
+| AI 접근 방법·주석 코드·리뷰 화면 | 현재 베타 provider는 `fake`, 실제 AI 품질 검증 아님 |
+| Source/Markdown 다운로드 | 전체 기록 일괄 백업·완전 복원 UI는 없음 |
+
+GitHub 저장소 업로드, 공개 공유·리더보드, Chrome 웹 스토어 출시는 이번 베타 범위가 아닙니다. 무료 API의 초기 응답이 늦을 수 있습니다.
+
+운영자는 [배포·전달 점검표](docs/beta-distribution-checklist.md)와 [초대 메시지 양식](docs/beta-invite-template.md)을 사용하세요. 문서 준비 완료는 실제 사용자 배포 승인이나 E2E 통과를 대신하지 않습니다.
+
+Dashboard 입장 비밀번호는 같은 탭에서 한 번만 확인하는 간단한 화면 제한입니다. **API 직접 호출이나 사용량을 강제로 차단하는 기능은 아닙니다.** 실제 값은 Main API의 `CODEARCHIVE_BETA_ACCESS_PASSWORD` 비밀 설정(8~128자)에 두며 공개 저장소·프론트엔드 환경 변수·ZIP에는 넣지 않습니다. [동작과 한계](docs/beta-access-design.md)
+
+## 동작 구조
+
 ```text
 SWEA PASS 감지
 → Extension IndexedDB 자동 저장
@@ -16,14 +54,15 @@ SWEA PASS 감지
 
 Dashboard가 닫혀 있거나 로그아웃되어 있어도 Extension의 로컬 수집·조회·수정·내보내기·삭제 기능은 계속 동작합니다. 다음 eligible Dashboard 연결 시 쌓여 있던 pending 기록을 자동으로 따라잡습니다.
 
-Extension은 OAuth, CodeArchive/GitHub token 저장, Main API 직접 호출, AI 또는 외부 서비스 연동을 담당하지 않습니다. 서버 동기화와 사용자 계정 컨텍스트는 Dashboard가 소유합니다.
+목표 구조에서 서버 동기화와 사용자 계정 컨텍스트는 Dashboard가 소유합니다. **현재 전환 버전에는 이전 Extension OAuth·token·직접 API 경로와 권한이 아직 남아 있습니다.** 로그인·서버 동기화·AI는 Dashboard를 사용하며, 잔여 경로는 대체 E2E 통과 후 #86에서 제거합니다.
 
 ## 현재 베타 상태와 목표 구조
 
+- Dashboard: [codearchive-dashboard-beta.onrender.com](https://codearchive-dashboard-beta.onrender.com)
 - Main API: `https://codearchive-api.onrender.com`
 - Analysis API: `https://codearchive-analysis.onrender.com`
 - 안정화된 Extension ID: `oohlcmihldmfninmdcmanddfmhoonmdl`
-- PostgreSQL: Neon, Flyway V1–V5 적용
+- PostgreSQL: Neon, 스키마 변경은 `apps/api/src/main/resources/db/migration`에서 관리
 - Analysis provider: `fake`
 - live OpenAI: 비활성화
 - provider auto-deploy: 비활성화 유지
@@ -65,11 +104,11 @@ Main API = authenticated durable persistence
 
 Dashboard가 닫힌 동안에는 네트워크 동기화를 하지 않고 local capture만 유지합니다. Dashboard가 다시 연결되면 pending을 자동으로 catch-up합니다.
 
-로그아웃이나 계정 전환 시 기존 bridge capability를 종료합니다. Extension은 CodeArchive/GitHub 사용자 식별자나 인증 token을 저장하지 않습니다.
+로그아웃이나 계정 전환 시 기존 bridge capability를 종료합니다. 새 Dashboard bridge에는 CodeArchive/GitHub 사용자 식별자나 인증 token을 전달하지 않습니다. 이전 Extension 인증 코드 제거 여부는 별도 cleanup 상태를 확인합니다.
 
 ## 개발 환경
 
-- Node.js 20 이상
+- Node.js 22 (CI 기준)
 - pnpm 10.15.0
 - Java 21
 - Python 3.12
@@ -178,7 +217,7 @@ ChatGPT Work에서는 한 대화에 CodeArchive 역할 Skill 하나만 명시적
 ## 보안 및 범위 제한
 
 - OAuth secret, API key, token, cookie와 전체 사용자 코드를 로그·Issue·PR에 남기지 않습니다.
-- Extension은 사용자 인증 또는 서버 API access token을 보유하지 않습니다.
+- 새 Dashboard bridge는 사용자 인증 token을 전달·저장하지 않습니다. 이전 Extension 인증 코드·권한은 #86 완료 전까지 잔존합니다.
 - 자동 동기화는 Dashboard에서 사용자가 활성화한 authenticated account context에서만 source 전송을 허용합니다.
 - Dashboard exact origin을 `externally_connectable`에 추가하는 변경은 브라우저 보안 경계 변경이므로 구현 직전 별도 승인을 받습니다.
 - Extension의 legacy `identity`/Main API host permission은 replacement E2E 통과 후 cleanup합니다.
@@ -187,6 +226,11 @@ ChatGPT Work에서는 한 대화에 CodeArchive 역할 Skill 하나만 명시적
 
 ## 문서
 
+- [설치·업데이트](docs/beta-install.md)
+- [베타 사용 가이드](docs/dashboard-beta-tester-guide.md)
+- [문제 해결·오류 제보](docs/beta-troubleshooting.md)
+- [운영자 배포·전달 점검표](docs/beta-distribution-checklist.md)
+- [지인 초대 메시지 양식](docs/beta-invite-template.md)
 - [개발 명세서](docs/codearchive-development-spec.md)
 - [Extension → Dashboard 자동 동기화 설계](docs/extension-dashboard-handoff-design.md)
 - [에이전트 구조](docs/agent-architecture.md)

@@ -4,6 +4,16 @@ import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
 
+    BETA_ACCESS_REQUIRED(
+            HttpStatus.FORBIDDEN,
+            "초대 비밀번호 확인이 필요합니다."
+    ),
+
+    BETA_ACCESS_UNAVAILABLE(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "베타 입장이 준비되지 않았습니다. 운영자에게 문의해 주세요."
+    ),
+
     AUTH_REQUIRED(
             HttpStatus.UNAUTHORIZED,
             "인증이 필요합니다."
