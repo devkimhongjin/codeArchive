@@ -46,4 +46,3 @@ public class GitHubIntegrationController {
                 .varyBy("Origin", "Cookie", "Authorization").body(ApiResponse.success(data, requestId));
     }
 }
-

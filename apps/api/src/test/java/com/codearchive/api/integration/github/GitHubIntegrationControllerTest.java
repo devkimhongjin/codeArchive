@@ -34,12 +34,15 @@ import com.codearchive.api.auth.AuthService;
 import com.codearchive.api.auth.config.SecurityConfig;
 import com.codearchive.api.auth.oauth.GitHubUserProfile;
 import com.codearchive.api.auth.security.CodeArchivePrincipal;
+import com.codearchive.api.auth.security.ApiAuthenticationFilter;
 import com.codearchive.api.auth.user.CodeArchiveUser;
 import com.codearchive.api.common.exception.CodeArchiveException;
 import com.codearchive.api.common.exception.ErrorCode;
 import com.codearchive.api.common.filter.RequestIdFilter;
+import jakarta.servlet.http.Cookie;
 
-@WebMvcTest(GitHubIntegrationController.class)
+@WebMvcTest(controllers = GitHubIntegrationController.class,
+        properties = "codearchive.auth.dashboard-origin=https://dashboard.example")
 @Import({SecurityConfig.class, GitHubIntegrationService.class})
 class GitHubIntegrationControllerTest {
     private static final String ROOT = "/api/v1/integrations/github/installations";
@@ -67,6 +70,20 @@ class GitHubIntegrationControllerTest {
                 .andExpect(jsonPath("$.error.code").value("AUTH_REQUIRED"));
         mvc.perform(request(suffix, "expired-session")).andExpect(status().isUnauthorized());
         verifyNoInteractions(client);
+    }
+
+    @Test
+    void dashboardCookieUsesSameOwnershipRulesAndMixedCredentialsAreRejected() throws Exception {
+        mvc.perform(get(ROOT).cookie(new Cookie(ApiAuthenticationFilter.SESSION_COOKIE_NAME, "alice-session"))
+                        .header(HttpHeaders.ORIGIN, "https://dashboard.example")
+                        .requestAttr(RequestIdFilter.REQUEST_ID_ATTRIBUTE, "github-read-test"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "https://dashboard.example"))
+                .andExpect(jsonPath("$.data.installations[0].account.id").value("101"));
+        mvc.perform(request("/701/repositories", "alice-session")
+                        .cookie(new Cookie(ApiAuthenticationFilter.SESSION_COOKIE_NAME, "bob-session")))
+                .andExpect(status().isUnauthorized());
+        verify(client, never()).listRepositories(anyLong(), anyInt());
     }
 
     @Test
@@ -180,6 +197,8 @@ class GitHubIntegrationControllerTest {
                 .andExpect(jsonPath("$.data").isEmpty())
                 .andExpect(jsonPath("$.error.code").value(code.name()))
                 .andExpect(jsonPath("$.requestId").value("github-read-test"))
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL,
+                        org.hamcrest.Matchers.containsString("no-store")))
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
     }
 
@@ -203,4 +222,3 @@ class GitHubIntegrationControllerTest {
                 .header(RequestIdFilter.REQUEST_ID_HEADER, "github-read-test");
     }
 }
-

@@ -10,6 +10,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withException;
 
 import java.time.Instant;
 
@@ -168,6 +169,23 @@ class GitHubHttpAppClientTest {
     }
 
     @Test
+    void repositoryTokenRevocationDoesNotReturnPriorDataOrRetry() {
+        expectToken(tokenResponse("\"metadata\":\"read\"", Instant.now().plusSeconds(3500).toString()));
+        server.expect(requestTo(API + "/installation/repositories?per_page=30&page=1"))
+                .andRespond(withStatus(HttpStatus.UNAUTHORIZED).body("provider_canary"));
+        assertSafeFailure(() -> client.listRepositories(701, 1), ErrorCode.GITHUB_INTEGRATION_UNAVAILABLE);
+        server.verify();
+    }
+
+    @Test
+    void transportFailureIsSanitizedAndNotRetried() {
+        server.expect(requestTo(API + "/users/alice/installation"))
+                .andRespond(withException(new java.io.IOException("transport-canary")));
+        assertSafeFailure(() -> client.findPersonalInstallation("alice"), ErrorCode.EXTERNAL_API_ERROR);
+        server.verify();
+    }
+
+    @Test
     void invalidLoginCannotChangeTheProviderRequestPath() {
         assertSafeFailure(() -> client.findPersonalInstallation("../orgs/other"),
                 ErrorCode.GITHUB_INTEGRATION_NOT_FOUND);
@@ -196,4 +214,3 @@ class GitHubHttpAppClientTest {
                 });
     }
 }
-

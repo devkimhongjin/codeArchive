@@ -14,4 +14,3 @@ public interface GitHubAppClient {
     record Repository(long id, Account owner, String name, boolean privateRepository, String defaultBranch) {}
     record RepositoryPage(List<Repository> repositories, boolean hasMore) {}
 }
-

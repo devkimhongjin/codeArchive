@@ -71,4 +71,3 @@ public class GitHubAppJwt {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 }
-

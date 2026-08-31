@@ -162,4 +162,3 @@ public class GitHubHttpAppClient implements GitHubAppClient {
         return new CodeArchiveException(ErrorCode.EXTERNAL_API_ERROR);
     }
 }
-

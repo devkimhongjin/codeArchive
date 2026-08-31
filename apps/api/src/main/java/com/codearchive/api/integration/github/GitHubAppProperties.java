@@ -17,4 +17,3 @@ public class GitHubAppProperties {
     public String getPrivateKeyPkcs8() { return privateKeyPkcs8; }
     public void setPrivateKeyPkcs8(String privateKeyPkcs8) { this.privateKeyPkcs8 = privateKeyPkcs8; }
 }
-

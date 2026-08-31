@@ -69,4 +69,3 @@ public class GitHubIntegrationService {
     public record RepositoriesResponse(String installationId, List<RepositoryResponse> repositories,
             int page, int perPage, boolean hasMore) {}
 }
-
