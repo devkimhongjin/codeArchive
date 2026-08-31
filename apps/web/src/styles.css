@@ -125,6 +125,9 @@ h2 { font-size: 20px; }
   .solution-tool-heading span { text-align: left; }
   .solution-edit-grid { grid-template-columns: 1fr; }
 }
+.api-startup-elapsed { color: #475569; font-size: 14px; font-variant-numeric: tabular-nums; }
+.api-startup-actions { display: flex; justify-content: flex-end; margin: 20px 0; }
+.api-startup-actions button { border: 1px solid #cbd5e1; border-radius: 7px; padding: 10px 14px; }
 .solution-ai { border-top: 1px solid var(--border, #dce2eb); margin-top: 1rem; padding-top: 1rem; }
 .solution-ai > p, .ai-confirm p, .ai-results p { font-size: .875rem; line-height: 1.6; overflow-wrap: anywhere; }
 .solution-ai .solution-tool-actions { margin-top: .75rem; }
