@@ -211,6 +211,122 @@ class GitHubIntegrationControllerTest {
                 .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
     }
 
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/701/repositories/801/branches", "/701/repositories/801/tree"})
+    void browseRequiresSessionAndRejectsAnotherAccountsInstallation(String suffix) throws Exception {
+        mvc.perform(get(ROOT + suffix)).andExpect(status().isUnauthorized());
+        mvc.perform(request(suffix, "bob-session").queryParam("branch", "main")
+                        .queryParam("expectedCommitSha", "a".repeat(40)))
+                .andExpect(status().isNotFound());
+        verify(client, never()).listBranches(anyLong(), anyLong(), anyLong(), anyInt());
+        verify(client, never()).readDirectory(anyLong(), anyLong(), anyLong(),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void branchesUseServerOwnerAndReturnSafeMetadataWithPagination() throws Exception {
+        when(client.listBranches(701, 801, 101, 2)).thenReturn(new GitHubAppClient.BranchPage(List.of(
+                new GitHubAppClient.Branch("feature/풀이", "a".repeat(40), true, true)), true));
+        mvc.perform(request("/701/repositories/801/branches", "alice-session")
+                        .queryParam("page", "2").queryParam("ownerId", "102").queryParam("repo", "bob-secret"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store, private"))
+                .andExpect(jsonPath("$.data.repositoryId").value("801"))
+                .andExpect(jsonPath("$.data.page").value(2))
+                .andExpect(jsonPath("$.data.hasMore").value(true))
+                .andExpect(jsonPath("$.data.branches[0].name").value("feature/풀이"))
+                .andExpect(jsonPath("$.data.branches[0].protected").value(true))
+                .andExpect(jsonPath("$.data.branches[0].selectable").value(true));
+        verify(client).listBranches(701, 801, 101, 2);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"'',0", "SWEA,1", "SWEA/1206,2"})
+    void treeResponseBuildsBreadcrumbsAndKeepsTheVerifiedSnapshot(String path, int depth) throws Exception {
+        String sha = "a".repeat(40);
+        when(client.readDirectory(701, 801, 101, "main", sha, path))
+                .thenReturn(new GitHubAppClient.Directory("main", sha, "b".repeat(40), "c".repeat(40), path, List.of()));
+        var result = mvc.perform(request("/701/repositories/801/tree", "alice-session")
+                        .queryParam("branch", "main").queryParam("expectedCommitSha", sha).queryParam("path", path))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.path").value(path))
+                .andExpect(jsonPath("$.data.commitSha").value(sha))
+                .andExpect(jsonPath("$.data.breadcrumbs.length()").value(depth + 1))
+                .andExpect(jsonPath("$.data.breadcrumbs[0].path").value(""))
+                .andExpect(jsonPath("$.data.entries").isEmpty())
+                .andExpect(jsonPath("$.data.truncated").value(false));
+        if (depth == 0) result.andExpect(jsonPath("$.data.parentPath").isEmpty());
+        if (depth == 1) result.andExpect(jsonPath("$.data.parentPath").value(""));
+        if (depth == 2) result.andExpect(jsonPath("$.data.parentPath").value("SWEA"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/absolute", "../escape", "a/../b", "a/./b", "a//b", "a/", "C:/temp",
+            "a\\b", "%2e%2e", "%252fetc", ".git/hooks", "a\ncanary", "a:stream", "a?.java",
+            "trailing.", "trailing ", "1/2/3/4/5/6/7/8/9"})
+    void unsafeDirectoryPathsAreRejectedBeforeOwnershipOrProviderCalls(String path) throws Exception {
+        mvc.perform(request("/701/repositories/801/tree", "alice-session")
+                        .queryParam("branch", "main").queryParam("expectedCommitSha", "a".repeat(40))
+                        .queryParam("path", path))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+        verifyNoInteractions(client);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "../main", "a//b", "a.lock", "a~1", "a^", "a:b", "a?b", "a*b",
+            "@{1}", "-main", "/main", "main/", "a\\b", "a b", "a%2fb"})
+    void unsafeBranchReferencesAreRejectedBeforeProviderCalls(String branch) throws Exception {
+        mvc.perform(request("/701/repositories/801/tree", "alice-session")
+                        .queryParam("branch", branch).queryParam("expectedCommitSha", "a".repeat(40)))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+        verifyNoInteractions(client);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "main", "abcd", "../other", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"})
+    void arbitraryOrMissingCommitCannotBeUsedToReadATree(String sha) throws Exception {
+        mvc.perform(request("/701/repositories/801/tree", "alice-session")
+                        .queryParam("branch", "main").queryParam("expectedCommitSha", sha))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void excessiveUtf8PathOrBranchLengthFailsBeforeProviderCalls() throws Exception {
+        for (var request : List.of(
+                request("/701/repositories/801/tree", "alice-session").queryParam("branch", "가".repeat(86))
+                        .queryParam("expectedCommitSha", "a".repeat(40)),
+                request("/701/repositories/801/tree", "alice-session").queryParam("branch", "main")
+                        .queryParam("expectedCommitSha", "a".repeat(40)).queryParam("path", "가".repeat(86)))) {
+            mvc.perform(request).andExpect(status().isBadRequest());
+        }
+        verifyNoInteractions(client);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "-1", "9223372036854775808", "bad"})
+    void invalidRepositoryIdCannotReachTheProvider(String id) throws Exception {
+        mvc.perform(request("/701/repositories/" + id + "/branches", "alice-session"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(client);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"GITHUB_REFERENCE_CHANGED,409", "GITHUB_REPOSITORY_STATE_UNAVAILABLE,409",
+            "GITHUB_DIRECTORY_LIMIT_EXCEEDED,422", "GITHUB_PATH_NOT_FOUND,404"})
+    void treeFailuresNeverReturnPartialDirectories(ErrorCode code, int statusCode) throws Exception {
+        when(client.readDirectory(701, 801, 101, "main", "a".repeat(40), ""))
+                .thenThrow(new CodeArchiveException(code));
+        mvc.perform(request("/701/repositories/801/tree", "alice-session")
+                        .queryParam("branch", "main").queryParam("expectedCommitSha", "a".repeat(40)))
+                .andExpect(status().is(statusCode))
+                .andExpect(jsonPath("$.error.code").value(code.name()))
+                .andExpect(jsonPath("$.data").isEmpty())
+                .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+    }
+
     private void actor(String token, long githubId, String login) {
         CodeArchiveUser user = CodeArchiveUser.create(
                 new GitHubUserProfile(githubId, login, login, null), Instant.now());

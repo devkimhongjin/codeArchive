@@ -15,6 +15,8 @@ import com.codearchive.api.common.filter.RequestIdFilter;
 import com.codearchive.api.common.response.ApiResponse;
 import com.codearchive.api.integration.github.GitHubIntegrationService.InstallationsResponse;
 import com.codearchive.api.integration.github.GitHubIntegrationService.RepositoriesResponse;
+import com.codearchive.api.integration.github.GitHubIntegrationService.BranchesResponse;
+import com.codearchive.api.integration.github.GitHubIntegrationService.DirectoryResponse;
 
 @RestController
 @RequestMapping("/api/v1/integrations/github")
@@ -39,6 +41,27 @@ public class GitHubIntegrationController {
             @RequestParam(defaultValue = "1") int page,
             @RequestAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE) String requestId) {
         return response(service.repositories(principal, installationId, page), requestId);
+    }
+
+    @GetMapping("/installations/{installationId}/repositories/{repositoryId}/branches")
+    public ResponseEntity<ApiResponse<BranchesResponse>> branches(
+            @AuthenticationPrincipal CodeArchivePrincipal principal,
+            @PathVariable long installationId, @PathVariable long repositoryId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE) String requestId) {
+        return response(service.branches(principal, installationId, repositoryId, page), requestId);
+    }
+
+    @GetMapping("/installations/{installationId}/repositories/{repositoryId}/tree")
+    public ResponseEntity<ApiResponse<DirectoryResponse>> directory(
+            @AuthenticationPrincipal CodeArchivePrincipal principal,
+            @PathVariable long installationId, @PathVariable long repositoryId,
+            @RequestParam(defaultValue = "") String branch,
+            @RequestParam(defaultValue = "") String expectedCommitSha,
+            @RequestParam(defaultValue = "") String path,
+            @RequestAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE) String requestId) {
+        return response(service.directory(principal, installationId, repositoryId,
+                branch, expectedCommitSha, path), requestId);
     }
 
     private static <T> ResponseEntity<ApiResponse<T>> response(T data, String requestId) {

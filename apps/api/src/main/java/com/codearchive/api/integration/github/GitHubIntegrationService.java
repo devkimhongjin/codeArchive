@@ -2,6 +2,7 @@ package com.codearchive.api.integration.github;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.ArrayList;
 
 import org.springframework.stereotype.Service;
 
@@ -35,9 +36,7 @@ public class GitHubIntegrationService {
             throw new CodeArchiveException(ErrorCode.INVALID_REQUEST);
         }
         // Re-resolve current GitHub ownership every request; never cache it by a client account ID.
-        GitHubAppClient.Installation installation = ownedInstallation(principal)
-                .filter(value -> value.id() == installationId)
-                .orElseThrow(() -> new CodeArchiveException(ErrorCode.GITHUB_INTEGRATION_NOT_FOUND));
+        GitHubAppClient.Installation installation = requireInstallation(principal, installationId);
         GitHubAppClient.RepositoryPage result = client.listRepositories(installationId, page);
         List<RepositoryResponse> repositories = result.repositories().stream()
                 .filter(repository -> repository.owner().id() == installation.account().id()
@@ -51,6 +50,43 @@ public class GitHubIntegrationService {
                 }).toList();
         return new RepositoriesResponse(Long.toString(installationId), repositories,
                 page, GitHubAppClient.PAGE_SIZE, result.hasMore());
+    }
+
+    public BranchesResponse branches(CodeArchivePrincipal principal, long installationId, long repositoryId, int page) {
+        GitHubBrowseInput.identifiers(installationId, repositoryId);
+        GitHubBrowseInput.page(page);
+        var installation = requireInstallation(principal, installationId);
+        var result = client.listBranches(installationId, repositoryId, installation.account().id(), page);
+        return new BranchesResponse(Long.toString(installationId), Long.toString(repositoryId),
+                result.branches().stream().map(branch -> new BranchResponse(branch.name(), branch.commitSha(),
+                        branch.protectedBranch(), branch.selectable())).toList(),
+                page, GitHubAppClient.PAGE_SIZE, result.hasMore());
+    }
+
+    public DirectoryResponse directory(CodeArchivePrincipal principal, long installationId, long repositoryId,
+            String branch, String expectedCommitSha, String path) {
+        GitHubBrowseInput.identifiers(installationId, repositoryId);
+        GitHubBrowseInput.reference(branch, expectedCommitSha);
+        List<String> segments = GitHubBrowseInput.directory(path);
+        var installation = requireInstallation(principal, installationId);
+        var result = client.readDirectory(installationId, repositoryId, installation.account().id(),
+                branch, expectedCommitSha, path);
+        var breadcrumbs = new ArrayList<Breadcrumb>();
+        breadcrumbs.add(new Breadcrumb("/", ""));
+        String prefix = "";
+        for (String segment : segments) {
+            prefix = prefix.isEmpty() ? segment : prefix + "/" + segment;
+            breadcrumbs.add(new Breadcrumb(segment, prefix));
+        }
+        String parentPath = path.isEmpty() ? null : path.contains("/") ? path.substring(0, path.lastIndexOf('/')) : "";
+        return new DirectoryResponse(Long.toString(installationId), Long.toString(repositoryId),
+                result.branch(), result.commitSha(), result.rootTreeSha(), result.treeSha(), result.path(),
+                parentPath, List.copyOf(breadcrumbs), result.entries(), false);
+    }
+
+    private GitHubAppClient.Installation requireInstallation(CodeArchivePrincipal principal, long installationId) {
+        return ownedInstallation(principal).filter(value -> value.id() == installationId)
+                .orElseThrow(() -> new CodeArchiveException(ErrorCode.GITHUB_INTEGRATION_NOT_FOUND));
     }
 
     private Optional<GitHubAppClient.Installation> ownedInstallation(CodeArchivePrincipal principal) {
@@ -68,4 +104,12 @@ public class GitHubIntegrationService {
             @JsonProperty("private") boolean privateRepository, String defaultBranch, String htmlUrl) {}
     public record RepositoriesResponse(String installationId, List<RepositoryResponse> repositories,
             int page, int perPage, boolean hasMore) {}
+    public record BranchResponse(String name, String commitSha,
+            @JsonProperty("protected") boolean protectedBranch, boolean selectable) {}
+    public record BranchesResponse(String installationId, String repositoryId,
+            List<BranchResponse> branches, int page, int perPage, boolean hasMore) {}
+    public record Breadcrumb(String name, String path) {}
+    public record DirectoryResponse(String installationId, String repositoryId, String branch,
+            String commitSha, String rootTreeSha, String treeSha, String path, String parentPath,
+            List<Breadcrumb> breadcrumbs, List<GitHubAppClient.TreeEntry> entries, boolean truncated) {}
 }

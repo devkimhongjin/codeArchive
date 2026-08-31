@@ -200,6 +200,18 @@ class GitHubHttpAppClientTest {
                 .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
     }
 
+    @Test
+    void metadataListingAlsoAcceptsTheNewOpaqueInstallationJwtFormat() {
+        String token = "ghs_1234_header.payload-with_dash.signature";
+        expectToken(tokenResponse("\"metadata\":\"read\"", Instant.now().plusSeconds(3500).toString())
+                .replace("installation_token_canary", token));
+        server.expect(requestTo(API + "/installation/repositories?per_page=30&page=1"))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andRespond(withSuccess("{\"total_count\":0,\"repositories\":[]}", MediaType.APPLICATION_JSON));
+        assertThat(client.listRepositories(701, 1).repositories()).isEmpty();
+        server.verify();
+    }
+
     private static String tokenResponse(String permissions, String expires) {
         return "{\"token\":\"installation_token_canary\",\"expires_at\":\"" + expires
                 + "\",\"permissions\":{" + permissions + "}}";

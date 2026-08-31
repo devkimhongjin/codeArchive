@@ -39,6 +39,26 @@ public enum ErrorCode {
             "접근 권한이 없습니다."
     ),
 
+    GITHUB_REFERENCE_CHANGED(
+            HttpStatus.CONFLICT,
+            "브랜치가 변경되었습니다. 브랜치를 다시 선택해 주세요."
+    ),
+
+    GITHUB_REPOSITORY_STATE_UNAVAILABLE(
+            HttpStatus.CONFLICT,
+            "저장소가 비어 있거나 현재 상태에서 탐색할 수 없습니다."
+    ),
+
+    GITHUB_DIRECTORY_LIMIT_EXCEEDED(
+            HttpStatus.UNPROCESSABLE_ENTITY,
+            "폴더 목록이 너무 크거나 불완전하여 안전하게 탐색할 수 없습니다."
+    ),
+
+    GITHUB_PATH_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "탐색할 수 있는 폴더를 찾을 수 없습니다."
+    ),
+
     GITHUB_INTEGRATION_UNAVAILABLE(
             HttpStatus.SERVICE_UNAVAILABLE,
             "GitHub 저장소 연결을 사용할 수 없습니다."
