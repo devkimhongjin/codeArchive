@@ -14,6 +14,10 @@ import com.codearchive.api.common.response.ApiError;
 import com.codearchive.api.common.response.ApiResponse;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolationException;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -66,6 +70,14 @@ public class GlobalExceptionHandler {
                         error,
                         getRequestId(request)
                 ));
+    }
+
+    @ExceptionHandler({ConstraintViolationException.class, HandlerMethodValidationException.class,
+            MethodArgumentTypeMismatchException.class, HttpMessageNotReadableException.class})
+    public ResponseEntity<ApiResponse<Void>> handleInvalidParameters(Exception exception, HttpServletRequest request) {
+        // Do not echo rejected values: they can contain code, comments, or identifiers.
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                ApiError.of(ErrorCode.INVALID_REQUEST.name(), ErrorCode.INVALID_REQUEST.getMessage()), getRequestId(request)));
     }
 
     @ExceptionHandler(Exception.class)

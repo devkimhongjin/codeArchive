@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CommunityPermalink, CommunitySharing } from "./Community";
+import { invalidateCommunity } from "./communityLifecycle";
+import { mainApiCommunityClient, type CommunityClient } from "./communityClient";
 import { createAccountConsentController } from "./accountConsent";
 import { ArchiveSessionExpiredError, mainApiArchiveDataSource } from "./archiveDataSource";
 import {
@@ -51,6 +54,7 @@ interface AppProps {
   solutionUpdateClient?: DashboardSolutionUpdateClient;
   solutionDeleteClient?: DashboardSolutionDeleteClient;
   aiArtifactClient?: DashboardAiArtifactClient;
+  communityClient?: CommunityClient;
 }
 
 type AuthState =
@@ -80,6 +84,7 @@ export function App({
   solutionUpdateClient = mainApiSolutionUpdateClient,
   solutionDeleteClient = mainApiSolutionDeleteClient,
   aiArtifactClient = mainApiAiArtifactClient,
+  communityClient = mainApiCommunityClient,
 }: AppProps) {
   const [archive, setArchive] = useState<{ account: string; records: readonly DashboardSolution[] }>({ account: "", records: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -368,6 +373,7 @@ export function App({
         {account && <button type="button" disabled={loading} onClick={() => setArchiveRefreshAttempt((value) => value + 1)}>목록 새로고침</button>}
       </section>
 
+      <CommunityPermalink account={account} client={communityClient} onSessionExpired={() => { if (accountRef.current === account) expireSession(); }} />
       {account && deleteNotice.account === account && deleteNotice.message && (
         <p className="tool-feedback" role="status">{deleteNotice.message}</p>
       )}
@@ -410,6 +416,7 @@ export function App({
                   aiClient={aiArtifactClient}
                   onSolutionDeleted={(id) => {
                     if (accountRef.current !== account) return;
+                    invalidateCommunity();
                     setArchive((current) => current.account === account
                       ? { account, records: current.records.filter((record) => record.id !== id) }
                       : current);
@@ -419,6 +426,7 @@ export function App({
                   }}
                   onSolutionUpdated={(updated) => {
                     if (accountRef.current !== account) return;
+                    invalidateCommunity();
                     setArchive((current) => current.account === account
                       ? {
                           account: current.account,
@@ -430,6 +438,8 @@ export function App({
                   onSessionExpired={() => { if (accountRef.current === account) expireSession(); }}
                 />
                 <pre className="code-view"><code>{selected.code}</code></pre>
+                <CommunitySharing key={`${account}:${selected.id}:${selected.updatedAt}`} solution={selected} account={account} client={communityClient}
+                  onSessionExpired={() => { if (accountRef.current === account) expireSession(); }} />
                 <p className="future-note">Main API에 보관된 풀이입니다. 서버에서 수정·삭제해도 Extension의 로컬 원본은 유지됩니다.</p>
               </article>
             )}
