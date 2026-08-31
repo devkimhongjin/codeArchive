@@ -16,10 +16,18 @@ public class GitHubPreviewSolutionReader {
 
     // Atomic source/provenance snapshot; do not hold a DB transaction across GitHub calls.
     public Optional<Snapshot> find(UUID ownerId, UUID solutionId) {
+        return find(ownerId, solutionId, false);
+    }
+
+    Optional<Snapshot> findLocked(UUID ownerId, UUID solutionId) {
+        return find(ownerId, solutionId, true);
+    }
+
+    private Optional<Snapshot> find(UUID ownerId, UUID solutionId, boolean lock) {
         return db.query("""
                 SELECT id, platform, problem_number, language, code, result, accepted_capture, updated_at
                 FROM solutions WHERE id = :id AND user_id = :owner
-                """, new MapSqlParameterSource("id", solutionId).addValue("owner", ownerId),
+                """ + (lock ? " FOR SHARE" : ""), new MapSqlParameterSource("id", solutionId).addValue("owner", ownerId),
                 (row, index) -> new Snapshot(row.getObject("id", UUID.class), row.getString("platform"),
                         row.getString("problem_number"), row.getString("language"), row.getString("code"),
                         row.getString("result"), row.getBoolean("accepted_capture"),

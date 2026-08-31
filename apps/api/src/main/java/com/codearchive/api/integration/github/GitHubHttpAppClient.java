@@ -1,9 +1,11 @@
 package com.codearchive.api.integration.github;
 
 import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -224,6 +226,11 @@ public class GitHubHttpAppClient implements GitHubAppClient {
         GitHubBrowseInput.reference(branch, expectedCommitSha);
         List<String> segments = GitHubUploadPath.segments(path);
         RepositoryAccess access = selectedRepository(installationId, repositoryId, ownerId);
+        return inspectUploadTarget(access, branch, expectedCommitSha, segments);
+    }
+
+    private UploadTarget inspectUploadTarget(RepositoryAccess access, String branch, String expectedCommitSha,
+            List<String> segments) {
         JsonNode selectedBranch = matchingBranch(access, branch, expectedCommitSha);
         require(selectedBranch.path("protected").isBoolean());
         boolean protectedBranch = selectedBranch.path("protected").booleanValue();
@@ -266,11 +273,15 @@ public class GitHubHttpAppClient implements GitHubAppClient {
     }
 
     private RepositoryAccess selectedRepository(long installationId, long repositoryId, long ownerId) {
+        return selectedRepository(installationId, repositoryId, ownerId, "read");
+    }
+
+    private RepositoryAccess selectedRepository(long installationId, long repositoryId, long ownerId, String permission) {
         if (!properties.isContentsReadEnabled()) {
             throw new CodeArchiveException(ErrorCode.GITHUB_INTEGRATION_UNAVAILABLE);
         }
         // Scope the token to the single requested ID before resolving names or reading any branch.
-        String token = issueToken(installationId, Map.of("metadata", "read", "contents", "read"), repositoryId);
+        String token = issueToken(installationId, Map.of("metadata", "read", "contents", permission), repositoryId);
         RepositoryPage page = repositoryPage(token, 1, true);
         if (page.hasMore() || page.repositories().size() != 1) {
             throw new CodeArchiveException(ErrorCode.GITHUB_INTEGRATION_NOT_FOUND);
@@ -282,6 +293,86 @@ public class GitHubHttpAppClient implements GitHubAppClient {
         }
         return new RepositoryAccess(token, repository);
     }
+
+    @Override
+    public PreparedCommit prepareCommit(CommitSelection selection) {
+        if (!properties.isContentsWriteEnabled() || !properties.isContentsReadEnabled()) {
+            throw new CodeArchiveException(ErrorCode.GITHUB_INTEGRATION_UNAVAILABLE);
+        }
+        GitHubBrowseInput.identifiers(selection.installationId(), selection.repositoryId());
+        GitHubBrowseInput.reference(selection.branch(), selection.expectedCommitSha());
+        var segments = GitHubUploadPath.segments(selection.path());
+        RepositoryAccess access = selectedRepository(selection.installationId(), selection.repositoryId(), selection.ownerId(), "write");
+        verifyCommitRepository(access.repository, selection);
+        UploadTarget target = inspectUploadTarget(access, selection.branch(), selection.expectedCommitSha(), segments);
+        if (target.protectedBranch() || target.existingEntry() != null || target.obstruction() != null) throw changedTarget();
+        JsonNode ref = read(client.get().uri(access.base() + "/git/ref/heads/{branch}", selection.branch()), access.token);
+        require(("refs/heads/" + selection.branch()).equals(text(ref, "ref")));
+        require("commit".equals(text(ref.path("object"), "type")));
+        if (!selection.expectedCommitSha().equals(sha(ref.path("object"), "sha"))) throw changedTarget();
+        String refId = text(ref, "node_id");
+        require(refId.length() <= 512 && refId.matches("[A-Za-z0-9_=/+-]+"));
+        // Last metadata checks follow potentially slow tree traversal. No source has been sent yet.
+        var latest = repositoryPage(access.token, 1, true);
+        if (latest.hasMore() || latest.repositories().size() != 1) throw changedTarget();
+        verifyCommitRepository(latest.repositories().getFirst(), selection);
+        var branch = matchingBranch(access, selection.branch(), selection.expectedCommitSha());
+        require(branch.path("protected").isBoolean());
+        if (branch.path("protected").booleanValue()) throw changedTarget();
+        // Opaque one-request capability; never serialize or cache this object or its token.
+        return new PreparedCommit() {
+            private final java.util.concurrent.atomic.AtomicBoolean used = new java.util.concurrent.atomic.AtomicBoolean();
+            @Override public CommitResult create(String source, String message) {
+                if (!properties.isContentsWriteEnabled() || !properties.isContentsReadEnabled()) {
+                    throw new CodeArchiveException(ErrorCode.GITHUB_INTEGRATION_UNAVAILABLE);
+                }
+                if (!used.compareAndSet(false, true)) throw new CodeArchiveException(ErrorCode.GITHUB_UPLOAD_ALREADY_ATTEMPTED);
+                return createCommit(access, selection, refId, source, message);
+            }
+            @Override public String toString() { return "PreparedCommit[redacted]"; }
+        };
+    }
+
+    private void verifyCommitRepository(Repository repository, CommitSelection selection) {
+        if (repository.id() != selection.repositoryId() || repository.owner().id() != selection.ownerId()
+                || !"User".equals(repository.owner().type()) || repository.privateRepository() != selection.privateRepository()
+                || !(repository.owner().login() + "/" + repository.name()).equals(selection.fullName())) throw changedTarget();
+    }
+
+    private CommitResult createCommit(RepositoryAccess access, CommitSelection selection, String refId, String source, String message) {
+        // expectedHeadOid is a provider-side precondition; a pre-read/non-force REST update alone is insufficient.
+        String query = """
+                mutation CodeArchiveCreate($input: CreateCommitOnBranchInput!) {
+                  createCommitOnBranch(input: $input) {
+                    commit { oid parents(first: 2) { nodes { oid } } }
+                    ref { id name prefix }
+                  }
+                }
+                """;
+        var input = Map.of("branch", Map.of("id", refId), "expectedHeadOid", selection.expectedCommitSha(),
+                "message", Map.of("headline", message), "fileChanges", Map.of("additions", List.of(Map.of(
+                        "path", selection.path(), "contents", Base64.getEncoder().encodeToString(source.getBytes(StandardCharsets.UTF_8))))));
+        try {
+            JsonNode body = read(client.post().uri(API + "/graphql").contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("query", query, "variables", Map.of("input", input))), access.token);
+            // Any mutation error/partial/malformed result is uncertain. Never parse or echo provider messages.
+            require(!body.has("errors"));
+            JsonNode result = body.path("data").path("createCommitOnBranch");
+            String commit = sha(result.path("commit"), "oid");
+            require(!commit.equals(selection.expectedCommitSha()));
+            JsonNode parents = result.path("commit").path("parents").path("nodes");
+            require(parents.isArray() && parents.size() == 1
+                    && selection.expectedCommitSha().equals(sha(parents.get(0), "oid")));
+            JsonNode ref = result.path("ref");
+            require(refId.equals(text(ref, "id")) && selection.branch().equals(text(ref, "name"))
+                    && "refs/heads/".equals(text(ref, "prefix")));
+            return new CommitResult(commit, "https://github.com/" + selection.fullName() + "/commit/" + commit);
+        } catch (Exception ignored) {
+            throw new CodeArchiveException(ErrorCode.GITHUB_UPLOAD_OUTCOME_UNKNOWN);
+        }
+    }
+
+    private CodeArchiveException changedTarget() { return new CodeArchiveException(ErrorCode.GITHUB_UPLOAD_TARGET_CHANGED); }
 
     private List<TreeEntry> tree(RepositoryAccess access, String expectedTreeSha, String parent) {
         // Omit recursive entirely: even recursive=false asks GitHub for a recursive tree.

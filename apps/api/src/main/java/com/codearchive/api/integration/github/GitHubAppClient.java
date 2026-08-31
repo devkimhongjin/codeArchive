@@ -13,6 +13,14 @@ public interface GitHubAppClient {
             String branch, String expectedCommitSha, String path);
     UploadTarget inspectUploadTarget(long installationId, long repositoryId, long ownerId,
             String branch, String expectedCommitSha, String path);
+    PreparedCommit prepareCommit(CommitSelection selection);
+
+    record CommitSelection(long installationId, long repositoryId, long ownerId, String branch,
+            String expectedCommitSha, String path, boolean privateRepository, String fullName) {
+        @Override public String toString() { return "CommitSelection[redacted]"; }
+    }
+    interface PreparedCommit { CommitResult create(String source, String message); }
+    record CommitResult(String sha, String url) {}
 
     record Account(long id, String login, String type) {}
     record Installation(long id, Account account, String repositorySelection, boolean suspended) {}

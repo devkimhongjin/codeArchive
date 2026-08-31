@@ -44,6 +44,13 @@ public enum ErrorCode {
             "자동 수집된 정답 풀이만 업로드 미리보기를 만들 수 있습니다."
     ),
 
+    GITHUB_UPLOAD_TARGET_CHANGED(HttpStatus.CONFLICT, "저장소 상태가 변경되었거나 업로드할 수 없습니다. 다시 미리보기를 확인해 주세요."),
+    GITHUB_UPLOAD_INTENT_NOT_FOUND(HttpStatus.NOT_FOUND, "현재 로그인에서 확인할 수 있는 업로드 요청이 없습니다."),
+    GITHUB_UPLOAD_INTENT_EXPIRED(HttpStatus.CONFLICT, "업로드 확인 시간이 만료되었습니다. 다시 미리보기를 확인해 주세요."),
+    GITHUB_UPLOAD_CONSENT_REQUIRED(HttpStatus.BAD_REQUEST, "전송할 내용과 외부 공개 위험을 확인해 주세요."),
+    GITHUB_UPLOAD_ALREADY_ATTEMPTED(HttpStatus.CONFLICT, "이미 실행된 대상입니다. 기존 요청의 결과를 확인해 주세요."),
+    GITHUB_UPLOAD_OUTCOME_UNKNOWN(HttpStatus.CONFLICT, "업로드 결과를 확정할 수 없습니다. 자동 재전송하지 말고 저장소를 확인해 주세요."),
+
     GITHUB_PREVIEW_SOURCE_CHANGED(
             HttpStatus.CONFLICT,
             "풀이가 변경되었습니다. 최신 풀이로 미리보기를 다시 요청해 주세요."

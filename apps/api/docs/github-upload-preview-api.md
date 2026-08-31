@@ -1,6 +1,7 @@
 # Single-solution upload preview — #44, slice 3
 
 Builds on [repository browsing](github-repository-browse-api.md). Changes only `apps/api/**`.
+The separately gated [explicit single-commit API](github-single-commit-api.md) adds a distinct confirmation flow.
 This slice is read-only: no source transmission to GitHub, file/branch/commit creation, overwrite,
 DB mutation/migration, preview persistence, Dashboard UI, permission provisioning or deployment.
 Both existing App integration and Contents-read configuration gates remain disabled by default.

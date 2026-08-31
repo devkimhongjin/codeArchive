@@ -37,6 +37,7 @@ codearchive:
     github:
       enabled: ${GITHUB_APP_INTEGRATION_ENABLED:false}
       contents-read-enabled: ${GITHUB_APP_CONTENTS_READ_ENABLED:false}
+      contents-write-enabled: ${GITHUB_APP_CONTENTS_WRITE_ENABLED:false}
       app-id: ${GITHUB_APP_ID:}
       private-key-pkcs8: ${GITHUB_APP_PRIVATE_KEY_PKCS8:}
   beta-access:
