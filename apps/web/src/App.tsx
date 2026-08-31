@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CommunityPermalink, CommunitySharing } from "./Community";
+import { GitHubUpload } from "./GitHubUpload";
+import { mainApiGitHubClient, type GitHubClient } from "./githubClient";
 import { invalidateCommunity } from "./communityLifecycle";
 import { mainApiCommunityClient, type CommunityClient } from "./communityClient";
 import { createAccountConsentController } from "./accountConsent";
@@ -57,6 +59,7 @@ interface AppProps {
   solutionDeleteClient?: DashboardSolutionDeleteClient;
   aiArtifactClient?: DashboardAiArtifactClient;
   communityClient?: CommunityClient;
+  githubClient?: GitHubClient;
 }
 
 type AuthState =
@@ -87,6 +90,7 @@ export function App({
   solutionDeleteClient = mainApiSolutionDeleteClient,
   aiArtifactClient = mainApiAiArtifactClient,
   communityClient = mainApiCommunityClient,
+  githubClient = mainApiGitHubClient,
 }: AppProps) {
   const [archive, setArchive] = useState<{ account: string; records: readonly DashboardSolution[] }>({ account: "", records: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -369,6 +373,9 @@ export function App({
           </div>
         </div>
       </header>
+
+      {authenticated && authState.status === "authenticated" && authState.user.id && <GitHubUpload key={account} solution={selected ?? null} client={githubClient} syncEligible={eligible}
+        onSessionExpired={() => { if (accountRef.current === account) expireSession(); }} />}
 
       <section className="toolbar" aria-label="풀이 검색">
         <div className="archive-filters">
