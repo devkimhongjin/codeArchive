@@ -18,8 +18,8 @@ GitHub 이슈가 세부 범위와 인수 상태의 원본이며 이 문서는 �
 
 | 순서 | 작업 | 선행 조건 / 이유 |
 | --- | --- | --- |
-| P1 | [#141 프로그래머스 → 정올](https://github.com/devkimhongjin/codeArchive/issues/141) | 수집 데이터를 확장한다. 개발 명세 2.2 순서를 따르며 플랫폼별 실제 DOM fixture와 최종 ACCEPTED 판정, 언어/문제 ID 계약을 먼저 확보한다. |
-| P2 | [#45 커뮤니티·CRUD](https://github.com/devkimhongjin/codeArchive/issues/45) | 공개/비공개 전환·조회·수정·삭제 → 댓글 CRUD → 좋아요/취소 → 탐색/비교. 사용자 격리와 공개 철회를 먼저 보장한다. |
+| P1 | [#45 커뮤니티·CRUD](https://github.com/devkimhongjin/codeArchive/issues/45) | 사용자의 추가 결정: 저장한 코드를 다른 사람이 볼 수 있는 가치를 먼저 제공한다. 공개/비공개 전환·조회·수정·삭제와 공유 링크 → 공개 풀이 탐색 → 댓글 CRUD → 좋아요/취소. 사용자 격리와 공개 철회를 먼저 보장한다. |
+| P2 | [#141 프로그래머스 → 정올](https://github.com/devkimhongjin/codeArchive/issues/141) | 커뮤니티 이후 수집 데이터를 확장한다. 개발 명세 2.2 순서를 따르며 플랫폼별 실제 DOM fixture와 최종 ACCEPTED 판정, 언어/문제 ID 계약을 먼저 확보한다. |
 | P3 | [#142 분석·리더보드](https://github.com/devkimhongjin/codeArchive/issues/142) | 개인 분석부터 시작한다. 공개 리더보드는 커뮤니티의 공개/참여 동의와 집계 정의가 필요하다. |
 
 플랫폼 확장은 베타 완료 이후다. 두 플랫폼의 capture는 API/Dashboard가 없어도 저장되어야 하고, 기존 Dashboard 동의 기반 전송 계약을 재사용한다. 새 origin/manifest 권한은 실제 주소를 확인하고 실행 직전 승인한다.
@@ -43,4 +43,4 @@ GitHub 이슈가 세부 범위와 인수 상태의 원본이며 이 문서는 �
 모든 구현은 `develop`에서 분기하고 `develop` PR로 전달한다. 병합·베타 배포·브라우저 권한 확대·Production 승격은 서로 별도의 실행 직전 승인 단계다. 유료 리소스, live AI, 외부 코드 업로드는 추가하지 않는다.
 
 다음 역할: `@codearchive-integrator` (Strategic / Sol).
-인계 요청: “#143 PR의 exact head, CI 및 자체검토 결과를 확인하고 #37/#84의 사용자 확인과 남은 E2E 증거를 구분하세요. 완료 조건이 충족되면 #86 정리를 분리하고, 신규 기능은 #141 → #45 → #142 순서로 진행하세요. 병합과 배포는 별도 승인입니다.”
+인계 요청: “#143 PR의 exact head, CI 및 자체검토 결과를 확인하고 #37/#84의 사용자 확인과 남은 E2E 증거를 구분하세요. 완료 조건이 충족되면 #86 정리를 분리하고, 신규 기능은 사용자 결정에 따라 #45 → #141 → #142 순서로 진행하세요. 다음 기능 설계는 공개/비공개 전환·공유 링크·공개 풀이 탐색부터 시작하세요. 병합과 배포는 별도 승인입니다.”

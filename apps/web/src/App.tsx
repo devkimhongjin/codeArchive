@@ -243,7 +243,8 @@ export function App({
       .then((next) => {
         if (!active || accountRef.current !== account) return;
         setArchive({ account, records: next });
-        setSelectedId(next[0]?.id ?? null);
+        // Until the user selects a row, detail follows the visible group order.
+        setSelectedId(null);
       })
       .catch((cause: unknown) => {
         if (!active || accountRef.current !== account) return;
