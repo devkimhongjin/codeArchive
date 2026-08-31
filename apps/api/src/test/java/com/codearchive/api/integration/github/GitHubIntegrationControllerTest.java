@@ -42,7 +42,7 @@ import com.codearchive.api.common.filter.RequestIdFilter;
 import jakarta.servlet.http.Cookie;
 
 @WebMvcTest(controllers = GitHubIntegrationController.class,
-        properties = "codearchive.auth.dashboard-origin=https://dashboard.example")
+        properties = "codearchive.auth.dashboard-origin=https://codearchive-dashboard-beta.onrender.com")
 @Import({SecurityConfig.class, GitHubIntegrationService.class})
 class GitHubIntegrationControllerTest {
     private static final String ROOT = "/api/v1/integrations/github/installations";
@@ -75,15 +75,24 @@ class GitHubIntegrationControllerTest {
     @Test
     void dashboardCookieUsesSameOwnershipRulesAndMixedCredentialsAreRejected() throws Exception {
         mvc.perform(get(ROOT).cookie(new Cookie(ApiAuthenticationFilter.SESSION_COOKIE_NAME, "alice-session"))
-                        .header(HttpHeaders.ORIGIN, "https://dashboard.example")
+                        .header(HttpHeaders.ORIGIN, "https://codearchive-dashboard-beta.onrender.com")
                         .requestAttr(RequestIdFilter.REQUEST_ID_ATTRIBUTE, "github-read-test"))
                 .andExpect(status().isOk())
-                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "https://dashboard.example"))
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN,
+                        "https://codearchive-dashboard-beta.onrender.com"))
                 .andExpect(jsonPath("$.data.installations[0].account.id").value("101"));
         mvc.perform(request("/701/repositories", "alice-session")
                         .cookie(new Cookie(ApiAuthenticationFilter.SESSION_COOKIE_NAME, "bob-session")))
                 .andExpect(status().isUnauthorized());
         verify(client, never()).listRepositories(anyLong(), anyInt());
+    }
+
+    @Test
+    void unapprovedOriginCannotUseTheNewReadEndpoints() throws Exception {
+        mvc.perform(get(ROOT).cookie(new Cookie(ApiAuthenticationFilter.SESSION_COOKIE_NAME, "alice-session"))
+                        .header(HttpHeaders.ORIGIN, "https://unapproved.example"))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(client);
     }
 
     @Test
