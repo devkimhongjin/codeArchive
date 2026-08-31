@@ -293,6 +293,7 @@ class GitHubHttpRepositoryBrowseTest {
 
     private void repositories(long total, List<?> repositories) {
         server.expect(requestTo(API + "/installation/repositories?per_page=30&page=1"))
+                .andExpect(method(HttpMethod.GET))
                 .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer " + TOKEN))
                 .andRespond(withSuccess(json(Map.of("total_count", total, "repositories", repositories)),
                         MediaType.APPLICATION_JSON));
@@ -304,9 +305,14 @@ class GitHubHttpRepositoryBrowseTest {
     }
 
     private void branch(String name, String encoded, String commit) {
+        branch(name, encoded, commit, false);
+    }
+
+    private void branch(String name, String encoded, String commit, boolean protectedBranch) {
         server.expect(requestTo(REPO + "/branches/" + encoded))
+                .andExpect(method(HttpMethod.GET))
                 .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer " + TOKEN))
-                .andRespond(withSuccess(json(Map.of("name", name, "commit",
+                .andRespond(withSuccess(json(Map.of("name", name, "protected", protectedBranch, "commit",
                         Map.of("sha", commit, "commit", Map.of("tree", Map.of("sha", ROOT),
                                 "message", "private-canary")))), MediaType.APPLICATION_JSON));
     }
@@ -321,6 +327,100 @@ class GitHubHttpRepositoryBrowseTest {
 
     private static Map<String, String> entry(String name, String type, String mode, String sha) {
         return Map.of("path", name, "type", type, "mode", mode, "sha", sha, "url", "https://untrusted.test");
+    }
+
+    @Test
+    void previewResolvesExistingParentsAndPlansMissingDirectoriesWithoutAnyBlobOrWrite(CapturedOutput output) {
+        access();
+        branch("feature/read-only", "feature%2Fread-only", COMMIT);
+        tree(ROOT, false, List.of(entry("풀이 모음", "tree", "040000", CHILD)));
+        tree(CHILD, false, List.of(entry("unrelated.java", "blob", "100644", BLOB)));
+        var result = client.inspectUploadTarget(701, 801, 101, "feature/read-only", COMMIT,
+                "풀이 모음/SWEA/1206/Solution.java");
+        assertThat(result.missingDirectories()).containsExactly("풀이 모음/SWEA", "풀이 모음/SWEA/1206");
+        assertThat(result.existingEntry()).isNull();
+        assertThat(result.obstruction()).isNull();
+        assertThat(result.protectedBranch()).isFalse();
+        assertThat(result.commitSha()).isEqualTo(COMMIT);
+        assertThat(result.rootTreeSha()).isEqualTo(ROOT);
+        assertThat(result.repository().id()).isEqualTo(801);
+        assertThat(output).doesNotContain(TOKEN, "private-canary", "app-jwt-canary");
+        server.verify();
+    }
+
+    @Test
+    void previewOfNewRootFileReportsProtectedBranchWithoutCreatingAnything() {
+        access(); branch("main", "main", COMMIT, true); tree(ROOT, false, List.of());
+        var result = client.inspectUploadTarget(701, 801, 101, "main", COMMIT, "Solution.java");
+        assertThat(result.protectedBranch()).isTrue();
+        assertThat(result.missingDirectories()).isEmpty();
+        assertThat(result.existingEntry()).isNull();
+        server.verify();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"blob,100644,FILE", "tree,040000,DIRECTORY", "blob,120000,SYMLINK", "commit,160000,SUBMODULE"})
+    void previewReportsEveryExistingTargetTypeWithoutReadingItsContent(String type, String mode,
+            GitHubAppClient.EntryType expectedType) {
+        access(); branch("main", "main", COMMIT);
+        tree(ROOT, false, List.of(entry("Solution.java", type, mode, BLOB)));
+        var result = client.inspectUploadTarget(701, 801, 101, "main", COMMIT, "Solution.java");
+        assertThat(result.existingEntry().type()).isEqualTo(expectedType);
+        assertThat(result.existingEntry().sha()).isEqualTo(BLOB);
+        assertThat(result.missingDirectories()).isEmpty();
+        server.verify();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"blob,100644", "blob,120000", "commit,160000"})
+    void previewNeverTraversesAnObstructingParent(String type, String mode) {
+        access(); branch("main", "main", COMMIT);
+        tree(ROOT, false, List.of(entry("folder", type, mode, BLOB)));
+        var result = client.inspectUploadTarget(701, 801, 101, "main", COMMIT, "folder/new/Solution.java");
+        assertThat(result.obstruction().path()).isEqualTo("folder");
+        assertThat(result.existingEntry()).isNull();
+        assertThat(result.missingDirectories()).isEmpty();
+        server.verify();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"stale", "truncated-root", "truncated-child", "missing-tree", "empty-repository"})
+    void previewCannotInventAbsenceFromAnUnverifiableSnapshot(String scenario) {
+        access();
+        ErrorCode expected;
+        if (scenario.equals("empty-repository")) {
+            server.expect(requestTo(REPO + "/branches/main")).andRespond(withStatus(HttpStatus.CONFLICT));
+            expected = ErrorCode.GITHUB_REPOSITORY_STATE_UNAVAILABLE;
+        } else {
+            branch("main", "main", scenario.equals("stale") ? BLOB : COMMIT);
+            expected = switch (scenario) {
+                case "stale" -> ErrorCode.GITHUB_REFERENCE_CHANGED;
+                case "missing-tree" -> ErrorCode.GITHUB_INTEGRATION_NOT_FOUND;
+                default -> ErrorCode.GITHUB_DIRECTORY_LIMIT_EXCEEDED;
+            };
+            if (scenario.equals("missing-tree")) {
+                server.expect(requestTo(REPO + "/git/trees/" + ROOT)).andRespond(withStatus(HttpStatus.NOT_FOUND));
+            } else if (scenario.equals("truncated-root")) tree(ROOT, true, List.of());
+            else if (scenario.equals("truncated-child")) {
+                tree(ROOT, false, List.of(entry("folder", "tree", "040000", CHILD)));
+                tree(CHILD, true, List.of());
+            }
+        }
+        failure(() -> client.inspectUploadTarget(701, 801, 101, "main", COMMIT, "folder/Solution.java"), expected);
+        server.verify();
+    }
+
+    @Test
+    void previewGateAndRepositoryOwnershipFailBeforeAnyBranchRead() {
+        properties.setContentsReadEnabled(false);
+        failure(() -> client.inspectUploadTarget(701, 801, 101, "main", COMMIT, "Solution.java"),
+                ErrorCode.GITHUB_INTEGRATION_UNAVAILABLE);
+        properties.setContentsReadEnabled(true);
+        token(Map.of("metadata", "read", "contents", "read"));
+        repositories(1, List.of(repository(801, 102, "User")));
+        failure(() -> client.inspectUploadTarget(701, 801, 101, "main", COMMIT, "Solution.java"),
+                ErrorCode.GITHUB_INTEGRATION_NOT_FOUND);
+        server.verify();
     }
 
     private static String json(Object value) {

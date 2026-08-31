@@ -199,12 +199,8 @@ public class GitHubHttpAppClient implements GitHubAppClient {
         GitHubBrowseInput.reference(branch, expectedCommitSha);
         List<String> segments = GitHubBrowseInput.directory(path);
         RepositoryAccess access = selectedRepository(installationId, repositoryId, ownerId);
-        JsonNode selectedBranch = read(client.get().uri(access.base() + "/branches/{branch}", branch), access.token);
-        require(branch.equals(text(selectedBranch, "name")));
-        String commitSha = sha(selectedBranch.path("commit"), "sha");
-        if (!expectedCommitSha.equals(commitSha)) {
-            throw new CodeArchiveException(ErrorCode.GITHUB_REFERENCE_CHANGED);
-        }
+        JsonNode selectedBranch = matchingBranch(access, branch, expectedCommitSha);
+        String commitSha = expectedCommitSha;
         String rootTreeSha = sha(selectedBranch.path("commit").path("commit").path("tree"), "sha");
         String treeSha = rootTreeSha;
         String currentPath = "";
@@ -218,6 +214,55 @@ public class GitHubHttpAppClient implements GitHubAppClient {
             entries = tree(access, treeSha, currentPath);
         }
         return new Directory(branch, commitSha, rootTreeSha, treeSha, path, entries);
+    }
+
+
+    @Override
+    public UploadTarget inspectUploadTarget(long installationId, long repositoryId, long ownerId,
+            String branch, String expectedCommitSha, String path) {
+        GitHubBrowseInput.identifiers(installationId, repositoryId);
+        GitHubBrowseInput.reference(branch, expectedCommitSha);
+        List<String> segments = GitHubUploadPath.segments(path);
+        RepositoryAccess access = selectedRepository(installationId, repositoryId, ownerId);
+        JsonNode selectedBranch = matchingBranch(access, branch, expectedCommitSha);
+        require(selectedBranch.path("protected").isBoolean());
+        boolean protectedBranch = selectedBranch.path("protected").booleanValue();
+        String rootSha = sha(selectedBranch.path("commit").path("commit").path("tree"), "sha");
+        List<TreeEntry> entries = tree(access, rootSha, "");
+        String prefix = "";
+        for (int index = 0; index < segments.size() - 1; index++) {
+            String segment = segments.get(index);
+            TreeEntry child = entries.stream().filter(entry -> entry.name().equals(segment)).findFirst().orElse(null);
+            if (child == null) {
+                // Absence is proved only by a complete parent tree, never by a provider 404.
+                var missing = new ArrayList<String>();
+                for (int rest = index; rest < segments.size() - 1; rest++) {
+                    prefix = prefix.isEmpty() ? segments.get(rest) : prefix + "/" + segments.get(rest);
+                    missing.add(prefix);
+                }
+                return new UploadTarget(access.repository, branch, expectedCommitSha, rootSha,
+                        protectedBranch, List.copyOf(missing), null, null);
+            }
+            if (!child.browsable()) {
+                return new UploadTarget(access.repository, branch, expectedCommitSha, rootSha,
+                        protectedBranch, List.of(), null, child);
+            }
+            prefix = child.path();
+            entries = tree(access, child.sha(), prefix);
+        }
+        String filename = segments.getLast();
+        TreeEntry existing = entries.stream().filter(entry -> entry.name().equals(filename)).findFirst().orElse(null);
+        return new UploadTarget(access.repository, branch, expectedCommitSha, rootSha,
+                protectedBranch, List.of(), existing, null);
+    }
+
+    private JsonNode matchingBranch(RepositoryAccess access, String branch, String expectedCommitSha) {
+        JsonNode selected = read(client.get().uri(access.base() + "/branches/{branch}", branch), access.token);
+        require(branch.equals(text(selected, "name")));
+        if (!expectedCommitSha.equals(sha(selected.path("commit"), "sha"))) {
+            throw new CodeArchiveException(ErrorCode.GITHUB_REFERENCE_CHANGED);
+        }
+        return selected;
     }
 
     private RepositoryAccess selectedRepository(long installationId, long repositoryId, long ownerId) {

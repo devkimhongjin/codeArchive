@@ -84,7 +84,7 @@ public class GitHubIntegrationService {
                 parentPath, List.copyOf(breadcrumbs), result.entries(), false);
     }
 
-    private GitHubAppClient.Installation requireInstallation(CodeArchivePrincipal principal, long installationId) {
+    GitHubAppClient.Installation requireInstallation(CodeArchivePrincipal principal, long installationId) {
         return ownedInstallation(principal).filter(value -> value.id() == installationId)
                 .orElseThrow(() -> new CodeArchiveException(ErrorCode.GITHUB_INTEGRATION_NOT_FOUND));
     }

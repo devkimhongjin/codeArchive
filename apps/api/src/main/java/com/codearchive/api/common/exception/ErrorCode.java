@@ -39,6 +39,16 @@ public enum ErrorCode {
             "접근 권한이 없습니다."
     ),
 
+    GITHUB_PREVIEW_NOT_ELIGIBLE(
+            HttpStatus.FORBIDDEN,
+            "자동 수집된 정답 풀이만 업로드 미리보기를 만들 수 있습니다."
+    ),
+
+    GITHUB_PREVIEW_SOURCE_CHANGED(
+            HttpStatus.CONFLICT,
+            "풀이가 변경되었습니다. 최신 풀이로 미리보기를 다시 요청해 주세요."
+    ),
+
     GITHUB_REFERENCE_CHANGED(
             HttpStatus.CONFLICT,
             "브랜치가 변경되었습니다. 브랜치를 다시 선택해 주세요."
