@@ -64,7 +64,7 @@ export function useCommunityResource<T>(load: ((signal: AbortSignal) => Promise<
     return () => { abort.abort(); controller.current?.abort(); generation.current++; };
   }, [enabled, revision]);
   async function mutate(action: (signal: AbortSignal) => Promise<unknown>, after?: () => void) {
-    if (busy) return;
+    if (busy || mutating.current) return;
     controller.current?.abort();
     const mine = ++generation.current;
     const abort = new AbortController(); controller.current = abort;

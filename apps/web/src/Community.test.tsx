@@ -88,7 +88,7 @@ describe("qualified peer community", () => {
   });
   it("ignores a late detail and a late mutation after unmount/account change", async () => {
     const api = client(); let resolve!: (value: SharedSolution) => void; let signal: AbortSignal | undefined;
-    api.detail = vi.fn((_id, value) => { signal = value; return new Promise((done) => { resolve = done; }); });
+    api.detail = vi.fn((_id, value) => { signal = value; return new Promise<SharedSolution>((done) => { resolve = done; }); });
     const view = render(<SharedDiscussion key={owner} id={peerId} account={owner} client={api} onSessionExpired={expired} />);
     view.unmount(); expect(signal?.aborted).toBe(true);
     await act(async () => resolve(peer)); expect(screen.queryByText(peer.code!)).not.toBeInTheDocument();
