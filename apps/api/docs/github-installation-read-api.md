@@ -2,7 +2,9 @@
 
 Priority: [owner handoff](https://github.com/devkimhongjin/codeArchive/issues/44#issuecomment-5479144590).
 This API foundation precedes Dashboard consent/connection UI, branch/tree browsing, preview, and explicit commits.
-It does not finish #44 or enable uploading.
+It does not finish #44 or enable uploading. The separate
+[branch/directory browsing slice](github-repository-browse-api.md) adds repository-specific Contents read
+behind its own disabled-by-default gate; the metadata-list contract below is unchanged.
 
 ## Identity and scope
 
