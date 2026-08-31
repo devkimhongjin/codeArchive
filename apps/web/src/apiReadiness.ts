@@ -1,9 +1,10 @@
 import { MAIN_API_ORIGIN } from "./authClient";
 import { withRequestDeadline } from "./requestDeadline";
 
-export const API_STARTUP_TIMEOUT_MS = 120_000;
+// Beta application startup took 122-126s in provider logs, before transport overhead.
+export const API_STARTUP_TIMEOUT_MS = 180_000;
 export const API_STARTUP_RETRY_MS = 10_000;
-export const API_STARTUP_MAX_ATTEMPTS = 12;
+export const API_STARTUP_MAX_ATTEMPTS = 18;
 export type ReadinessFailure = "network" | "server" | "response";
 export type ReadinessResult = { status: "ready" | "cancelled" }
   | { status: "unavailable"; reason: ReadinessFailure };

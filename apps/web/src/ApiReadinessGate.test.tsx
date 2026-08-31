@@ -40,7 +40,8 @@ describe("API readiness before beta entry and Dashboard effects", () => {
     const ready = deferred();
     render(<ApiReadinessGate check={ready.check}>archive</ApiReadinessGate>);
     await act(async () => vi.advanceTimersByTimeAsync(5000));
-    expect(screen.getByText("경과 5초 / 최대 120초")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("최대 3분");
+    expect(screen.getByText("경과 5초 / 최대 180초")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "대기 취소" }));
     expect(ready.check.mock.calls[0][0].aborted).toBe(true);
     expect(screen.getByRole("button", { name: "다시 확인" })).toHaveFocus();
@@ -69,11 +70,11 @@ describe("API readiness before beta entry and Dashboard effects", () => {
     const fetcher = vi.fn().mockImplementation(() => new Promise<Response>(() => undefined));
     const check = createReadinessCheck(fetcher);
     render(<ApiReadinessGate check={check}>archive</ApiReadinessGate>);
-    await act(async () => vi.advanceTimersByTimeAsync(120_000));
+    await act(async () => vi.advanceTimersByTimeAsync(180_000));
     expect(screen.getByRole("status")).toHaveTextContent("네트워크");
     expect(screen.queryByRole("button", { name: "대기 취소" })).not.toBeInTheDocument();
     const count = fetcher.mock.calls.length;
-    await act(async () => vi.advanceTimersByTimeAsync(120_000));
+    await act(async () => vi.advanceTimersByTimeAsync(180_000));
     expect(fetcher).toHaveBeenCalledTimes(count);
     fetcher.mockImplementation(async () => new Response('{"status":"UP"}'));
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "다시 확인" })));
