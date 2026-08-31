@@ -38,6 +38,7 @@ class CommunityIntegrationTest {
     @Autowired SolutionRepository solutions;
     @Autowired JdbcTemplate db;
     @Autowired CommunityService community;
+    @Autowired org.springframework.transaction.PlatformTransactionManager transactions;
     record Actor(UUID id, UUID session, String token) {}
     @AfterEach void clean() { db.update("DELETE FROM users"); }
 
@@ -164,6 +165,51 @@ class CommunityIntegrationTest {
         request(a, get("/api/v1/community/peers/{id}?offset=10001", own)).andExpect(status().isBadRequest());
         db.update("INSERT INTO community_rate_windows VALUES (?, 'comment', date_trunc('minute', now()), 30)", a.id());
         request(a, post("/api/v1/community/solutions/{id}/comments", peer).contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"spam\"}")).andExpect(status().isTooManyRequests());
+    }
+
+    @Test void pagesAreBoundedStableAndDoNotContainPrivateFields() throws Exception {
+        Actor a = actor(), b = actor(); UUID own = shared(a, "1000"), peer = shared(b, "1000");
+        for (int i = 0; i < 21; i++) db.update("""
+                INSERT INTO solutions(id,user_id,client_record_id,platform,problem_number,title,language,code,result,
+                    created_at,updated_at,accepted_capture,community_public,published_at)
+                VALUES(?,?,?,'SWEA','1000','fixture','Java','code','ACCEPTED',now(),now(),TRUE,TRUE,now())
+                """, UUID.randomUUID(), b.id(), "page-" + i);
+        var first = community.peers(principal(a), own, "", 0);
+        var second = community.peers(principal(a), own, "", 20);
+        assertThat(first.items()).hasSize(20); assertThat(first.hasMore()).isTrue();
+        assertThat(second.items()).hasSize(2); assertThat(second.hasMore()).isFalse();
+        assertThat(first.items().stream().map(CommunityService.SharedSolution::id).toList())
+                .doesNotContainAnyElementsOf(second.items().stream().map(CommunityService.SharedSolution::id).toList());
+        assertThat(community.peers(principal(a), own, "Python", 0).items()).isEmpty();
+        for (int i = 0; i < 51; i++) db.update("INSERT INTO community_comments(id,solution_id,user_id,body) VALUES(?,?,?,?)", UUID.randomUUID(), peer, a.id(), "comment-" + i);
+        assertThat(community.comments(principal(a), peer, 0).items()).hasSize(50);
+        assertThat(community.comments(principal(a), peer, 0).hasMore()).isTrue();
+        assertThat(community.comments(principal(a), peer, 50).items()).hasSize(1);
+        request(a, get("/api/v1/community/solutions/{id}", peer)).andExpect(jsonPath("$.data.clientRecordId").doesNotExist())
+                .andExpect(jsonPath("$.data.observedAt").doesNotExist()).andExpect(jsonPath("$.data.executionTime").doesNotExist())
+                .andExpect(jsonPath("$.data.aiUsage").doesNotExist());
+    }
+
+    @Test void revokeWaitsForAuthorizedReadAndSubsequentReadsAreDenied() throws Exception {
+        Actor a = actor(), b = actor(); UUID own = shared(a, "1000"), peer = shared(b, "1000");
+        var locked = new CountDownLatch(1); var release = new CountDownLatch(1);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(transactions);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var read = pool.submit(() -> tx.execute(status -> {
+                community.detail(principal(a), peer); locked.countDown();
+                try { if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("test release timeout"); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
+                return null;
+            }));
+            assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
+            var revoke = pool.submit(() -> community.publish(principal(a), own, false));
+            try { assertThatThrownBy(() -> revoke.get(150, TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class); }
+            finally { release.countDown(); }
+            read.get(5, TimeUnit.SECONDS); revoke.get(5, TimeUnit.SECONDS);
+        }
+        request(a, get("/api/v1/community/solutions/{id}", peer)).andExpect(status().isNotFound());
+        request(a, post("/api/v1/community/solutions/{id}/like", peer).contentType(MediaType.APPLICATION_JSON).content("{\"liked\":true}")).andExpect(status().isNotFound());
+        request(a, post("/api/v1/community/solutions/{id}/report", peer).contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"SPAM\"}")).andExpect(status().isNotFound());
     }
 
     private CodeArchivePrincipal principal(Actor a) { return new CodeArchivePrincipal(a.id(), a.session(), "synthetic"); }

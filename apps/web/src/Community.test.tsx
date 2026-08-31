@@ -111,4 +111,21 @@ describe("qualified peer community", () => {
     await screen.findByText(peer.code!); view.rerender(<CommunityPermalink account="" client={api} onSessionExpired={expired} />);
     expect(screen.queryByText(peer.code!)).not.toBeInTheDocument();
   });
+  it("clears hidden-tab content and rechecks authorization on return", async () => {
+    const api = client(); const descriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+    render(<SharedDiscussion id={peerId} account={owner} client={api} onSessionExpired={expired} />);
+    await screen.findByText(peer.code!);
+    try {
+      Object.defineProperty(document, "hidden", { configurable: true, value: true });
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      expect(screen.queryByText(peer.code!)).not.toBeInTheDocument();
+      api.detail = vi.fn().mockRejectedValue(new CommunityUnavailableError());
+      Object.defineProperty(document, "hidden", { configurable: true, value: false });
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      expect(await screen.findByRole("alert")).toHaveTextContent("접근할 수 없습니다");
+    } finally {
+      if (descriptor) Object.defineProperty(document, "hidden", descriptor);
+      else Reflect.deleteProperty(document, "hidden");
+    }
+  });
 });
