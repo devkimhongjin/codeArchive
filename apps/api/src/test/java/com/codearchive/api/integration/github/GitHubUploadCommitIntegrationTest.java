@@ -115,6 +115,7 @@ class GitHubUploadCommitIntegrationTest {
         error(() -> service.status(new CodeArchivePrincipal(a.id(), newSession.getId(), a.login()), id), ErrorCode.GITHUB_UPLOAD_INTENT_NOT_FOUND);
         db.update("UPDATE github_upload_intents SET expires_at=clock_timestamp()-interval '1 second' WHERE id=?", id);
         error(() -> service.commit(a.principal(), id, CONSENT), ErrorCode.GITHUB_UPLOAD_INTENT_EXPIRED);
+        assertThat(service.status(a.principal(), id).status()).isEqualTo("EXPIRED");
         sessions.revoke(a.session(), Instant.now());
         error(() -> service.status(a.principal(), id), ErrorCode.AUTH_REQUIRED);
         verifyNoInteractions(prepared);
@@ -153,6 +154,14 @@ class GitHubUploadCommitIntegrationTest {
         assertThat(service.commit(a.principal(), id, CONSENT).status()).isEqualTo("UNKNOWN");
         UUID newId = intent(a, source);
         error(() -> service.commit(a.principal(), newId, CONSENT), ErrorCode.GITHUB_UPLOAD_ALREADY_ATTEMPTED);
+        // A new login, changed archive metadata/version and different message still cannot reset the target tombstone.
+        var session = sessions.save(AuthSession.create(a.id(), tokens.hash(UUID.randomUUID().toString()), Instant.now().plusSeconds(3600), Instant.now()));
+        var principal = new CodeArchivePrincipal(a.id(), session.getId(), a.login());
+        db.update("UPDATE solutions SET title='New title', updated_at=updated_at+interval '1 second' WHERE id=?", source);
+        var selected = selection(source);
+        var changed = new GitHubUploadPreviewService.Request(source, selected.expectedUpdatedAt(), 701, 801, "main", HEAD, null, "Different message");
+        UUID changedId = service.prepare(principal, changed).intentId();
+        error(() -> service.commit(principal, changedId, CONSENT), ErrorCode.GITHUB_UPLOAD_ALREADY_ATTEMPTED);
         verify(prepared, times(1)).create(anyString(), anyString());
         assertThat(output).doesNotContain("provider-body-canary", "synthetic-commit-source");
     }

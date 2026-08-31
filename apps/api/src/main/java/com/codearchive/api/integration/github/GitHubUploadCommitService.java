@@ -121,8 +121,10 @@ public class GitHubUploadCommitService {
 
     private Result result(GitHubUploadIntentStore.Intent intent) {
         String state = intent.status().equals("ATTEMPTED") ? "UNKNOWN" : intent.status();
+        if (state.equals("READY") && !intent.expiresAt().isAfter(Instant.now())) state = "EXPIRED";
         return new Result(intent.id(), state, false, intent.commitSha(), intent.commitUrl(),
-                state.equals("UNKNOWN") ? ErrorCode.GITHUB_UPLOAD_OUTCOME_UNKNOWN.name() : intent.errorCode());
+                state.equals("UNKNOWN") ? ErrorCode.GITHUB_UPLOAD_OUTCOME_UNKNOWN.name()
+                        : state.equals("EXPIRED") ? ErrorCode.GITHUB_UPLOAD_INTENT_EXPIRED.name() : intent.errorCode());
     }
     public record Consent(boolean confirmUpload, boolean acknowledgeVisibilityRisk, boolean confirmPublicUpload) {}
     public record Confirmation(UUID intentId, Instant expiresAt, GitHubUploadPreviewService.Preview preview, String consentNotice) {

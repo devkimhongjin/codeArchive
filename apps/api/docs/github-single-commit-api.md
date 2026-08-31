@@ -43,7 +43,8 @@ Vary rules apply. Cookie POSTs require the configured exact Dashboard Origin; mi
 
 Success is `SUCCEEDED`, with a URL constructed from the validated repository name and returned SHA.
 Repeated commit calls read the saved result, never re-dispatch. A known pre-send failure is `REJECTED`;
-its saved safe error tells the client why a fresh review is needed. Expired READY intents cannot execute.
+its saved safe error tells the client why a fresh review is needed. Expired READY intents cannot execute
+and are returned as `EXPIRED` without rewriting their durable state.
 In-progress, crashed or uncertain dispatch is exposed as `UNKNOWN`, never as a retry invitation.
 
 ## Conditional create and local concurrency
