@@ -39,6 +39,16 @@ public enum ErrorCode {
             "접근 권한이 없습니다."
     ),
 
+    GITHUB_INTEGRATION_UNAVAILABLE(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "GitHub 저장소 연결을 사용할 수 없습니다."
+    ),
+
+    GITHUB_INTEGRATION_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "사용 가능한 GitHub 저장소 연결을 찾을 수 없습니다."
+    ),
+
     INVALID_REQUEST(
             HttpStatus.BAD_REQUEST,
             "요청 값이 올바르지 않습니다."
