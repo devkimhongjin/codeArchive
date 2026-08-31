@@ -11,6 +11,8 @@ public interface GitHubAppClient {
     BranchPage listBranches(long installationId, long repositoryId, long ownerId, int page);
     Directory readDirectory(long installationId, long repositoryId, long ownerId,
             String branch, String expectedCommitSha, String path);
+    UploadTarget inspectUploadTarget(long installationId, long repositoryId, long ownerId,
+            String branch, String expectedCommitSha, String path);
 
     record Account(long id, String login, String type) {}
     record Installation(long id, Account account, String repositorySelection, boolean suspended) {}
@@ -22,4 +24,6 @@ public interface GitHubAppClient {
     record TreeEntry(String name, String path, EntryType type, String sha, boolean browsable) {}
     record Directory(String branch, String commitSha, String rootTreeSha, String treeSha,
             String path, List<TreeEntry> entries) {}
+    record UploadTarget(Repository repository, String branch, String commitSha, String rootTreeSha,
+            boolean protectedBranch, List<String> missingDirectories, TreeEntry existingEntry, TreeEntry obstruction) {}
 }

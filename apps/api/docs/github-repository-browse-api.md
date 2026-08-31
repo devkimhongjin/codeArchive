@@ -1,6 +1,7 @@
 # GitHub repository browsing — #44, slice 2
 
 Builds on [installation/repository reads](github-installation-read-api.md).
+The next implemented API slice is [single-solution upload preview](github-upload-preview-api.md).
 Only apps/api changes; no UI, source upload, branch creation, persistence, permission provisioning,
 runtime enablement, deployment, or ordinary OAuth scope changes.
 
