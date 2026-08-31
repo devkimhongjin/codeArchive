@@ -4,7 +4,7 @@
 
 ## 동작
 
-1. 새 Dashboard 탭에서 초대 비밀번호 입력 화면을 보여준다. 아직 App을 마운트하지 않으므로 정상 UI에서는 로그인 확인·Extension 연결·자동 동기화를 시작하지 않는다.
+1. Dashboard 시작 시 먼저 쿠키 없는 공개 API 상태 조회로 서버 준비를 확인한다. 최대 2분 동안 기다리며 취소·수동 재시도가 가능하다. 준비된 뒤 새 탭에는 초대 비밀번호 입력 화면을 보여준다. 아직 App을 마운트하지 않으므로 정상 UI에서는 로그인 확인·Extension 연결·자동 동기화를 시작하지 않는다. 상태 조회는 입장 승인이나 로그인으로 취급하지 않는다. 세부 제한은 [기동 대기 설계](dashboard-api-startup.md)를 따른다.
 2. `POST /api/v1/beta/access`에 HTTPS JSON `{password}`를 전송한다. 인증 쿠키를 보내지 않고, 기존 exact Dashboard Origin만 허용한다.
 3. 서버가 비밀 설정 `CODEARCHIVE_BETA_ACCESS_PASSWORD`와 비교한다. 8~128자 설정이 없으면 503으로 닫고, 틀리면 403을 반환한다. 성공은 공통 ApiResponse의 `{accepted: true}`이며 no-store이다. 비밀번호/해시를 응답하거나 로그에 남기지 않는다.
 4. 성공하면 **승인 여부만** `sessionStorage`에 보관한다. 같은 탭의 새로고침·GitHub 로그인 후 복귀에서는 다시 묻지 않는다. 입력 문자열은 요청 후 지우며 저장소·URL에 남기지 않는다.
