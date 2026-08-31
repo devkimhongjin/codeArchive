@@ -113,10 +113,21 @@ public class SolutionUpsertRepository {
             Values values,
             Instant now
     ) {
-        return jdbcTemplate.update(
+        int inserted = jdbcTemplate.update(
                 INSERT_IF_ABSENT_SQL,
                 parameters(userId, clientRecordId, values, now)
         );
+        // A duplicate import can establish provenance for an unchanged legacy capture.
+        // Never overwrite the archive, and never qualify a different/edited payload.
+        jdbcTemplate.update("""
+                UPDATE solutions SET accepted_capture = TRUE
+                WHERE user_id = :userId AND client_record_id = :clientRecordId
+                  AND platform = :platform AND problem_number = :problemNumber
+                  AND language = :language AND code = :code
+                  AND result = 'ACCEPTED' AND :result = 'ACCEPTED'
+                  AND observed_at IS NOT NULL AND observed_at = :observedAt
+                """, parameters(userId, clientRecordId, values, now));
+        return inserted;
     }
 
     private MapSqlParameterSource parameters(
