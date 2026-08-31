@@ -113,6 +113,7 @@ class AuthServiceTest {
         assertThat(result.authorizationUrl())
                 .contains("client_id=mock-client-id")
                 .contains("state=raw-state")
+                .doesNotContain("prompt=select_account")
                 .doesNotContain("scope=")
                 .doesNotContain("repo");
     }

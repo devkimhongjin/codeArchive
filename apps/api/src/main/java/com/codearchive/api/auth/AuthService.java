@@ -143,14 +143,20 @@ public class AuthService {
         AuthProperties.Github github =
                 authProperties.getGithub();
 
-        String authorizationUrl = UriComponentsBuilder
+        UriComponentsBuilder authorization = UriComponentsBuilder
                 .fromUriString(github.getAuthorizeUrl())
                 .queryParam("client_id", github.getClientId())
                 .queryParam(
                         "redirect_uri",
                         github.getCallbackUrl()
                 )
-                .queryParam("state", rawState)
+                .queryParam("state", rawState);
+
+        if (flowType == OAuthState.FlowType.DASHBOARD) {
+            authorization.queryParam("prompt", "select_account");
+        }
+
+        String authorizationUrl = authorization
                 .build()
                 .encode()
                 .toUriString();
