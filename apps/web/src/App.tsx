@@ -4,8 +4,10 @@ import { invalidateCommunity } from "./communityLifecycle";
 import { mainApiCommunityClient, type CommunityClient } from "./communityClient";
 import { createAccountConsentController } from "./accountConsent";
 import { ArchiveSessionExpiredError, mainApiArchiveDataSource } from "./archiveDataSource";
+import { archiveFilterOptions, EMPTY_ARCHIVE_FILTERS, filterDashboardSolutions } from "./archiveFilters";
 import {
   groupDashboardSolutions,
+  type ArchiveSortOrder,
   type DashboardArchiveDataSource,
   type DashboardSolution,
 } from "./archiveTypes";
@@ -88,7 +90,8 @@ export function App({
 }: AppProps) {
   const [archive, setArchive] = useState<{ account: string; records: readonly DashboardSolution[] }>({ account: "", records: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState(EMPTY_ARCHIVE_FILTERS);
+  const [sortOrder, setSortOrder] = useState<ArchiveSortOrder>("updated_desc");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [deleteNotice, setDeleteNotice] = useState({ account: "", message: "" });
@@ -193,6 +196,11 @@ export function App({
   const accountRef = useRef(account);
   accountRef.current = account;
   const records = account && archive.account === account ? archive.records : [];
+
+  useEffect(() => {
+    setFilters(EMPTY_ARCHIVE_FILTERS);
+    setSortOrder("updated_desc");
+  }, [account]);
   const connected = extensionState.status === "connected";
   const exactOrigin = isExactDashboardOrigin(dashboardOrigin);
   const eligible = authenticated
@@ -240,7 +248,8 @@ export function App({
       .then((next) => {
         if (!active || accountRef.current !== account) return;
         setArchive({ account, records: next });
-        setSelectedId(next[0]?.id ?? null);
+        // Until the user selects a row, detail follows the visible group order.
+        setSelectedId(null);
       })
       .catch((cause: unknown) => {
         if (!active || accountRef.current !== account) return;
@@ -283,19 +292,16 @@ export function App({
     setAuthState(ok ? { status: "signed_out" } : { status: "unavailable" });
   }
 
-  const filtered = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return records;
-    return records.filter((record) =>
-      [record.platform, record.problemNumber, record.title, record.language]
-        .join(" ")
-        .toLowerCase()
-        .includes(normalized),
-    );
-  }, [query, records]);
+  const filtered = useMemo(() => filterDashboardSolutions(records, filters), [filters, records]);
+  const filterOptions = useMemo(() => archiveFilterOptions(records), [records]);
+  const groups = useMemo(() => groupDashboardSolutions(filtered, sortOrder), [filtered, sortOrder]);
+  const selected = filtered.find((record) => record.id === selectedId) ?? groups[0]?.records[0] ?? null;
+  const hasFilters = Boolean(filters.query || filters.platform || filters.language);
 
-  const groups = useMemo(() => groupDashboardSolutions(filtered), [filtered]);
-  const selected = filtered.find((record) => record.id === selectedId) ?? filtered[0] ?? null;
+  function resetArchiveFilters() {
+    setFilters(EMPTY_ARCHIVE_FILTERS);
+    setSortOrder("updated_desc");
+  }
 
   return (
     <main className="dashboard-shell">
@@ -365,12 +371,42 @@ export function App({
       </header>
 
       <section className="toolbar" aria-label="풀이 검색">
-        <label>
-          <span>검색</span>
-          <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="문제 번호, 제목, 언어" />
-        </label>
-        <strong>{filtered.length}건 · {groups.length}문제</strong>
-        {account && <button type="button" disabled={loading} onClick={() => setArchiveRefreshAttempt((value) => value + 1)}>목록 새로고침</button>}
+        <div className="archive-filters">
+          <label className="archive-search">
+            <span>검색</span>
+            <input type="search" value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} placeholder="문제 번호, 제목, 언어" aria-describedby="archive-filter-scope" />
+          </label>
+          <label>
+            <span>플랫폼</span>
+            <select value={filters.platform} onChange={(event) => setFilters((current) => ({ ...current, platform: event.target.value }))}>
+              <option value="">모든 플랫폼</option>
+              {filterOptions.platforms.map((platform) => <option key={platform} value={platform}>{platform}</option>)}
+              {filters.platform && !filterOptions.platforms.includes(filters.platform) && <option value={filters.platform}>{filters.platform} (현재 기록 없음)</option>}
+            </select>
+          </label>
+          <label>
+            <span>언어</span>
+            <select value={filters.language} onChange={(event) => setFilters((current) => ({ ...current, language: event.target.value }))}>
+              <option value="">모든 언어</option>
+              {filterOptions.languages.map((language) => <option key={language} value={language}>{language}</option>)}
+              {filters.language && !filterOptions.languages.includes(filters.language) && <option value={filters.language}>{filters.language} (현재 기록 없음)</option>}
+            </select>
+          </label>
+          <label>
+            <span>정렬</span>
+            <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as ArchiveSortOrder)}>
+              <option value="updated_desc">최근 수정순</option>
+              <option value="updated_asc">오래된 수정순</option>
+              <option value="problem_number">플랫폼·문제 번호순</option>
+            </select>
+          </label>
+        </div>
+        <div className="archive-filter-summary">
+          <strong aria-live="polite" aria-atomic="true">{filtered.length}건 · {groups.length}문제</strong>
+          <button type="button" disabled={!hasFilters && sortOrder === "updated_desc"} onClick={resetArchiveFilters}>검색·필터 초기화</button>
+          {account && <button type="button" disabled={loading} onClick={() => setArchiveRefreshAttempt((value) => value + 1)}>목록 새로고침</button>}
+        </div>
+        <p id="archive-filter-scope" className="archive-filter-scope">현재 불러온 서버 기록 최대 50건 안에서 검색·필터·정렬합니다. 전체 기록 검색이나 통계가 아닙니다.</p>
       </section>
 
       <CommunityPermalink account={account} client={communityClient} onSessionExpired={() => { if (accountRef.current === account) expireSession(); }} />
@@ -391,11 +427,11 @@ export function App({
       ) : (
         <div className="archive-layout">
           <section className="archive-list" aria-label="전체 풀이 목록">
-            {groups.length === 0 ? <p className="state-card">검색 결과가 없습니다.</p> : groups.map((group) => (
+            {groups.length === 0 ? <p className="state-card">검색 결과가 없습니다. 검색·필터 초기화로 다시 확인하세요.</p> : groups.map((group) => (
               <article className="problem-group" key={group.key}>
                 <div className="problem-heading"><div><strong>{group.title}</strong><span>{group.platform} · {group.problemNumber}</span></div><small>{group.records.length}회</small></div>
                 <div className="submission-list">{group.records.map((record) => (
-                  <button type="button" key={record.id} className={record.id === selected?.id ? "submission selected" : "submission"} onClick={() => setSelectedId(record.id)}>
+                  <button type="button" key={record.id} aria-pressed={record.id === selected?.id} className={record.id === selected?.id ? "submission selected" : "submission"} onClick={() => setSelectedId(record.id)}>
                     <span>{sourceLabel(record.source)} · {record.language}</span><small>{formatDate(record.solvedAt)}</small>
                   </button>
                 ))}</div>
