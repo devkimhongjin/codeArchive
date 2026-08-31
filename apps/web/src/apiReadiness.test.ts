@@ -53,7 +53,7 @@ describe("bounded public API startup checks", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["fetch", "body"])("includes stalled %s in the 20 second attempt and 120 second total bounds", async (phase) => {
+  it.each(["fetch", "body"])("includes stalled %s in the 20 second attempt and 180 second total bounds", async (phase) => {
     vi.useFakeTimers();
     const signals: AbortSignal[] = [];
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -67,8 +67,23 @@ describe("bounded public API startup checks", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(API_STARTUP_TIMEOUT_MS - 20_000);
     expect(await pending).toEqual({ status: "unavailable", reason: "network" });
-    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(fetcher).toHaveBeenCalledTimes(6);
     expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("allows observed 126-second startup while preserving per-request deadlines", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const fetcher = vi.fn(() => {
+      attempts++;
+      if (attempts < 5) return new Promise<Response>(() => undefined);
+      return new Promise<Response>((resolve) => setTimeout(() => resolve(up()), 6000));
+    });
+    const pending = createReadinessCheck(fetcher)(new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(126_000);
+    expect(await pending).toEqual({ status: "ready" });
+    expect(fetcher).toHaveBeenCalledTimes(5);
     expect(vi.getTimerCount()).toBe(0);
   });
 
