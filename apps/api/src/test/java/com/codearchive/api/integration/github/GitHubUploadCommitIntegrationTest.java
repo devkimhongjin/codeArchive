@@ -55,6 +55,7 @@ class GitHubUploadCommitIntegrationTest {
     @Autowired SolutionRepository solutions;
     @Autowired JdbcTemplate db;
     @Autowired GitHubUploadCommitService service;
+    @Autowired GitHubCommitExecutor executor;
     @Autowired GitHubAppProperties properties;
     @MockitoSpyBean GitHubUploadIntentStore intents;
     @MockitoBean GitHubAppClient github;
@@ -95,6 +96,16 @@ class GitHubUploadCommitIntegrationTest {
         error(() -> service.prepare(a.principal(), selection(source)), ErrorCode.GITHUB_INTEGRATION_UNAVAILABLE);
         assertThat(db.queryForObject("SELECT count(*) FROM github_upload_intents", Integer.class)).isZero();
         verifyNoInteractions(github, prepared);
+    }
+
+    @Test void temporaryCapacityLimitDoesNotConsumeReviewedManualIntent() throws Exception {
+        var a=actor(); UUID source=capture(a); allow(a,true); UUID id=intent(a,source);
+        assertThat(executor.reserve()).isTrue(); assertThat(executor.reserve()).isTrue();
+        try {
+            error(()->service.commit(a.principal(),id,CONSENT),ErrorCode.RATE_LIMITED);
+            assertThat(state(id)).isEqualTo("READY");
+            verifyNoInteractions(prepared);
+        } finally { executor.release(); executor.release(); }
     }
 
     @Test void consentAndPrivatePublicDisclosureAreSeparateFromSyncAndCommunity() throws Exception {

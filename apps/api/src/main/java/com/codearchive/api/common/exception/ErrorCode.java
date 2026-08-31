@@ -45,6 +45,8 @@ public enum ErrorCode {
     ),
 
     GITHUB_UPLOAD_TARGET_CHANGED(HttpStatus.CONFLICT, "저장소 상태가 변경되었거나 업로드할 수 없습니다. 다시 미리보기를 확인해 주세요."),
+    GITHUB_AUTO_STOPPED(HttpStatus.CONFLICT, "자동 커밋이 꺼졌거나 실행 시간이 만료되었습니다. 새로 동의해 주세요."),
+    GITHUB_AUTO_ACTIVE(HttpStatus.CONFLICT, "다른 화면에서 자동 커밋을 실행 중입니다. 먼저 꺼 주세요."),
     GITHUB_UPLOAD_INTENT_NOT_FOUND(HttpStatus.NOT_FOUND, "현재 로그인에서 확인할 수 있는 업로드 요청이 없습니다."),
     GITHUB_UPLOAD_INTENT_EXPIRED(HttpStatus.CONFLICT, "업로드 확인 시간이 만료되었습니다. 다시 미리보기를 확인해 주세요."),
     GITHUB_UPLOAD_CONSENT_REQUIRED(HttpStatus.BAD_REQUEST, "전송할 내용과 외부 공개 위험을 확인해 주세요."),

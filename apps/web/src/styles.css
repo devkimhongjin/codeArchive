@@ -166,3 +166,24 @@ h2 { font-size: 20px; }
 .community-section nav, .community-permalink nav { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
 .community-section [role="alert"], .community-permalink [role="alert"] { color: #a42620; }
 @media (max-width: 760px) { .community-code-compare { grid-template-columns: 1fr; } .community-section, .community-permalink { padding: 12px; } }
+/* External upload stays a compact, optional part of the archive. */
+.github-panel { margin: 18px 0; padding: 20px; border: 1px solid #dce3ee; border-radius: 16px; background: #fff; }
+.github-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.github-heading h2, .github-heading h3 { margin: 0; }
+.github-panel p { color: #536078; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.github-panel fieldset { border: 1px solid #e2e8f0; border-radius: 10px; margin: 14px 0; padding: 16px; min-width: 0; }
+.github-panel legend { font-size: 13px; color: #536078; padding: 0 5px; }
+.github-panel label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; font-size: 14px; }
+.github-panel input:not([type="checkbox"]), .github-panel select { min-width: 0; width: 100%; padding: 9px 12px; border: 1px solid #cbd5e1; border-radius: 8px; background: white; color: #152239; }
+.github-panel input[type="checkbox"] { flex: 0 0 auto; width: 16px; height: 16px; }
+.github-target { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+.github-target legend { grid-column: 1 / -1; }
+.github-actions, .github-folders, .github-result { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.github-destination { padding: 12px; border-radius: 8px; background: #f0f5ff; }
+.github-manual, .github-auto { margin-top: 22px; padding-top: 10px; border-top: 1px solid #e2e8f0; }
+.github-preview { margin-top: 16px; }
+.github-preview .code-view { max-height: 280px; }
+.github-on { background: #dcfce7; color: #166534; }
+.github-result { margin-top: 12px; padding: 12px; border: 1px solid #dce3ee; border-radius: 8px; }
+.github-panel button:disabled { opacity: .45; cursor: not-allowed; }
+@media (max-width: 700px) { .github-heading { align-items: flex-start; flex-direction: column; } .github-target { grid-template-columns: 1fr; } .github-panel { padding: 14px; } }
