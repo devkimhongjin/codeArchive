@@ -1,6 +1,7 @@
 package com.codearchive.api.community;
 
 import java.util.UUID;
+import java.time.Instant;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -23,7 +24,7 @@ public class CommunityController {
         response.setHeader("Cache-Control", "no-store, private");
         response.setHeader("Vary", "Origin, Cookie, Authorization");
     }
-    public record Visibility(@NotNull Boolean publicSolution) {}
+    public record Visibility(@NotNull Boolean publicSolution, Instant expectedUpdatedAt) {}
     public record Body(@NotBlank @Size(max = 2000) String body) {}
     public record Like(@NotNull Boolean liked) {}
     public record Report(@NotNull @Pattern(regexp = "SPAM|ABUSE|SENSITIVE") String reason) {}
@@ -38,7 +39,7 @@ public class CommunityController {
     public ApiResponse<CommunityService.Sharing> publish(@AuthenticationPrincipal CodeArchivePrincipal user,
             @PathVariable UUID id, @Valid @RequestBody Visibility body,
             @RequestAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE) String requestId) {
-        return ApiResponse.success(service.publish(user, id, body.publicSolution()), requestId);
+        return ApiResponse.success(service.publish(user, id, body.publicSolution(), body.expectedUpdatedAt()), requestId);
     }
     @GetMapping("/peers/{anchor}")
     public ApiResponse<CommunityService.Page<CommunityService.SharedSolution>> peers(@AuthenticationPrincipal CodeArchivePrincipal user,

@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CommunityPermalink, CommunitySharing, SharedDiscussion } from "./Community";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
-import { CommunityUnavailableError, type CommunityClient, type SharedSolution } from "./communityClient";
+import { CommunityRevisionError, CommunityUnavailableError, type CommunityClient, type SharedSolution } from "./communityClient";
 import { invalidateCommunity } from "./communityLifecycle";
 import type { DashboardSolution } from "./archiveTypes";
 const owner = "11111111-1111-4111-8111-111111111111";
@@ -15,7 +15,7 @@ function client(): CommunityClient {
   let shared = false, liked = false;
   return {
     sharing: vi.fn(async () => ({ publicSolution: shared, canPublish: true, eligible: shared })),
-    publish: vi.fn(async (_id, value) => { shared = value; return { publicSolution: value, canPublish: true, eligible: value }; }),
+    publish: vi.fn(async (_id, value) => { shared = value.publicSolution; return { publicSolution: shared, canPublish: true, eligible: shared }; }),
     peers: vi.fn(async () => ({ items: [peer], hasMore: false })),
     detail: vi.fn(async () => ({ ...peer, liked, likeCount: liked ? 1 : 0 })),
     comments: vi.fn(async () => ({ items: [comment], hasMore: false })),
@@ -34,11 +34,40 @@ async function openAndPublish() {
   await waitFor(() => expect(screen.getByRole("button", { name: "다른 풀이 보기" })).toBeEnabled());
 }
 describe("qualified peer community", () => {
+  it("rejects stale publication and requires fresh consent before another attempt", async () => {
+    const api = client(); api.publish = vi.fn().mockRejectedValue(new CommunityRevisionError());
+    render(<CommunitySharing solution={own} account={owner} client={api} onSessionExpired={expired} />);
+    fireEvent.click(screen.getByRole("button", { name: "공개 설정 확인" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /공개할 코드/ }));
+    fireEvent.click(screen.getByRole("button", { name: "이 풀이 공개하기" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("목록을 새로고침");
+    expect(api.publish).toHaveBeenCalledOnce(); expect(api.peers).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "공개 설정 확인" }));
+    expect(await screen.findByRole("button", { name: "이 풀이 공개하기" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /공개할 코드/ })).not.toBeChecked();
+  });
+
+  it("lets a slow authorization recheck reach its deadline instead of restarting every 15 seconds", async () => {
+    vi.useFakeTimers();
+    const api = client();
+    await act(async () => { render(<SharedDiscussion id={peerId} account={owner} client={api} onSessionExpired={expired} />); });
+    expect(screen.getByText(peer.code!)).toBeInTheDocument();
+    let reject!: (error: Error) => void; let signal: AbortSignal | undefined;
+    api.detail = vi.fn((_id, next) => { signal = next; return new Promise<SharedSolution>((_resolve, fail) => { reject = fail; }); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
+    expect(screen.getByText(peer.code!)).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(16000); });
+    expect(api.detail).toHaveBeenCalledOnce(); expect(signal?.aborted).toBe(false);
+    await act(async () => reject(new CommunityUnavailableError()));
+    expect(screen.getByRole("alert")).toHaveTextContent("접근할 수 없습니다");
+    expect(screen.queryByText(peer.code!)).not.toBeInTheDocument();
+  });
+
   it("does not fetch peers or publish on selection and requires separate consent", async () => {
     const api = client(); render(<CommunitySharing solution={own} account={owner} client={api} onSessionExpired={expired} />);
     expect(api.sharing).not.toHaveBeenCalled(); expect(api.peers).not.toHaveBeenCalled(); expect(api.publish).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "다른 풀이 보기" })).toBeDisabled();
-    await openAndPublish(); expect(api.publish).toHaveBeenCalledWith(owner, true, expect.any(AbortSignal));
+    await openAndPublish(); expect(api.publish).toHaveBeenCalledWith(owner, { publicSolution: true, expectedUpdatedAt: now }, expect.any(AbortSignal));
     expect(api.peers).not.toHaveBeenCalled(); fireEvent.click(screen.getByRole("button", { name: "다른 풀이 보기" }));
     fireEvent.click(await screen.findByRole("button", { name: /@peer · Java/ }));
     expect(await screen.findByText(peer.code!)).toBeInTheDocument();

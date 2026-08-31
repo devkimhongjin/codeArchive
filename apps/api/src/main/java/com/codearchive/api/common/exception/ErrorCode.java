@@ -49,6 +49,11 @@ public enum ErrorCode {
             "풀이를 찾을 수 없습니다."
     ),
 
+    SOLUTION_CHANGED(
+            HttpStatus.CONFLICT,
+            "풀이가 변경되었습니다. 목록을 새로고침하고 공개할 내용을 다시 확인해 주세요."
+    ),
+
     AI_ARTIFACT_NOT_FOUND(
             HttpStatus.NOT_FOUND,
             "AI 결과를 찾을 수 없습니다."

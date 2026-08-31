@@ -27,13 +27,14 @@ export function CommunitySharing({ solution, account, client = mainApiCommunityC
         <p>현재 선택한 코드, 문제·제목·언어와 GitHub 계정명이 같은 문제의 정답 공개자에게 표시됩니다. AI 결과와 개인 성능 메모는 공개하지 않습니다.</p>
         <label className="community-consent"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />공개할 코드와 정보를 확인했으며 공유에 동의합니다</label>
         <button type="button" disabled={!consent || sharing.busy} onClick={() => {
-          void sharing.mutate((signal) => client.publish(solution.id, true, signal), () => { setConsent(false); invalidateCommunity(); });
+          setConsent(false);
+          void sharing.mutate((signal) => client.publish(solution.id, { publicSolution: true, expectedUpdatedAt: solution.updatedAt }, signal), invalidateCommunity);
         }}>이 풀이 공개하기</button>
       </>}
       {status.publicSolution && <>
         <button type="button" disabled={sharing.busy} onClick={() => {
           setPeers(false); setOwnDiscussion(false);
-          void sharing.mutate((signal) => client.publish(solution.id, false, signal), invalidateCommunity);
+          void sharing.mutate((signal) => client.publish(solution.id, { publicSolution: false }, signal), invalidateCommunity);
         }}>비공개로 전환</button>
         <button type="button" disabled={sharing.busy} onClick={() => setOwnDiscussion(!ownDiscussion)}>내 공개 풀이·댓글 보기</button>
         <label>자격이 있는 사용자용 공유 링크<input readOnly value={link(solution.id)} onFocus={(e) => e.target.select()} /></label>

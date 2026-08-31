@@ -1,17 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
-import { CommunityRateLimitError, CommunityUnavailableError, createCommunityClient } from "./communityClient";
+import { CommunityRateLimitError, CommunityRevisionError, CommunityUnavailableError, createCommunityClient } from "./communityClient";
 const id = "11111111-1111-4111-8111-111111111111";
 const sharing = { publicSolution: false, canPublish: true, eligible: false };
 const ok = (data: unknown) => new Response(JSON.stringify({ success: true, data, error: null, requestId: "test" }), { status: 200 });
 describe("community request boundary", () => {
   it("uses cookie session, no-store and separate explicit publication payload", async () => {
     const fetcher = vi.fn(async () => ok(sharing)); const api = createCommunityClient(fetcher);
-    await api.sharing(id); await api.publish(id, true);
+    await api.sharing(id); await api.publish(id, { publicSolution: true, expectedUpdatedAt: "2026-08-31T00:00:00Z" });
     expect(fetcher).toHaveBeenNthCalledWith(1, expect.stringContaining(`/sharing/${id}`), expect.objectContaining({ credentials: "include", cache: "no-store", method: "GET" }));
-    expect(fetcher).toHaveBeenNthCalledWith(2, expect.any(String), expect.objectContaining({ method: "POST", body: '{"publicSolution":true}' }));
+    expect(fetcher).toHaveBeenNthCalledWith(2, expect.any(String), expect.objectContaining({ method: "POST", body: '{"publicSolution":true,"expectedUpdatedAt":"2026-08-31T00:00:00Z"}' }));
   });
-  it.each([[401, ArchiveSessionExpiredError], [403, CommunityUnavailableError], [404, CommunityUnavailableError], [429, CommunityRateLimitError]] as const)("maps %s without exposing response bodies", async (status, kind) => {
+  it.each([[401, ArchiveSessionExpiredError], [403, CommunityUnavailableError], [404, CommunityUnavailableError], [409, CommunityRevisionError], [429, CommunityRateLimitError]] as const)("maps %s without exposing response bodies", async (status, kind) => {
     const api = createCommunityClient(vi.fn(async () => new Response("secret body", { status })));
     await expect(api.sharing(id)).rejects.toBeInstanceOf(kind);
   });

@@ -202,7 +202,7 @@ class CommunityIntegrationTest {
                 return null;
             }));
             assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
-            var revoke = pool.submit(() -> community.publish(principal(a), own, false));
+            var revoke = pool.submit(() -> community.publish(principal(a), own, false, null));
             try { assertThatThrownBy(() -> revoke.get(150, TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class); }
             finally { release.countDown(); }
             read.get(5, TimeUnit.SECONDS); revoke.get(5, TimeUnit.SECONDS);
@@ -214,7 +214,26 @@ class CommunityIntegrationTest {
 
     private CodeArchivePrincipal principal(Actor a) { return new CodeArchivePrincipal(a.id(), a.session(), "synthetic"); }
     private ResultActions request(Actor a, MockHttpServletRequestBuilder request) throws Exception { return mvc.perform(request.header("Authorization", "Bearer " + a.token())); }
-    private MockHttpServletRequestBuilder publish(UUID id, boolean value) { return post("/api/v1/community/sharing/{id}", id).contentType(MediaType.APPLICATION_JSON).content("{\"publicSolution\":" + value + "}"); }
+    private MockHttpServletRequestBuilder publish(UUID id, boolean value) {
+        Instant revision = db.queryForObject("SELECT updated_at FROM solutions WHERE id = ?", java.sql.Timestamp.class, id).toInstant();
+        return post("/api/v1/community/sharing/{id}", id).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"publicSolution\":" + value + ",\"expectedUpdatedAt\":\"" + revision + "\"}");
+    }
+
+    @Test void publicationRequiresTheArchiveRevisionReviewedByTheOwner() throws Exception {
+        Actor a = actor(); UUID own = create(a, "1000", true);
+        var stale = publish(own, true);
+        db.update("UPDATE solutions SET title = 'Changed elsewhere', updated_at = updated_at + interval '1 second' WHERE id = ?", own);
+        request(a, stale).andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("SOLUTION_CHANGED"));
+        request(a, post("/api/v1/community/sharing/{id}", own).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"publicSolution\":true}")).andExpect(status().isBadRequest());
+        request(a, get("/api/v1/community/sharing/{id}", own)).andExpect(jsonPath("$.data.publicSolution").value(false));
+        request(a, publish(own, true)).andExpect(status().isOk());
+        // Revocation must work even from an old page, without a version precondition.
+        request(a, post("/api/v1/community/sharing/{id}", own).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"publicSolution\":false}")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.publicSolution").value(false));
+    }
     private Actor actor() {
         Instant now = Instant.now();
         var user = users.save(CodeArchiveUser.create(new GitHubUserProfile(Math.abs(UUID.randomUUID().getMostSignificantBits()), "test-user", "Test", null), now));

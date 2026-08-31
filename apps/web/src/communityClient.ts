@@ -12,9 +12,11 @@ export interface CommunityComment { id: string; author: CommunityAuthor; body: s
 export interface CommunityPage<T> { items: T[]; hasMore: boolean }
 export class CommunityUnavailableError extends Error {}
 export class CommunityRateLimitError extends Error {}
+export class CommunityRevisionError extends Error {}
+export type Publication = { publicSolution: true; expectedUpdatedAt: string } | { publicSolution: false };
 export interface CommunityClient {
   sharing(id: string, signal?: AbortSignal): Promise<Sharing>;
-  publish(id: string, value: boolean, signal?: AbortSignal): Promise<Sharing>;
+  publish(id: string, value: Publication, signal?: AbortSignal): Promise<Sharing>;
   peers(id: string, language: string, offset: number, signal?: AbortSignal): Promise<CommunityPage<SharedSolution>>;
   detail(id: string, signal?: AbortSignal): Promise<SharedSolution>;
   comments(id: string, offset: number, signal?: AbortSignal): Promise<CommunityPage<CommunityComment>>;
@@ -50,6 +52,7 @@ export function createCommunityClient(fetcher: typeof fetch = globalThis.fetch.b
       if (response.status === 401) throw new ArchiveSessionExpiredError();
       if (response.status === 403 || response.status === 404) throw new CommunityUnavailableError();
       if (response.status === 429) throw new CommunityRateLimitError();
+      if (response.status === 409) throw new CommunityRevisionError();
       if (!response.ok) throw new Error("Community request failed");
       const value: unknown = await response.json();
       if (!object(value) || value.success !== true || value.error !== null || !string(value.requestId) || !value.requestId.trim() || !guard(value.data)) throw new Error("Invalid community response");
@@ -58,7 +61,7 @@ export function createCommunityClient(fetcher: typeof fetch = globalThis.fetch.b
   }
   return {
     sharing: (id, signal) => request(`sharing/${idPath(id)}`, sharing, signal),
-    publish: (id, value, signal) => request(`sharing/${idPath(id)}`, sharing, signal, "POST", { publicSolution: value }),
+    publish: (id, value, signal) => request(`sharing/${idPath(id)}`, sharing, signal, "POST", value),
     peers: (id, language, offset, signal) => request(`peers/${idPath(id)}?language=${encodeURIComponent(language)}&offset=${offset}`, page(solution, 20), signal),
     detail: (id, signal) => request(`solutions/${idPath(id)}`, (v): v is SharedSolution => solution(v) && string(v.code), signal),
     comments: (id, offset, signal) => request(`solutions/${idPath(id)}/comments?offset=${offset}`, page(comment, 50), signal),

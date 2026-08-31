@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
-import { CommunityRateLimitError, CommunityUnavailableError } from "./communityClient";
+import { CommunityRateLimitError, CommunityRevisionError, CommunityUnavailableError } from "./communityClient";
 
 const EVENT = "codearchive-community-invalidated";
 const CHANNEL = "codearchive-community";
@@ -15,6 +15,7 @@ export function invalidateCommunity() {
 export function communityError(error: unknown) {
   if (error instanceof CommunityUnavailableError) return "접근할 수 없습니다. 이 문제의 성공 풀이 공개 여부를 확인하세요. 상대 풀이가 비공개 또는 삭제되었을 수도 있습니다.";
   if (error instanceof CommunityRateLimitError) return "요청이 많습니다. 잠시 후 다시 시도하세요.";
+  if (error instanceof CommunityRevisionError) return "풀이가 변경되었습니다. 목록을 새로고침하고 공개할 내용을 다시 확인해 주세요.";
   return "커뮤니티를 불러오지 못했습니다. 다시 시도해 주세요.";
 }
 
@@ -28,10 +29,11 @@ export function useCommunityResource<T>(load: ((signal: AbortSignal) => Promise<
   const controller = useRef<AbortController | null>(null);
   const generation = useRef(0);
   const mutating = useRef(false);
+  const reading = useRef(false);
   const preserve = useRef(false);
   const loadRef = useRef(load); loadRef.current = load;
   const expiredRef = useRef(onExpired); expiredRef.current = onExpired;
-  function clear() { generation.current++; controller.current?.abort(); setData(null); setError(""); setBusy(false); }
+  function clear() { generation.current++; controller.current?.abort(); reading.current = false; preserve.current = false; setData(null); setError(""); setBusy(false); }
   function refresh() { clear(); setRevision((v) => v + 1); }
   useEffect(() => {
     const reload = () => { clear(); if (!document.hidden) setRevision((v) => v + 1); };
@@ -41,7 +43,7 @@ export function useCommunityResource<T>(load: ((signal: AbortSignal) => Promise<
     globalThis.addEventListener("focus", reload);
     document.addEventListener("visibilitychange", reload);
     const timer = globalThis.setInterval(() => {
-      if (!document.hidden && !mutating.current) { preserve.current = true; setRevision((v) => v + 1); }
+      if (!document.hidden && !mutating.current && !reading.current) { preserve.current = true; setRevision((v) => v + 1); }
     }, 15000);
     return () => { clearInterval(timer); channel?.close(); globalThis.removeEventListener(EVENT, reload); globalThis.removeEventListener("focus", reload); document.removeEventListener("visibilitychange", reload); };
   }, []);
@@ -52,7 +54,7 @@ export function useCommunityResource<T>(load: ((signal: AbortSignal) => Promise<
     if (!preserve.current) setData(null);
     preserve.current = false; setError("");
     if (!loadRef.current || document.hidden) return () => abort.abort();
-    setBusy(true);
+    reading.current = true; setBusy(true);
     void loadRef.current(abort.signal).then((result) => {
       if (generation.current === mine && !abort.signal.aborted) setData(result);
     }).catch((cause: unknown) => {
@@ -60,8 +62,8 @@ export function useCommunityResource<T>(load: ((signal: AbortSignal) => Promise<
       setData(null);
       if (cause instanceof ArchiveSessionExpiredError) expiredRef.current();
       else setError(communityError(cause));
-    }).finally(() => { if (generation.current === mine && !abort.signal.aborted) setBusy(false); });
-    return () => { abort.abort(); controller.current?.abort(); generation.current++; };
+    }).finally(() => { if (generation.current === mine && !abort.signal.aborted) { reading.current = false; setBusy(false); } });
+    return () => { abort.abort(); controller.current?.abort(); reading.current = false; generation.current++; };
   }, [enabled, revision]);
   async function mutate(action: (signal: AbortSignal) => Promise<unknown>, after?: () => void) {
     if (busy || mutating.current) return;

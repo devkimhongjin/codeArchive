@@ -27,7 +27,7 @@ public class CommunityService {
             long commentCount, boolean liked) {}
     public record Comment(UUID id, Author author, String body, Instant createdAt, Instant updatedAt) {}
     public record Page<T>(List<T> items, boolean hasMore) {}
-    private record Target(UUID id, UUID owner, String platform, String problem, boolean shared, boolean captured) {}
+    private record Target(UUID id, UUID owner, String platform, String problem, boolean shared, boolean captured, Instant updatedAt) {}
 
     private static final String QUALIFIED = "community_public AND accepted_capture AND result = 'ACCEPTED'";
     private static final String SUMMARY = """
@@ -44,10 +44,14 @@ public class CommunityService {
         return new Sharing(own.shared(), own.captured(), qualify(user, own));
     }
 
-    public Sharing publish(CodeArchivePrincipal principal, UUID id, boolean publish) {
+    public Sharing publish(CodeArchivePrincipal principal, UUID id, boolean publish, Instant expectedUpdatedAt) {
         UUID user = user(principal);
         Target own = target(id, user, true, true);
         if (publish && !own.captured()) throw new CodeArchiveException(ErrorCode.ACCESS_DENIED);
+        // Consent applies to the archive revision the owner actually reviewed.
+        // Hold the row lock through publication so a concurrent edit cannot slip in.
+        if (publish && expectedUpdatedAt == null) throw new CodeArchiveException(ErrorCode.INVALID_REQUEST);
+        if (publish && !own.updatedAt().equals(expectedUpdatedAt)) throw new CodeArchiveException(ErrorCode.SOLUTION_CHANGED);
         rate(user, "publish", 30);
         db.update("""
                 UPDATE solutions SET community_public = :publish,
@@ -149,12 +153,12 @@ public class CommunityService {
 
     private Target target(UUID id, UUID user, boolean ownerOnly, boolean write) {
         var rows = db.query("""
-                SELECT id, user_id, platform, problem_number, community_public,
+                SELECT id, user_id, platform, problem_number, community_public, updated_at,
                        accepted_capture AND result = 'ACCEPTED' AS captured
                 FROM solutions WHERE id = :id
                 """ + (ownerOnly ? " AND user_id = :user" : "") + (write ? " FOR UPDATE" : " FOR SHARE"),
                 params(user, id), (rs, n) -> new Target(rs.getObject("id", UUID.class), rs.getObject("user_id", UUID.class),
-                        rs.getString("platform"), rs.getString("problem_number"), rs.getBoolean("community_public"), rs.getBoolean("captured")));
+                        rs.getString("platform"), rs.getString("problem_number"), rs.getBoolean("community_public"), rs.getBoolean("captured"), rs.getTimestamp("updated_at").toInstant()));
         if (rows.isEmpty()) throw unavailable();
         return rows.getFirst();
     }
