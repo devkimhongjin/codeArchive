@@ -31,28 +31,28 @@ public class GitHubCommitExecutor {
     GitHubAppClient.CommitResult execute(CodeArchivePrincipal principal, GitHubUploadIntentStore.Review review,
             Instant expiresAt, Runnable authorization, AtomicBoolean sent) {
         gate(); activeOwner(principal, false);
-        if (!slots.tryAcquire()) throw new CodeArchiveException(ErrorCode.RATE_LIMITED);
-        try {
-            var selection=review.selection();
-            var installation=integrations.requireInstallation(principal, selection.installationId());
-            var prepared=github.prepareCommit(new GitHubAppClient.CommitSelection(selection.installationId(), selection.repositoryId(),
-                    installation.account().id(), selection.branch(), selection.expectedCommitSha(), selection.path(), review.privateRepository(), review.fullName()));
-            return tx.execute(transaction -> {
-                db.execute("SET LOCAL lock_timeout = '2s'");
-                authorization.run();
-                if (activeOwner(principal, true)!=installation.account().id()) throw new CodeArchiveException(ErrorCode.ACCESS_DENIED);
-                var source=sources.findLocked(principal.userId(), selection.solutionId())
-                        .orElseThrow(() -> new CodeArchiveException(ErrorCode.GITHUB_PREVIEW_SOURCE_CHANGED));
-                if (!expiresAt.isAfter(Instant.now())) throw new CodeArchiveException(ErrorCode.GITHUB_UPLOAD_INTENT_EXPIRED);
-                if (!source.acceptedCapture() || !"ACCEPTED".equals(source.result()) || !source.updatedAt().equals(selection.expectedUpdatedAt())
-                        || !GitHubUploadIntentStore.hash(source.code()).equals(review.sourceSha256())) {
-                    throw new CodeArchiveException(ErrorCode.GITHUB_PREVIEW_SOURCE_CHANGED);
-                }
-                gate(); sent.set(true);
-                return prepared.create(source.code(), selection.commitMessage());
-            });
-        } finally { slots.release(); }
+        var selection=review.selection();
+        var installation=integrations.requireInstallation(principal, selection.installationId());
+        var prepared=github.prepareCommit(new GitHubAppClient.CommitSelection(selection.installationId(), selection.repositoryId(),
+                installation.account().id(), selection.branch(), selection.expectedCommitSha(), selection.path(), review.privateRepository(), review.fullName()));
+        return tx.execute(transaction -> {
+            db.execute("SET LOCAL lock_timeout = '2s'");
+            authorization.run();
+            if (activeOwner(principal, true)!=installation.account().id()) throw new CodeArchiveException(ErrorCode.ACCESS_DENIED);
+            var source=sources.findLocked(principal.userId(), selection.solutionId())
+                    .orElseThrow(() -> new CodeArchiveException(ErrorCode.GITHUB_PREVIEW_SOURCE_CHANGED));
+            if (!expiresAt.isAfter(Instant.now())) throw new CodeArchiveException(ErrorCode.GITHUB_UPLOAD_INTENT_EXPIRED);
+            if (!source.acceptedCapture() || !"ACCEPTED".equals(source.result()) || !source.updatedAt().equals(selection.expectedUpdatedAt())
+                    || !GitHubUploadIntentStore.hash(source.code()).equals(review.sourceSha256())) {
+                throw new CodeArchiveException(ErrorCode.GITHUB_PREVIEW_SOURCE_CHANGED);
+            }
+            gate(); sent.set(true);
+            return prepared.create(source.code(), selection.commitMessage());
+        });
     }
+
+    boolean reserve() { return slots.tryAcquire(); }
+    void release() { slots.release(); }
 
     long activeOwner(CodeArchivePrincipal principal, boolean lock) {
         if (principal==null) throw new CodeArchiveException(ErrorCode.AUTH_REQUIRED);

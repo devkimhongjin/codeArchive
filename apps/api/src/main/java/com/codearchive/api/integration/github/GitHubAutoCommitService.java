@@ -53,10 +53,12 @@ public class GitHubAutoCommitService {
     }
     public Status tick(CodeArchivePrincipal p,UUID id) {
         executor.gate();executor.activeOwner(p,false);
-        var claim=store.claim(p,id);
-        if (claim==null) return status(p,id);
-        var sent=new AtomicBoolean();
+        if (!executor.reserve()) throw new CodeArchiveException(ErrorCode.RATE_LIMITED);
         try {
+            var claim=store.claim(p,id);
+            if (claim==null) return status(p,id);
+            var sent=new AtomicBoolean();
+            try {
             var target=claim.run().target();
             var source=sources.find(p.userId(),claim.source()).orElseThrow(()->new CodeArchiveException(ErrorCode.GITHUB_PREVIEW_SOURCE_CHANGED));
             var selection=new GitHubUploadPreviewService.Request(source.id(),source.updatedAt(),target.installationId(),target.repositoryId(),target.branch(),
@@ -69,12 +71,15 @@ public class GitHubAutoCommitService {
             var review=new GitHubUploadIntentStore.Review(resolved,preview.file().sha256(),target.privateRepository(),target.fullName());
             var result=executor.execute(p,review,claim.run().leaseUntil(),()->store.requireLive(p,id,true,"ACTIVE"),sent);
             store.finish(claim,result,null,true);
-        } catch(Exception failure) {
-            ErrorCode code=sent.get()?ErrorCode.GITHUB_UPLOAD_OUTCOME_UNKNOWN:failure instanceof CodeArchiveException known?known.getErrorCode():ErrorCode.INTERNAL_ERROR;
-            try { store.finish(claim,null,code,sent.get()); } catch(Exception ignored) { /* Durable ATTEMPTED blocks retries, including a new run. */ }
-            throw new CodeArchiveException(code);
+            } catch(Exception failure) {
+                ErrorCode code=sent.get()?ErrorCode.GITHUB_UPLOAD_OUTCOME_UNKNOWN:failure instanceof CodeArchiveException known?known.getErrorCode():ErrorCode.INTERNAL_ERROR;
+                try { store.finish(claim,null,code,sent.get()); } catch(Exception ignored) { /* Durable ATTEMPTED blocks retries, including a new run. */ }
+                throw new CodeArchiveException(code);
+            }
+            return status(p,id);
+        } finally {
+            executor.release();
         }
-        return status(p,id);
     }
     private static String path(String folder,String platform,String problem,String language) {
         if (folder==null) throw new CodeArchiveException(ErrorCode.INVALID_REQUEST);

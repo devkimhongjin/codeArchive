@@ -46,7 +46,8 @@ public class GitHubUploadCommitService {
             throw new CodeArchiveException(ErrorCode.GITHUB_UPLOAD_CONSENT_REQUIRED);
         }
 
-        {
+        if (!executor.reserve()) throw new CodeArchiveException(ErrorCode.RATE_LIMITED);
+        try {
             var claim = intents.claim(principal, id);
             if (!claim.acquired()) return result(claim.intent());
             var intent = claim.intent(); var review = intent.review();
@@ -62,7 +63,7 @@ public class GitHubUploadCommitService {
                 catch (Exception ignored) { /* ATTEMPTED remains a durable no-retry tombstone if persistence fails. */ }
                 throw new CodeArchiveException(code);
             }
-        }
+        } finally { executor.release(); }
     }
 
     private Result result(GitHubUploadIntentStore.Intent intent) {

@@ -55,6 +55,7 @@ class GitHubAutoCommitIntegrationTest {
     @Autowired SolutionRepository solutions;
     @Autowired JdbcTemplate db;
     @Autowired GitHubAutoCommitService service;
+    @Autowired GitHubCommitExecutor executor;
     @Autowired GitHubAppProperties properties;
     
     @MockitoBean GitHubAppClient github;
@@ -100,6 +101,17 @@ class GitHubAutoCommitIntegrationTest {
         assertThat(db.queryForList("SELECT solution_id FROM github_auto_attempts",UUID.class)).containsExactly(fresh).doesNotContain(old,lateOld,manual);
         assertThat(db.queryForObject("SELECT count(*) FROM github_upload_intents",Integer.class)).isZero();
         assertThat(output).doesNotContain("synthetic-commit-source",a.token());
+    }
+
+    @Test void temporaryCapacityLimitDoesNotClaimAnAutomaticSource() throws Exception {
+        var a=actor();allow(a,true);UUID run=enable(a);capture(a);
+        assertThat(executor.reserve()).isTrue();assertThat(executor.reserve()).isTrue();
+        try {
+            error(()->service.tick(a.principal(),run),ErrorCode.RATE_LIMITED);
+            assertThat(db.queryForObject("SELECT count(*) FROM github_auto_attempts",Integer.class)).isZero();
+            assertThat(service.status(a.principal(),run).state()).isEqualTo("ACTIVE");
+            verifyNoInteractions(prepared);
+        } finally { executor.release();executor.release(); }
     }
 
     @Test void stopBeforeEnableAndStopDuringEnableCannotBeUndoneByLateResponses() {
