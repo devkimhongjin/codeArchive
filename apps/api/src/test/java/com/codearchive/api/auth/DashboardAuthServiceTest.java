@@ -105,6 +105,8 @@ class DashboardAuthServiceTest {
                 .isEqualTo(OAuthState.FlowType.DASHBOARD);
         assertThat(result.rawState())
                 .isEqualTo("synthetic-raw-state");
+        assertThat(result.authorizationUrl())
+                .contains("prompt=select_account");
         assertThat(result.expiresAt())
                 .isEqualTo(NOW.plus(Duration.ofMinutes(10)));
     }
