@@ -57,11 +57,16 @@ h2 { font-size: 20px; }
 .connection-dot.error { background: #b42318; }
 .connection-dot.connecting { background: #d69719; }
 .badge { padding: 6px 9px; border-radius: 999px; background: #eef1ff; color: #4658c9; font-size: 12px; font-weight: 750; }
-.toolbar { align-items: end; margin: 24px 0 14px; }
-.toolbar label { display: grid; gap: 5px; width: min(420px, 100%); color: #475569; font-size: 12px; font-weight: 700; }
-.toolbar input { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 9px; background: white; color: #172033; }
+.toolbar { display: grid; gap: 12px; margin: 24px 0 14px; }
+.archive-filters { display: grid; grid-template-columns: minmax(180px, 2fr) repeat(3, minmax(0, 1fr)); gap: 12px; }
+.toolbar label { display: grid; gap: 5px; min-width: 0; color: #475569; font-size: 12px; font-weight: 700; }
+.toolbar input, .toolbar select { width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 7px; background: white; color: #172033; }
+.archive-filter-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.archive-filter-summary strong { margin-right: auto; }
+.archive-filter-scope { margin: 0; color: #475569; font-size: 12px; line-height: 1.5; }
+.toolbar :is(input, select, button):focus-visible, .submission:focus-visible { outline: 3px solid #4658c9; outline-offset: 2px; }
 .toolbar strong { color: #475569; font-size: 13px; }
-.toolbar button { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 7px; background: white; color: #334155; font-size: 12px; }
+.toolbar button { min-height: 44px; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 7px; background: white; color: #334155; font-size: 12px; }
 .toolbar button:disabled { opacity: .55; cursor: not-allowed; }
 .archive-layout { display: grid; grid-template-columns: minmax(300px, 420px) minmax(0, 1fr); gap: 20px; align-items: start; }
 .archive-list { display: grid; gap: 10px; }
@@ -124,6 +129,8 @@ h2 { font-size: 20px; }
   .solution-tool-heading { align-items: flex-start; flex-direction: column; }
   .solution-tool-heading span { text-align: left; }
   .solution-edit-grid { grid-template-columns: 1fr; }
+  .archive-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .archive-search { grid-column: 1 / -1; }
 }
 .solution-ai { border-top: 1px solid var(--border, #dce2eb); margin-top: 1rem; padding-top: 1rem; }
 .solution-ai > p, .ai-confirm p, .ai-results p { font-size: .875rem; line-height: 1.6; overflow-wrap: anywhere; }

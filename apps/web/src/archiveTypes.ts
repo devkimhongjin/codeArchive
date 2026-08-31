@@ -54,8 +54,33 @@ export interface DashboardProblemGroup {
   records: readonly DashboardSolution[];
 }
 
+export type ArchiveSortOrder = "updated_desc" | "updated_asc" | "problem_number";
+
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function compareProblem(a: DashboardSolution, b: DashboardSolution): number {
+  // Platform first: problem numbers from different judges are not comparable.
+  return a.platform.localeCompare(b.platform, "ko", { numeric: true })
+    || compareText(a.platform, b.platform)
+    || a.problemNumber.localeCompare(b.problemNumber, "ko", { numeric: true })
+    || compareText(a.problemNumber, b.problemNumber);
+}
+
+function compareUpdated(a: DashboardSolution, b: DashboardSolution, oldestFirst = false): number {
+  const left = Date.parse(a.updatedAt);
+  const right = Date.parse(b.updatedAt);
+  // Unparseable dates always follow known timestamps, in either direction.
+  if (!Number.isFinite(left) || !Number.isFinite(right)) {
+    return Number(Number.isFinite(right)) - Number(Number.isFinite(left));
+  }
+  return oldestFirst ? left - right : right - left;
+}
+
 export function groupDashboardSolutions(
   records: readonly DashboardSolution[],
+  order: ArchiveSortOrder = "updated_desc",
 ): DashboardProblemGroup[] {
   const groups = new Map<string, DashboardSolution[]>();
   for (const record of records) {
@@ -67,10 +92,12 @@ export function groupDashboardSolutions(
 
   return [...groups.entries()]
     .map(([key, groupRecords]) => {
-      const sorted = [...groupRecords].sort((a, b) =>
-        b.updatedAt.localeCompare(a.updatedAt),
-      );
-      const representative = sorted[0];
+      const newest = [...groupRecords].sort((a, b) => compareUpdated(a, b) || compareText(a.id, b.id));
+      // Changing sort order must not replace a problem's latest title with an old one.
+      const representative = newest[0];
+      const sorted = order === "updated_asc"
+        ? [...newest].sort((a, b) => compareUpdated(a, b, true) || compareText(a.id, b.id))
+        : newest;
       return {
         key,
         platform: representative.platform,
@@ -79,5 +106,12 @@ export function groupDashboardSolutions(
         records: sorted,
       };
     })
-    .sort((a, b) => b.records[0].updatedAt.localeCompare(a.records[0].updatedAt));
+    .sort((a, b) => {
+      const left = a.records[0];
+      const right = b.records[0];
+      return (order === "problem_number"
+        ? compareProblem(left, right)
+        : compareUpdated(left, right, order === "updated_asc") || compareProblem(left, right))
+        || compareText(left.id, right.id);
+    });
 }
