@@ -2,7 +2,6 @@ import { StrictMode, useEffect } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiReadinessGate } from "./ApiReadinessGate";
-import { BetaEntryGate } from "./BetaEntryGate";
 import { createReadinessCheck, type ReadinessResult } from "./apiReadiness";
 
 afterEach(() => vi.useRealTimers());
@@ -12,23 +11,15 @@ function deferred() {
   return { check, resolve: (result: ReadinessResult) => resolve(result) };
 }
 
-describe("API readiness before beta entry and Dashboard effects", () => {
-  it.each([false, true])("does not mount account/bridge effects early, including accepted tab=%s", async (accepted) => {
+describe("API readiness before Dashboard effects", () => {
+  it("does not mount account/bridge effects early and opens Dashboard directly after readiness", async () => {
     const mounted = vi.fn();
     function Dashboard() { useEffect(() => { mounted(); }, []); return <div>archive</div>; }
     const ready = deferred();
-    const checkEntry = vi.fn(async () => "accepted" as const);
-    render(<ApiReadinessGate check={ready.check}><BetaEntryGate check={checkEntry}
-      entry={{ accepted: () => accepted, remember: vi.fn() }}><Dashboard /></BetaEntryGate></ApiReadinessGate>);
+    render(<ApiReadinessGate check={ready.check}><Dashboard /></ApiReadinessGate>);
     expect(mounted).not.toHaveBeenCalled();
-    expect(screen.queryByLabelText("초대 비밀번호")).not.toBeInTheDocument();
+    expect(screen.queryByText("archive")).not.toBeInTheDocument();
     await act(async () => ready.resolve({ status: "ready" }));
-    expect(checkEntry).not.toHaveBeenCalled();
-    if (!accepted) {
-      expect(mounted).not.toHaveBeenCalled();
-      fireEvent.change(screen.getByLabelText("초대 비밀번호"), { target: { value: "synthetic-only" } });
-      await act(async () => fireEvent.click(screen.getByRole("button", { name: "Dashboard 입장" })));
-    }
     expect(screen.getByText("archive")).toBeInTheDocument();
     expect(mounted).toHaveBeenCalledTimes(1);
   });
@@ -82,11 +73,10 @@ describe("API readiness before beta entry and Dashboard effects", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it.each(["network", "server", "response"] as const)("explains %s failures separately from password rejection", async (reason) => {
+  it.each(["network", "server", "response"] as const)("explains %s failures without opening Dashboard", async (reason) => {
     const check = vi.fn(async () => ({ status: "unavailable" as const, reason }));
     render(<ApiReadinessGate check={check}>archive</ApiReadinessGate>);
     expect(await screen.findByRole("button", { name: "다시 확인" })).toBeInTheDocument();
-    expect(screen.getByRole("status")).not.toHaveTextContent("비밀번호가 맞지");
     expect(screen.queryByText("archive")).not.toBeInTheDocument();
     expect(check).toHaveBeenCalledTimes(1);
   });
