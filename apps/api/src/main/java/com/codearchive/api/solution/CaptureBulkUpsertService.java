@@ -19,7 +19,11 @@ import com.codearchive.api.common.exception.ErrorCode;
 public class CaptureBulkUpsertService {
 
     private static final int MAX_BATCH_SIZE = 25;
-    private static final String SUPPORTED_PLATFORM = "SWEA";
+    private static final String DEFAULT_PLATFORM = "SWEA";
+    private static final Set<String> SUPPORTED_PLATFORMS = Set.of(
+            "SWEA",
+            "PROGRAMMERS"
+    );
     private static final String ACCEPTED_RESULT = "ACCEPTED";
     private static final String DEFAULT_AI_USAGE = "unknown";
     private static final Set<String> AI_USAGE_VALUES = Set.of(
@@ -148,9 +152,9 @@ public class CaptureBulkUpsertService {
 
     private String normalizePlatform(String value) {
         String platform = value == null || value.isBlank()
-                ? SUPPORTED_PLATFORM
+                ? DEFAULT_PLATFORM
                 : value.trim();
-        if (!SUPPORTED_PLATFORM.equals(platform)) {
+        if (!SUPPORTED_PLATFORMS.contains(platform)) {
             throw new CodeArchiveException(
                     ErrorCode.PLATFORM_NOT_SUPPORTED
             );

@@ -127,6 +127,38 @@ class CaptureBulkUpsertIntegrationTest {
     }
 
     @Test
+    void programmersCaptureIsImportedWithoutChangingItsPlatform()
+            throws Exception {
+        TestUser user = createAuthenticatedUser(1251L, "programmers-user");
+
+        mockMvc.perform(
+                        post("/api/v1/solutions/bulk-upsert")
+                                .header(
+                                        HttpHeaders.AUTHORIZATION,
+                                        bearer(user.token())
+                                )
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(batch(record(
+                                        "programmers-id",
+                                        "ī��",
+                                        "PROGRAMMERS",
+                                        "class Solution {}"
+                                )))
+                )
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.results[0].outcome")
+                        .value("IMPORTED"));
+
+        Solution stored = solutionRepository
+                .findByUserIdAndClientRecordId(
+                        user.user().getId(),
+                        "programmers-id"
+                )
+                .orElseThrow();
+        assertThat(stored.getPlatform()).isEqualTo("PROGRAMMERS");
+    }
+
+    @Test
     void batchLargerThanTwentyFiveIsRejected() throws Exception {
         TestUser user = createAuthenticatedUser(1301L, "bounded-user");
         String records = IntStream.range(0, 26)

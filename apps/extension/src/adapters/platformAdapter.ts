@@ -3,7 +3,7 @@ import type { SweaSolvingProblemMetaResult } from "./swea/sweaSolvingProblemMeta
 import type { SweaSubmissionResultState } from "./swea/sweaSubmissionResult";
 import type { SweaAutoSaveState } from "../sweaAutoCapture";
 
-export type PlatformCode = "SWEA";
+export type PlatformCode = "SWEA" | "PROGRAMMERS";
 
 export interface DetectedProblemInfo {
   platform: PlatformCode;

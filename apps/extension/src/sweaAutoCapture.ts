@@ -2,8 +2,9 @@ import type { SweaSubmissionResultState } from "./adapters/swea/sweaSubmissionRe
 import { detectSweaSolvingProblemMeta } from "./adapters/swea/sweaSolvingProblemMeta";
 import { detectSweaEditor } from "./adapters/swea/sweaEditor";
 import { syncSweaEditor } from "./adapters/swea/sweaEditorSync";
+import type { AcceptedCapture } from "./acceptedCapture";
 
-export interface SweaAcceptedCapture { captureId: string; platform: "SWEA"; problemNumber: string; title: string; language: string; code: string; result: "ACCEPTED"; observedAt: string; solvedAt: string; problemUrl?: string; }
+export interface SweaAcceptedCapture extends AcceptedCapture { platform: "SWEA"; }
 export type SweaAutoSaveState = { status: "idle" } | { status: "saving"; observedAt: string } | { status: "saved" | "duplicate"; solutionId: string; savedAt: string } | { status: "failed"; observedAt: string; reason: "metadata_untrusted" | "editor_sync_failed" | "editor_incomplete" | "empty_code" | "invalid_capture" | "idempotency_conflict" | "storage_failed" | "confirmation_unknown" };
 export type SaveResponse = { status: "saved" | "duplicate"; solutionId: string; savedAt: string } | { status: "rejected"; reason: "invalid_capture" | "idempotency_conflict" } | { status: "failed"; reason: "storage_failed" };
 export const SAVE_SWEA_ACCEPTED = "CODEARCHIVE_SAVE_SWEA_ACCEPTED" as const;

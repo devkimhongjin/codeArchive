@@ -38,6 +38,13 @@ describe("background capture validation", () => {
     expect(valid({ captureId: "x", platform: "SWEA", result: "ACCEPTED" })).toBe(false);
   });
 
+  it("accepts a complete Programmers capture and rejects unknown platforms", async () => {
+    setupChrome();
+    const { valid } = await import("./background");
+    expect(valid({ ...capture, platform: "PROGRAMMERS" })).toBe(true);
+    expect(valid({ ...capture, platform: "OTHER" })).toBe(false);
+  });
+
   it("completes the local commit before bridge notification or legacy sync", async () => {
     setupChrome();
     const { saveThenSyncAcceptedCapture } = await import("./background");
