@@ -18,7 +18,7 @@ The optional archive panel loads the current personal GitHub App installation on
 - Client-generated run UUIDs make enable/stop ordering safe: OFF creates a durable tombstone even if it arrives before enable. No response or stale enable can reactivate that ID. Only one STARTING/ACTIVE run per account. New ON requires a new UUID and fresh consent.
 - Select only `accepted_capture=true`, `result=ACCEPTED`, server `created_at > enabled_at`, and browser `observed_at >= enabled_at AND <= now`. Old records and late imports of old captures are excluded; client clock skew can conservatively exclude a capture. This is browser-observed provenance, not an official judge attestation. Manual upload remains available for otherwise eligible historical captures.
 - Layout: `[folder/]platform/problemNumber/Solution.extension`, standard `Add platform problemNumber solution` message. No overwrite, backfill, rebase, force push, or automatic retry. A duplicate problem/path, protected branch, branch move, changed privacy/name/ownership, source edit/delete, or permission error pauses the run.
-- A successful commit advances only this run's expected head to its own new commit. External head changes stop it. After OFF the user must explicitly enable a fresh run; stale target/run state cannot silently resume.
+- A successful commit advances only this run's expected head to its own new commit. External head changes stop it. After OFF, Dashboard requires fresh branch/target confirmation and HEAD refresh before another manual/automatic run; popup state never silently resumes or reuses stale target/run state.
 
 ## Extension popup control boundary — Issue #159
 
@@ -47,7 +47,7 @@ Popup ON is intent, not consent. Dashboard handles it as follows:
 
 If any requirement is missing, keep authoritative state OFF and publish only the applicable fixed error code such as `GITHUB_TARGET_REQUIRED`, `GITHUB_CONSENT_REQUIRED`, `PUBLIC_REPOSITORY_CONSENT_REQUIRED`, `GITHUB_TARGET_CHANGED`, or `GITHUB_OUTCOME_UNKNOWN`. The Extension never fabricates or repairs those conditions.
 
-Popup OFF stops new client ticks immediately and uses the existing server `autoStop` flow when a run exists. After OFF is confirmed, captures accepted afterward are not automatically uploaded to GitHub. If auto-sync remains ON they may still be synchronized to the Main API. An external write already dispatched before OFF may finish and cannot be recalled.
+Popup OFF stops new client ticks immediately and uses the existing server `autoStop` flow when a run exists. After OFF is confirmed, captures accepted afterward are not automatically uploaded to GitHub. If auto-sync remains ON they may still be synchronized to the Main API. An external write already dispatched before OFF may finish and cannot be recalled. A later ON still requires Dashboard-side fresh target/branch confirmation and HEAD refresh; the popup never receives or persists those values.
 
 ## Multiple Dashboard tabs — fail closed
 
