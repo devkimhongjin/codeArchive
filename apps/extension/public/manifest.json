@@ -28,6 +28,13 @@
       ],
       "js": ["content/swea.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://school.programmers.co.kr/learn/courses/30/lessons/*"
+      ],
+      "js": ["content/programmers.js"],
+      "run_at": "document_idle"
     }
   ]
 }

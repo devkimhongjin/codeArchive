@@ -9,6 +9,33 @@ const savedAutoRecord = {
 };
 
 describe("SweaDetectionPanel", () => {
+  it("shows Programmers accepted capture status without exposing raw result text", async () => {
+    const programmersRecord = {
+      ...savedAutoRecord,
+      id: "programmers-auto:one",
+      platform: "PROGRAMMERS",
+      problemNumber: "42842",
+      title: "카펫",
+      autoCapture: { source: "PROGRAMMERS_AUTO" as const, result: "ACCEPTED" as const, observedAt: "2026-09-01T00:30:00.000Z" },
+    };
+    render(<SweaDetectionPanel savedRecords={[programmersRecord]} requestContext={async () => ({ status: "connected", result: {
+      status: "connected_page",
+      platform: "PROGRAMMERS",
+      pageKind: "lesson",
+      url: "https://school.programmers.co.kr/learn/courses/30/lessons/42842",
+      problem: { platform: "PROGRAMMERS", problemNumber: "42842", title: "카펫", difficulty: null, url: "https://school.programmers.co.kr/learn/courses/30/lessons/42842" },
+      editor: { status: "detected", editor: { language: "Java", code: "class Solution {}" }, warnings: [] },
+      submissionResult: { status: "observed", submission: { result: "ACCEPTED", observedAt: "2026-09-01T00:30:00.000Z" }, warnings: [] },
+      autoSave: { status: "saved", solutionId: "programmers-auto:one", savedAt: "2026-09-01T00:30:01.000Z" },
+    } })} />);
+
+    expect(await screen.findByText("프로그래머스 풀이 페이지 연결됨")).toBeInTheDocument();
+    expect(screen.getByText("문제: 42842 · 카펫")).toBeInTheDocument();
+    expect(screen.getByText("현재 세션 제출 결과: ACCEPTED · 관찰 시각: 2026-09-01 09:30:00 KST")).toBeInTheDocument();
+    expect(screen.getByText("최근 저장: PASS 자동저장")).toBeInTheDocument();
+    expect(screen.getByText("자동 저장 완료")).toBeInTheDocument();
+  });
+
   it("shows detected problem metadata without a manual registration prefill action", async () => {
     render(<SweaDetectionPanel requestContext={async () => ({ status: "connected", result: { status: "detected", problem: { platform: "SWEA", problemNumber: "1206", title: "View", difficulty: "D3", url: "https://swexpertacademy.com/main/code/problem/problemDetail.do" }, warnings: [] } })} />);
     expect(await screen.findByText("SWEA 문제 감지")).toBeInTheDocument();

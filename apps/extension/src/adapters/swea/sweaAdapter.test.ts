@@ -34,7 +34,7 @@ describe("sweaAdapter", () => {
     const document = documentFrom('<div class="problem_box"><h3>1234. Synthetic title</h3></div><input id="contestProbId" value="ABC"><select id="selectCodeLang"><option selected>Java 17</option></select><textarea id="textSource">public class Main {}</textarea>');
     const result = sweaAdapter.detect(document, SOLVING_URL);
     expect(result.status).toBe("connected_page");
-    if (result.status === "connected_page") {
+    if (result.status === "connected_page" && result.platform === "SWEA") {
       expect(result.editor).toEqual({ status: "detected", editor: { language: "Java", code: "public class Main {}" }, warnings: [] });
       expect(result.metadata).toEqual({ status: "detected", problem: { problemNumber: "1234", title: "Synthetic title", contestProbId: "ABC" }, warnings: [] });
       expect(result.submissionResult).toEqual({ status: "none" });

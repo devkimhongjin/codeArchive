@@ -14,11 +14,11 @@ export function getSweaPageContext(
   const syncResult = getSweaPageKind(url) === "solving" ? syncSweaEditor(document) : null;
   let result = sweaAdapter.detect(document, url);
 
-  if (result.status === "connected_page" && syncResult?.status === "failed") {
+  if (result.status === "connected_page" && result.platform === "SWEA" && syncResult?.status === "failed") {
     result = { ...result, editor: detectSweaEditor(document, url, false) };
   }
 
-  return result.status === "connected_page"
+  return result.status === "connected_page" && result.platform === "SWEA"
     ? { ...result, submissionResult, autoSave }
     : result;
 }
