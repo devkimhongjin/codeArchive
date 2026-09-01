@@ -53,6 +53,7 @@ jobs:
           test -f apps/extension/dist/manifest.json
           test -f apps/extension/dist/popup.html
           test -f apps/extension/dist/content/swea.js
+          test -f apps/extension/dist/content/programmers.js
           test -f apps/extension/dist/background.js
           grep -q '"manifest_version": 3' apps/extension/dist/manifest.json
           test -n "$(find apps/extension/dist -type f -name '*.js' -print -quit)"
@@ -92,16 +93,23 @@ jobs:
               "type": "module",
           }
           scripts = manifest.get("content_scripts")
-          assert isinstance(scripts, list) and len(scripts) == 1
-          script = scripts[0]
-          assert script.get("matches") == [
+          assert isinstance(scripts, list) and len(scripts) == 2
+          swea_script, programmers_script = scripts
+          assert swea_script.get("matches") == [
               "https://swexpertacademy.com/main/code/problem/problemDetail.do*",
               "https://swexpertacademy.com/main/code/contestProblem/contestProblemDetail.do*",
               "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do*",
               "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do*",
           ]
-          assert script.get("js") == ["content/swea.js"]
-          assert script.get("run_at") == "document_idle"
+          assert swea_script.get("js") == ["content/swea.js"]
+          assert swea_script.get("run_at") == "document_idle"
+          assert programmers_script == {
+              "matches": [
+                  "https://school.programmers.co.kr/learn/courses/30/lessons/*"
+              ],
+              "js": ["content/programmers.js"],
+              "run_at": "document_idle",
+          }
           PY
 
       - name: Verify unpacked popup in stable Chrome for Testing
