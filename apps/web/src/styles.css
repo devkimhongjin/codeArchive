@@ -9,6 +9,13 @@ body { margin: 0; min-width: 0; }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 
+.beta-entry-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; }
+.beta-entry-card { width: min(440px, 100%); padding: 32px; background: white; border: 1px solid #dce2ef; border-radius: 16px; box-shadow: 0 12px 36px #17203308; }
+.beta-entry-description, .beta-entry-note { color: #64748b; font-size: 14px; line-height: 1.7; }
+.beta-entry-card button:focus-visible { outline: 3px solid #aeb8ed; outline-offset: 2px; }
+.beta-entry-card .primary-button { justify-self: stretch; padding: 12px; }
+.beta-entry-note { margin-bottom: 0; font-size: 12px; }
+
 .dashboard-shell { max-width: 1180px; margin: 0 auto; padding: 28px 20px 40px; }
 .topbar, .toolbar, .problem-heading, .detail-heading { display: flex; justify-content: space-between; gap: 16px; }
 .topbar { align-items: flex-start; }
