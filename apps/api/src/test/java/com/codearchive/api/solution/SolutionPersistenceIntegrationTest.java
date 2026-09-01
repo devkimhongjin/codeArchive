@@ -202,6 +202,40 @@ class SolutionPersistenceIntegrationTest {
     }
 
     @Test
+    void programmersPlatformIsAcceptedAndPersisted() throws Exception {
+        TestUser user = createAuthenticatedUser(3003L, "programmers-user");
+
+        mockMvc.perform(
+                        put("/api/v1/solutions/by-client-id/programmers-42842")
+                                .header(
+                                        HttpHeaders.AUTHORIZATION,
+                                        bearer(user.token())
+                                )
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(basePayload(
+                                        "카펫",
+                                        null,
+                                        null,
+                                        "unknown"
+                                ).replace(
+                                        "\"SWEA\"",
+                                        "\"PROGRAMMERS\""
+                                ))
+                )
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.platform")
+                        .value("PROGRAMMERS"));
+
+        Solution stored = solutionRepository
+                .findByUserIdAndClientRecordId(
+                        user.user().getId(),
+                        "programmers-42842"
+                )
+                .orElseThrow();
+        assertThat(stored.getPlatform()).isEqualTo("PROGRAMMERS");
+    }
+
+    @Test
     void retryUpdatesSameRowAndPreservesCreatedAtAndMetricsExactly()
             throws Exception {
         TestUser user = createAuthenticatedUser(3003L, "editor");

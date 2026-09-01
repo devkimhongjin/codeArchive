@@ -4,8 +4,9 @@ import type { CodeArchiveAuthService } from "./authSession";
 import { backgroundCodeArchiveAuthService } from "./backgroundAuthRuntime";
 import { notifyDashboardCaptureChanged, registerExternalDashboardBridge, type ExternalDashboardPort } from "./dashboardCaptureBridge";
 import { CODEARCHIVE_DASHBOARD_ORIGIN } from "./dashboardConfig";
-import { SAVE_SWEA_ACCEPTED, type SaveResponse, type SweaAcceptedCapture } from "./sweaAutoCapture";
-import { saveSweaAcceptedCapture } from "./solutionRepository";
+import { SAVE_SWEA_ACCEPTED, type SaveResponse } from "./sweaAutoCapture";
+import { saveAcceptedCapture } from "./solutionRepository";
+import { isAutoCapturePlatform, SAVE_ACCEPTED_CAPTURE, type AcceptedCapture } from "./acceptedCapture";
 import { syncSolutionRecord, type SolutionSyncDependencies } from "./solutionSync";
 
 type BackgroundResponse = SaveResponse | AuthLoginResponse;
@@ -17,20 +18,20 @@ declare const chrome: {
   };
 };
 
-export function valid(value: unknown): value is SweaAcceptedCapture {
+export function valid(value: unknown): value is AcceptedCapture {
   if (!value || typeof value !== "object") return false;
   const c = value as Record<string, unknown>;
-  return c.platform === "SWEA" && c.result === "ACCEPTED" && ["captureId", "problemNumber", "title", "language", "code", "observedAt", "solvedAt"].every((k) => typeof c[k] === "string" && (c[k] as string).trim()) && (c.problemUrl === undefined || typeof c.problemUrl === "string");
+  return isAutoCapturePlatform(c.platform) && c.result === "ACCEPTED" && ["captureId", "problemNumber", "title", "language", "code", "observedAt", "solvedAt"].every((k) => typeof c[k] === "string" && (c[k] as string).trim()) && (c.problemUrl === undefined || typeof c.problemUrl === "string");
 }
 
 interface CaptureSyncDependencies {
-  saveCapture(capture: SweaAcceptedCapture): Promise<SaveResponse>;
+  saveCapture(capture: AcceptedCapture): Promise<SaveResponse>;
   /** Legacy direct-sync injection retained only as rollback/reference until cleanup #86. */
   sync?: SolutionSyncDependencies;
   onCaptureCommitted?: () => Promise<void>;
 }
 
-export async function saveThenSyncAcceptedCapture(capture: SweaAcceptedCapture, dependencies: CaptureSyncDependencies): Promise<SaveResponse> {
+export async function saveThenSyncAcceptedCapture(capture: AcceptedCapture, dependencies: CaptureSyncDependencies): Promise<SaveResponse> {
   const localResult = await dependencies.saveCapture(capture);
   if (localResult.status === "saved") {
     void dependencies.onCaptureCommitted?.().catch(() => undefined);
@@ -50,7 +51,7 @@ export async function runBackgroundLogin(authService: Pick<CodeArchiveAuthServic
 }
 
 const defaultDependencies: CaptureSyncDependencies = {
-  saveCapture: saveSweaAcceptedCapture,
+  saveCapture: saveAcceptedCapture,
   onCaptureCommitted: notifyDashboardCaptureChanged,
 };
 
@@ -64,7 +65,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  if (request.type !== SAVE_SWEA_ACCEPTED || !valid(request.capture)) {
+  if ((request.type !== SAVE_SWEA_ACCEPTED && request.type !== SAVE_ACCEPTED_CAPTURE) || !valid(request.capture)) {
     sendResponse({ status: "rejected", reason: "invalid_capture" });
     return;
   }

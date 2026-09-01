@@ -5,6 +5,7 @@ import type {
 } from "../../../packages/shared-types/src";
 import type { NewSolutionInput, SolutionRecord, SolutionSyncMetadata } from "./solution";
 import type { SaveResponse, SweaAcceptedCapture } from "./sweaAutoCapture";
+import { captureSource, type AcceptedCapture } from "./acceptedCapture";
 
 const DB_NAME = "codearchive";
 const DB_VERSION = 2;
@@ -62,7 +63,9 @@ function transactionDone(transaction: IDBTransaction): Promise<void> {
 }
 
 export function isAcceptedCaptureRecord(record: SolutionRecord): boolean {
-  return record.platform === "SWEA" && record.autoCapture?.source === "SWEA_AUTO" && record.autoCapture.result === "ACCEPTED";
+  if (record.autoCapture?.result !== "ACCEPTED") return false;
+  return (record.platform === "SWEA" && record.autoCapture.source === "SWEA_AUTO")
+    || (record.platform === "PROGRAMMERS" && record.autoCapture.source === "PROGRAMMERS_AUTO");
 }
 
 /**
@@ -210,8 +213,9 @@ export const indexedDbSolutionRepository: SolutionRepository = {
   },
 };
 
-export async function saveSweaAcceptedCapture(capture: SweaAcceptedCapture): Promise<SaveResponse> {
-  const id = `swea-auto:${capture.captureId}`;
+export async function saveAcceptedCapture(capture: AcceptedCapture): Promise<SaveResponse> {
+  const source = captureSource(capture.platform);
+  const id = `${capture.platform.toLowerCase()}-auto:${capture.captureId}`;
   const db = await openDatabase();
   try {
     const transaction = db.transaction([STORE_NAME, META_STORE_NAME], "readwrite");
@@ -219,7 +223,7 @@ export async function saveSweaAcceptedCapture(capture: SweaAcceptedCapture): Pro
     const store = transaction.objectStore(STORE_NAME);
     const existing = await requestToPromise(store.get(id) as IDBRequest<SolutionRecord | undefined>);
     if (existing) {
-      const matches = existing.autoCapture?.source === "SWEA_AUTO" && existing.autoCapture.observedAt === capture.observedAt && existing.platform === capture.platform && existing.problemNumber === capture.problemNumber && existing.title === capture.title && existing.language === capture.language && existing.code === capture.code && existing.solvedAt === capture.solvedAt;
+      const matches = existing.autoCapture?.source === source && existing.autoCapture.observedAt === capture.observedAt && existing.platform === capture.platform && existing.problemNumber === capture.problemNumber && existing.title === capture.title && existing.language === capture.language && existing.code === capture.code && existing.solvedAt === capture.solvedAt;
       await done;
       return matches ? { status: "duplicate", solutionId: id, savedAt: existing.createdAt } : { status: "rejected", reason: "idempotency_conflict" };
     }
@@ -227,7 +231,7 @@ export async function saveSweaAcceptedCapture(capture: SweaAcceptedCapture): Pro
     const record: SolutionRecord = {
       id,
       clientRecordId: crypto.randomUUID(),
-      platform: "SWEA",
+      platform: capture.platform,
       problemNumber: capture.problemNumber,
       title: capture.title,
       language: capture.language,
@@ -235,7 +239,7 @@ export async function saveSweaAcceptedCapture(capture: SweaAcceptedCapture): Pro
       solvedAt: capture.solvedAt,
       aiUsage: "unknown",
       autoCapture: {
-        source: "SWEA_AUTO",
+        source,
         result: "ACCEPTED",
         observedAt: capture.observedAt,
         ...(capture.problemUrl ? { problemUrl: capture.problemUrl } : {}),
@@ -250,10 +254,15 @@ export async function saveSweaAcceptedCapture(capture: SweaAcceptedCapture): Pro
   } finally { db.close(); }
 }
 
+export function saveSweaAcceptedCapture(capture: SweaAcceptedCapture): Promise<SaveResponse> {
+  return saveAcceptedCapture(capture);
+}
+
 function bridgeLanguage(value: string): ProgrammingLanguage {
   switch (value.trim().toLowerCase()) {
     case "java": return "JAVA";
     case "python": return "PYTHON";
+    case "python3": return "PYTHON";
     case "c": return "C";
     case "c++": return "CPP";
     case "javascript": return "JAVASCRIPT";
@@ -274,7 +283,7 @@ export function toCaptureImportRecord(record: SolutionRecord): CaptureImportReco
   return {
     clientRecordId: record.clientRecordId,
     problem: {
-      platform: "SWEA",
+      platform: record.platform as "SWEA" | "PROGRAMMERS",
       platformProblemId: record.problemNumber,
       problemNumber: record.problemNumber,
       title: record.title,

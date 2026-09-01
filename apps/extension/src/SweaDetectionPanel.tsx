@@ -17,6 +17,39 @@ function DetectionContent({ result, savedRecords }: {
   if (result.status === "unsupported_page") return <p className="detection-muted">지원되는 SWEA 페이지가 아닙니다.</p>;
 
   if (result.status === "connected_page") {
+    if (result.platform === "PROGRAMMERS") {
+      const editor = result.editor;
+      const submissionResult = result.submissionResult;
+      const autoSave = result.autoSave ?? { status: "idle" };
+      const latestSaved = savedRecords.find((record) => record.platform === "PROGRAMMERS" && record.problemNumber === result.problem.problemNumber);
+
+      return (
+        <div className="detection-result">
+          <div>
+            <strong>프로그래머스 풀이 페이지 연결됨</strong>
+            <p>문제: {result.problem.problemNumber} · {result.problem.title}</p>
+            {submissionResult.status === "none" && <p className="detection-muted">현재 세션 제출 결과: 감지 전</p>}
+            {submissionResult.status === "observed" && <p>현재 세션 제출 결과: ACCEPTED · 관찰 시각: {formatKstDateTime(submissionResult.submission.observedAt)}</p>}
+            {latestSaved && <p>최근 저장: {solutionProvenance(latestSaved)}</p>}
+            {autoSave.status === "saved" && <p>자동 저장 완료</p>}
+            {autoSave.status === "duplicate" && <p>이미 처리된 제출</p>}
+            {autoSave.status === "failed" && <p>{autoSave.reason === "confirmation_unknown" ? "저장 여부 확인 필요" : "자동 저장 실패 · 수동 저장을 이용해주세요"}</p>}
+            {editor.status === "detected" ? (
+              <>
+                <p>언어: {editor.editor.language}</p>
+                <span>코드: 감지됨 · {editor.editor.code.length.toLocaleString()}자</span>
+              </>
+            ) : (
+              <>
+                <p>언어: {editor.language ?? "미확인"}</p>
+                <span>코드 편집기 감지 실패 · 누락: {editor.missing.join(", ")}</span>
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     const editor = result.editor;
     const syncFailed = editor.status === "incomplete" && editor.warnings.some((warning) => warning.includes("최신 코드 동기화"));
     const metadata = result.metadata;

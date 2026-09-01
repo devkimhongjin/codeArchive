@@ -33,7 +33,7 @@ export interface SolutionRecord {
   updatedAt: string;
   performance?: SubmissionPerformance;
   autoCapture?: {
-    source: "SWEA_AUTO";
+    source: "SWEA_AUTO" | "PROGRAMMERS_AUTO";
     result: "ACCEPTED";
     observedAt: string;
     problemUrl?: string;

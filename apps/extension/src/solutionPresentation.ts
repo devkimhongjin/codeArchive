@@ -8,7 +8,7 @@ export interface SolutionGroup {
 }
 
 export function solutionProvenance(record: SolutionRecord): "PASS 자동저장" | "수동저장" {
-  return record.autoCapture?.source === "SWEA_AUTO" && record.autoCapture.result === "ACCEPTED"
+  return record.autoCapture?.result === "ACCEPTED" && (record.autoCapture.source === "SWEA_AUTO" || record.autoCapture.source === "PROGRAMMERS_AUTO")
     ? "PASS 자동저장"
     : "수동저장";
 }

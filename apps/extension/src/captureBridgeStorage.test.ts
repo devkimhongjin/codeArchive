@@ -61,4 +61,25 @@ describe("capture bridge storage identity", () => {
     });
     expect(JSON.stringify(imported)).not.toMatch(/userId|github|token|cookie|sync|serverSolutionId/i);
   });
+
+  it("preserves Programmers identity when bridging an accepted local capture", () => {
+    const imported = toCaptureImportRecord(acceptedRecord({
+      id: "programmers-auto:capture",
+      clientRecordId: "programmers-capture",
+      platform: "PROGRAMMERS",
+      problemNumber: "42842",
+      title: "카펫",
+      language: "Python3",
+      autoCapture: {
+        source: "PROGRAMMERS_AUTO",
+        result: "ACCEPTED",
+        observedAt: "2026-09-01T00:00:00.000Z",
+        problemUrl: "https://school.programmers.co.kr/learn/courses/30/lessons/42842",
+      },
+    }));
+
+    expect(imported.problem.platform).toBe("PROGRAMMERS");
+    expect(imported.problem.platformProblemId).toBe("42842");
+    expect(imported.language).toBe("PYTHON");
+  });
 });
