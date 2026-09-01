@@ -34,8 +34,6 @@ pwsh -NoProfile -File ./scripts/package-beta.ps1
 - [ ] 해당 SHA의 Dashboard CI typecheck/test/build 증거 기록
 - [ ] ZIP 무결성, manifest ID `oohlcmihldmfninmdcmanddfmhoonmdl`, exact Dashboard origin 확인
 - [ ] 압축 해제 후 안내 링크와 Chrome 설치/기존 설치 업데이트 확인
-- [ ] Main API의 `CODEARCHIVE_BETA_ACCESS_PASSWORD` 비밀 설정(8~128자)과 API/Web 반영 확인; 실제 값은 공개 자료에 없음
-- [ ] 첫 입장 성공/오입력/서버 오류, 같은 탭 새로고침·OAuth 복귀, 새 탭 입장 확인 ([간단 입장 설계와 우회 한계](beta-access-design.md))
 
 ## 2. 실제 브라우저·서버 검증 — 수행 후만 체크
 

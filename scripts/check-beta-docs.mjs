@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 const root = resolve(process.argv[2] ?? ".");
 const docs = ["README.md", "docs/beta-install.md", "docs/dashboard-beta-tester-guide.md",
   "docs/beta-troubleshooting.md", "docs/beta-distribution-checklist.md",
-  "docs/beta-invite-template.md", "docs/beta-access-design.md", "docs/dashboard-ai-beta-acceptance.md"];
+  "docs/beta-invite-template.md", "docs/dashboard-ai-beta-acceptance.md"];
 const failures = [];
 let checked = 0;
 for (const file of docs) {
