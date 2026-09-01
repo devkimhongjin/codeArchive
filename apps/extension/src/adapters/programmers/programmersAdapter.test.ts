@@ -8,7 +8,7 @@ function documentFrom(html: string): Document {
 describe("programmersAdapter", () => {
   it("detects the canonical problem identity from the observed lesson URL and title DOM", () => {
     const result = programmersAdapter.detect(
-      documentFrom('<div class="challenge-title">ī��</div>'),
+      documentFrom('<div class="challenge-title">카펫</div>'),
       new URL("https://school.programmers.co.kr/learn/courses/30/lessons/42842?language=cpp#editor"),
     );
 
@@ -17,7 +17,7 @@ describe("programmersAdapter", () => {
       problem: {
         platform: "PROGRAMMERS",
         problemNumber: "42842",
-        title: "ī��",
+        title: "카펫",
         difficulty: null,
         url: "https://school.programmers.co.kr/learn/courses/30/lessons/42842",
       },

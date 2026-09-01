@@ -140,7 +140,7 @@ class CaptureBulkUpsertIntegrationTest {
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(batch(record(
                                         "programmers-id",
-                                        "ī��",
+                                        "카펫",
                                         "PROGRAMMERS",
                                         "class Solution {}"
                                 )))

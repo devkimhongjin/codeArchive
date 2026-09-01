@@ -68,7 +68,7 @@ describe("capture bridge storage identity", () => {
       clientRecordId: "programmers-capture",
       platform: "PROGRAMMERS",
       problemNumber: "42842",
-      title: "ī��",
+      title: "카펫",
       language: "Python3",
       autoCapture: {
         source: "PROGRAMMERS_AUTO",

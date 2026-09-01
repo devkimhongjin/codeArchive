@@ -27,7 +27,7 @@ export const programmersAdapter: PlatformAdapter = {
       return {
         status: "incomplete",
         missing: ["title"],
-        warnings: ["���α׷��ӽ� ���� ���� ���� ������ ����� �ٸ��ϴ�."],
+        warnings: ["프로그래머스 문제 제목 영역 구조가 예상과 다릅니다."],
       };
     }
 

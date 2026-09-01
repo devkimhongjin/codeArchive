@@ -7,10 +7,10 @@ export interface SolutionGroup {
   records: SolutionRecord[];
 }
 
-export function solutionProvenance(record: SolutionRecord): "PASS �ڵ�����" | "��������" {
+export function solutionProvenance(record: SolutionRecord): "PASS 자동저장" | "수동저장" {
   return record.autoCapture?.result === "ACCEPTED" && (record.autoCapture.source === "SWEA_AUTO" || record.autoCapture.source === "PROGRAMMERS_AUTO")
-    ? "PASS �ڵ�����"
-    : "��������";
+    ? "PASS 자동저장"
+    : "수동저장";
 }
 
 export function solutionDisplayTime(record: SolutionRecord): string {

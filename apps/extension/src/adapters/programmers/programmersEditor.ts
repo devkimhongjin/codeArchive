@@ -36,11 +36,11 @@ export function detectProgrammersEditor(document: Document): ProgrammersEditorDe
 
   if (!language) {
     missing.push("language");
-    warnings.push("���� ���� �� Ȯ������ ���߽��ϴ�.");
+    warnings.push("현재 선택 언어를 확인하지 못했습니다.");
   }
   if (code === null) {
     missing.push("code");
-    warnings.push("���α׷��ӽ� �ҽ� ���� �ʵ�(#code)�� ã�� ���߽��ϴ�.");
+    warnings.push("프로그래머스 소스 저장 필드(#code)를 찾지 못했습니다.");
   }
 
   return language !== null && code !== null

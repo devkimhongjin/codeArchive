@@ -213,7 +213,7 @@ class SolutionPersistenceIntegrationTest {
                                 )
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(basePayload(
-                                        "ī��",
+                                        "카펫",
                                         null,
                                         null,
                                         "unknown"
