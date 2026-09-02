@@ -12,6 +12,8 @@ export type ProgrammersSubmissionResultState =
 
 const ACCEPTED_DIALOG_SELECTOR = "#modal-dialog.modal.show[role='dialog'][aria-modal='true']";
 const ACCEPTED_TITLE_SELECTOR = "h4.modal-title";
+const FINAL_SUBMIT_SELECTOR = "#submit-code";
+const MAX_SUBMISSION_ATTEMPT_MS = 60_000;
 const MAX_SETTLE_MS = 2_000;
 const MAX_INSPECTIONS = 6;
 const SETTLE_DELAYS_MS = [0, 100, 200, 400, 600, 700];
@@ -36,11 +38,12 @@ function createAcceptedCycle(
   document: Document,
   dialog: Element,
   initialRecords: readonly MutationRecord[],
+  freshResultMutationBeforeAccepted = false,
 ): ProgrammersAcceptedCycle {
   const initialContext = pageContext(document);
   const startedAt = Date.now();
   let invalidated = false;
-  let freshResultMutation = resultGroupMutationRelevant(document, initialRecords);
+  let freshResultMutation = freshResultMutationBeforeAccepted || resultGroupMutationRelevant(document, initialRecords);
   let inspections = 0;
   let settled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -111,8 +114,30 @@ export function observeProgrammersSubmissionResult(
 ): () => void {
   let observedDialog: Element | null = null;
   let activeCycle: ProgrammersAcceptedCycle | undefined;
+  let pendingAttempt: { context: string; startedAt: number; freshResultMutation: boolean } | undefined;
+
+  const pendingAttemptIsCurrent = () => !!pendingAttempt
+    && pendingAttempt.context === pageContext(document)
+    && Date.now() - pendingAttempt.startedAt <= MAX_SUBMISSION_ATTEMPT_MS;
+
+  const onClick = (event: Event) => {
+    const target = event.target as Element | null;
+    if (!target?.closest?.(FINAL_SUBMIT_SELECTOR)) return;
+    activeCycle?.invalidate();
+    activeCycle = undefined;
+    pendingAttempt = {
+      context: pageContext(document),
+      startedAt: Date.now(),
+      freshResultMutation: false,
+    };
+  };
 
   const inspect = (records: readonly MutationRecord[] = []) => {
+    if (pendingAttempt && !pendingAttemptIsCurrent()) pendingAttempt = undefined;
+    if (pendingAttempt && resultGroupMutationRelevant(document, records)) {
+      pendingAttempt.freshResultMutation = true;
+    }
+
     const dialog = acceptedDialog(document);
     if (!dialog) {
       observedDialog = null;
@@ -131,13 +156,18 @@ export function observeProgrammersSubmissionResult(
       warnings: [],
     };
     const isInitialHistoricalState = records.length === 0;
-    activeCycle = isInitialHistoricalState ? undefined : createAcceptedCycle(document, dialog, records);
+    const freshResultMutationBeforeAccepted = pendingAttemptIsCurrent() && !!pendingAttempt?.freshResultMutation;
+    pendingAttempt = undefined;
+    activeCycle = isInitialHistoricalState
+      ? undefined
+      : createAcceptedCycle(document, dialog, records, freshResultMutationBeforeAccepted);
     if (activeCycle) onObservation(observation, activeCycle);
     else onObservation(observation);
   };
 
   inspect();
   if (!document.body) return () => undefined;
+  document.addEventListener("click", onClick, true);
   const observer = new MutationObserver(inspect);
   observer.observe(document.body, {
     childList: true,
@@ -147,6 +177,7 @@ export function observeProgrammersSubmissionResult(
     attributeFilter: ["class", "style", "aria-modal"],
   });
   return () => {
+    document.removeEventListener("click", onClick, true);
     observer.disconnect();
     activeCycle?.invalidate();
   };
