@@ -37,4 +37,17 @@ describe("SWEA Problem-family identity handoff", () => {
     expect(store.consume(7, "https://swexpertacademy.com", "/wrong", sourceUrl)).toBeNull();
     expect(store.consume(7, "https://swexpertacademy.com", solvingPath, sourceUrl)).toBe("current");
   });
+
+  it("rejects expired cross-tab and ambiguous same-referrer handoffs", () => {
+    let now = 1_000;
+    const store = createProblemContestIdHandoffStore(() => now);
+    const sourceUrl = "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=current";
+    store.issue(7, "expired", sourceUrl);
+    now += 60_001;
+    expect(store.consume(8, "https://swexpertacademy.com", solvingPath, sourceUrl)).toBeNull();
+
+    store.issue(7, "first", sourceUrl);
+    store.issue(9, "second", sourceUrl);
+    expect(store.consume(8, "https://swexpertacademy.com", solvingPath, sourceUrl)).toBeNull();
+  });
 });

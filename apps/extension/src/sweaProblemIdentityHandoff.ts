@@ -15,9 +15,10 @@ export function createProblemContestIdHandoffStore(
 ) {
   const entries = new Map<number, ProblemContestIdHandoff>();
 
-  const cleanup = (tabId: number) => {
-    const entry = entries.get(tabId);
-    if (entry && now() - entry.issuedAt > ttlMs) entries.delete(tabId);
+  const cleanupExpired = () => {
+    for (const [entryTabId, entry] of entries) {
+      if (now() - entry.issuedAt > ttlMs) entries.delete(entryTabId);
+    }
   };
 
   return {
@@ -37,16 +38,15 @@ export function createProblemContestIdHandoffStore(
     },
     consume(tabId: number, origin: string, path: string, referrer: string): string | null {
       if (origin !== "https://swexpertacademy.com" || path !== "/main/solvingProblem/solvingProblem.do") return null;
-      cleanup(tabId);
+      cleanupExpired();
       let normalizedReferrer: string;
       try { normalizedReferrer = new URL(referrer).href; } catch { return null; }
       const sameTab = entries.get(tabId);
-      const entry = sameTab?.sourceUrl === normalizedReferrer
-        ? sameTab
-        : Array.from(entries.values()).find((candidate) => candidate.sourceUrl === normalizedReferrer);
-      if (!entry) return null;
-      const ownerTabId = Array.from(entries.entries()).find(([, candidate]) => candidate === entry)?.[0];
-      if (ownerTabId === undefined) return null;
+      const matches = sameTab?.sourceUrl === normalizedReferrer
+        ? [[tabId, sameTab] as const]
+        : Array.from(entries.entries()).filter(([, candidate]) => candidate.sourceUrl === normalizedReferrer);
+      if (matches.length !== 1) return null;
+      const [ownerTabId, entry] = matches[0];
       entries.delete(ownerTabId);
       return entry.problemContestId;
     },
