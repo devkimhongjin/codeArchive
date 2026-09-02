@@ -114,14 +114,14 @@ export function parseSweaPerformance(
 export async function fetchSweaPerformance(
   document: Document,
   url: URL,
-  contestProbId: string | null,
+  problemContestId: string | null,
   code: string,
   observedAt: string,
   fetcher: Fetcher = fetch,
   referrer: string = document.referrer,
 ): Promise<SubmissionPerformance | undefined> {
   if (url.origin !== SWEA_ORIGIN || url.pathname !== "/main/solvingProblem/solvingProblem.do") return undefined;
-  if (!contestProbId || !exactProblemReferrer(referrer)) return undefined;
+  if (!problemContestId || !exactProblemReferrer(referrer)) return undefined;
   const nickname = visibleNickname(document);
   if (!nickname) return undefined;
 
@@ -130,13 +130,13 @@ export async function fetchSweaPerformance(
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
-    body: new URLSearchParams({ contestProbId, nickName: nickname }).toString(),
+    body: new URLSearchParams({ contestProbId: problemContestId, nickName: nickname }).toString(),
   });
   if (!response.ok || new URL(response.url || endpoint.href).pathname !== PROBLEM_SOLVER_PATH) return undefined;
   const resultDocument = new DOMParser().parseFromString(await response.text(), "text/html");
   const resultIds = Array.from(resultDocument.querySelectorAll("#problemForm input[name='contestProbId']"))
     .map((input) => normalizeText((input as HTMLInputElement).value))
     .filter(Boolean);
-  if (resultIds.length !== 1 || resultIds[0] !== contestProbId) return undefined;
+  if (resultIds.length !== 1 || resultIds[0] !== problemContestId) return undefined;
   return parseSweaPerformance(resultDocument, nickname, code, observedAt) ?? undefined;
 }

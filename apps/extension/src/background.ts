@@ -8,12 +8,14 @@ import { SAVE_SWEA_ACCEPTED, type SaveResponse } from "./sweaAutoCapture";
 import { saveAcceptedCapture } from "./solutionRepository";
 import { isAutoCapturePlatform, SAVE_ACCEPTED_CAPTURE, type AcceptedCapture } from "./acceptedCapture";
 import { syncSolutionRecord, type SolutionSyncDependencies } from "./solutionSync";
+import { createProblemContestIdHandoffStore, SWEA_CONSUME_PROBLEM_CONTEST_ID, SWEA_STORE_PROBLEM_CONTEST_ID } from "./sweaProblemIdentityHandoff";
+import { SWEA_PROBLEM_DETAIL_PATH, SWEA_SOLVING_PATH } from "./adapters/swea/sweaSelectors";
 
 type BackgroundResponse = SaveResponse | AuthLoginResponse;
 
 declare const chrome: {
   runtime: {
-    onMessage: { addListener(listener: (message: unknown, sender: unknown, sendResponse: (response: BackgroundResponse) => void) => boolean | void): void };
+    onMessage: { addListener(listener: (message: unknown, sender: unknown, sendResponse: (response: unknown) => void) => boolean | void): void };
     onConnectExternal: { addListener(listener: (port: ExternalDashboardPort) => void): void };
   };
 };
@@ -57,8 +59,30 @@ const defaultDependencies: CaptureSyncDependencies = {
 
 registerExternalDashboardBridge(chrome.runtime, CODEARCHIVE_DASHBOARD_ORIGIN);
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+const problemContestIdHandoffs = createProblemContestIdHandoffStore();
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const request = message as { type?: string; capture?: unknown };
+  const senderTab = (sender as { tab?: { id?: number; url?: string } } | undefined)?.tab;
+  const tabId = senderTab?.id;
+  let senderUrl: URL | null = null;
+  try { if (senderTab?.url) senderUrl = new URL(senderTab.url); } catch { /* fail closed */ }
+
+  if (request.type === SWEA_STORE_PROBLEM_CONTEST_ID) {
+    const problemContestId = (message as { problemContestId?: unknown }).problemContestId;
+    sendResponse({ ok: Number.isInteger(tabId) && senderUrl?.origin === "https://swexpertacademy.com" && senderUrl.pathname === SWEA_PROBLEM_DETAIL_PATH && typeof problemContestId === "string" && problemContestIdHandoffs.issue(tabId!, problemContestId) });
+    return;
+  }
+
+  if (request.type === SWEA_CONSUME_PROBLEM_CONTEST_ID) {
+    const page = message as { origin?: unknown; path?: unknown };
+    sendResponse({
+      problemContestId: Number.isInteger(tabId) && senderUrl?.origin === "https://swexpertacademy.com" && senderUrl.pathname === SWEA_SOLVING_PATH && typeof page.origin === "string" && typeof page.path === "string"
+        ? problemContestIdHandoffs.consume(tabId!, page.origin, page.path)
+        : null,
+    });
+    return;
+  }
 
   if (request.type === AUTH_LOGIN) {
     runBackgroundLogin(backgroundCodeArchiveAuthService).then(sendResponse);

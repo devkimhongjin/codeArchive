@@ -10,10 +10,10 @@ export type SweaAutoSaveState = { status: "idle" } | { status: "saving"; observe
 export type SaveResponse = { status: "saved" | "duplicate"; solutionId: string; savedAt: string } | { status: "rejected"; reason: "invalid_capture" | "idempotency_conflict" } | { status: "failed"; reason: "storage_failed" };
 export const SAVE_SWEA_ACCEPTED = "CODEARCHIVE_SAVE_SWEA_ACCEPTED" as const;
 
-export async function captureAccepted(document: Document, url: URL, observation: Extract<SweaSubmissionResultState, { status: "observed" }>, send: (message: unknown) => Promise<SaveResponse>, uuid: () => string = () => crypto.randomUUID(), sync: typeof syncSweaEditor = syncSweaEditor, enrich: typeof fetchSweaPerformance = fetchSweaPerformance): Promise<SweaAutoSaveState> {
+export async function captureAccepted(document: Document, url: URL, observation: Extract<SweaSubmissionResultState, { status: "observed" }>, send: (message: unknown) => Promise<SaveResponse>, uuid: () => string = () => crypto.randomUUID(), sync: typeof syncSweaEditor = syncSweaEditor, enrich: typeof fetchSweaPerformance = fetchSweaPerformance, handoffProblemContestId: string | null = null): Promise<SweaAutoSaveState> {
   const observedAt = observation.submission.observedAt;
   if (observation.submission.result !== "ACCEPTED") return { status: "idle" };
-  const metadata = detectSweaSolvingProblemMeta(document, url);
+  const metadata = detectSweaSolvingProblemMeta(document, url, handoffProblemContestId);
   if (metadata.status !== "detected") return { status: "failed", observedAt, reason: "metadata_untrusted" };
   if (sync(document).status !== "synced") return { status: "failed", observedAt, reason: "editor_sync_failed" };
   const editor = detectSweaEditor(document, url);
@@ -21,7 +21,7 @@ export async function captureAccepted(document: Document, url: URL, observation:
   if (!editor.editor.code.trim()) return { status: "failed", observedAt, reason: "empty_code" };
   let performance: Awaited<ReturnType<typeof fetchSweaPerformance>>;
   try {
-    performance = await enrich(document, url, metadata.problem.contestProbId, editor.editor.code, observedAt);
+    performance = await enrich(document, url, metadata.problem.problemContestId, editor.editor.code, observedAt);
   } catch {
     performance = undefined;
   }

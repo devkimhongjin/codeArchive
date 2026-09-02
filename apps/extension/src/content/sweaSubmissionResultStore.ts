@@ -16,8 +16,8 @@ const CACHE_PREFIX = "codearchive:swea:submission-result:";
 
 function cacheKey(document: Document, url: URL): string | null {
   const metadata = detectSweaSolvingProblemMeta(document, url);
-  if (metadata.status !== "detected" || !metadata.problem.contestProbId) return null;
-  return `${CACHE_PREFIX}${metadata.problem.contestProbId}`;
+  if (metadata.status !== "detected" || !metadata.problem.problemContestId) return null;
+  return `${CACHE_PREFIX}${metadata.problem.problemContestId}`;
 }
 
 function readCachedState(storage: Storage | undefined, key: string | null): SweaSubmissionResultState {
