@@ -55,6 +55,16 @@ function parseCodeLength(value: string | null): number | null {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
+export function sweaDisplayedCodeLength(code: string): number | null {
+  let length = 0;
+  for (const character of code) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined || codePoint > 0xffff) return null;
+    length += codePoint <= 0x7f ? 1 : 2;
+  }
+  return length;
+}
+
 function visibleNickname(document: Document): string | null {
   const selectors = [
     "#Beginner",
@@ -87,8 +97,8 @@ function rowPerformance(row: Element, code: string): SubmissionPerformance | nul
   const memoryUsage = parseMemory(metricValue(row, METRIC_LABELS.memoryUsage));
   const executionTime = parseExecutionTime(metricValue(row, METRIC_LABELS.executionTime));
   const codeLength = parseCodeLength(metricValue(row, METRIC_LABELS.codeLength));
-  const sourceBytes = new TextEncoder().encode(code).length;
-  if (!memoryUsage || !executionTime || codeLength === null || codeLength !== sourceBytes) return null;
+  const sourceLength = sweaDisplayedCodeLength(code);
+  if (!memoryUsage || !executionTime || codeLength === null || sourceLength === null || codeLength !== sourceLength) return null;
   return { memoryUsage, executionTime };
 }
 
