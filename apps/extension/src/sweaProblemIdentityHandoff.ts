@@ -24,8 +24,10 @@ export function createProblemContestIdHandoffStore(
       let parsedSource: URL;
       try { parsedSource = new URL(sourceUrl); } catch { return null; }
       if (parsedSource.origin !== "https://swexpertacademy.com" || parsedSource.pathname !== "/main/code/problem/problemDetail.do") return null;
-      const sourceIds = parsedSource.searchParams.getAll("contestProbId").map((value) => value.trim()).filter(Boolean);
-      if (sourceIds.length !== 1 || sourceIds[0] !== problemContestId.trim()) return null;
+      const rawIds = parsedSource.searchParams.getAll("contestProbId");
+      if (rawIds.length !== 1) return null;
+      const sourceId = rawIds[0].trim();
+      if (!sourceId || sourceId !== problemContestId.trim()) return null;
       return parsedSource;
   };
 
@@ -50,8 +52,10 @@ export function createProblemContestIdHandoffStore(
       let normalizedReferrer: URL;
       try { normalizedReferrer = new URL(referrer); } catch { return null; }
       if (normalizedReferrer.origin !== pending.sourceOrigin || normalizedReferrer.pathname !== pending.sourcePath) return null;
-      const referrerIds = normalizedReferrer.searchParams.getAll("contestProbId").map((value) => value.trim()).filter(Boolean);
-      if (referrerIds.length !== 1 || referrerIds[0] !== pending.problemContestId) return null;
+      const rawIds = normalizedReferrer.searchParams.getAll("contestProbId");
+      if (rawIds.length !== 1) return null;
+      const referrerId = rawIds[0].trim();
+      if (!referrerId || referrerId !== pending.problemContestId) return null;
       if (normalizedReferrer.href !== pending.sourceUrl) return null;
       const result = pending.problemContestId;
       pending = null;
