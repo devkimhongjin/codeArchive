@@ -244,6 +244,7 @@ export async function saveAcceptedCapture(capture: AcceptedCapture): Promise<Sav
         observedAt: capture.observedAt,
         ...(capture.problemUrl ? { problemUrl: capture.problemUrl } : {}),
       },
+      ...(capture.performance ? { performance: capture.performance } : {}),
       createdAt: now,
       updatedAt: now,
     };

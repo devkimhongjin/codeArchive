@@ -44,7 +44,7 @@ describe("SweaDetectionPanel", () => {
   });
 
   it("keeps solving metadata, accepted result, saved provenance, and automatic-save status visible", async () => {
-    render(<SweaDetectionPanel savedRecords={[savedAutoRecord]} requestContext={async () => ({ status: "connected", result: { status: "connected_page", platform: "SWEA", pageKind: "solving", url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do", metadata: { status: "detected", problem: { problemNumber: "1234", title: "Synthetic title", contestProbId: "current" }, warnings: [] }, editor: { status: "detected", editor: { language: "Java", code: "public class Main {}" }, warnings: [] }, submissionResult: { status: "observed", submission: { result: "ACCEPTED", observedAt: "2026-08-24T12:00:00.000Z" }, warnings: [] }, autoSave: { status: "saved", solutionId: "swea-auto:1", savedAt: "2026-08-24T12:00:01.000Z" } } })} />);
+    render(<SweaDetectionPanel savedRecords={[savedAutoRecord]} requestContext={async () => ({ status: "connected", result: { status: "connected_page", platform: "SWEA", pageKind: "solving", url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do", metadata: { status: "detected", problem: { problemNumber: "1234", title: "Synthetic title", problemContestId: "current" }, warnings: [] }, editor: { status: "detected", editor: { language: "Java", code: "public class Main {}" }, warnings: [] }, submissionResult: { status: "observed", submission: { result: "ACCEPTED", observedAt: "2026-08-24T12:00:00.000Z" }, warnings: [] }, autoSave: { status: "saved", solutionId: "swea-auto:1", savedAt: "2026-08-24T12:00:01.000Z" } } })} />);
     expect(await screen.findByText("SWEA 풀이 페이지 연결됨")).toBeInTheDocument();
     expect(screen.getByText("문제: 1234 · Synthetic title")).toBeInTheDocument();
     expect(screen.getByText("언어: Java")).toBeInTheDocument();
@@ -56,7 +56,7 @@ describe("SweaDetectionPanel", () => {
   });
 
   it("shows observer none as current-session detection pending", async () => {
-    render(<SweaDetectionPanel requestContext={async () => ({ status: "connected", result: { status: "connected_page", platform: "SWEA", pageKind: "solving", url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do", metadata: { status: "detected", problem: { problemNumber: "1234", title: "Synthetic title", contestProbId: "current" }, warnings: [] }, editor: { status: "detected", editor: { language: "Java", code: "current" }, warnings: [] }, submissionResult: { status: "none" } } })} />);
+    render(<SweaDetectionPanel requestContext={async () => ({ status: "connected", result: { status: "connected_page", platform: "SWEA", pageKind: "solving", url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do", metadata: { status: "detected", problem: { problemNumber: "1234", title: "Synthetic title", problemContestId: "current" }, warnings: [] }, editor: { status: "detected", editor: { language: "Java", code: "current" }, warnings: [] }, submissionResult: { status: "none" } } })} />);
     expect(await screen.findByText("현재 세션 제출 결과: 감지 전")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "등록 폼에 채우기" })).not.toBeInTheDocument();
   });
@@ -81,7 +81,7 @@ describe("SweaDetectionPanel", () => {
   });
 
   it("shows latest-code sync failure without a stale prefill button", async () => {
-    render(<SweaDetectionPanel requestContext={async () => ({ status: "connected", result: { status: "connected_page", platform: "SWEA", pageKind: "solving", url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do", metadata: { status: "detected", problem: { problemNumber: "1234", title: "Synthetic title", contestProbId: "current" }, warnings: [] }, editor: { status: "incomplete", language: "Java", code: null, missing: ["code"], warnings: ["SWEA 편집기 최신 코드 동기화에 실패했습니다."] }, submissionResult: { status: "none" } } })} />);
+    render(<SweaDetectionPanel requestContext={async () => ({ status: "connected", result: { status: "connected_page", platform: "SWEA", pageKind: "solving", url: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do", metadata: { status: "detected", problem: { problemNumber: "1234", title: "Synthetic title", problemContestId: "current" }, warnings: [] }, editor: { status: "incomplete", language: "Java", code: null, missing: ["code"], warnings: ["SWEA 편집기 최신 코드 동기화에 실패했습니다."] }, submissionResult: { status: "none" } } })} />);
     expect(await screen.findByText("최신 코드 동기화 실패")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "등록 폼에 채우기" })).not.toBeInTheDocument();
   });

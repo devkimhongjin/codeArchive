@@ -10,7 +10,7 @@ function doc(html = '<div class="challenge-title">카펫</div><nav class="challe
 
 describe("captureProgrammersAccepted", () => {
   it("freezes the evidence-backed accepted source and sends it to local persistence", async () => {
-    const send = vi.fn(async () => ({ status: "saved" as const, solutionId: "programmers-auto:uuid", savedAt: "2026-09-01T00:30:01.000Z" }));
+    const send = vi.fn<(message: unknown) => Promise<any>>(async () => ({ status: "saved" as const, solutionId: "programmers-auto:uuid", savedAt: "2026-09-01T00:30:01.000Z" }));
     await expect(captureProgrammersAccepted(doc(), url, accepted, send, () => "uuid")).resolves.toMatchObject({ status: "saved" });
     expect(send).toHaveBeenCalledWith({
       type: SAVE_ACCEPTED_CAPTURE,
@@ -25,6 +25,13 @@ describe("captureProgrammersAccepted", () => {
         problemUrl: "https://school.programmers.co.kr/learn/courses/30/lessons/42842",
       }),
     });
+  });
+
+  it("attaches optional performance without changing the accepted source contract", async () => {
+    const send = vi.fn<(message: unknown) => Promise<any>>(async () => ({ status: "saved" as const, solutionId: "programmers-auto:uuid", savedAt: "2026-09-01T00:30:01.000Z" }));
+    const cycle = { getPerformance: vi.fn(async () => ({ executionTime: "1.50 ms", memoryUsage: "23.00 MB" })) } as any;
+    await expect(captureProgrammersAccepted(doc(), url, accepted, send, () => "uuid", cycle)).resolves.toMatchObject({ status: "saved" });
+    expect(send.mock.calls[0][0]).toMatchObject({ capture: { performance: { executionTime: "1.50 ms", memoryUsage: "23.00 MB" } } });
   });
 
   it("fails closed for untrusted metadata, missing editor, empty code, and channel loss", async () => {

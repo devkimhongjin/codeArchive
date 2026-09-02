@@ -2,6 +2,7 @@ import { SAVE_ACCEPTED_CAPTURE, type AcceptedCapture } from "./acceptedCapture";
 import { programmersAdapter } from "./adapters/programmers/programmersAdapter";
 import { detectProgrammersEditor } from "./adapters/programmers/programmersEditor";
 import type { ProgrammersSubmissionResultState } from "./adapters/programmers/programmersSubmissionResult";
+import type { ProgrammersAcceptedCycle } from "./adapters/programmers/programmersSubmissionResult";
 import type { SaveResponse } from "./sweaAutoCapture";
 
 export type ProgrammersAutoSaveState =
@@ -16,6 +17,7 @@ export async function captureProgrammersAccepted(
   observation: Extract<ProgrammersSubmissionResultState, { status: "observed" }>,
   send: (message: unknown) => Promise<SaveResponse>,
   uuid: () => string = () => crypto.randomUUID(),
+  cycle?: ProgrammersAcceptedCycle,
 ): Promise<ProgrammersAutoSaveState> {
   const observedAt = observation.submission.observedAt;
   const metadata = programmersAdapter.detect(document, url);
@@ -26,6 +28,8 @@ export async function captureProgrammersAccepted(
     return { status: "failed", observedAt, reason: "editor_incomplete" };
   }
   if (!editor.editor.code.trim()) return { status: "failed", observedAt, reason: "empty_code" };
+
+  const performance = await cycle?.getPerformance();
 
   const capture: AcceptedCapture = {
     captureId: uuid(),
@@ -38,6 +42,7 @@ export async function captureProgrammersAccepted(
     observedAt,
     solvedAt: new Date(observedAt).toLocaleDateString("en-CA"),
     problemUrl: metadata.problem.url,
+    ...(performance ? { performance } : {}),
   };
 
   try {

@@ -12,6 +12,13 @@ describe("captureAccepted", () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0][0]).toMatchObject({ type: SAVE_SWEA_ACCEPTED, capture: { captureId: "uuid", code: "latest", result: "ACCEPTED", problemUrl: url.href } });
   });
+  it("attaches strict performance enrichment when the Problem-family lookup succeeds", async () => {
+    const send = vi.fn<(message: unknown) => Promise<any>>(async () => ({ status: "saved" as const, solutionId: "swea-auto:uuid", savedAt: "2026-08-24T12:00:01.000Z" }));
+    const enrich = vi.fn(async () => ({ executionTime: "123 ms", memoryUsage: "12,345 kb" }));
+    await expect(captureAccepted(doc(), url, accepted, send, () => "uuid", () => ({ status: "synced" }), enrich)).resolves.toMatchObject({ status: "saved" });
+    expect(enrich).toHaveBeenCalledWith(expect.any(Document), url, "current", "latest", accepted.submission.observedAt);
+    expect(send.mock.calls[0][0]).toMatchObject({ capture: { performance: { executionTime: "123 ms", memoryUsage: "12,345 kb" } } });
+  });
   it("fails closed for unknown, untrusted metadata, stale sync, and channel loss", async () => {
     const send = vi.fn();
     await expect(captureAccepted(doc(), url, { ...accepted, submission: { ...accepted.submission, result: "UNKNOWN" } }, send)).resolves.toEqual({ status: "idle" });

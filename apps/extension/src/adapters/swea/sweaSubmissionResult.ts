@@ -54,6 +54,11 @@ export function observeSweaSubmissionResult(
       observedInVisibleCycle = false;
       return;
     }
+    if (observation.submission.result !== "ACCEPTED") {
+      observedInVisibleCycle = false;
+      onObservation(observation);
+      return;
+    }
     if (observedInVisibleCycle) return;
 
     observedInVisibleCycle = true;
