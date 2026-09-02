@@ -70,15 +70,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (request.type === SWEA_STORE_PROBLEM_CONTEST_ID) {
     const problemContestId = (message as { problemContestId?: unknown }).problemContestId;
-    sendResponse({ ok: Number.isInteger(tabId) && senderUrl?.origin === "https://swexpertacademy.com" && senderUrl.pathname === SWEA_PROBLEM_DETAIL_PATH && typeof problemContestId === "string" && problemContestIdHandoffs.issue(tabId!, problemContestId) });
+    sendResponse({ ok: Number.isInteger(tabId) && senderUrl?.origin === "https://swexpertacademy.com" && senderUrl.pathname === SWEA_PROBLEM_DETAIL_PATH && typeof problemContestId === "string" && problemContestIdHandoffs.issue(tabId!, problemContestId, senderUrl.href) });
     return;
   }
 
   if (request.type === SWEA_CONSUME_PROBLEM_CONTEST_ID) {
-    const page = message as { origin?: unknown; path?: unknown };
+    const page = message as { origin?: unknown; path?: unknown; referrer?: unknown };
     sendResponse({
-      problemContestId: Number.isInteger(tabId) && senderUrl?.origin === "https://swexpertacademy.com" && senderUrl.pathname === SWEA_SOLVING_PATH && typeof page.origin === "string" && typeof page.path === "string"
-        ? problemContestIdHandoffs.consume(tabId!, page.origin, page.path)
+      problemContestId: Number.isInteger(tabId) && senderUrl?.origin === "https://swexpertacademy.com" && senderUrl.pathname === SWEA_SOLVING_PATH && typeof page.origin === "string" && typeof page.path === "string" && typeof page.referrer === "string"
+        ? problemContestIdHandoffs.consume(tabId!, page.origin, page.path, page.referrer)
         : null,
     });
     return;

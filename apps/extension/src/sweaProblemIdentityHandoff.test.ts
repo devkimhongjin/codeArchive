@@ -14,21 +14,27 @@ describe("SWEA Problem-family identity handoff", () => {
   it("is same-tab, one-shot, short-lived, and replaces newer Problem detail context", () => {
     let now = 1_000;
     const store = createProblemContestIdHandoffStore(() => now);
-    expect(store.issue(7, "first")).toBe(true);
-    expect(store.issue(7, "second")).toBe(true);
-    expect(store.consume(8, "https://swexpertacademy.com", solvingPath)).toBeNull();
-    expect(store.consume(7, "https://swexpertacademy.com", solvingPath)).toBe("second");
-    expect(store.consume(7, "https://swexpertacademy.com", solvingPath)).toBeNull();
+    const firstUrl = "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=first";
+    const secondUrl = "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=second";
+    expect(store.issue(7, "first", firstUrl)).toBe(true);
+    expect(store.issue(7, "second", secondUrl)).toBe(true);
+    expect(store.consume(8, "https://swexpertacademy.com", solvingPath, secondUrl)).toBe("second");
+    expect(store.consume(7, "https://swexpertacademy.com", solvingPath, secondUrl)).toBeNull();
+    expect(store.issue(7, "second", secondUrl)).toBe(true);
+    expect(store.consume(7, "https://swexpertacademy.com", solvingPath, secondUrl)).toBe("second");
+    expect(store.consume(7, "https://swexpertacademy.com", solvingPath, secondUrl)).toBeNull();
 
-    expect(store.issue(7, "expired")).toBe(true);
+    expect(store.issue(7, "expired", firstUrl)).toBe(true);
     now += 60_001;
-    expect(store.consume(7, "https://swexpertacademy.com", solvingPath)).toBeNull();
+    expect(store.consume(7, "https://swexpertacademy.com", solvingPath, firstUrl)).toBeNull();
   });
 
   it("rejects wrong origin and route without preserving the handoff", () => {
     const store = createProblemContestIdHandoffStore(() => 1_000);
-    store.issue(7, "current");
-    expect(store.consume(7, "https://example.com", solvingPath)).toBeNull();
-    expect(store.consume(7, "https://swexpertacademy.com", solvingPath)).toBeNull();
+    const sourceUrl = "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=current";
+    store.issue(7, "current", sourceUrl);
+    expect(store.consume(7, "https://example.com", solvingPath, sourceUrl)).toBeNull();
+    expect(store.consume(7, "https://swexpertacademy.com", "/wrong", sourceUrl)).toBeNull();
+    expect(store.consume(7, "https://swexpertacademy.com", solvingPath, sourceUrl)).toBe("current");
   });
 });

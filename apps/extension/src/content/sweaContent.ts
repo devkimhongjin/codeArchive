@@ -19,11 +19,11 @@ let autoSave: SweaAutoSaveState = { status: "idle" };
 const pageKind = getSweaPageKind(initialUrl);
 if (pageKind === "problem_detail") {
   const problemContestId = detailProblemContestId(document, initialUrl);
-  if (problemContestId) void chrome.runtime.sendMessage({ type: SWEA_STORE_PROBLEM_CONTEST_ID, problemContestId });
+  if (problemContestId) void chrome.runtime.sendMessage({ type: SWEA_STORE_PROBLEM_CONTEST_ID, problemContestId, sourceUrl: initialUrl.href });
 }
 
 const problemContestIdPromise: Promise<string | null> = pageKind === "solving"
-  ? chrome.runtime.sendMessage({ type: SWEA_CONSUME_PROBLEM_CONTEST_ID, origin: initialUrl.origin, path: initialUrl.pathname })
+  ? chrome.runtime.sendMessage({ type: SWEA_CONSUME_PROBLEM_CONTEST_ID, origin: initialUrl.origin, path: initialUrl.pathname, referrer: document.referrer })
     .then((response) => (response as { problemContestId?: unknown })?.problemContestId)
     .then((value) => typeof value === "string" && value.trim() ? value.trim() : null)
     .catch(() => null)

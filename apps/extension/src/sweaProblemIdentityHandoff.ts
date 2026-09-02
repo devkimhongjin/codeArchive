@@ -6,6 +6,7 @@ export interface ProblemContestIdHandoff {
   issuedAt: number;
   sourceOrigin: "https://swexpertacademy.com";
   sourcePath: "/main/code/problem/problemDetail.do";
+  sourceUrl: string;
 }
 
 export function createProblemContestIdHandoffStore(
@@ -20,21 +21,33 @@ export function createProblemContestIdHandoffStore(
   };
 
   return {
-    issue(tabId: number, problemContestId: string): boolean {
+    issue(tabId: number, problemContestId: string, sourceUrl: string): boolean {
       if (!Number.isInteger(tabId) || !problemContestId.trim()) return false;
+      let parsedSource: URL;
+      try { parsedSource = new URL(sourceUrl); } catch { return false; }
+      if (parsedSource.origin !== "https://swexpertacademy.com" || parsedSource.pathname !== "/main/code/problem/problemDetail.do") return false;
       entries.set(tabId, {
         problemContestId: problemContestId.trim(),
         issuedAt: now(),
         sourceOrigin: "https://swexpertacademy.com",
         sourcePath: "/main/code/problem/problemDetail.do",
+        sourceUrl: parsedSource.href,
       });
       return true;
     },
-    consume(tabId: number, origin: string, path: string): string | null {
+    consume(tabId: number, origin: string, path: string, referrer: string): string | null {
+      if (origin !== "https://swexpertacademy.com" || path !== "/main/solvingProblem/solvingProblem.do") return null;
       cleanup(tabId);
-      const entry = entries.get(tabId);
-      entries.delete(tabId);
-      if (!entry || origin !== "https://swexpertacademy.com" || path !== "/main/solvingProblem/solvingProblem.do") return null;
+      let normalizedReferrer: string;
+      try { normalizedReferrer = new URL(referrer).href; } catch { return null; }
+      const sameTab = entries.get(tabId);
+      const entry = sameTab?.sourceUrl === normalizedReferrer
+        ? sameTab
+        : Array.from(entries.values()).find((candidate) => candidate.sourceUrl === normalizedReferrer);
+      if (!entry) return null;
+      const ownerTabId = Array.from(entries.entries()).find(([, candidate]) => candidate === entry)?.[0];
+      if (ownerTabId === undefined) return null;
+      entries.delete(ownerTabId);
       return entry.problemContestId;
     },
     size(): number { return entries.size; },
