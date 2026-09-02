@@ -1,7 +1,7 @@
 export interface SweaSolvingProblemMeta {
   problemNumber: string;
   title: string;
-  contestProbId: string | null;
+  problemContestId: string | null;
 }
 
 export type SweaSolvingProblemMetaResult =
@@ -33,7 +33,7 @@ function parseHeading(heading: string | null): Pick<SweaSolvingProblemMeta, "pro
   return { problemNumber: match[1], title };
 }
 
-export function detectSweaSolvingProblemMeta(document: Document, url: URL): SweaSolvingProblemMetaResult {
+export function detectSweaSolvingProblemMeta(document: Document, url: URL, handoffProblemContestId: string | null = null): SweaSolvingProblemMetaResult {
   const contestProbId = lastNonEmptyContestProbId(document);
   const urlContestProbId = url.searchParams.get("contestProbId")?.trim() || null;
 
@@ -52,7 +52,7 @@ export function detectSweaSolvingProblemMeta(document: Document, url: URL): Swea
 
   return {
     status: "detected",
-    problem: { ...parsedHeading, contestProbId: contestProbId ?? urlContestProbId },
+    problem: { ...parsedHeading, problemContestId: contestProbId ?? urlContestProbId ?? handoffProblemContestId },
     warnings: [],
   };
 }

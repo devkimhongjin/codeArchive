@@ -93,4 +93,20 @@ describe("sweaSubmissionResult", () => {
     await flushMutations();
     expect(onObservation).toHaveBeenCalledTimes(2);
   });
+
+  it("recognizes a new PASS when the same popup node is reused after a non-PASS transition", async () => {
+    const onObservation = vi.fn();
+    const document = documentFrom('<div class="popup_layer show"><div><p class="txt">Pass입니다.</p></div></div>');
+    const cleanup = observeSweaSubmissionResult(document, onObservation, fixedNow);
+    const text = document.querySelector(".txt")!;
+
+    text.textContent = "제출 중입니다.";
+    await flushMutations();
+    text.textContent = "Pass입니다.";
+    await flushMutations();
+
+    expect(onObservation).toHaveBeenCalledTimes(3);
+    expect(onObservation.mock.calls.filter(([value]) => value.submission.result === "ACCEPTED")).toHaveLength(2);
+    cleanup();
+  });
 });
