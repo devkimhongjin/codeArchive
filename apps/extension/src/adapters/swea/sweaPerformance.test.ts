@@ -28,6 +28,7 @@ describe("SWEA performance", () => {
     expect(parseSweaPerformance(resultDocument(row({ user: "other" })), nickname, code, observedAt)).toBeNull();
     expect(parseSweaPerformance(resultDocument(`${row()}${row({ time: "09:01" })}`), nickname, code, observedAt)).toBeNull();
     expect(parseSweaPerformance(resultDocument(row({ time: "08:54" })), nickname, code, observedAt)).toBeNull();
+    expect(parseSweaPerformance(resultDocument(row({ time: "08:58" })), nickname, code, observedAt)).toBeNull();
     expect(parseSweaPerformance(resultDocument(row({ memory: "12345 kb" })), nickname, code, observedAt)).toBeNull();
     expect(parseSweaPerformance(resultDocument(row({ execution: "1.5 ms" })), nickname, code, observedAt)).toBeNull();
   });

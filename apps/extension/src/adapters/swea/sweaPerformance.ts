@@ -4,6 +4,7 @@ const SWEA_ORIGIN = "https://swexpertacademy.com";
 const PROBLEM_DETAIL_PATH = "/main/code/problem/problemDetail.do";
 const PROBLEM_SOLVER_PATH = "/main/code/problem/problemSolver.do";
 const RESULT_ROW_SELECTOR = ".box-list-inner > .problem_smt.right_answer";
+const MAX_CURRENT_SUBMISSION_DELTA_MS = 90_000;
 const METRIC_LABELS = {
   memoryUsage: "메모리",
   executionTime: "실행시간",
@@ -115,7 +116,7 @@ export function parseSweaPerformance(
     const submitted = submissionTime(row);
     return submitter(row) === nickname
       && submitted !== null
-      && Math.abs(submitted - observedTime) <= 300_000;
+      && Math.abs(submitted - observedTime) <= MAX_CURRENT_SUBMISSION_DELTA_MS;
   });
   if (candidates.length !== 1) return null;
   return rowPerformance(candidates[0], code);
