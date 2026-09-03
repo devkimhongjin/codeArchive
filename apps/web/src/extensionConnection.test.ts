@@ -68,19 +68,79 @@ describe("Dashboard Extension connection", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("exhausts three retries without infinite timers and permits manual restart", async () => {
+  it("continues bounded backoff beyond the old short window without a retry storm and permits manual restart", async () => {
     const connect = vi.fn(() => { throw new Error("unavailable"); });
     const connection = createDashboardExtensionConnection({ connect });
     const state = vi.fn();
     connection.start(state);
-    await vi.runAllTimersAsync();
+    expect(connect).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(connect).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(connect).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(10_000);
     expect(connect).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(connect).toHaveBeenCalledTimes(5);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(connect).toHaveBeenCalledTimes(6);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(connect).toHaveBeenCalledTimes(7);
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(connect).toHaveBeenCalledTimes(8);
     expect(state).toHaveBeenLastCalledWith({ status: "error" });
     expect(vi.getTimerCount()).toBe(0);
     const stop = connection.start(state);
-    expect(connect).toHaveBeenCalledTimes(5);
+    expect(connect).toHaveBeenCalledTimes(9);
     stop();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reconnects with a fresh bridge and republishes only through the current Port", async () => {
+    const ports: FakePort[] = [];
+    const connect = vi.fn(() => { const port = new FakePort(); ports.push(port); return port; });
+    const states: ExtensionConnectionState[] = [];
+    const automation = vi.fn();
+    const connection = createDashboardExtensionConnection({ connect });
+    connection.start((state) => states.push(state), undefined, automation);
+    ports[0]!.receive({ ok: true, data: { protocolVersion: 1 } });
+    await flush();
+    ports[0]!.receive({ ok: true, data: { protocolVersion: 1, pendingCount: 1, allCount: 1, revision: 1 } });
+    await flush();
+    ports[0]!.disconnect();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(connect).toHaveBeenCalledTimes(2);
+    ports[0]!.receive({ type: "CODEARCHIVE_AUTOMATION_STATE_REQUEST", protocolVersion: 1 });
+    expect(automation).not.toHaveBeenCalled();
+    ports[1]!.receive({ ok: true, data: { protocolVersion: 1 } });
+    await flush();
+    ports[1]!.receive({ ok: true, data: { protocolVersion: 1, pendingCount: 2, allCount: 3, revision: 2 } });
+    await flush();
+    expect(states.at(-1)).toEqual({ status: "connected", summary: { protocolVersion: 1, pendingCount: 2, allCount: 3, revision: 2 } });
+    expect(connection.publishAutomationState!({ protocolVersion: 1, autoSyncEnabled: false, githubAutoCommitEnabled: false, githubTargetConfigured: false, authenticated: true, connectionAvailable: true, errorCode: null })).toBe(true);
+    expect(ports[1]!.sent.at(-1)).toMatchObject({ type: "CODEARCHIVE_AUTOMATION_STATE_UPDATE" });
+    expect(ports[0]!.sent).not.toContainEqual(expect.objectContaining({ type: "CODEARCHIVE_AUTOMATION_STATE_UPDATE" }));
+  });
+
+  it("starts a fresh bounded recovery window after a successful reconnect", async () => {
+    const ports: FakePort[] = [];
+    const connect = vi.fn(() => { const port = new FakePort(); ports.push(port); return port; });
+    const connection = createDashboardExtensionConnection({ connect });
+    connection.start(() => undefined);
+    for (const response of [
+      { ok: true, data: { protocolVersion: 1 } },
+      { ok: true, data: { protocolVersion: 1, pendingCount: 0, allCount: 0, revision: 1 } },
+    ]) { ports[0]!.receive(response); await flush(); }
+    ports[0]!.disconnect();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(connect).toHaveBeenCalledTimes(2);
+    ports[1]!.receive({ ok: true, data: { protocolVersion: 1 } });
+    await flush();
+    ports[1]!.receive({ ok: true, data: { protocolVersion: 1, pendingCount: 0, allCount: 0, revision: 2 } });
+    await flush();
+    ports[1]!.disconnect();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(connect).toHaveBeenCalledTimes(3);
   });
 
   it("uses the exact beta Extension ID and requests metadata only before consent eligibility", async () => {
