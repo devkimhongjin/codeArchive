@@ -10,21 +10,21 @@ function result(text: string, className = "result passed") {
 }
 
 describe("Programmers performance", () => {
-  it("averages every passed final-test row to deterministic two-decimal strings", () => {
+  it("sums every passed final-test execution time and averages memory to deterministic two-decimal strings", () => {
     const document = group([
       result("통과 (0.01ms, 73.3MB)"), result("통과 (0.02ms, 87.2MB)"), result("통과 (0.03ms, 83.7MB)"),
     ].join(""));
-    expect(parseProgrammersPerformanceGroup(findProgrammersResultGroup(document)!)).toEqual({ executionTime: "0.02 ms", memoryUsage: "81.40 MB" });
+    expect(parseProgrammersPerformanceGroup(findProgrammersResultGroup(document)!)).toEqual({ executionTime: "0.06 ms", memoryUsage: "81.40 MB" });
   });
 
-  it("matches the observed 13-test-case arithmetic average", () => {
+  it("matches the observed 13-test-case execution total and memory arithmetic average", () => {
     const values = [
       ["0.01", "73.3"], ["0.02", "87.2"], ["0.03", "83.7"], ["0.01", "80.7"], ["0.02", "74.5"],
       ["0.01", "84.2"], ["0.02", "81.8"], ["0.03", "77"], ["0.02", "83.6"], ["0.03", "75.3"],
       ["0.01", "80.9"], ["0.01", "84.4"], ["0.01", "73.8"],
     ];
     const document = group(values.map(([time, memory]) => result(`통과 (${time}ms, ${memory}MB)`)).join(""));
-    expect(parseProgrammersPerformanceGroup(findProgrammersResultGroup(document)!)).toEqual({ executionTime: "0.02 ms", memoryUsage: "80.03 MB" });
+    expect(parseProgrammersPerformanceGroup(findProgrammersResultGroup(document)!)).toEqual({ executionTime: "0.23 ms", memoryUsage: "80.03 MB" });
   });
 
   it("fails closed when any result is not a valid passed ms/MB row", () => {
