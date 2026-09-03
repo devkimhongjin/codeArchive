@@ -39,6 +39,7 @@ export interface PendingDrainController {
   run(syncSessionId: string): Promise<PendingDrainResult>;
   invalidate(): void;
   isRunning(): boolean;
+  isBusy(): boolean;
 }
 
 export type PendingDrainResultStatus = "completed" | "failed" | "cancelled" | "unavailable" | "busy";
@@ -302,6 +303,9 @@ export function createPendingDrainController(
     },
     isRunning() {
       return running;
+    },
+    isBusy() {
+      return running || scheduledSessionId !== null;
     },
   };
 }

@@ -92,7 +92,7 @@ describe("Dashboard automation authority", () => {
     expect(fixture.startSyncSession).toHaveBeenCalledTimes(2);
   });
 
-  it("invalidates the active sync session and remembered opt-in on explicit auto-sync OFF", async () => {
+  it("turns automatic mode off without revoking source-transfer consent", async () => {
     const fixture = bridge();
     const write = vi.fn();
     render(<App dataSource={{ listSolutions: async () => [] }} authClient={auth()} extensionConnection={fixture.extensionConnection} consentStore={{ read: () => false, write }} dashboardOrigin="https://codearchive-dashboard-beta.onrender.com" />);
@@ -100,7 +100,9 @@ describe("Dashboard automation authority", () => {
     await waitFor(() => expect(fixture.startSyncSession).toHaveBeenCalledTimes(1));
     await act(async () => fixture.send({ type: "CODEARCHIVE_AUTOMATION_SET_REQUEST", protocolVersion: 1, automation: "AUTO_SYNC", enabled: false }));
     await waitFor(() => expect(fixture.endSyncSession).toHaveBeenCalledTimes(1));
-    expect(write).toHaveBeenCalledWith(false, undefined);
+    await waitFor(() => expect(fixture.published.at(-1)).toMatchObject({ autoSyncEnabled: false, githubAutoCommitEnabled: false }));
+    expect(write).toHaveBeenCalledWith(true, expect.any(String));
+    expect(write).not.toHaveBeenCalledWith(false, undefined);
     expect(fixture.startSyncSession).toHaveBeenCalledTimes(1);
   });
 });
