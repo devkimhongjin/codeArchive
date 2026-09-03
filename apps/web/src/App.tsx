@@ -312,6 +312,7 @@ export function App({
       const errorCode = automationGuard("AUTO_SYNC");
       if (errorCode) { setAutomationAutoSyncEnabled(false); setAutomationError(errorCode); return; }
       automationSafetyStoppedRef.current = false;
+      setAutomationSafetyStopped(false);
       setAutomationError(null);
       setAutomationAutoSyncEnabled(true);
       return;

@@ -56,6 +56,20 @@ describe("Dashboard automation authority", () => {
     expect(fixture.startSyncSession).toHaveBeenCalledTimes(1);
   });
 
+  it("clears the multi-tab safety state only after an explicit valid AUTO_SYNC re-enable", async () => {
+    const fixture = bridge();
+    const store = { read: () => false, write: vi.fn() };
+    render(<App dataSource={{ listSolutions: async () => [] }} authClient={auth()} extensionConnection={fixture.extensionConnection} consentStore={store} dashboardOrigin="https://codearchive-dashboard-beta.onrender.com" />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: /자동 동기화/ }));
+    await waitFor(() => expect(fixture.startSyncSession).toHaveBeenCalledTimes(1));
+    await act(async () => fixture.send({ type: "CODEARCHIVE_AUTOMATION_SAFETY_STOP", protocolVersion: 1, errorCode: "MULTIPLE_DASHBOARD_TABS" }));
+    await waitFor(() => expect(fixture.published.at(-1)).toMatchObject({ autoSyncEnabled: false, githubAutoCommitEnabled: false, errorCode: "MULTIPLE_DASHBOARD_TABS" }));
+    await act(async () => fixture.send({ type: "CODEARCHIVE_AUTOMATION_SET_REQUEST", protocolVersion: 1, automation: "AUTO_SYNC", enabled: true }));
+    await waitFor(() => expect(fixture.startSyncSession).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fixture.published.at(-1)).toMatchObject({ autoSyncEnabled: true, githubAutoCommitEnabled: false, errorCode: null }));
+    expect(fixture.startSyncSession).toHaveBeenCalledTimes(2);
+  });
+
   it("invalidates the active sync session and remembered opt-in on explicit auto-sync OFF", async () => {
     const fixture = bridge();
     const write = vi.fn();
