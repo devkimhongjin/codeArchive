@@ -18,7 +18,9 @@ import { CODEARCHIVE_EXTENSION_ID } from "./extensionConfig";
 import { isAutomationControlType, parseAutomationMessage } from "./automationControl";
 
 const BRIDGE_RESPONSE_TIMEOUT_MS = 5_000;
-const RECONNECT_DELAYS_MS = [1_000, 3_000, 10_000] as const;
+// Keep a bounded recovery window long enough for ordinary service-worker suspension/wake,
+// without turning a missing Extension into a retry storm.
+const RECONNECT_DELAYS_MS = [1_000, 3_000, 10_000, 30_000, 60_000, 120_000, 300_000] as const;
 
 interface RuntimePort {
   postMessage(message: unknown): void;
@@ -250,6 +252,9 @@ export function createDashboardExtensionConnection(
             terminalError();
             return;
           }
+          // A successful handshake closes this outage. A later disconnect gets its own
+          // bounded recovery window instead of inheriting attempts from an earlier outage.
+          retries = 0;
           onState({ status: "connected", summary: summary.data });
         })();
 

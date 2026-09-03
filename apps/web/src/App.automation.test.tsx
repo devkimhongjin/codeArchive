@@ -31,6 +31,28 @@ function bridge() {
 }
 
 describe("Dashboard automation authority", () => {
+  it("publishes fresh sanitized automation state after a manual reconnect", async () => {
+    let attempts = 0;
+    const published: unknown[] = [];
+    const extensionConnection: DashboardExtensionConnection = {
+      start(onState) {
+        attempts += 1;
+        onState(attempts === 1
+          ? { status: "unavailable" }
+          : { status: "connected", summary: { protocolVersion: 1, pendingCount: 2, allCount: 3, revision: 2 } });
+        return () => undefined;
+      },
+      publishAutomationState(state) { published.push(state); return true; },
+      startSyncSession: vi.fn(async () => true),
+      endSyncSession: vi.fn(async () => undefined),
+    };
+    render(<App dataSource={{ listSolutions: async () => [] }} authClient={auth()} extensionConnection={extensionConnection} consentStore={{ read: () => false, write: vi.fn() }} dashboardOrigin="https://codearchive-dashboard-beta.onrender.com" />);
+    fireEvent.click(await screen.findByRole("button", { name: "다시 확인" }));
+    await screen.findByText("Extension 연결됨");
+    await waitFor(() => expect(published.at(-1)).toMatchObject({ authenticated: true, connectionAvailable: true, autoSyncEnabled: false, githubAutoCommitEnabled: false, errorCode: null }));
+    expect(attempts).toBe(2);
+  });
+
   it("answers state requests with only the sanitized authoritative shape and rejects ON without consent", async () => {
     const fixture = bridge();
     render(<App dataSource={{ listSolutions: async () => [] }} authClient={auth()} extensionConnection={fixture.extensionConnection} consentStore={{ read: () => false, write: vi.fn() }} dashboardOrigin="https://codearchive-dashboard-beta.onrender.com" />);
