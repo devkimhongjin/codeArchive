@@ -4,7 +4,7 @@ import { GitHubUpload } from "./GitHubUpload";
 import { mainApiGitHubClient, type GitHubClient } from "./githubClient";
 import { invalidateCommunity } from "./communityLifecycle";
 import { mainApiCommunityClient, type CommunityClient } from "./communityClient";
-import { createAccountConsentController } from "./accountConsent";
+import { createAccountConsentController, validatedAccountId } from "./accountConsent";
 import { ArchiveSessionExpiredError, mainApiArchiveDataSource } from "./archiveDataSource";
 import { archiveFilterOptions, EMPTY_ARCHIVE_FILTERS, filterDashboardSolutions } from "./archiveFilters";
 import {
@@ -243,7 +243,8 @@ export function App({
   }, [authClient, authAttempt, consentController]);
 
   const authenticated = authState.status === "authenticated" && verifiedAuthClient === authClient && !logoutPending;
-  const account = authenticated ? authState.user.id ?? authState.user.githubLogin : "";
+  const immutableAccountId = authenticated ? validatedAccountId(authState.user.id) : undefined;
+  const account = immutableAccountId ?? "";
   const accountRef = useRef(account);
   accountRef.current = account;
   const records = account && archive.account === account ? archive.records : [];
@@ -266,6 +267,23 @@ export function App({
     && connected
     && !logoutPending
     && !consentPending;
+  const githubAutomationBlockedReason = !authenticated
+    ? "GitHub 자동 커밋은 먼저 Dashboard에 로그인해야 사용할 수 있습니다."
+    : !immutableAccountId
+      ? "CodeArchive 계정 식별자를 확인할 수 없어 GitHub 자동 커밋을 시작할 수 없습니다. Dashboard를 새로고침하거나 다시 로그인해 주세요."
+      : !exactOrigin
+        ? "승인된 Dashboard 주소에서만 GitHub 자동 커밋을 사용할 수 있습니다."
+        : !connected
+          ? "Extension 연결을 확인해야 GitHub 자동 커밋을 켤 수 있습니다."
+          : !online
+            ? "온라인 상태가 되어야 GitHub 자동 커밋을 켤 수 있습니다."
+            : !autoSyncConsent
+              ? "자동 동기화 동의를 먼저 켜야 GitHub 자동 커밋을 사용할 수 있습니다."
+              : consentPending
+                ? "계정 동의를 확인하는 중입니다. 확인이 끝나면 다시 시도하세요."
+                : automationSafetyStopped
+                  ? "Dashboard가 여러 탭에서 열려 자동 커밋을 안전하게 시작할 수 없습니다. 다른 탭을 닫고 다시 시도하세요."
+                  : null;
 
   drainEligibilityRef.current = { eligible, activeSyncSessionId };
   if (manualSyncSessionRef.current) {
@@ -680,7 +698,7 @@ export function App({
         </div>
       </header>
 
-      {authenticated && authState.status === "authenticated" && authState.user.id && <GitHubUpload key={account} solution={selected ?? null} client={githubClient} syncEligible={eligible} automationIntent={automationIntent}
+      {authenticated && authState.status === "authenticated" && <GitHubUpload key={`${authState.user.id ?? "missing"}:${authState.user.githubLogin}`} accountIdValid={Boolean(immutableAccountId)} automationBlockedReason={githubAutomationBlockedReason} solution={selected ?? null} client={githubClient} syncEligible={eligible} automationIntent={automationIntent}
         onAutomationStateChange={(enabled, errorCode) => { setGithubAutoCommitEnabled(enabled); setAutomationError(errorCode); }}
         onTargetConfiguredChange={setGithubTargetConfigured}
         onSessionExpired={() => { if (accountRef.current === account) expireSession(); }} />}

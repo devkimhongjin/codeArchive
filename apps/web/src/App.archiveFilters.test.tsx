@@ -11,10 +11,11 @@ const records: DashboardSolution[] = [
   { id: "ten-old", platform: "SWEA", problemNumber: "10", title: "열 번째 문제", language: "Python", code: "old python", solvedAt: "2026-08-28", updatedAt: "2026-08-28T00:00:00Z", source: "captured" },
   { id: "programmers", platform: "PROGRAMMERS", problemNumber: "10", title: "다른 플랫폼", language: "Java", code: "other java", solvedAt: null, updatedAt: "2026-08-29T00:00:00Z", source: "captured" },
 ];
+const ACCOUNT_ID = "550e8400-e29b-41d4-a716-446655440000";
 
 function fixtures() {
   const authClient: DashboardAuthClient = {
-    discoverSession: vi.fn(async () => ({ status: "authenticated" as const, user: { githubLogin: "tester", displayName: "Tester", avatarUrl: "" } })),
+    discoverSession: vi.fn(async () => ({ status: "authenticated" as const, user: { id: ACCOUNT_ID, githubLogin: "tester", displayName: "Tester", avatarUrl: "" } })),
     login: vi.fn(), logout: vi.fn(async () => true),
   };
   const extensionConnection: DashboardExtensionConnection = {
@@ -95,7 +96,7 @@ describe("Dashboard archive discovery", () => {
     expect(screen.getByRole("combobox", { name: "플랫폼" })).toHaveValue("PROGRAMMERS");
     expect(screen.getByText(/검색 결과가 없습니다/)).toBeInTheDocument();
     const next = fixtures();
-    next.authClient.discoverSession = vi.fn(async () => ({ status: "authenticated" as const, user: { githubLogin: "other", displayName: "Other", avatarUrl: "" } }));
+    next.authClient.discoverSession = vi.fn(async () => ({ status: "authenticated" as const, user: { id: "650e8400-e29b-41d4-a716-446655440000", githubLogin: "other", displayName: "Other", avatarUrl: "" } }));
     rerender(<App {...props} authClient={next.authClient} />);
     await screen.findByText("Other");
     await waitFor(() => expect(screen.getByRole("combobox", { name: "플랫폼" })).toHaveValue(""));
