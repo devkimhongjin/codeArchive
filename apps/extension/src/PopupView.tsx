@@ -92,7 +92,7 @@ function AutomationControls({
       <label><input type="checkbox" aria-label="자동 동기화" checked={state.autoSyncEnabled} onChange={(event) => void changeAutomation("AUTO_SYNC", event.target.checked)} /> 자동 동기화</label>
       <label><input type="checkbox" aria-label="GitHub 자동 커밋" checked={state.githubAutoCommitEnabled} onChange={(event) => void changeAutomation("GITHUB_AUTO_COMMIT", event.target.checked)} /> GitHub 자동 커밋</label>
     </fieldset>
-    <p className="automation-guidance" role="status">{pending ? "Dashboard에 변경을 요청하는 중입니다." : automationGuidance(state)}</p>
+    <p className="automation-guidance" aria-live="polite">{pending ? "Dashboard에 변경을 요청하는 중입니다." : automationGuidance(state)}</p>
   </section>;
 }
 
