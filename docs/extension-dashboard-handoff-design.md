@@ -577,3 +577,169 @@ feature/fix branch
 - 기존 Main API user/session/solution 기반은 Dashboard가 재사용한다.
 - Extension 전용 login/exchange endpoint와 exact Extension CORS allowlist는 사용처 제거가 확인된 뒤 service cleanup 대상으로 분리한다.
 - 기존 Extension OAuth 문제를 추적하던 issue는 새 설계 merge 시 자동으로 계속 수행하지 않는다. Integrator가 각각 `superseded`, `re-scope`, 또는 Dashboard/API에 여전히 필요한 운영 문제인지 분류한다.
+
+## Issue #177 superseding contract — fully closed Dashboard relay
+
+이 섹션은 위의 기존 capture-only/#159 계약을 삭제하지 않고 **execution generation을 분리**한다. 위에서 “Dashboard가 닫혀 있으면 외부 네트워크 요청 없음”, “Extension은 Main API를 직접 호출하지 않음”, “pagehide/Port disconnect가 자동 실행 stop”이라고 한 규칙은 현재 `PAGE_OWNED` generation에 계속 적용된다. Issue #177의 replacement generation이 구현·명시 활성화·exact-beta acceptance되면 아래 규칙이 fully closed Dashboard 동작에 한해 이를 좁게 supersede한다.
+
+### Closed Dashboard 정의
+
+`Dashboard closed`는 Dashboard document/tab/external Port가 하나도 없는 상태다. `document.hidden` 또는 background tab은 #159의 page-owned background 동작이며 closed 상태가 아니다.
+
+Fully closed 상태의 목표 흐름은 다음이다.
+
+```text
+ACCEPTED
+→ Extension IndexedDB local commit
+→ Extension background capture relay
+→ Main API idempotent ingest
+→ local relay ACK receipt; source record retained
+→ durable server automation worker
+→ current GitHub target/privacy/permission/branch/HEAD revalidation
+→ conditional create-only GitHub commit
+```
+
+### Relay grant trust boundary
+
+Extension에 새로 허용되는 자격은 **capture relay 전용 grant**뿐이다. 이것은 Dashboard session, OAuth token, GitHub token 또는 일반 API credential이 아니다.
+
+Relay grant는 다음 조건을 모두 만족해야 한다.
+
+- authenticated exact-origin Dashboard와 현재 연결된 Extension pairing에서만 provision한다.
+- server-issued cryptographically random credential 또는 동등 이상 메커니즘을 사용한다.
+- device/account/automation generation에 결합한다.
+- independently revocable하고 shortest practical lifetime/rotation 정책을 가진다.
+- grant 자체로 append-only captured-solution ingest와 그 요청의 receipt 확인 외 다른 API를 사용할 수 없다.
+- archive list/read/update/delete, account/admin, AI, community, GitHub installation/target/read/write API를 허용하지 않는다.
+- relay payload의 user/account ID는 authority로 사용하지 않는다. server가 grant에서 authenticated ownership을 결정한다.
+- capture payload는 기존 shared capture 의미와 strict schema/body/page/rate limits를 적용한다.
+- `(userId, clientRecordId)` idempotency와 replay-safe 결과를 유지한다.
+- grant, source body, OAuth/token/cookie, provider raw body를 로그/telemetry/issue에 기록하지 않는다.
+- logout/account switch/revocation이 API/worker restart 후에도 유지되어야 한다.
+
+Extension은 relay용으로 다음 최소 durable 상태만 가질 수 있다.
+
+- opaque grant identifier/secret 또는 동등한 device credential;
+- grant의 account/device/generation binding을 확인하기 위한 최소 metadata;
+- 기존 local capture/ACK receipt;
+- offline explicit OFF를 즉시 fail-closed하기 위한 local stop/revocation-pending marker.
+
+Extension은 GitHub App JWT/installation token, repository/branch/folder target, provider HEAD, worker lease, Dashboard cookie/session bearer, 일반 CodeArchive account credential을 저장하지 않는다.
+
+현재 manifest에 Main API host permission이 존재하더라도 그것은 이 새 credential/transport semantics에 대한 blanket approval이 아니다. relay 구현에 새 host/browser permission 또는 origin expansion이 필요하면 **manifest를 수정하기 전에** exact proposed diff와 이유를 Integrator/owner gate로 반환한다.
+
+### Durable server automation model
+
+Replacement generation의 server/account-device state는 다음 의미만 지속할 수 있다.
+
+1. `sourceTransferEnabled` 또는 동등한 relay ingest intent;
+2. `githubAutoCommitEnabled`;
+3. server-validated GitHub installation/repository/branch/folder target;
+4. target generation/version;
+5. source-transfer consent, GitHub automatic/visibility-risk consent, current privacy에 결합된 public-repository consent;
+6. `enabledAt` 또는 동등한 monotonic automation generation;
+7. worker claim/run/attempt/lease 및 terminal uncertainty state.
+
+Persisted provider HEAD는 unconditional authority가 아니다. GitHub write 직전에 installation ownership, repository identity/privacy, branch/protection, current HEAD를 provider에서 fresh revalidation하고 existing conditional create-only contract를 사용한다.
+
+### New-capture-only invariant
+
+GitHub auto eligibility는 server ingest 시각이 아니라 **불변 original capture provenance와 현재 ON generation**으로 결정한다. 현재 generation 이전에 생성된 capture는 Dashboard가 닫힌 동안 늦게 relay되거나 #166 manual sync로 나중에 server-backed가 되어도 historical auto-backfill 대상이 아니다.
+
+`scope: all`, ACK reset 또는 historical re-import는 이 relay의 기본 자동 경로가 아니다. #166 manual recovery는 Main API catch-up으로 유지되고 GitHub automatic eligibility를 재작성하지 않는다.
+
+### Lifecycle semantics
+
+#### Explicit OFF
+
+- Extension은 추가 source relay를 즉시 local fail-closed한다.
+- online이면 server durable OFF/grant revoke를 요청한다.
+- server confirmation 전에는 UI/status를 “local stop / server revocation pending”으로 구분하고 confirmed global OFF라고 표시하지 않는다.
+- confirmed OFF 이후 새 capture는 이전 generation의 automatic work가 될 수 없다.
+- 이미 provider로 dispatch된 mutation은 완료될 수 있고 `UNKNOWN`은 자동 retry하지 않는다.
+
+#### Logout / account switch
+
+- old account/device grant를 revoke하고 old durable automation generation을 disable한다.
+- late response/stale grant/stale generation은 새 account에서 무효다.
+- old grant는 account switch 후 어떤 일반 API 또는 새 account relay에도 사용할 수 없다.
+
+#### Extension disconnect / service-worker restart / offline
+
+- server에 이미 idempotently ingest된 eligible work는 durable server intent가 여전히 유효하면 worker가 처리할 수 있다.
+- relay가 unavailable이면 새 capture는 local에만 남는다.
+- service-worker restart는 persisted narrow grant를 검증 후 reload할 수 있지만 Dashboard/GitHub authority를 복원하지 않는다.
+- offline capture는 local pending으로 남고 same grant/generation이 여전히 valid할 때만 reconnect 후 relay한다.
+- offline에서 OFF를 선택하면 source relay는 즉시 local stop하고 server revocation은 pending으로 유지한다.
+
+#### Worker/API restart and UNKNOWN
+
+- worker는 durable profile/claim/attempt ledger에서만 복구한다.
+- in-memory Dashboard timer/lease를 continuity source로 사용하지 않는다.
+- ATTEMPTED/UNKNOWN/uncertain provider 결과는 restart 뒤에도 terminal/blocking이며 자동 재전송하지 않는다.
+
+#### Multiple Dashboard tabs
+
+- Dashboard tabs는 durable state controller이지 GitHub writer가 아니다.
+- target/enable 변경은 server generation/version conditional update로 stale/conflict를 fail-closed한다.
+- #159 single-Port rule은 기존 Dashboard↔Extension source-capability operation에 계속 적용한다.
+- durable worker는 arbitrary Dashboard tab을 선택하거나 Port 수에 따라 writer ownership을 획득하지 않는다.
+
+### Pagehide transition
+
+현재 `PAGE_OWNED` generation에서는 `pagehide`, navigation, Port disconnect가 기존 sync capability와 GitHub page-owned run을 stop/invalidate하는 규칙을 유지한다.
+
+향후 `DURABLE_SERVER` generation에서는 Dashboard pagehide가 page-local Port/capability, timers, inflight page requests, legacy page lease만 종료한다. **이미 server에서 confirmed된 durable sourceTransfer/GitHub-auto intent는 page close만으로 clear하지 않는다.**
+
+따라서 구현 시 기존 cleanup handler만 삭제해서 page-owned runtime을 억지로 계속 살리는 것은 금지한다. `GitHubAutoCommit.tsx`는 durable worker가 존재한 뒤 control/status surface로 전환되어야 한다.
+
+### Migration/coexistence — single writer rule
+
+Rollout에는 server-authoritative execution mode/generation gate가 필요하다.
+
+```text
+PAGE_OWNED
+DURABLE_SERVER
+```
+
+한 account/automation generation에서는 둘 중 하나만 GitHub execution을 소유할 수 있다.
+
+- `DURABLE_SERVER` 전환 전에 page-owned automatic execution을 ineligible로 만들고 active page run을 stop/invalidate한다.
+- worker는 server gate가 durable ownership을 확정한 뒤에만 새 claim을 잡는다.
+- mixed Web/API/Extension deploy, refresh, multi-tab, worker restart에서도 client가 local 추측으로 ownership을 전환하지 않는다.
+- rollback은 durable claims가 stop/expire된 것을 server가 확인한 뒤 fresh generation으로만 `PAGE_OWNED`를 복원한다.
+- ownership 전환 후 stale run/target/provider HEAD는 재사용하지 않고 fresh target/HEAD validation을 요구한다.
+
+이 gate가 없으면 Slice 1 이후 구현을 진행하지 않는다. dual writer 가능성을 lease 시간 조정이나 client timer로 완화하지 않는다.
+
+### #177 exact-beta acceptance
+
+Replacement architecture의 완료 증거는 reviewed exact `develop` beta에서 다음을 모두 포함해야 한다.
+
+1. authenticated Dashboard에서 relay/device context와 durable automation을 명시적으로 enable한다.
+2. Dashboard tab/document를 전부 닫는다.
+3. real ACCEPTED capture가 Extension IndexedDB에 먼저 local commit된다.
+4. Dashboard document 없이 relay가 Main API로 capture를 보내고 `(userId, clientRecordId)` 기준 exactly-once/idempotent server record를 만든다.
+5. local source record는 유지되고 relay receipt만 갱신된다.
+6. durable worker가 fresh provider target/HEAD를 확인하고 GitHub에 at-most-one conditional commit을 만든다.
+7. pre-ON historical capture가 늦게 relay/import되어도 auto-backfill되지 않는다.
+8. explicit OFF/revoke, logout/account switch, offline/reconnect, Extension restart가 fail closed한다.
+9. API/worker restart 후 duplicate write가 없고 `UNKNOWN`은 retry되지 않는다.
+10. target/privacy/permission/branch/protection change가 unsafe write 전에 stop된다.
+11. migration 동안 동일 generation에 page-owned writer와 durable worker가 동시에 존재하지 않음을 증명한다.
+
+Issue #86 cleanup은 이 exact-beta replacement E2E 이후까지 계속 blocked다.
+
+### Slice 0 non-authorization
+
+이 문서 계약은 다음 실행을 승인하지 않는다.
+
+- Render/provider worker/service 생성 또는 runtime mutation;
+- environment/secret 변경;
+- GitHub App permission 변경;
+- Extension manifest/host/origin permission 변경;
+- beta deployment/package rollout;
+- `master` 또는 Production;
+- Issue #86 cleanup.
+
+위 항목은 각각 별도 explicit owner approval gate가 필요하다. Replacement runtime이 구현·검증되기 전까지 현재 `apps/web/**` / `apps/extension/**`의 pagehide/disconnect fail-closed 구현은 변경하지 않는다.
