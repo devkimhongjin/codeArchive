@@ -36,8 +36,17 @@ export interface PendingDrainApiClient {
 
 export interface PendingDrainController {
   schedule(syncSessionId: string): void;
+  run(syncSessionId: string): Promise<PendingDrainResult>;
   invalidate(): void;
   isRunning(): boolean;
+}
+
+export type PendingDrainResultStatus = "completed" | "failed" | "cancelled" | "unavailable" | "busy";
+
+export interface PendingDrainResult {
+  readonly status: PendingDrainResultStatus;
+  readonly recordsRead: number;
+  readonly acknowledged: number;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -210,45 +219,51 @@ export function createPendingDrainController(
   const stillEligible = (sessionId: string, runGeneration: number) =>
     generation === runGeneration && isEligible(sessionId);
 
-  const drain = async (sessionId: string, runGeneration: number) => {
+  const drain = async (sessionId: string, runGeneration: number): Promise<PendingDrainResult> => {
     const beginImport = bridge.beginImport;
     const readPendingPage = bridge.readPendingPage;
     const ackImported = bridge.ackImported;
-    if (!beginImport || !readPendingPage || !ackImported) return;
-    if (!stillEligible(sessionId, runGeneration)) return;
+    if (!beginImport || !readPendingPage || !ackImported) return { status: "unavailable", recordsRead: 0, acknowledged: 0 };
+    if (!stillEligible(sessionId, runGeneration)) return { status: "cancelled", recordsRead: 0, acknowledged: 0 };
     const capability = await beginImport(sessionId);
-    if (!capability || !stillEligible(sessionId, runGeneration)) return;
+    if (!capability) return { status: "unavailable", recordsRead: 0, acknowledged: 0 };
+    if (!stillEligible(sessionId, runGeneration)) return { status: "cancelled", recordsRead: 0, acknowledged: 0 };
 
     let cursor: string | undefined;
+    let recordsRead = 0;
+    let acknowledged = 0;
     for (let pageCount = 0; pageCount < CODEARCHIVE_SYNC_MAX_PAGE_REQUESTS; pageCount += 1) {
-      if (!stillEligible(sessionId, runGeneration)) return;
+      if (!stillEligible(sessionId, runGeneration)) return { status: "cancelled", recordsRead, acknowledged };
       const rawPage = await readPendingPage(capability, cursor);
-      if (!stillEligible(sessionId, runGeneration)) return;
+      if (!stillEligible(sessionId, runGeneration)) return { status: "cancelled", recordsRead, acknowledged };
       const page = parsePendingPage(rawPage);
-      if (!page) return;
+      if (!page) return { status: "failed", recordsRead, acknowledged };
+      recordsRead += page.records.length;
 
       if (page.records.length > 0) {
         const importBatchId = generateImportBatchId();
-        if (!stillEligible(sessionId, runGeneration)) return;
+        if (!stillEligible(sessionId, runGeneration)) return { status: "cancelled", recordsRead, acknowledged };
         let ackableIds: readonly string[] | null;
         try {
           ackableIds = await api.upsert(importBatchId, page.records, () => stillEligible(sessionId, runGeneration));
         } catch (error) {
           if (error instanceof PendingDrainSessionExpiredError && stillEligible(sessionId, runGeneration)) onSessionExpired();
-          return;
+          return { status: "failed", recordsRead, acknowledged };
         }
-        if (!stillEligible(sessionId, runGeneration)) return;
-        if (ackableIds === null) return;
+        if (!stillEligible(sessionId, runGeneration)) return { status: "cancelled", recordsRead, acknowledged };
+        if (!ackableIds) return { status: "failed", recordsRead, acknowledged };
         if (ackableIds.length > 0) {
           onServerRecordsChanged();
-          await ackImported(capability, importBatchId, ackableIds);
-          if (!stillEligible(sessionId, runGeneration)) return;
+          if (!await ackImported(capability, importBatchId, ackableIds)) return { status: "failed", recordsRead, acknowledged };
+          acknowledged += ackableIds.length;
+          if (!stillEligible(sessionId, runGeneration)) return { status: "cancelled", recordsRead, acknowledged };
         }
       }
 
-      if (!page.nextCursor) return;
+      if (!page.nextCursor) return { status: "completed", recordsRead, acknowledged };
       cursor = page.nextCursor;
     }
+    return { status: "failed", recordsRead, acknowledged };
   };
 
   const pump = async () => {
@@ -271,6 +286,15 @@ export function createPendingDrainController(
     schedule(syncSessionId) {
       scheduledSessionId = syncSessionId;
       void pump();
+    },
+    run(syncSessionId) {
+      if (running || scheduledSessionId) return Promise.resolve({ status: "busy", recordsRead: 0, acknowledged: 0 });
+      running = true;
+      const runGeneration = generation;
+      return drain(syncSessionId, runGeneration).finally(() => {
+        running = false;
+        if (scheduledSessionId) void pump();
+      });
     },
     invalidate() {
       generation += 1;

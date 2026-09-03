@@ -125,8 +125,11 @@ export function App({
   const [automationIntent, setAutomationIntent] = useState<{ enabled: boolean; nonce: number } | null>(null);
   const [automationSafetyStopped, setAutomationSafetyStopped] = useState(false);
   const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine !== false);
+  const [manualSyncStatus, setManualSyncStatus] = useState<"idle" | "running" | "success" | "partial" | "blocked" | "failed">("idle");
+  const [manualSyncMessage, setManualSyncMessage] = useState("");
 
   const drainEligibilityRef = useRef({ eligible: false, activeSyncSessionId: null as string | null });
+  const manualSyncPendingBeforeRef = useRef(0);
   const sessionExpiredRef = useRef(() => {});
   const automationSafetyStoppedRef = useRef(false);
   const automationStateRef = useRef(sanitizeAutomationState({
@@ -291,6 +294,66 @@ export function App({
     return null;
   }
 
+  function manualSyncBlockReason(): string | null {
+    if (!authenticated) return "로그인 후 로컬 풀이를 동기화할 수 있습니다.";
+    if (!exactOrigin) return "승인된 Dashboard에서만 로컬 풀이를 동기화할 수 있습니다.";
+    if (!online) return "오프라인 상태에서는 동기화할 수 없습니다.";
+    if (automationSafetyStopped) return "여러 Dashboard 탭이 감지되어 동기화를 중지했습니다.";
+    if (!connected) return "Extension 연결 후 동기화할 수 있습니다.";
+    if (!autoSyncConsent || !effectiveAutoSyncEnabled) return "자동 동기화 동의와 현재 활성화가 필요합니다.";
+    if (!activeSyncSessionId) return "동기화 세션을 준비하는 중입니다.";
+    if (logoutPending || consentPending) return "현재 계정 상태가 정리되는 중입니다.";
+    return null;
+  }
+
+  async function runManualSync() {
+    if (manualSyncStatus === "running") return;
+    const blocked = manualSyncBlockReason();
+    if (blocked) {
+      setManualSyncStatus("blocked");
+      setManualSyncMessage(blocked);
+      return;
+    }
+    const sessionId = activeSyncSessionId;
+    if (!sessionId) return;
+    manualSyncPendingBeforeRef.current = extensionState.status === "connected" ? extensionState.summary.pendingCount : 0;
+    setManualSyncStatus("running");
+    setManualSyncMessage("동기화 중");
+    const result = await pendingDrainController.run(sessionId);
+    if (result.status === "busy") {
+      setManualSyncStatus("blocked");
+      setManualSyncMessage("이미 동기화 중입니다.");
+      return;
+    }
+    if (result.acknowledged > 0) {
+      setExtensionState((current) => current.status === "connected"
+        ? { ...current, summary: { ...current.summary, pendingCount: Math.max(0, current.summary.pendingCount - result.acknowledged) } }
+        : current);
+    }
+    if (result.status === "completed" && result.recordsRead === 0) {
+      setManualSyncStatus("success");
+      setManualSyncMessage("동기화할 로컬 풀이 없음");
+      return;
+    }
+    if (result.status === "completed" && result.acknowledged === result.recordsRead) {
+      setManualSyncStatus("success");
+      setManualSyncMessage(`${result.acknowledged}건 동기화 완료`);
+      return;
+    }
+    if (result.acknowledged > 0) {
+      const remaining = Math.max(0, manualSyncPendingBeforeRef.current - result.acknowledged);
+      setManualSyncStatus("partial");
+      setManualSyncMessage(`${result.acknowledged}건 동기화 완료 · ${remaining}건 pending 남음`);
+      return;
+    }
+    setManualSyncStatus(result.status === "cancelled" || result.status === "unavailable" ? "blocked" : "failed");
+    setManualSyncMessage(result.status === "cancelled"
+      ? "현재 연결 또는 계정 상태가 바뀌어 동기화를 취소했습니다."
+      : result.status === "unavailable"
+        ? "현재 Extension 연결에서 동기화를 시작할 수 없습니다."
+        : "동기화에 실패했습니다. pending 풀이는 로컬에 유지됩니다.");
+  }
+
   automationMessageRef.current = (message) => {
     if (message.type === "CODEARCHIVE_AUTOMATION_STATE_REQUEST") {
       extensionConnection.publishAutomationState?.(automationStateRef.current);
@@ -355,6 +418,8 @@ export function App({
     automationSafetyStoppedRef.current = false;
     setGithubAutoCommitEnabled(false);
     setGithubTargetConfigured(false);
+    setManualSyncStatus("idle");
+    setManualSyncMessage("");
     nextAutomationIntent(false);
     setAutomationAutoSyncEnabled(false);
   }, [account]);
@@ -523,6 +588,13 @@ export function App({
             {(extensionState.status === "unavailable" || extensionState.status === "error") && (
               <button type="button" onClick={() => setConnectionAttempt((value) => value + 1)}>다시 확인</button>
             )}
+          </div>
+          <div className="manual-sync-status" aria-live="polite">
+            <strong>{extensionState.status === "connected" ? `로컬 pending ${extensionState.summary.pendingCount}건` : "로컬 pending 확인 불가"}</strong>
+            <button type="button" disabled={manualSyncStatus === "running" || Boolean(manualSyncBlockReason())} onClick={() => void runManualSync()}>
+              {manualSyncStatus === "running" ? "동기화 중" : "지금 동기화"}
+            </button>
+            <small>{manualSyncBlockReason() || manualSyncMessage || "현재 pending 풀이를 즉시 서버에 동기화합니다."}</small>
           </div>
         </div>
       </header>
