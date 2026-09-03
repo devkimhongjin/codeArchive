@@ -94,3 +94,88 @@ Real Chrome acceptance for Issue #159 additionally requires a non-sensitive test
 - Extension control payloads contain no GitHub target/account/source data.
 
 This contract change does **not** enable GitHub App flags, install/configure an App, send user source to GitHub, change V9, alter API/DB/runtime configuration, expand browser/origin permissions, deploy beta, package the Extension, touch `master`, or authorize Production. Merge and beta runtime actions remain separate owner approval gates.
+
+## Issue #177 superseding contract — fully closed Dashboard
+
+Issue #177 adds a separate future execution generation for the literal state **Dashboard closed**, meaning no Dashboard document, tab, or external Port exists. This section supersedes the page-owned statements above only after the durable replacement generation is implemented, explicitly enabled, and accepted in exact-beta Real Chrome. Until then, the current #159 page-owned behavior remains normative and `pagehide`/disconnect still stops automatic execution.
+
+### Durable execution ownership
+
+The replacement flow is:
+
+```text
+ACCEPTED
+→ Extension local IndexedDB commit
+→ narrow append-only capture relay
+→ Main API idempotent ingest
+→ durable server automation worker
+→ fresh GitHub target/HEAD validation
+→ conditional create-only commit
+```
+
+The Main API/worker owns durable automatic execution, GitHub target state, consent state, attempt/lease state, provider validation, and GitHub writes. GitHub App credentials and short-lived installation tokens remain server-only. The Extension never receives GitHub credentials, repository write authority, target values, provider HEAD authority, or retry authority.
+
+A server worker alone is not sufficient: while every Dashboard document is closed, newly captured source exists only in Extension local storage. Therefore the replacement generation requires the separately specified, narrowly scoped capture-relay grant. The relay is only a source delivery mechanism; it is not a GitHub automation credential.
+
+### Durable automation state
+
+The server persists only the background-continuation state needed for the current account/device automation generation:
+
+- source-transfer enabled state;
+- GitHub auto-commit enabled state;
+- server-validated installation/repository/branch/folder target plus target generation/version;
+- automatic source-transfer consent and GitHub visibility-risk consent;
+- public-repository consent bound to current repository privacy/target generation;
+- `enabledAt` or an equivalent monotonic automation generation boundary;
+- durable worker run/attempt/lease state and terminal uncertainty state.
+
+A persisted provider HEAD is never perpetual write authority. Before every GitHub mutation the server re-reads/revalidates the installation, repository ownership, privacy, branch/protection state and fresh HEAD, then uses the existing conditional create-only writer. No overwrite, rebase, force push, historical backfill, or automatic retry of uncertain work is introduced.
+
+### New-capture-only invariant
+
+Automatic GitHub eligibility is based on immutable original capture provenance and the current server ON generation, not on the time a delayed relay first reaches the server. A record captured before the current GitHub-auto ON generation is never automatically committed merely because it is ingested later. #166 manual pending recovery may still import historical pending records into Main API, but that import does not convert them into GitHub auto-backfill candidates.
+
+### Lifecycle and pagehide
+
+For the replacement durable generation:
+
+- closing/navigating the Dashboard tears down page-local Port/capability, timers, requests, and any legacy page lease;
+- `pagehide` does **not** by itself clear already confirmed durable source-transfer/GitHub-auto intent;
+- explicit OFF stops new local relay immediately and must persist server OFF/revocation when reachable;
+- if global OFF cannot be confirmed, UI/state must distinguish local stop from server revocation pending;
+- logout/account switch revokes the device/account relay grant and disables the old account automation generation; stale responses cannot reactivate it;
+- offline capture remains local and may relay only after connectivity returns and the same grant/generation is still valid;
+- worker restart reconstructs work only from durable state/attempt ledger; `UNKNOWN` remains terminal and is never automatically retried;
+- target, ownership, privacy, permission, branch/protection or generation mismatch fails closed.
+
+The current `GitHubAutoCommit.tsx` page-owned run is not converted into an always-running owner by deleting its cleanup. Long-lived execution moves to the server only after the replacement worker exists.
+
+### Multiple tabs and writer exclusivity
+
+Dashboard tabs become controllers of durable state rather than competing execution owners. Multiple pages must not create multiple writers. Target/enable mutations require server generation/version checks and fail closed on stale/conflicting state. The existing #159 single-Port rule continues to protect Dashboard↔Extension source-capability operations while that bridge is used, but the durable worker never selects an arbitrary Dashboard tab as writer.
+
+During migration there must be an explicit server-controlled execution mode/generation gate with two mutually exclusive modes:
+
+- `PAGE_OWNED`: current #159 browser tick/60-second lease behavior;
+- `DURABLE_SERVER`: #177 relay + worker behavior.
+
+For one account/automation generation, exactly one mode may own GitHub execution. Enabling `DURABLE_SERVER` must first make page-owned execution ineligible and invalidate/stop any page-owned run before the worker can claim new work. Rollback reverses ownership only after durable worker claims are stopped/expired and must not reuse stale target/HEAD/run state. A fresh generation and fresh provider validation are required after every ownership transition.
+
+No Web/Extension implementation may infer this handoff locally. The server feature/migration gate is authoritative and must prevent dual writers across deploy skew, browser refresh, worker restart, or rollback.
+
+### #177 exact-beta acceptance
+
+The replacement generation is not accepted until a reviewed exact `develop` beta proves in real Chrome:
+
+1. GitHub auto is explicitly enabled and the relay/device context is provisioned while Dashboard is authenticated.
+2. Every Dashboard document is fully closed.
+3. A real ACCEPTED submission is committed to Extension IndexedDB.
+4. The relay sends that capture exactly/idempotently to Main API while no Dashboard document exists.
+5. The durable worker processes it and produces at most one conditional GitHub commit.
+6. A pre-ON historical capture is not automatically committed when later relayed/imported.
+7. explicit OFF/revocation, logout/account switch, offline/reconnect and Extension restart remain fail closed.
+8. API/worker restart does not duplicate work or retry `UNKNOWN`.
+9. target/privacy/permission/branch change stops before an unsafe provider write.
+10. migration mode proves there is never both a page-owned writer and durable worker for the same generation.
+
+Issue #86 remains blocked until this replacement E2E succeeds. This contract does not authorize a Render worker/service, environment/secret mutation, GitHub App permission mutation, Extension manifest/host permission expansion, beta deployment, `master`/Production, or cleanup. Each remains a separate owner gate.
