@@ -15,6 +15,14 @@ import { codeArchiveAuthService } from "./authRuntime";
 import type { CodeArchiveAuthService } from "./authSession";
 import { codeArchiveAiApi, type CodeArchiveAiApi } from "./aiArtifacts";
 import { CODEARCHIVE_DASHBOARD_ORIGIN } from "./dashboardConfig";
+import {
+  automationGuidance,
+  requestPopupAutomationState,
+  setPopupAutomation,
+  unavailableAutomationState,
+  type PopupAutomationSetResponse,
+  type PopupAutomationStateResponse,
+} from "./automationControl";
 
 const RECENT_GROUP_LIMIT = 5;
 const EMPTY_FORM: NewSolutionInput = { platform: "", problemNumber: "", title: "", language: "", code: "", solvedAt: null, aiUsage: "unknown" };
@@ -30,6 +38,8 @@ interface PopupProps {
   confirmDelete?: (message: string) => boolean;
   authService?: CodeArchiveAuthService;
   aiApi?: CodeArchiveAiApi;
+  requestAutomationState?: () => Promise<PopupAutomationStateResponse>;
+  setAutomation?: (automation: "AUTO_SYNC" | "GITHUB_AUTO_COMMIT", enabled: boolean) => Promise<PopupAutomationSetResponse>;
 }
 
 type ViewMode = "list" | "create" | "detail" | "edit";
@@ -46,6 +56,46 @@ function CopySettingsControls({ settings, onChange }: { settings: CopySettings; 
   return <fieldset className="copy-settings"><legend>코드 복사 설정</legend><label><input type="checkbox" checked={settings.includeProblemInfo} onChange={() => toggle("includeProblemInfo")} /> 문제 정보 주석</label><label><input type="checkbox" checked={settings.includeLanguage} onChange={() => toggle("includeLanguage")} /> 언어 주석</label><label><input type="checkbox" checked={settings.includePerformance} onChange={() => toggle("includePerformance")} /> 실행시간·메모리 주석</label></fieldset>;
 }
 
+function AutomationControls({
+  requestState,
+  setAutomation,
+}: {
+  requestState: () => Promise<PopupAutomationStateResponse>;
+  setAutomation: (automation: "AUTO_SYNC" | "GITHUB_AUTO_COMMIT", enabled: boolean) => Promise<PopupAutomationSetResponse>;
+}) {
+  const [state, setState] = useState(() => unavailableAutomationState());
+  const [pending, setPending] = useState<"AUTO_SYNC" | "GITHUB_AUTO_COMMIT" | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    requestState().then((response) => { if (active) setState(response.state); }).catch(() => { if (active) setState(unavailableAutomationState()); });
+    return () => { active = false; };
+  }, [requestState]);
+
+  async function changeAutomation(automation: "AUTO_SYNC" | "GITHUB_AUTO_COMMIT", enabled: boolean): Promise<void> {
+    setPending(automation);
+    try {
+      const response = await setAutomation(automation, enabled);
+      setState(response.state);
+    } catch {
+      setState(unavailableAutomationState());
+    } finally {
+      setPending(null);
+    }
+  }
+
+  const disabled = pending !== null || !state.connectionAvailable || state.errorCode !== null;
+  return <section className="automation-controls" aria-labelledby="automation-controls-title">
+    <div className="automation-heading"><div><h2 id="automation-controls-title">자동화</h2><p>Dashboard가 최종 상태를 관리합니다.</p></div><span className="automation-badge">{state.connectionAvailable && state.errorCode === null ? "연결됨" : "사용 불가"}</span></div>
+    <fieldset disabled={disabled}>
+      <legend className="sr-only">자동화 제어</legend>
+      <label><input type="checkbox" aria-label="자동 동기화" checked={state.autoSyncEnabled} onChange={(event) => void changeAutomation("AUTO_SYNC", event.target.checked)} /> 자동 동기화</label>
+      <label><input type="checkbox" aria-label="GitHub 자동 커밋" checked={state.githubAutoCommitEnabled} onChange={(event) => void changeAutomation("GITHUB_AUTO_COMMIT", event.target.checked)} /> GitHub 자동 커밋</label>
+    </fieldset>
+    <p className="automation-guidance" role="status">{pending ? "Dashboard에 변경을 요청하는 중입니다." : automationGuidance(state)}</p>
+  </section>;
+}
+
 export function Popup({
   repository = indexedDbSolutionRepository,
   requestPageContext,
@@ -55,6 +105,8 @@ export function Popup({
   confirmDelete = (message) => window.confirm(message),
   authService = codeArchiveAuthService,
   aiApi = codeArchiveAiApi,
+  requestAutomationState = requestPopupAutomationState,
+  setAutomation = setPopupAutomation,
 }: PopupProps) {
   const [form, setForm] = useState<NewSolutionInput>(EMPTY_FORM);
   const [records, setRecords] = useState<SolutionRecord[]>([]);
@@ -95,6 +147,7 @@ export function Popup({
       <button className="primary-button" type="button" onClick={openDashboard}>전체 풀이 보기</button>
       <p className="dashboard-entry-hint">새 탭으로 열립니다. 자동 동기화는 Dashboard에서 직접 켜야 시작됩니다.</p>
     </section>}
+    {mode === "list" && <AutomationControls requestState={requestAutomationState} setAutomation={setAutomation} />}
     {mode === "list" && <PopupAuthPanel showLegacySignIn={false} authService={authService} repository={repository} onRecordsChange={refreshRecords} />}
     {mode === "list" && <SweaDetectionPanel requestContext={requestPageContext} savedRecords={records} />}
     {showForm && <form className="solution-form" onSubmit={handleSubmit} noValidate><div className="form-heading"><strong>{mode === "edit" ? "풀이 수정" : "새 풀이 등록"}</strong><button className="text-button" type="button" onClick={mode === "edit" ? () => setMode("detail") : backToList}>취소</button></div>{mode === "create" && importedFrom && <p className="import-notice">{importedFrom}에서 가져왔습니다. 내용을 확인한 뒤 저장해주세요.</p>}<div className="field-grid"><label>플랫폼 <span>*</span><input value={form.platform} onChange={(e) => updateField("platform", e.target.value)} /></label><label>문제 번호 <span>*</span><input value={form.problemNumber} onChange={(e) => updateField("problemNumber", e.target.value)} /></label></div><label>제목 <span>*</span><input value={form.title} onChange={(e) => updateField("title", e.target.value)} /></label><label>언어 <span>*</span><input value={form.language} onChange={(e) => updateField("language", e.target.value)} /></label><label>코드 <span>*</span><textarea rows={10} value={form.code} onChange={(e) => updateField("code", e.target.value)} /></label><div className="field-grid"><label>풀이 날짜<input type="date" value={form.solvedAt ?? ""} onChange={(e) => updateField("solvedAt", e.target.value || null)} /></label><label>AI 활용<select value={form.aiUsage} onChange={(e) => updateField("aiUsage", e.target.value as AiUsage)}><option value="unknown">모름</option><option value="not_used">사용 안 함</option><option value="used">사용함</option></select></label></div><div className="field-grid"><label>실행시간<input placeholder="123 ms" value={form.performance?.executionTime ?? ""} onChange={(e) => updatePerformance("executionTime", e.target.value)} /></label><label>메모리<input placeholder="45,678 kb" value={form.performance?.memoryUsage ?? ""} onChange={(e) => updatePerformance("memoryUsage", e.target.value)} /></label></div><p className="form-hint">실행시간과 메모리는 둘 다 입력하거나 둘 다 비워주세요.</p>{error && <p className="error" role="alert">{error}</p>}<button className="primary-button save-button" type="submit" disabled={saving}>{saving ? "저장 중..." : mode === "edit" ? "수정 저장" : "저장"}</button></form>}

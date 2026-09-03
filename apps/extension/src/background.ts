@@ -2,7 +2,7 @@ import { AuthLoginStageError } from "./authDiagnostics";
 import { AUTH_LOGIN, type AuthLoginResponse } from "./authMessages";
 import type { CodeArchiveAuthService } from "./authSession";
 import { backgroundCodeArchiveAuthService } from "./backgroundAuthRuntime";
-import { notifyDashboardCaptureChanged, registerExternalDashboardBridge, type ExternalDashboardPort } from "./dashboardCaptureBridge";
+import { backgroundDashboardCaptureBridge, notifyDashboardCaptureChanged, registerExternalDashboardBridge, type ExternalDashboardPort } from "./dashboardCaptureBridge";
 import { CODEARCHIVE_DASHBOARD_ORIGIN } from "./dashboardConfig";
 import { SAVE_SWEA_ACCEPTED, type SaveResponse } from "./sweaAutoCapture";
 import { saveAcceptedCapture } from "./solutionRepository";
@@ -10,6 +10,7 @@ import { isAutoCapturePlatform, SAVE_ACCEPTED_CAPTURE, type AcceptedCapture } fr
 import { syncSolutionRecord, type SolutionSyncDependencies } from "./solutionSync";
 import { createProblemContestIdHandoffStore, SWEA_CONSUME_PROBLEM_CONTEST_ID, SWEA_STORE_PROBLEM_CONTEST_ID } from "./sweaProblemIdentityHandoff";
 import { SWEA_PROBLEM_DETAIL_PATH, SWEA_SOLVING_PATH } from "./adapters/swea/sweaSelectors";
+import { POPUP_AUTOMATION_SET, POPUP_AUTOMATION_STATE_GET } from "./automationControl";
 
 type BackgroundResponse = SaveResponse | AuthLoginResponse;
 
@@ -86,6 +87,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (request.type === AUTH_LOGIN) {
     runBackgroundLogin(backgroundCodeArchiveAuthService).then(sendResponse);
+    return true;
+  }
+
+  if (request.type === POPUP_AUTOMATION_STATE_GET) {
+    backgroundDashboardCaptureBridge.requestAutomationState().then(sendResponse);
+    return true;
+  }
+
+  if (request.type === POPUP_AUTOMATION_SET) {
+    const automation = (message as { automation?: unknown }).automation;
+    const enabled = (message as { enabled?: unknown }).enabled;
+    if ((automation !== "AUTO_SYNC" && automation !== "GITHUB_AUTO_COMMIT") || typeof enabled !== "boolean") {
+      sendResponse({ accepted: false, state: backgroundDashboardCaptureBridge.getAutomationState(), forwarded: false });
+      return;
+    }
+    backgroundDashboardCaptureBridge.setAutomation(automation, enabled).then(sendResponse);
     return true;
   }
 

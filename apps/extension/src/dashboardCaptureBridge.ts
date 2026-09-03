@@ -16,6 +16,7 @@ import {
   type CodeArchiveSyncSessionData,
   type DashboardBridgeRequest,
 } from "../../../packages/shared-types/src";
+import { AutomationControlController, type PopupAutomationSetResponse, type PopupAutomationStateResponse } from "./automationControl";
 import {
   InvalidCaptureCursorError,
   indexedDbCaptureBridgeRepository,
@@ -147,6 +148,7 @@ function senderMatchesExactOrigin(sender: ExternalDashboardSender | undefined, a
 
 export class ExtensionDashboardCaptureBridge {
   private readonly sessions = new Map<ExternalDashboardPort, PortSession>();
+  private readonly automation = new AutomationControlController(() => this.invalidateAllSessions());
 
   constructor(
     private readonly repository: CaptureBridgeRepository,
@@ -169,7 +171,11 @@ export class ExtensionDashboardCaptureBridge {
       tabId: sender.tab.id,
     };
     this.sessions.set(port, session);
-    port.onMessage.addListener((message) => { void this.handleMessage(session, message); });
+    this.automation.connect(port);
+    port.onMessage.addListener((message) => {
+      if (this.automation.receive(port, message)) return;
+      void this.handleMessage(session, message);
+    });
     port.onDisconnect.addListener(() => this.disconnect(port));
     return true;
   }
@@ -178,10 +184,30 @@ export class ExtensionDashboardCaptureBridge {
     const session = this.sessions.get(port);
     if (session) delete session.capability;
     this.sessions.delete(port);
+    this.automation.disconnect(port);
   }
 
   activePortCount(): number {
     return this.sessions.size;
+  }
+
+  getAutomationState() {
+    return this.automation.getState();
+  }
+
+  requestAutomationState(): Promise<PopupAutomationStateResponse> {
+    return this.automation.requestState();
+  }
+
+  setAutomation(automation: "AUTO_SYNC" | "GITHUB_AUTO_COMMIT", enabled: boolean): Promise<PopupAutomationSetResponse> {
+    return this.automation.setAutomation(automation, enabled);
+  }
+
+  private invalidateAllSessions(): void {
+    for (const session of this.sessions.values()) {
+      delete session.syncSessionId;
+      delete session.capability;
+    }
   }
 
   async notifyCaptureChanged(): Promise<void> {
