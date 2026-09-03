@@ -105,13 +105,26 @@ describe("automatic commit lifecycle", () => {
     await waitFor(() => expect(client.autoTick).toHaveBeenCalledTimes(1), { timeout: 2500 });
     await screen.findByText(/전송 결과를 확정할 수 없습니다/); expect(client.autoStop).toHaveBeenCalledTimes(1); expect(client.commit).not.toHaveBeenCalled();
   });
-  it("stops on page hiding and on unmount, while an existing run is never adopted", async () => {
+  it("continues while hidden, stops on pagehide and on unmount, while an existing run is never adopted", async () => {
     const client = githubTestClient(); const view = render(<GitHubAutoCommit client={client} target={githubTestTarget} eligible blocked={false} onLock={vi.fn()} onSessionExpired={vi.fn()} />);
     await consentAuto(); fireEvent.click(screen.getByRole("button", { name: "자동 커밋 ON" })); await screen.findByText("ON", { selector: "strong" });
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    act(() => document.dispatchEvent(new Event("visibilitychange"))); await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText("ON", { selector: "strong" })).toBeInTheDocument(); expect(client.autoStop).not.toHaveBeenCalled();
     act(() => window.dispatchEvent(new Event("pagehide"))); await screen.findByText("OFF", { selector: "strong" });
     await consentAuto(); fireEvent.click(screen.getByRole("button", { name: "자동 커밋 ON" })); await screen.findByText("ON", { selector: "strong" }); view.unmount(); expect(client.autoStop).toHaveBeenCalledTimes(2);
     vi.mocked(client.autoStatus).mockResolvedValue({ ...githubTestOff, runId: "44444444-4444-4444-8444-444444444444", state: "ACTIVE", target: githubTestTarget });
     render(<GitHubAutoCommit client={client} target={githubTestTarget} eligible blocked={false} onLock={vi.fn()} onSessionExpired={vi.fn()} />);
     await screen.findByText("다른 화면에서 ON"); expect(screen.getByRole("button", { name: "자동 커밋 ON" })).toBeDisabled(); expect(client.autoTick).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the selected branch HEAD immediately before enabling", async () => {
+    const client = githubTestClient();
+    vi.mocked(client.branches).mockResolvedValueOnce({ page: 1, hasMore: false, items: [{ name: "main", commitSha: "a".repeat(40), protected: false, selectable: true }] })
+      .mockResolvedValueOnce({ page: 1, hasMore: false, items: [{ name: "main", commitSha: "d".repeat(40), protected: false, selectable: true }] });
+    render(<GitHubUpload client={client} solution={githubTestSource} syncEligible onSessionExpired={vi.fn()} />);
+    await selectTarget(); await consentAuto(); fireEvent.click(screen.getByRole("button", { name: "자동 커밋 ON" }));
+    await screen.findByText("ON", { selector: "strong" });
+    expect(client.autoEnable).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ target: expect.objectContaining({ expectedCommitSha: "d".repeat(40) }) }), expect.any(AbortSignal));
   });
 });

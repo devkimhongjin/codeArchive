@@ -2,17 +2,23 @@ import { useEffect, useRef, useState } from "react";
 import type { DashboardSolution } from "./archiveTypes";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
 import { GitHubAutoCommit } from "./GitHubAutoCommit";
-import { githubErrorMessage, type GitHubAutoTarget, type GitHubBranch, type GitHubClient, type GitHubCommitResult, type GitHubConfirmation, type GitHubDirectory, type GitHubInstallation, type GitHubPage, type GitHubRepository } from "./githubClient";
+import { githubErrorMessage, GitHubRequestError, type GitHubAutoTarget, type GitHubBranch, type GitHubClient, type GitHubCommitResult, type GitHubConfirmation, type GitHubDirectory, type GitHubInstallation, type GitHubPage, type GitHubRepository } from "./githubClient";
 
-export function GitHubUpload({ solution, client, syncEligible, onSessionExpired }: { solution: DashboardSolution | null; client: GitHubClient; syncEligible: boolean; onSessionExpired: () => void }) {
+type AutomationIntent = { enabled: boolean; nonce: number };
+
+export function GitHubUpload({ solution, client, syncEligible, onSessionExpired, automationIntent, onAutomationStateChange, onTargetConfiguredChange }: { solution: DashboardSolution | null; client: GitHubClient; syncEligible: boolean; onSessionExpired: () => void; automationIntent?: AutomationIntent | null; onAutomationStateChange?: (enabled: boolean, errorCode: import("../../../packages/shared-types/src").CodeArchiveAutomationControlErrorCode | null) => void; onTargetConfiguredChange?: (configured: boolean) => void }) {
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) onTargetConfiguredChange?.(false);
+    return () => onTargetConfiguredChange?.(false);
+  }, [open, onTargetConfiguredChange]);
   return <section className="github-panel" aria-label="GitHub 풀이 업로드">
     <div className="github-heading"><div><h2>GitHub 풀이 업로드</h2><p>수동 확인 후 한 번 커밋하거나, 새 풀이의 자동 커밋을 켜세요. 기본은 OFF입니다.</p></div>
       <button type="button" onClick={() => setOpen(v => !v)}>{open ? "업로드 화면 닫기" : "GitHub 저장소 연결 확인"}</button></div>
-    {open && <GitHubUploadBody solution={solution} client={client} syncEligible={syncEligible} onSessionExpired={onSessionExpired} />}
+    {open && <GitHubUploadBody solution={solution} client={client} syncEligible={syncEligible} onSessionExpired={onSessionExpired} automationIntent={automationIntent} onAutomationStateChange={onAutomationStateChange} onTargetConfiguredChange={onTargetConfiguredChange} />}
   </section>;
 }
-function GitHubUploadBody({ solution, client, syncEligible, onSessionExpired }: { solution: DashboardSolution | null; client: GitHubClient; syncEligible: boolean; onSessionExpired: () => void }) {
+function GitHubUploadBody({ solution, client, syncEligible, onSessionExpired, automationIntent, onAutomationStateChange, onTargetConfiguredChange }: { solution: DashboardSolution | null; client: GitHubClient; syncEligible: boolean; onSessionExpired: () => void; automationIntent?: AutomationIntent | null; onAutomationStateChange?: (enabled: boolean, errorCode: import("../../../packages/shared-types/src").CodeArchiveAutomationControlErrorCode | null) => void; onTargetConfiguredChange?: (configured: boolean) => void }) {
   const [installations, setInstallations] = useState<GitHubInstallation[]>([]);
   const [installation, setInstallation] = useState("");
   const [repositories, setRepositories] = useState<GitHubPage<GitHubRepository>>({ page: 1, hasMore: false, items: [] });
@@ -43,6 +49,17 @@ function GitHubUploadBody({ solution, client, syncEligible, onSessionExpired }: 
   const unresolved = receipt?.status === "UNKNOWN" || receipt?.status === "READY";
   const locked = busy || autoLocked || !!unresolved;
   const target: GitHubAutoTarget | null = repository && branch ? { installationId: installation, repositoryId: repository.id, branch: branch.name, expectedCommitSha: branch.commitSha, folder, privateRepository: repository.private, fullName: repository.fullName } : null;
+  useEffect(() => { onTargetConfiguredChange?.(Boolean(target)); }, [onTargetConfiguredChange, target?.installationId, target?.repositoryId, target?.branch, target?.expectedCommitSha, target?.folder, target?.privateRepository, target?.fullName]);
+  async function refreshAutomationTarget(signal: AbortSignal): Promise<GitHubAutoTarget> {
+    if (!target || !repository || !branch) throw new GitHubRequestError("GITHUB_REFERENCE_CHANGED");
+    const latestRepositories = await client.repositories(installation, repositories.page, signal);
+    const latestRepository = latestRepositories.items.find((item) => item.id === repository.id);
+    if (!latestRepository || latestRepository.fullName !== repository.fullName || latestRepository.private !== repository.private) throw new GitHubRequestError("GITHUB_REFERENCE_CHANGED");
+    const latest = await client.branches(installation, latestRepository.id, branches.page, signal);
+    const current = latest.items.find((item) => item.name === branch.name);
+    if (!current || current.protected || !current.selectable) throw new GitHubRequestError("GITHUB_REFERENCE_CHANGED");
+    return { ...target, privateRepository: latestRepository.private, fullName: latestRepository.fullName, expectedCommitSha: current.commitSha };
+  }
   function invalidate() { setConfirmation(null); setConsent(false); setRisk(false); setPublicConsent(false); }
   async function perform<T>(operation: (s: AbortSignal) => Promise<T>, accept: (v: T) => void, checkSource = false) {
     controller.current?.abort(); const current = ++generation.current;
@@ -124,7 +141,7 @@ function GitHubUploadBody({ solution, client, syncEligible, onSessionExpired }: 
       </div>}
       {receipt && <div className="github-result" role="status"><strong>{receipt.status === "SUCCEEDED" ? "커밋 완료" : receipt.status === "UNKNOWN" ? "전송 결과 확인 필요 · 재전송하지 마세요" : receipt.status === "REJECTED" ? "전송 전 중단됨" : "요청 상태 확인 필요"}</strong>{receipt.commitUrl && <a href={receipt.commitUrl} target="_blank" rel="noopener noreferrer">GitHub 커밋 보기</a>}<button disabled={busy} onClick={() => void perform(s => client.result(receipt.intentId, s), value => { setReceipt(value); if (value.status === "SUCCEEDED") { setBranch(null); setDirectory(null); setNotice("커밋 완료를 확인했습니다. 다음 업로드 전에 브랜치를 새로 확인해 주세요."); } })}>전송 결과 확인</button></div>}
     </section>
-    <GitHubAutoCommit client={client} target={target} eligible={syncEligible} blocked={busy || !!unresolved} onSessionExpired={() => callback.current()}
+    <GitHubAutoCommit client={client} target={target} eligible={syncEligible} blocked={busy || !!unresolved} automationIntent={automationIntent} onAutomationStateChange={onAutomationStateChange} refreshTarget={refreshAutomationTarget} onSessionExpired={() => callback.current()}
       onLock={value => { setAutoLocked(value); invalidate(); if (!value) { setBranch(null); setDirectory(null); } }} />
     {busy && <p role="status">GitHub 요청 확인 중…</p>}{notice && <p role="status">{notice}</p>}
     {!loaded && !busy && <button onClick={load}>GitHub 연결 다시 확인</button>}
