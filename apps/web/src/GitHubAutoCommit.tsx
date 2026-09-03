@@ -14,8 +14,9 @@ function automationError(error: unknown): CodeArchiveAutomationControlErrorCode 
   return null;
 }
 
-export function GitHubAutoCommit({ client, target, eligible, blocked, onLock, onSessionExpired, automationIntent, onAutomationStateChange, refreshTarget }: {
+export function GitHubAutoCommit({ client, target, eligible, blocked, blockedReason, onLock, onSessionExpired, automationIntent, onAutomationStateChange, refreshTarget }: {
   client: GitHubClient; target: GitHubAutoTarget | null; eligible: boolean; blocked: boolean;
+  blockedReason?: string | null;
   onLock: (locked: boolean) => void; onSessionExpired: () => void;
   automationIntent?: AutomationIntent | null; onAutomationStateChange?: AutomationStateCallback;
   refreshTarget?: (signal: AbortSignal) => Promise<GitHubAutoTarget>;
@@ -173,11 +174,21 @@ export function GitHubAutoCommit({ client, target, eligible, blocked, onLock, on
   }, [automationIntent?.nonce, automationIntent?.enabled, checked, fingerprint]);
   const otherRun = status?.state === "ACTIVE" || status?.state === "STARTING";
   const locked = phase !== "idle";
+  const diagnostic = blockedReason
+    ?? (blocked ? "다른 GitHub 작업 또는 확인이 끝나지 않은 작업이 있어 자동 커밋을 시작할 수 없습니다."
+      : !eligible ? "자동 커밋을 켜기 위한 Dashboard·Extension·온라인 상태 조건을 확인하세요."
+        : !target ? "GitHub 저장소와 안전한 브랜치를 먼저 선택하세요."
+          : !checked ? "GitHub 연결 상태를 먼저 확인하세요."
+            : otherRun ? "다른 화면의 자동 커밋이 실행 중입니다. 먼저 OFF로 바꿔 주세요."
+              : phase !== "idle" ? "자동 커밋 상태를 확인하는 중입니다."
+                : !consent ? "자동 전송 동의를 선택해야 자동 커밋을 켤 수 있습니다."
+                  : !risk ? "코드 공개 위험 확인을 선택해야 자동 커밋을 켤 수 있습니다."
+                    : !target.privateRepository && !publicConsent ? "공개 저장소 자동 공개 동의를 선택해야 자동 커밋을 켤 수 있습니다." : null);
   return <section className="github-auto" aria-label="자동 풀이 커밋">
     <div className="github-heading"><h3>자동 풀이 커밋</h3><strong className={`badge ${phase === "running" ? "github-on" : ""}`}>{phase === "running" ? "ON" : phase === "enabling" ? "ON 확인 중" : phase === "stopping" ? "OFF 확인 중" : otherRun ? "다른 화면에서 ON" : "OFF"}</strong></div>
     <p>Dashboard가 살아 있고 자동 동기화·Extension 연결·온라인 상태가 유지되는 동안, background에서도 ON 이후 새로 수집·저장된 정답 풀이를 커밋합니다. 페이지 종료·연결 해제·로그아웃 시 꺼집니다.</p>
     <p>경로: <code>{target?.folder ? `${target.folder}/` : ""}{"{플랫폼}/{문제번호}/Solution.{언어 확장자}"}</code> · 기존 파일은 덮어쓰지 않습니다. 과거 풀이·실패한 요청은 자동 재시도하지 않습니다.</p>
-    {!eligible && <p>자동 동기화를 켜고 Extension을 연결해야 ON으로 바꿀 수 있습니다.</p>}
+    {diagnostic && <p role="status">{diagnostic}</p>}
     <fieldset disabled={locked || !!otherRun || blocked}>
       <legend>자동 전송 동의</legend>
       <label><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />선택한 저장소·브랜치·폴더로 새 풀이 코드를 자동 전송하는 데 동의합니다.</label>

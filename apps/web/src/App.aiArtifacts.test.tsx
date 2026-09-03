@@ -13,8 +13,9 @@ const solution: DashboardServerSolution = {
 };
 const second = { ...solution, id: "22222222-2222-4222-8222-222222222222", problemNumber: "1207", code: "second source", language: "PYTHON" };
 const artifact: AiArtifact = { id: "33333333-3333-4333-8333-333333333333", solutionId: solution.id, type: "CODE_REVIEW", content: "<script>synthetic()</script>", provider: "fake", model: "fake-model", createdAt: "2026-08-31T00:00:00Z" };
-function auth(id = "account-a"): DashboardAuthClient {
-  return { discoverSession: async () => ({ status: "authenticated", user: { id, githubLogin: id, displayName: id, avatarUrl: "" } }), login: vi.fn(), logout: vi.fn(async (before) => { await before?.(); return true; }) };
+function auth(login = "account-a"): DashboardAuthClient {
+  const id = login === "account-a" ? "550e8400-e29b-41d4-a716-446655440000" : login === "account-b" ? "650e8400-e29b-41d4-a716-446655440000" : login;
+  return { discoverSession: async () => ({ status: "authenticated", user: { id, githubLogin: login, displayName: login, avatarUrl: "" } }), login: vi.fn(), logout: vi.fn(async (before) => { await before?.(); return true; }) };
 }
 function bridge(): DashboardExtensionConnection {
   return { start(onState) { onState({ status: "unavailable" }); return () => {}; }, startSyncSession: vi.fn(), endSyncSession: vi.fn(), beginImport: vi.fn(), readPendingPage: vi.fn(), ackImported: vi.fn() };

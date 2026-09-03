@@ -4,6 +4,7 @@ import { App } from "./App";
 import type { DashboardAuthClient, SessionDiscovery } from "./authClient";
 import type { DashboardExtensionConnection } from "./extensionConnection";
 import type { ExtensionToDashboardAutomationMessage } from "../../../packages/shared-types/src";
+import { githubTestClient } from "./githubTestFixtures";
 
 const ID = "550e8400-e29b-41d4-a716-446655440000";
 const session: SessionDiscovery = { status: "authenticated", user: { id: ID, githubLogin: "fixture", displayName: "Fixture", avatarUrl: "" } };
@@ -104,5 +105,37 @@ describe("Dashboard automation authority", () => {
     expect(write).toHaveBeenCalledWith(true, expect.any(String));
     expect(write).not.toHaveBeenCalledWith(false, undefined);
     expect(fixture.startSyncSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports AUTO_SYNC OFF distinctly while valid source-transfer consent remains", async () => {
+    const fixture = bridge();
+    const read = vi.fn(() => true);
+    const write = vi.fn();
+    const githubClient = githubTestClient();
+    render(<App
+      dataSource={{ listSolutions: async () => [] }}
+      authClient={auth()}
+      extensionConnection={fixture.extensionConnection}
+      consentStore={{ read, write }}
+      githubClient={githubClient}
+      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      syncSessionIdGenerator={() => "session-a"}
+    />);
+
+    const consent = await screen.findByRole("checkbox", { name: /자동 동기화/ });
+    await waitFor(() => expect(consent).toBeChecked());
+    await act(async () => fixture.send({ type: "CODEARCHIVE_AUTOMATION_SET_REQUEST", protocolVersion: 1, automation: "AUTO_SYNC", enabled: true }));
+    await waitFor(() => expect(fixture.published.at(-1)).toMatchObject({ autoSyncEnabled: true, authenticated: true, connectionAvailable: true }));
+    await act(async () => fixture.send({ type: "CODEARCHIVE_AUTOMATION_SET_REQUEST", protocolVersion: 1, automation: "AUTO_SYNC", enabled: false }));
+    await waitFor(() => expect(fixture.endSyncSession).toHaveBeenCalledWith("session-a"));
+    await waitFor(() => expect(fixture.published.at(-1)).toMatchObject({ autoSyncEnabled: false, githubAutoCommitEnabled: false }));
+
+    fireEvent.click(screen.getByRole("button", { name: "GitHub 저장소 연결 확인" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("자동 동기화가 OFF 상태입니다. 자동 동기화를 먼저 켠 뒤 GitHub 자동 커밋을 활성화하세요.");
+    expect(screen.queryByText("자동 커밋을 켜기 위한 Dashboard·Extension·온라인 상태 조건을 확인하세요.")).not.toBeInTheDocument();
+    expect(consent).toBeChecked();
+    expect(read).toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalledWith(false, expect.anything());
+    expect(githubClient.autoEnable).not.toHaveBeenCalled();
   });
 });

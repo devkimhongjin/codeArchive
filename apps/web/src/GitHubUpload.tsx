@@ -6,15 +6,53 @@ import { githubErrorMessage, GitHubRequestError, type GitHubAutoTarget, type Git
 
 type AutomationIntent = { enabled: boolean; nonce: number };
 
-export function GitHubUpload({ solution, client, syncEligible, onSessionExpired, automationIntent, onAutomationStateChange, onTargetConfiguredChange }: { solution: DashboardSolution | null; client: GitHubClient; syncEligible: boolean; onSessionExpired: () => void; automationIntent?: AutomationIntent | null; onAutomationStateChange?: (enabled: boolean, errorCode: import("../../../packages/shared-types/src").CodeArchiveAutomationControlErrorCode | null) => void; onTargetConfiguredChange?: (configured: boolean) => void }) {
+type GitHubUploadProps = {
+  solution: DashboardSolution | null;
+  client: GitHubClient;
+  syncEligible: boolean;
+  automationBlockedReason?: string | null;
+  accountIdValid?: boolean;
+  onSessionExpired: () => void;
+  automationIntent?: AutomationIntent | null;
+  onAutomationStateChange?: (enabled: boolean, errorCode: import("../../../packages/shared-types/src").CodeArchiveAutomationControlErrorCode | null) => void;
+  onTargetConfiguredChange?: (configured: boolean) => void;
+};
+
+function selectableBranch(branch: GitHubBranch): boolean {
+  return !branch.protected && branch.selectable;
+}
+
+function initialBranch(repository: GitHubRepository, page: GitHubPage<GitHubBranch>): GitHubBranch | null {
+  const candidate = page.items.find((item) => item.name === repository.defaultBranch);
+  return candidate && selectableBranch(candidate) ? candidate : null;
+}
+
+function refreshedBranch(repository: GitHubRepository, page: GitHubPage<GitHubBranch>, previousName: string | null): GitHubBranch | null {
+  const previous = previousName ? page.items.find((item) => item.name === previousName) : null;
+  if (previous && selectableBranch(previous)) return previous;
+  return initialBranch(repository, page);
+}
+
+function branchGuidance(repository: GitHubRepository | null, page: GitHubPage<GitHubBranch>, selected: GitHubBranch | null): string | null {
+  if (!repository) return "GitHub 저장소와 안전한 기본 브랜치를 먼저 선택하세요.";
+  if (selected) return null;
+  const candidate = page.items.find((item) => item.name === repository.defaultBranch);
+  if (!candidate) return `저장소 기본 브랜치 '${repository.defaultBranch}'을 확인할 수 없습니다. 브랜치를 새로 확인하거나 안전한 브랜치를 직접 선택하세요.`;
+  if (candidate.protected) return `저장소 기본 브랜치 '${repository.defaultBranch}'은 보호되어 자동·수동 추가가 불가합니다. 안전한 브랜치를 직접 선택하세요.`;
+  if (!candidate.selectable) return `저장소 기본 브랜치 '${repository.defaultBranch}'은 현재 사용할 수 없습니다. 안전한 브랜치를 직접 선택하세요.`;
+  return "기본 브랜치를 확인하는 중입니다.";
+}
+
+export function GitHubUpload({ accountIdValid = true, automationBlockedReason, ...props }: GitHubUploadProps) {
   const [open, setOpen] = useState(false);
   return <section className="github-panel" aria-label="GitHub 풀이 업로드">
     <div className="github-heading"><div><h2>GitHub 풀이 업로드</h2><p>수동 확인 후 한 번 커밋하거나, 새 풀이의 자동 커밋을 켜세요. 기본은 OFF입니다.</p></div>
-      <button type="button" onClick={() => setOpen(v => !v)}>{open ? "업로드 화면 닫기" : "GitHub 저장소 연결 확인"}</button></div>
-    <GitHubUploadBody open={open} solution={solution} client={client} syncEligible={syncEligible} onSessionExpired={onSessionExpired} automationIntent={automationIntent} onAutomationStateChange={onAutomationStateChange} onTargetConfiguredChange={onTargetConfiguredChange} />
+      <button type="button" disabled={!accountIdValid} onClick={() => setOpen(v => !v)}>{open ? "업로드 화면 닫기" : "GitHub 저장소 연결 확인"}</button></div>
+    {!accountIdValid ? <p role="alert">CodeArchive 계정 식별자를 확인할 수 없어 GitHub 연결을 시작할 수 없습니다. Dashboard를 새로고침하거나 다시 로그인해 주세요.</p>
+      : <GitHubUploadBody {...props} open={open} automationBlockedReason={automationBlockedReason} />}
   </section>;
 }
-function GitHubUploadBody({ open, solution, client, syncEligible, onSessionExpired, automationIntent, onAutomationStateChange, onTargetConfiguredChange }: { open: boolean; solution: DashboardSolution | null; client: GitHubClient; syncEligible: boolean; onSessionExpired: () => void; automationIntent?: AutomationIntent | null; onAutomationStateChange?: (enabled: boolean, errorCode: import("../../../packages/shared-types/src").CodeArchiveAutomationControlErrorCode | null) => void; onTargetConfiguredChange?: (configured: boolean) => void }) {
+function GitHubUploadBody({ open, solution, client, syncEligible, automationBlockedReason, onSessionExpired, automationIntent, onAutomationStateChange, onTargetConfiguredChange }: GitHubUploadProps & { open: boolean }) {
   const [installations, setInstallations] = useState<GitHubInstallation[]>([]);
   const [installation, setInstallation] = useState("");
   const [repositories, setRepositories] = useState<GitHubPage<GitHubRepository>>({ page: 1, hasMore: false, items: [] });
@@ -45,16 +83,23 @@ function GitHubUploadBody({ open, solution, client, syncEligible, onSessionExpir
   const unresolved = receipt?.status === "UNKNOWN" || receipt?.status === "READY";
   const locked = busy || autoLocked || !!unresolved;
   const target: GitHubAutoTarget | null = repository && branch ? { installationId: installation, repositoryId: repository.id, branch: branch.name, expectedCommitSha: branch.commitSha, folder, privateRepository: repository.private, fullName: repository.fullName } : null;
+  const targetGuidance = branchGuidance(repository, branches, branch);
   useEffect(() => { onTargetConfiguredChange?.(Boolean(target)); }, [onTargetConfiguredChange, target?.installationId, target?.repositoryId, target?.branch, target?.expectedCommitSha, target?.folder, target?.privateRepository, target?.fullName]);
-  async function refreshAutomationTarget(signal: AbortSignal): Promise<GitHubAutoTarget> {
+  async function fetchFreshSelectedTarget(signal: AbortSignal): Promise<{ repositories: GitHubPage<GitHubRepository>; repository: GitHubRepository; branches: GitHubPage<GitHubBranch>; branch: GitHubBranch; target: GitHubAutoTarget }> {
     if (!target || !repository || !branch) throw new GitHubRequestError("GITHUB_REFERENCE_CHANGED");
     const latestRepositories = await client.repositories(installation, repositories.page, signal);
     const latestRepository = latestRepositories.items.find((item) => item.id === repository.id);
     if (!latestRepository || latestRepository.fullName !== repository.fullName || latestRepository.private !== repository.private) throw new GitHubRequestError("GITHUB_REFERENCE_CHANGED");
     const latest = await client.branches(installation, latestRepository.id, branches.page, signal);
     const current = latest.items.find((item) => item.name === branch.name);
-    if (!current || current.protected || !current.selectable) throw new GitHubRequestError("GITHUB_REFERENCE_CHANGED");
-    return { ...target, privateRepository: latestRepository.private, fullName: latestRepository.fullName, expectedCommitSha: current.commitSha };
+    if (!current || !selectableBranch(current)) throw new GitHubRequestError("GITHUB_REFERENCE_CHANGED");
+    return { repositories: latestRepositories, repository: latestRepository, branches: latest, branch: current, target: { ...target, privateRepository: latestRepository.private, fullName: latestRepository.fullName, expectedCommitSha: current.commitSha } };
+  }
+  async function refreshAutomationTarget(signal: AbortSignal): Promise<GitHubAutoTarget> {
+    const fresh = await fetchFreshSelectedTarget(signal);
+    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+    setRepositories(fresh.repositories); setRepository(fresh.repository); setBranches(fresh.branches); setBranch(fresh.branch);
+    return fresh.target;
   }
   function invalidate() { setConfirmation(null); setConsent(false); setRisk(false); setPublicConsent(false); }
   async function perform<T>(operation: (s: AbortSignal) => Promise<T>, accept: (v: T) => void, checkSource = false) {
@@ -87,7 +132,7 @@ function GitHubUploadBody({ open, solution, client, syncEligible, onSessionExpir
   function chooseRepository(value: string) {
     const selected = repositories.items.find(r => r.id === value) ?? null;
     setRepository(selected); setBranch(null); setDirectory(null); setFolder(""); invalidate();
-    if (selected) void perform(s => client.branches(installation, selected.id, 1, s), setBranches);
+    if (selected) void perform(s => client.branches(installation, selected.id, 1, s), value => { setBranches(value); setBranch(initialBranch(selected, value)); });
   }
   function browse(t: GitHubAutoTarget, directoryPath: string) { void perform(s => client.directory(t, directoryPath, s), value => { setDirectory(value); setFolder(value.path); invalidate(); }); }
   function prepare() {
@@ -95,11 +140,30 @@ function GitHubUploadBody({ open, solution, client, syncEligible, onSessionExpir
     invalidate();
     const extension = ({ java: "java", python: "py", javascript: "js", typescript: "ts", "c++": "cpp" } as Record<string, string>)[solution.language.trim().toLowerCase()] ?? "txt";
     const defaultPath = `${folder ? folder + "/" : ""}${solution.platform}/${solution.problemNumber}/Solution.${extension}`;
-    void perform(s => client.prepare({ solutionId: solution.id, expectedUpdatedAt: solution.updatedAt, installationId: installation, repositoryId: target.repositoryId,
-      branch: target.branch, expectedCommitSha: target.expectedCommitSha, path: path || defaultPath, commitMessage: message || null }, s), value => {
-        if (value.preview.source.id !== solution.id || value.preview.source.updatedAt !== solution.updatedAt || value.preview.target.installationId !== installation || value.preview.target.repositoryId !== target.repositoryId || value.preview.target.branch !== target.branch || value.preview.target.commitSha !== target.expectedCommitSha) { setNotice("미리보기 대상이 달라 다시 확인해야 합니다."); return; }
+    void perform(async s => {
+      const fresh = await fetchFreshSelectedTarget(s);
+      const value = await client.prepare({ solutionId: solution.id, expectedUpdatedAt: solution.updatedAt, installationId: fresh.target.installationId, repositoryId: fresh.target.repositoryId,
+        branch: fresh.target.branch, expectedCommitSha: fresh.target.expectedCommitSha, path: path || defaultPath, commitMessage: message || null }, s);
+      return { fresh, value };
+    }, ({ fresh, value }) => {
+        setRepositories(fresh.repositories); setRepository(fresh.repository); setBranches(fresh.branches); setBranch(fresh.branch);
+        if (value.preview.source.id !== solution.id || value.preview.source.updatedAt !== solution.updatedAt || value.preview.target.installationId !== fresh.target.installationId || value.preview.target.repositoryId !== fresh.target.repositoryId || value.preview.target.branch !== fresh.target.branch || value.preview.target.commitSha !== fresh.target.expectedCommitSha) { setNotice("미리보기 대상이 달라 다시 확인해야 합니다."); return; }
         setConfirmation(value);
       }, true);
+  }
+  function refreshAfterSuccess() {
+    if (!repository || !installation) return;
+    const previousBranchName = branch?.name ?? null;
+    void perform(async s => {
+      const latestRepositories = await client.repositories(installation, repositories.page, s);
+      const latestRepository = latestRepositories.items.find((item) => item.id === repository.id);
+      if (!latestRepository || latestRepository.fullName !== repository.fullName || latestRepository.private !== repository.private) throw new GitHubRequestError("GITHUB_REFERENCE_CHANGED");
+      const latestBranches = await client.branches(installation, latestRepository.id, branches.page, s);
+      return { latestRepositories, latestRepository, latestBranches, nextBranch: refreshedBranch(latestRepository, latestBranches, previousBranchName) };
+    }, ({ latestRepositories, latestRepository, latestBranches, nextBranch }) => {
+      setRepositories(latestRepositories); setRepository(latestRepository); setBranches(latestBranches); setBranch(nextBranch); setDirectory(null); setPath(""); setMessage("");
+      setNotice(nextBranch ? "커밋 완료 · 최신 브랜치를 확인했습니다. 다음 풀이를 선택해 다시 미리볼 수 있습니다." : "커밋 완료 · 안전한 브랜치를 다시 선택해 주세요.");
+    }, true);
   }
   function commit() {
     if (!confirmation || locked || pendingMutation.current || !consent || !risk || (!confirmation.preview.target.privateRepository && !publicConsent)) return;
@@ -109,7 +173,7 @@ function GitHubUploadBody({ open, solution, client, syncEligible, onSessionExpir
     setReceipt({ intentId: id, status: "UNKNOWN", retryAllowed: false, commitSha: null, commitUrl: null, errorCode: null });
     invalidate();
     void perform(s => client.commit(id, { confirmUpload: consent, acknowledgeVisibilityRisk: risk, confirmPublicUpload: publicConsent }, s), value => {
-      setReceipt(value); if (value.status === "SUCCEEDED") { setBranch(null); setDirectory(null); setNotice("커밋을 완료했습니다. 다음 업로드 전에 브랜치를 새로 확인해 주세요."); }
+      setReceipt(value); if (value.status === "SUCCEEDED") { setConfirmation(null); setPath(""); setMessage(""); setNotice("커밋 완료 · 최신 브랜치를 확인하는 중입니다."); refreshAfterSuccess(); }
     });
   }
   return <>
@@ -120,7 +184,8 @@ function GitHubUploadBody({ open, solution, client, syncEligible, onSessionExpir
       <label>저장소<select disabled={!installation} value={repository?.id ?? ""} onChange={e => chooseRepository(e.target.value)}><option value="">저장소 선택</option>{repositories.items.map(r => <option key={r.id} value={r.id}>{r.fullName} · {r.private ? "비공개" : "공개"}</option>)}</select></label>
       {installation && <div className="github-actions"><button disabled={repositories.page <= 1} onClick={() => void perform(s => client.repositories(installation, repositories.page - 1, s), v => { setRepositories(v); setRepository(null); setBranch(null); invalidate(); })}>이전 저장소</button><button disabled={!repositories.hasMore} onClick={() => void perform(s => client.repositories(installation, repositories.page + 1, s), v => { setRepositories(v); setRepository(null); setBranch(null); invalidate(); })}>다음 저장소</button></div>}
       <label>브랜치<select disabled={!repository} value={branch?.name ?? ""} onChange={e => { const selected = branches.items.find(b => b.name === e.target.value) ?? null; setBranch(selected); setFolder(""); setDirectory(null); invalidate(); }}><option value="">브랜치 선택</option>{branches.items.map(b => <option key={b.name} disabled={!b.selectable || b.protected} value={b.name}>{b.name}{b.protected ? " (보호됨)" : !b.selectable ? " (사용 불가)" : ""}</option>)}</select></label>
-      {repository && <div className="github-actions"><button onClick={() => void perform(s => client.branches(installation, repository.id, 1, s), v => { setBranches(v); setBranch(null); invalidate(); })}>브랜치 새로 확인</button><button disabled={branches.page <= 1} onClick={() => void perform(s => client.branches(installation, repository.id, branches.page - 1, s), v => { setBranches(v); setBranch(null); invalidate(); })}>이전 브랜치</button><button disabled={!branches.hasMore} onClick={() => void perform(s => client.branches(installation, repository.id, branches.page + 1, s), v => { setBranches(v); setBranch(null); invalidate(); })}>다음 브랜치</button></div>}
+      {repository && <div className="github-actions"><button onClick={() => void perform(s => client.branches(installation, repository.id, 1, s), v => { setBranches(v); setBranch(refreshedBranch(repository, v, branch?.name ?? null)); invalidate(); })}>브랜치 새로 확인</button><button disabled={branches.page <= 1} onClick={() => void perform(s => client.branches(installation, repository.id, branches.page - 1, s), v => { setBranches(v); setBranch(refreshedBranch(repository, v, branch?.name ?? null)); invalidate(); })}>이전 브랜치</button><button disabled={!branches.hasMore} onClick={() => void perform(s => client.branches(installation, repository.id, branches.page + 1, s), v => { setBranches(v); setBranch(refreshedBranch(repository, v, branch?.name ?? null)); invalidate(); })}>다음 브랜치</button></div>}
+      {repository && targetGuidance && <p role="status">{targetGuidance}</p>}
       <label>기본 폴더<input value={folder} disabled={!target} placeholder="비워 두면 저장소 루트" onChange={e => { setFolder(e.target.value); setDirectory(null); invalidate(); }} /></label>
       <div className="github-actions"><button disabled={!target} onClick={() => target && browse(target, folder)}>폴더 찾아보기</button>{directory?.parentPath !== null && directory && <button onClick={() => target && browse(target, directory.parentPath!)}>상위 폴더</button>}</div>
       {directory && <div className="github-folders" aria-label="폴더 목록"><span>{directory.path || "/"}</span>{directory.entries.filter(e => e.type === "DIRECTORY" && e.browsable).map(e => <button key={e.path} onClick={() => target && browse(target, e.path)}>{e.name}/</button>)}{!directory.entries.some(e => e.type === "DIRECTORY" && e.browsable) && <small>하위 폴더 없음</small>}</div>}
@@ -143,7 +208,7 @@ function GitHubUploadBody({ open, solution, client, syncEligible, onSessionExpir
       {!loaded && !busy && <button onClick={load}>GitHub 연결 다시 확인</button>}
     </div>
     <div hidden={!open}>
-      <GitHubAutoCommit client={client} target={target} eligible={syncEligible} blocked={busy || !!unresolved} automationIntent={automationIntent} onAutomationStateChange={onAutomationStateChange} refreshTarget={refreshAutomationTarget} onSessionExpired={() => callback.current()}
+      <GitHubAutoCommit client={client} target={target} eligible={syncEligible} blocked={busy || !!unresolved} blockedReason={automationBlockedReason ?? targetGuidance} automationIntent={automationIntent} onAutomationStateChange={onAutomationStateChange} refreshTarget={refreshAutomationTarget} onSessionExpired={() => callback.current()}
         onLock={value => { setAutoLocked(value); invalidate(); if (!value) { setBranch(null); setDirectory(null); } }} />
     </div>
   </>;
