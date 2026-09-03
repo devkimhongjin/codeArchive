@@ -28,10 +28,10 @@ export function parseProgrammersPerformanceGroup(group: Element): SubmissionPerf
   if (metrics.some((metric) => metric === null)) return null;
 
   const validMetrics = metrics as Array<{ executionTime: number; memoryUsage: number }>;
-  const executionAverage = validMetrics.reduce((sum, metric) => sum + metric.executionTime, 0) / validMetrics.length;
+  const executionTotal = validMetrics.reduce((sum, metric) => sum + metric.executionTime, 0);
   const memoryAverage = validMetrics.reduce((sum, metric) => sum + metric.memoryUsage, 0) / validMetrics.length;
   return {
-    executionTime: `${executionAverage.toFixed(2)} ms`,
+    executionTime: `${executionTotal.toFixed(2)} ms`,
     memoryUsage: `${memoryAverage.toFixed(2)} MB`,
   };
 }
