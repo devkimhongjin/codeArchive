@@ -283,7 +283,9 @@ export function App({
                 ? "계정 동의를 확인하는 중입니다. 확인이 끝나면 다시 시도하세요."
                 : automationSafetyStopped
                   ? "Dashboard가 여러 탭에서 열려 자동 커밋을 안전하게 시작할 수 없습니다. 다른 탭을 닫고 다시 시도하세요."
-                  : null;
+                  : !automationAutoSyncEnabled
+                    ? "자동 동기화가 OFF 상태입니다. 자동 동기화를 먼저 켠 뒤 GitHub 자동 커밋을 활성화하세요."
+                    : null;
 
   drainEligibilityRef.current = { eligible, activeSyncSessionId };
   if (manualSyncSessionRef.current) {
