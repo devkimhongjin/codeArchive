@@ -13,6 +13,83 @@ export type ImportBatchId = string;
 export type SyncSessionId = string;
 
 /**
+ * Popup automation control is a metadata-only control plane. It never carries
+ * account/target identifiers, credentials, OAuth material, or captured source.
+ * Dashboard remains authoritative for whether an automation is actually ON.
+ */
+export type CodeArchiveAutomationKind = "AUTO_SYNC" | "GITHUB_AUTO_COMMIT";
+
+export type CodeArchiveAutomationControlErrorCode =
+  | "AUTH_REQUIRED"
+  | "DASHBOARD_DISCONNECTED"
+  | "MULTIPLE_DASHBOARD_TABS"
+  | "AUTO_SYNC_CONSENT_REQUIRED"
+  | "GITHUB_TARGET_REQUIRED"
+  | "GITHUB_CONSENT_REQUIRED"
+  | "PUBLIC_REPOSITORY_CONSENT_REQUIRED"
+  | "OFFLINE"
+  | "LEASE_FAILED"
+  | "GITHUB_TARGET_CHANGED"
+  | "GITHUB_OUTCOME_UNKNOWN"
+  | "CONTROL_UNAVAILABLE";
+
+export interface CodeArchiveAutomationState {
+  readonly protocolVersion: CodeArchiveBridgeProtocolVersion;
+  readonly autoSyncEnabled: boolean;
+  readonly githubAutoCommitEnabled: boolean;
+  readonly githubTargetConfigured: boolean;
+  readonly authenticated: boolean;
+  readonly connectionAvailable: boolean;
+  readonly errorCode: CodeArchiveAutomationControlErrorCode | null;
+}
+
+interface CodeArchiveAutomationMessageBase {
+  readonly protocolVersion: CodeArchiveBridgeProtocolVersion;
+}
+
+/** Extension -> Dashboard: request the current authoritative sanitized state. */
+export interface CodeArchiveAutomationStateRequest
+  extends CodeArchiveAutomationMessageBase {
+  readonly type: "CODEARCHIVE_AUTOMATION_STATE_REQUEST";
+}
+
+/**
+ * Extension -> Dashboard: limited user intent only. `enabled: true` never
+ * substitutes for Dashboard authentication, consent, or GitHub target checks.
+ */
+export interface CodeArchiveAutomationSetRequest
+  extends CodeArchiveAutomationMessageBase {
+  readonly type: "CODEARCHIVE_AUTOMATION_SET_REQUEST";
+  readonly automation: CodeArchiveAutomationKind;
+  readonly enabled: boolean;
+}
+
+/**
+ * Extension -> Dashboard: fail-closed signal when multiple exact-origin
+ * Dashboard Ports exist. No tab/account identity is disclosed.
+ */
+export interface CodeArchiveAutomationSafetyStopRequest
+  extends CodeArchiveAutomationMessageBase {
+  readonly type: "CODEARCHIVE_AUTOMATION_SAFETY_STOP";
+  readonly errorCode: "MULTIPLE_DASHBOARD_TABS";
+}
+
+export type ExtensionToDashboardAutomationMessage =
+  | CodeArchiveAutomationStateRequest
+  | CodeArchiveAutomationSetRequest
+  | CodeArchiveAutomationSafetyStopRequest;
+
+/** Dashboard -> Extension: authoritative sanitized state for popup display. */
+export interface CodeArchiveAutomationStateUpdateEvent
+  extends CodeArchiveAutomationMessageBase {
+  readonly type: "CODEARCHIVE_AUTOMATION_STATE_UPDATE";
+  readonly state: CodeArchiveAutomationState;
+}
+
+export type DashboardToExtensionAutomationMessage =
+  CodeArchiveAutomationStateUpdateEvent;
+
+/**
  * `pending` is the only automatic-sync scope.
  * `all` is reserved for an explicit, target-account-confirmed recovery/re-import action.
  */
@@ -84,6 +161,10 @@ export interface CodeArchiveCaptureAckRequest
   readonly clientRecordIds: readonly ClientRecordId[];
 }
 
+/**
+ * Source/capability data plane remains Dashboard -> Extension and is deliberately
+ * separate from the metadata-only popup automation control plane above.
+ */
 export type DashboardBridgeRequest =
   | CodeArchivePingRequest
   | CodeArchiveCaptureSummaryRequest
@@ -93,7 +174,7 @@ export type DashboardBridgeRequest =
   | CodeArchiveCapturePageRequest
   | CodeArchiveCaptureAckRequest;
 
-/** Metadata-only event. Source/title/problem/account/auth fields are forbidden. */
+/** Metadata-only data-plane event. Source/title/problem/account/auth fields are forbidden. */
 export interface CodeArchiveCaptureChangedEvent {
   readonly type: "CODEARCHIVE_CAPTURE_CHANGED";
   readonly protocolVersion: CodeArchiveBridgeProtocolVersion;
@@ -101,6 +182,7 @@ export interface CodeArchiveCaptureChangedEvent {
   readonly revision: number;
 }
 
+/** Existing source-sync data-plane event union; automation messages stay separate. */
 export type ExtensionBridgeEvent = CodeArchiveCaptureChangedEvent;
 
 export interface CodeArchivePingData {
