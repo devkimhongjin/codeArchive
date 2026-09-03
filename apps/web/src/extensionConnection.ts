@@ -7,12 +7,15 @@ import {
   type CodeArchiveCaptureChangedEvent,
   type CodeArchiveCaptureSummaryData,
   type CodeArchiveCaptureSummaryResponse,
+  type CodeArchiveAutomationState,
   type CodeArchiveImportBeginResponse,
   type CodeArchivePingResponse,
   type CodeArchiveSyncSessionEndResponse,
   type CodeArchiveSyncSessionStartResponse,
+  type ExtensionToDashboardAutomationMessage,
 } from "../../../packages/shared-types/src";
 import { CODEARCHIVE_EXTENSION_ID } from "./extensionConfig";
+import { isAutomationControlType, parseAutomationMessage } from "./automationControl";
 
 const BRIDGE_RESPONSE_TIMEOUT_MS = 5_000;
 const RECONNECT_DELAYS_MS = [1_000, 3_000, 10_000] as const;
@@ -31,6 +34,7 @@ interface ChromeRuntime {
 
 interface ActiveBridge {
   request<T>(message: unknown): Promise<T | null>;
+  publish(message: unknown): boolean;
 }
 
 export type ExtensionConnectionState =
@@ -43,7 +47,9 @@ export interface DashboardExtensionConnection {
   start(
     onState: (state: ExtensionConnectionState) => void,
     onCaptureChanged?: (event: CodeArchiveCaptureChangedEvent) => void,
+    onAutomationMessage?: (message: ExtensionToDashboardAutomationMessage) => void,
   ): () => void;
+  publishAutomationState?(state: CodeArchiveAutomationState): boolean;
   startSyncSession(syncSessionId: string): Promise<boolean>;
   endSyncSession(syncSessionId: string): Promise<void>;
   beginImport?(syncSessionId: string): Promise<string | null>;
@@ -125,7 +131,7 @@ export function createDashboardExtensionConnection(
   let stopPrevious: (() => void) | undefined;
 
   return {
-    start(onState, onCaptureChanged) {
+    start(onState, onCaptureChanged, onAutomationMessage) {
       stopPrevious?.();
       if (!runtime) {
         activeBridge = null;
@@ -182,7 +188,13 @@ export function createDashboardExtensionConnection(
           }
         });
 
-        const bridge: ActiveBridge = { request };
+        const bridge: ActiveBridge = {
+          request,
+          publish(message) {
+            if (!active || disposed) return false;
+            try { port.postMessage(message); return true; } catch { return false; }
+          },
+        };
         activeBridge = bridge;
 
         port.onMessage.addListener((message) => {
@@ -191,6 +203,12 @@ export function createDashboardExtensionConnection(
             onCaptureChanged?.(message);
             return;
           }
+          const automation = parseAutomationMessage(message);
+          if (automation) {
+            onAutomationMessage?.(automation);
+            return;
+          }
+          if (isAutomationControlType(message)) return;
           pending.shift()?.(message);
         });
         port.onDisconnect.addListener(() => {
@@ -252,6 +270,15 @@ export function createDashboardExtensionConnection(
       };
       stopPrevious = stop;
       return stop;
+    },
+
+    publishAutomationState(state) {
+      const bridge = activeBridge;
+      return Boolean(bridge?.publish({
+        type: "CODEARCHIVE_AUTOMATION_STATE_UPDATE",
+        protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+        state,
+      }));
     },
 
     async startSyncSession(syncSessionId) {

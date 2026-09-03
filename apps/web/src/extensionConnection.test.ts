@@ -172,6 +172,21 @@ describe("Dashboard Extension connection", () => {
     await expect(begin).resolves.toBe("cap-a");
   });
 
+  it("routes automation control messages separately and publishes only sanitized state", async () => {
+    const port = new FakePort();
+    const controls: unknown[] = [];
+    const connection = createDashboardExtensionConnection({ connect: () => port });
+    connection.start(() => undefined, undefined, (message) => controls.push(message));
+    port.receive({ ok: true, data: { protocolVersion: 1 } });
+    await flush();
+    port.receive({ ok: true, data: { protocolVersion: 1, pendingCount: 0, allCount: 0, revision: 1 } });
+    await flush();
+    port.receive({ type: "CODEARCHIVE_AUTOMATION_STATE_REQUEST", protocolVersion: 1 });
+    expect(controls).toEqual([{ type: "CODEARCHIVE_AUTOMATION_STATE_REQUEST", protocolVersion: 1 }]);
+    expect(connection.publishAutomationState!({ protocolVersion: 1, autoSyncEnabled: true, githubAutoCommitEnabled: false, githubTargetConfigured: true, authenticated: true, connectionAvailable: true, errorCode: null })).toBe(true);
+    expect(port.sent.at(-1)).toEqual({ type: "CODEARCHIVE_AUTOMATION_STATE_UPDATE", protocolVersion: 1, state: { protocolVersion: 1, autoSyncEnabled: true, githubAutoCommitEnabled: false, githubTargetConfigured: true, authenticated: true, connectionAvailable: true, errorCode: null } });
+  });
+
   it("fails closed on malformed IMPORT_BEGIN and ACK responses", async () => {
     const { port, connection } = await connectBridge();
     const begin = connection.beginImport!("session-a");
