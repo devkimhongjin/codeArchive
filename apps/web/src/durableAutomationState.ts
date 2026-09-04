@@ -16,10 +16,11 @@ export function markDurableLocalSourceStopped(): void {
   localSourceStopped = true;
 }
 
-export function setDurableAutomationProfile(profile: DurableAutomationProfile | null): void {
+export function setDurableAutomationProfile(profile: DurableAutomationProfile | null, activateLocalSource = true): void {
   current = profile;
-  if (profile?.ownershipMode === "DURABLE_SERVER" && profile.sourceTransferEnabled) localSourceStopped = false;
-  if (!profile || !profile.sourceTransferEnabled) localSourceStopped = true;
+  if (profile?.ownershipMode === "DURABLE_SERVER" && profile.sourceTransferEnabled) {
+    if (activateLocalSource) localSourceStopped = false;
+  } else localSourceStopped = true;
   for (const listener of listeners) listener(profile);
 }
 
