@@ -288,10 +288,14 @@ export function GitHubAutoCommit({ client, target, eligible, blocked, blockedRea
     if (intent.enabled && (!checked || !target)) return;
     appliedIntent.current = intent.nonce;
     if (intent.enabled) void enable(true);
-    else if (effectiveDurableMode && effectiveDurableEnabled) void stop();
-    else if (run.current || phaseRef.current !== "idle") void stop();
-    else callbacks.current.onAutomationStateChange?.(false, null);
-  }, [automationIntent?.nonce, automationIntent?.enabled, checked, fingerprint, effectiveDurableMode, effectiveDurableEnabled]);
+    // A global restored DURABLE_SERVER profile must ignore page-owned lifecycle OFF
+    // intents (initial auth/consent loading, pagehide, disconnect). Explicit popup OFF
+    // is handled by durableAutomationRuntime; an explicitly-propped durable owner may
+    // still use this intent channel.
+    else if (durableMode && effectiveDurableEnabled) void stop();
+    else if (!effectiveDurableMode && (run.current || phaseRef.current !== "idle")) void stop();
+    else if (!effectiveDurableMode) callbacks.current.onAutomationStateChange?.(false, null);
+  }, [automationIntent?.nonce, automationIntent?.enabled, checked, fingerprint, durableMode, effectiveDurableMode, effectiveDurableEnabled]);
 
   const otherRun = !effectiveDurableMode && (status?.state === "ACTIVE" || status?.state === "STARTING");
   const locked = phase !== "idle";
