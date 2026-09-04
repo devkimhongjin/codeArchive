@@ -7,6 +7,7 @@ on:
       - master
     paths:
       - "apps/extension/**"
+      - "packages/shared-types/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/extension-pr-verify.yml"
 
