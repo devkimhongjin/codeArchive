@@ -8,5 +8,5 @@ export function registerExplicitAutoSyncOffHandler(next: ExplicitAutoSyncOffHand
 }
 
 export async function notifyExplicitAutoSyncOff(): Promise<void> {
-  await handler?.();
+  try { await handler?.(); } catch { /* Local consent OFF remains authoritative even while server revoke is pending. */ }
 }
