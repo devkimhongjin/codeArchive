@@ -8,6 +8,10 @@ export function durableAutomationProfile(): DurableAutomationProfile | null {
   return current;
 }
 
+export function durableLocalSourceStopped(): boolean {
+  return localSourceStopped;
+}
+
 export function durableSourceTransferEffective(): boolean {
   return current?.ownershipMode === "DURABLE_SERVER" && current.sourceTransferEnabled && !localSourceStopped;
 }
