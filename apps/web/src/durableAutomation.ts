@@ -82,14 +82,14 @@ function pairedForProfile(info: CodeArchiveRelayPairingInfoResponse, profile: Du
 export class DurableAutomationController {
   constructor(
     private readonly client: DurableAutomationClient,
-    private readonly bridge: DashboardRelayPairingConnection,
+    private readonly bridge: Partial<DashboardRelayPairingConnection>,
     private readonly now: () => number = () => Date.now(),
   ) {}
 
   async discover(signal?: AbortSignal): Promise<{ profile: DurableAutomationProfile; pairing: CodeArchiveRelayPairingInfoResponse | null }> {
     const [profile, pairing] = await Promise.all([
       this.client.profile(signal),
-      this.bridge.relayPairingInfo().catch(() => null),
+      this.bridge.relayPairingInfo?.().catch(() => null) ?? Promise.resolve(null),
     ]);
     return { profile, pairing };
   }
@@ -140,7 +140,7 @@ export class DurableAutomationController {
   async disableGitHubAutoCommit(signal?: AbortSignal): Promise<DurableTransitionResult> {
     const current = await this.client.profile(signal);
     if (current.ownershipMode !== "DURABLE_SERVER") return { profile: current, relayPaired: false };
-    const pairing = await this.bridge.relayPairingInfo().catch(() => null);
+    const pairing = await (this.bridge.relayPairingInfo?.().catch(() => null) ?? Promise.resolve(null));
     const deviceId = pairing?.deviceId ?? current.deviceId;
     if (!deviceId) throw new DurableAutomationTransitionError("RELAY_PAIRING_UNAVAILABLE");
     const desired = {
@@ -163,7 +163,7 @@ export class DurableAutomationController {
 
   async disableAll(signal?: AbortSignal): Promise<DurableTransitionResult> {
     const current = await this.client.profile(signal);
-    const pairing = await this.bridge.relayPairingInfo().catch(() => null);
+    const pairing = await (this.bridge.relayPairingInfo?.().catch(() => null) ?? Promise.resolve(null));
     if (current.ownershipMode !== "DURABLE_SERVER") return { profile: current, relayPaired: false };
     const deviceId = pairing?.deviceId ?? current.deviceId;
     if (!deviceId) throw new DurableAutomationTransitionError("RELAY_PAIRING_UNAVAILABLE");
@@ -180,7 +180,7 @@ export class DurableAutomationController {
     const profile = await this.updateIfNeeded(current, desired, signal);
     let localRevocationConfirmed = false;
     if (pairing && pairing.state !== "UNPAIRED") {
-      const applied = await this.bridge.relayConfirmRevoke({
+      const applied = await (this.bridge.relayConfirmRevoke?.({
         type: "CODEARCHIVE_RELAY_REVOKE_CONFIRMED",
         phase: "REQUEST",
         protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
@@ -188,7 +188,7 @@ export class DurableAutomationController {
         grantId: pairing.grantId,
         generation: pairing.generation,
         revokedAt: profile.updatedAt,
-      }).catch(() => null);
+      }).catch(() => null) ?? Promise.resolve(null));
       localRevocationConfirmed = Boolean(applied
         && applied.deviceId === pairing.deviceId
         && applied.grantId === pairing.grantId
@@ -198,7 +198,9 @@ export class DurableAutomationController {
   }
 
   private async requirePairingInfo(): Promise<CodeArchiveRelayPairingInfoResponse> {
-    const pairing = await this.bridge.relayPairingInfo().catch(() => null);
+    const pairingInfo = this.bridge.relayPairingInfo;
+    if (!pairingInfo) throw new DurableAutomationTransitionError("RELAY_PAIRING_UNAVAILABLE");
+    const pairing = await pairingInfo().catch(() => null);
     if (!pairing) throw new DurableAutomationTransitionError("RELAY_PAIRING_UNAVAILABLE");
     return pairing;
   }
@@ -222,7 +224,7 @@ export class DurableAutomationController {
 
     const challenge = await this.client.relayChallenge(info.deviceId, info.publicKey, signal);
     if (Date.parse(challenge.expiresAt) <= this.now()) throw new DurableAutomationTransitionError("CHALLENGE_EXPIRED");
-    const signed = await this.bridge.relaySignChallenge({
+    const signed = await this.bridge.relaySignChallenge?.({
       type: "CODEARCHIVE_RELAY_SIGN_CHALLENGE",
       phase: "REQUEST",
       protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
@@ -230,7 +232,7 @@ export class DurableAutomationController {
       challengeId: challenge.challengeId,
       challenge: challenge.challenge,
       expiresAt: challenge.expiresAt,
-    });
+    }) ?? null;
     if (!signed || signed.deviceId !== info.deviceId || signed.challengeId !== challenge.challengeId) {
       throw new DurableAutomationTransitionError("CHALLENGE_SIGNATURE_REJECTED");
     }
@@ -244,7 +246,7 @@ export class DurableAutomationController {
     if (grant.deviceId !== profile.deviceId || grant.generation !== profile.generation || Date.parse(grant.expiresAt) <= this.now()) {
       throw new DurableAutomationTransitionError("GRANT_GENERATION_MISMATCH");
     }
-    const stored = await this.bridge.relayProvisionGrant({
+    const stored = await this.bridge.relayProvisionGrant?.({
       type: "CODEARCHIVE_RELAY_GRANT_PROVISION",
       phase: "REQUEST",
       protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
@@ -254,7 +256,7 @@ export class DurableAutomationController {
       credential: grant.credential,
       generation: grant.generation,
       expiresAt: grant.expiresAt,
-    });
+    }) ?? null;
     if (!stored || stored.deviceId !== grant.deviceId || stored.grantId !== grant.grantId
       || stored.generation !== grant.generation || stored.expiresAt !== grant.expiresAt) {
       throw new DurableAutomationTransitionError("GRANT_STORAGE_UNCONFIRMED");
