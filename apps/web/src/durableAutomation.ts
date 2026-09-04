@@ -100,7 +100,7 @@ export class DurableAutomationController {
     const desired = {
       deviceId: pairing.deviceId,
       sourceTransferEnabled: true,
-      githubAutoCommitEnabled: false,
+      githubAutoCommitEnabled: current.githubAutoCommitEnabled,
       ownershipMode: "DURABLE_SERVER" as const,
       target: current.target,
       automaticTransferConsent: true,
