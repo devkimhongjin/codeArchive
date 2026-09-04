@@ -2,7 +2,12 @@ import { createAutoSyncConsentStore } from "./accountConsent";
 import { DurableAutomationController, type DashboardRelayPairingConnection } from "./durableAutomation";
 import { mainApiDurableAutomationClient } from "./durableAutomationClient";
 import { registerExplicitAutoSyncOffHandler } from "./durableAutomationIntent";
-import { durableAutomationProfile, setDurableAutomationProfile } from "./durableAutomationState";
+import { registerDurableAutomationController } from "./durableAutomationRuntime";
+import {
+  durableAutomationProfile,
+  markDurableLocalSourceStopped,
+  setDurableAutomationProfile,
+} from "./durableAutomationState";
 export { createAutoSyncConsentStore, type AutoSyncConsentStore } from "./accountConsent";
 export const DASHBOARD_BETA_ORIGIN = "https://codearchive-dashboard-beta.onrender.com";
 
@@ -50,12 +55,13 @@ export function createAutoSyncSessionController(
   const durable = relayCapable(transport) ? new DurableAutomationController(mainApiDurableAutomationClient, transport) : null;
 
   if (durable) {
+    registerDurableAutomationController(durable);
     registerExplicitAutoSyncOffHandler(async () => {
       const current = durableAutomationProfile();
       if (!current || current.ownershipMode !== "DURABLE_SERVER") return;
       try {
         const result = await durable.disableAll();
-        setDurableAutomationProfile(result.profile);
+        setDurableAutomationProfile(result.profile, false);
       } catch {
         // Local Extension state is stopped by the metadata update immediately.
         // Server OFF remains pending and will be reconciled from the next authenticated Dashboard.
@@ -97,6 +103,20 @@ export function createAutoSyncSessionController(
       try { pairing = await transport.relayPairingInfo(); } catch { pairing = null; }
       if (pairing) {
         durableDetected = true;
+        if (pairing.state === "REVOCATION_PENDING") {
+          // Popup-local OFF is durable intent, not a transient disconnect. Never turn it
+          // back on merely because the Dashboard reopened and remembered consent exists.
+          markDurableLocalSourceStopped();
+          try {
+            const result = await durable.disableAll();
+            setDurableAutomationProfile(result.profile, false);
+          } catch {
+            // Keep the local stop latched. A later authenticated reconciliation may finish
+            // the server-side OFF, but this generation must not silently resume.
+          }
+          await endPageOwnedSession();
+          return;
+        }
         try {
           const result = await durable.enableSourceTransfer();
           setDurableAutomationProfile(result.profile);
