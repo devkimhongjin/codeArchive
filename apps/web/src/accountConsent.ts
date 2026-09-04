@@ -1,3 +1,5 @@
+import { notifyExplicitAutoSyncOff } from "./durableAutomationIntent";
+
 export const ACCOUNT_CONSENT_KEY = "codearchive.autoSyncConsent.v1";
 const BINDING_PREFIX = "v1:sha256:";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -101,7 +103,11 @@ export function createAccountConsentController(
     async choose(enabled: boolean) {
       const current = ++revision;
       onChange(enabled);
-      if (!enabled) { write(false); return; }
+      if (!enabled) {
+        write(false);
+        await notifyExplicitAutoSyncOff();
+        return;
+      }
       const binding = await bindingFor(verifiedId);
       if (current === revision) write(true, binding);
     },
