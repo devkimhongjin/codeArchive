@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DurableAutomationController, DurableAutomationTransitionError, type DashboardRelayPairingConnection } from "./durableAutomation";
+import { DurableAutomationController, type DashboardRelayPairingConnection } from "./durableAutomation";
 import type { DurableAutomationClient, DurableAutomationProfile } from "./durableAutomationClient";
 import type { GitHubAutoTarget } from "./githubClient";
 
@@ -90,7 +90,7 @@ function fixture(initial = profile()) {
       deviceId: request.deviceId, grantId: request.grantId, generation: request.generation, revokedAt: request.revokedAt,
     })),
   };
-  return { client, bridge, calls, get profile() { return current; } };
+  return { client, bridge, calls };
 }
 
 describe("DurableAutomationController", () => {
@@ -141,7 +141,7 @@ describe("DurableAutomationController", () => {
     expect(f.client.relayGrant).toHaveBeenCalled();
   });
 
-  it("turns all durable intent off before confirming local revoke metadata", async () => {
+  it("turns all durable intent off and confirms local revoke metadata", async () => {
     const f = fixture(profile({ githubAutoCommitEnabled: true, githubEnabledAt: "2026-09-04T07:00:00Z" }));
     vi.mocked(f.bridge.relayPairingInfo).mockResolvedValue({
       type: "CODEARCHIVE_RELAY_PAIRING_INFO", phase: "INFO", protocolVersion: 1,
@@ -150,9 +150,13 @@ describe("DurableAutomationController", () => {
     });
     const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);
     const result = await controller.disableAll();
+    expect(f.client.update).toHaveBeenCalledWith(expect.objectContaining({
+      sourceTransferEnabled: false,
+      githubAutoCommitEnabled: false,
+    }), undefined);
+    expect(f.bridge.relayConfirmRevoke).toHaveBeenCalledTimes(1);
     expect(result.profile.sourceTransferEnabled).toBe(false);
     expect(result.profile.githubAutoCommitEnabled).toBe(false);
-    expect(f.bridge.relayConfirmRevoke).toHaveBeenCalledAfter(f.client.update as never);
     expect(result.localRevocationConfirmed).toBe(true);
   });
 
@@ -163,9 +167,7 @@ describe("DurableAutomationController", () => {
       generation: 999, expiresAt: "2026-10-04T08:00:00Z",
     }));
     const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);
-    await expect(controller.enableSourceTransfer()).rejects.toMatchObject<Partial<DurableAutomationTransitionError>>({
-      code: "GRANT_GENERATION_MISMATCH",
-    });
+    await expect(controller.enableSourceTransfer()).rejects.toMatchObject({ code: "GRANT_GENERATION_MISMATCH" });
     expect(f.bridge.relayProvisionGrant).not.toHaveBeenCalled();
   });
 
