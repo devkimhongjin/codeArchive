@@ -24,31 +24,71 @@ export const CODEARCHIVE_RELAY_CREDENTIAL_MAX_LENGTH = 512 as const;
  * - current device identity;
  * - most recently signed, unexpired challengeId;
  * - strict bounds exported by this module;
- * - positive safe-integer generation and valid absolute expiry timestamps.
+ * - positive safe-integer generation and valid absolute timestamps.
  */
 
 export type CodeArchiveRelayDeviceId = string;
 export type CodeArchiveRelayChallengeId = string;
 export type CodeArchiveRelayGrantId = string;
 
-interface CodeArchiveRelayPairingMessageBase {
+export type CodeArchiveRelayLocalState =
+  | "UNPAIRED"
+  | "ACTIVE"
+  | "REVOCATION_PENDING"
+  | "EXPIRED"
+  | "INVALIDATED";
+
+interface CodeArchiveRelayMessageBase {
   readonly protocolVersion: CodeArchiveBridgeProtocolVersion;
+}
+
+interface CodeArchiveRelayDeviceMessageBase extends CodeArchiveRelayMessageBase {
   readonly deviceId: CodeArchiveRelayDeviceId;
 }
 
-/**
- * Extension -> Dashboard.
- * Announces only the local device identifier and Ed25519 SPKI public key.
- */
-export interface CodeArchiveRelayPairingInfoMessage
-  extends CodeArchiveRelayPairingMessageBase {
+interface CodeArchiveRelayGrantMetadata {
+  readonly grantId: CodeArchiveRelayGrantId;
+  readonly generation: number;
+  readonly expiresAt: string;
+}
+
+/** Dashboard -> Extension. Explicit feature-detection request; never unsolicited by Extension. */
+export interface CodeArchiveRelayPairingInfoRequest extends CodeArchiveRelayMessageBase {
   readonly type: "CODEARCHIVE_RELAY_PAIRING_INFO";
+  readonly phase: "REQUEST";
+}
+
+interface CodeArchiveRelayPairingInfoBase extends CodeArchiveRelayDeviceMessageBase {
+  readonly type: "CODEARCHIVE_RELAY_PAIRING_INFO";
+  readonly phase: "INFO";
   readonly publicKey: string;
 }
 
+/** Extension -> Dashboard. No grant metadata exists before a device has been paired. */
+export interface CodeArchiveRelayPairingInfoUnpaired
+  extends CodeArchiveRelayPairingInfoBase {
+  readonly state: "UNPAIRED";
+  readonly grantId?: never;
+  readonly generation?: never;
+  readonly expiresAt?: never;
+}
+
+/**
+ * Extension -> Dashboard. Non-secret grant metadata is present for every local
+ * state that refers to a previously provisioned grant. Credential is forbidden.
+ */
+export interface CodeArchiveRelayPairingInfoPaired
+  extends CodeArchiveRelayPairingInfoBase, CodeArchiveRelayGrantMetadata {
+  readonly state: Exclude<CodeArchiveRelayLocalState, "UNPAIRED">;
+}
+
+export type CodeArchiveRelayPairingInfoResponse =
+  | CodeArchiveRelayPairingInfoUnpaired
+  | CodeArchiveRelayPairingInfoPaired;
+
 /** Dashboard -> Extension: request proof-of-possession for one API challenge. */
 export interface CodeArchiveRelaySignChallengeRequest
-  extends CodeArchiveRelayPairingMessageBase {
+  extends CodeArchiveRelayDeviceMessageBase {
   readonly type: "CODEARCHIVE_RELAY_SIGN_CHALLENGE";
   readonly phase: "REQUEST";
   readonly challengeId: CodeArchiveRelayChallengeId;
@@ -58,11 +98,10 @@ export interface CodeArchiveRelaySignChallengeRequest
 
 /**
  * Extension -> Dashboard: signature for the exact current challengeId.
- * The raw challenge is intentionally not echoed back; Dashboard already owns
- * the API challenge response that it must submit with this signature.
+ * The raw challenge is intentionally not echoed back.
  */
 export interface CodeArchiveRelaySignChallengeResponse
-  extends CodeArchiveRelayPairingMessageBase {
+  extends CodeArchiveRelayDeviceMessageBase {
   readonly type: "CODEARCHIVE_RELAY_SIGN_CHALLENGE";
   readonly phase: "SIGNED";
   readonly challengeId: CodeArchiveRelayChallengeId;
@@ -71,41 +110,56 @@ export interface CodeArchiveRelaySignChallengeResponse
 
 /**
  * Dashboard -> Extension.
- * The relay credential is permitted in this message family only and must be
- * persisted only as the narrow append-only relay credential described by #177.
+ * This is the only pairing message shape in which the relay credential may
+ * exist. It is the narrow append-only relay credential described by #177.
  */
-export interface CodeArchiveRelayGrantProvisionMessage
-  extends CodeArchiveRelayPairingMessageBase {
+export interface CodeArchiveRelayGrantProvisionRequest
+  extends CodeArchiveRelayDeviceMessageBase, CodeArchiveRelayGrantMetadata {
   readonly type: "CODEARCHIVE_RELAY_GRANT_PROVISION";
+  readonly phase: "REQUEST";
   readonly challengeId: CodeArchiveRelayChallengeId;
-  readonly grantId: CodeArchiveRelayGrantId;
   readonly credential: string;
-  readonly generation: number;
-  readonly expiresAt: string;
 }
 
-/**
- * Dashboard -> Extension.
- * Confirms server-side revoke/disable for the previously provisioned grant.
- * No credential is ever repeated in a revoke confirmation.
- */
-export interface CodeArchiveRelayRevokeConfirmedMessage
-  extends CodeArchiveRelayPairingMessageBase {
+/** Extension -> Dashboard: confirms durable local storage without echoing secret material. */
+export interface CodeArchiveRelayGrantProvisionResponse
+  extends CodeArchiveRelayDeviceMessageBase, CodeArchiveRelayGrantMetadata {
+  readonly type: "CODEARCHIVE_RELAY_GRANT_PROVISION";
+  readonly phase: "STORED";
+}
+
+/** Dashboard -> Extension: confirms server-side revoke/disable for one grant generation. */
+export interface CodeArchiveRelayRevokeConfirmedRequest
+  extends CodeArchiveRelayDeviceMessageBase {
   readonly type: "CODEARCHIVE_RELAY_REVOKE_CONFIRMED";
+  readonly phase: "REQUEST";
   readonly grantId: CodeArchiveRelayGrantId;
   readonly generation: number;
   readonly revokedAt: string;
 }
 
-export type ExtensionToDashboardRelayPairingMessage =
-  | CodeArchiveRelayPairingInfoMessage
-  | CodeArchiveRelaySignChallengeResponse;
+/** Extension -> Dashboard: confirms the local revoke transition was applied. */
+export interface CodeArchiveRelayRevokeConfirmedResponse
+  extends CodeArchiveRelayDeviceMessageBase {
+  readonly type: "CODEARCHIVE_RELAY_REVOKE_CONFIRMED";
+  readonly phase: "APPLIED";
+  readonly grantId: CodeArchiveRelayGrantId;
+  readonly generation: number;
+  readonly revokedAt: string;
+}
 
 export type DashboardToExtensionRelayPairingMessage =
+  | CodeArchiveRelayPairingInfoRequest
   | CodeArchiveRelaySignChallengeRequest
-  | CodeArchiveRelayGrantProvisionMessage
-  | CodeArchiveRelayRevokeConfirmedMessage;
+  | CodeArchiveRelayGrantProvisionRequest
+  | CodeArchiveRelayRevokeConfirmedRequest;
+
+export type ExtensionToDashboardRelayPairingMessage =
+  | CodeArchiveRelayPairingInfoResponse
+  | CodeArchiveRelaySignChallengeResponse
+  | CodeArchiveRelayGrantProvisionResponse
+  | CodeArchiveRelayRevokeConfirmedResponse;
 
 export type CodeArchiveRelayPairingMessage =
-  | ExtensionToDashboardRelayPairingMessage
-  | DashboardToExtensionRelayPairingMessage;
+  | DashboardToExtensionRelayPairingMessage
+  | ExtensionToDashboardRelayPairingMessage;
