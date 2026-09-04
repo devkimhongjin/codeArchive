@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { DashboardSolution } from "./archiveTypes";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
-import { GitHubAutoCommit } from "./GitHubAutoCommit";
+import { GitHubAutoCommit, type DurableGitHubConsent } from "./GitHubAutoCommit";
 import { githubErrorMessage, GitHubRequestError, type GitHubAutoTarget, type GitHubBranch, type GitHubClient, type GitHubCommitResult, type GitHubConfirmation, type GitHubDirectory, type GitHubInstallation, type GitHubPage, type GitHubRepository } from "./githubClient";
 
 type AutomationIntent = { enabled: boolean; nonce: number };
@@ -16,6 +16,10 @@ type GitHubUploadProps = {
   automationIntent?: AutomationIntent | null;
   onAutomationStateChange?: (enabled: boolean, errorCode: import("../../../packages/shared-types/src").CodeArchiveAutomationControlErrorCode | null) => void;
   onTargetConfiguredChange?: (configured: boolean) => void;
+  durableMode?: boolean;
+  durableEnabled?: boolean;
+  onDurableEnable?: (target: GitHubAutoTarget, consent: DurableGitHubConsent) => Promise<boolean>;
+  onDurableDisable?: () => Promise<boolean>;
 };
 
 function selectableBranch(branch: GitHubBranch): boolean {
@@ -52,7 +56,8 @@ export function GitHubUpload({ accountIdValid = true, automationBlockedReason, .
       : <GitHubUploadBody {...props} open={open} automationBlockedReason={automationBlockedReason} />}
   </section>;
 }
-function GitHubUploadBody({ open, solution, client, syncEligible, automationBlockedReason, onSessionExpired, automationIntent, onAutomationStateChange, onTargetConfiguredChange }: GitHubUploadProps & { open: boolean }) {
+function GitHubUploadBody({ open, solution, client, syncEligible, automationBlockedReason, onSessionExpired, automationIntent, onAutomationStateChange, onTargetConfiguredChange,
+  durableMode = false, durableEnabled = false, onDurableEnable, onDurableDisable }: GitHubUploadProps & { open: boolean }) {
   const [installations, setInstallations] = useState<GitHubInstallation[]>([]);
   const [installation, setInstallation] = useState("");
   const [repositories, setRepositories] = useState<GitHubPage<GitHubRepository>>({ page: 1, hasMore: false, items: [] });
@@ -84,7 +89,7 @@ function GitHubUploadBody({ open, solution, client, syncEligible, automationBloc
   const locked = busy || autoLocked || !!unresolved;
   const target: GitHubAutoTarget | null = repository && branch ? { installationId: installation, repositoryId: repository.id, branch: branch.name, expectedCommitSha: branch.commitSha, folder, privateRepository: repository.private, fullName: repository.fullName } : null;
   const targetGuidance = branchGuidance(repository, branches, branch);
-  useEffect(() => { onTargetConfiguredChange?.(Boolean(target)); }, [onTargetConfiguredChange, target?.installationId, target?.repositoryId, target?.branch, target?.expectedCommitSha, target?.folder, target?.privateRepository, target?.fullName]);
+  useEffect(() => { onTargetConfiguredChange?.(Boolean(target) || (durableMode && durableEnabled)); }, [onTargetConfiguredChange, durableMode, durableEnabled, target?.installationId, target?.repositoryId, target?.branch, target?.expectedCommitSha, target?.folder, target?.privateRepository, target?.fullName]);
   async function fetchFreshSelectedTarget(signal: AbortSignal): Promise<{ repositories: GitHubPage<GitHubRepository>; repository: GitHubRepository; branches: GitHubPage<GitHubBranch>; branch: GitHubBranch; target: GitHubAutoTarget }> {
     if (!target || !repository || !branch) throw new GitHubRequestError("GITHUB_REFERENCE_CHANGED");
     const latestRepositories = await client.repositories(installation, repositories.page, signal);
@@ -209,6 +214,7 @@ function GitHubUploadBody({ open, solution, client, syncEligible, automationBloc
     </div>
     <div hidden={!open}>
       <GitHubAutoCommit client={client} target={target} eligible={syncEligible} blocked={busy || !!unresolved} blockedReason={automationBlockedReason ?? targetGuidance} automationIntent={automationIntent} onAutomationStateChange={onAutomationStateChange} refreshTarget={refreshAutomationTarget} onSessionExpired={() => callback.current()}
+        durableMode={durableMode} durableEnabled={durableEnabled} onDurableEnable={onDurableEnable} onDurableDisable={onDurableDisable}
         onLock={value => { setAutoLocked(value); invalidate(); if (!value) { setBranch(null); setDirectory(null); } }} />
     </div>
   </>;
