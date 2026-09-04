@@ -4,6 +4,7 @@ import {
   type CodeArchiveAutomationState,
   type ExtensionToDashboardAutomationMessage,
 } from "../../../packages/shared-types/src";
+import { durableAutomationProfile, durableSourceTransferEffective } from "./durableAutomationState";
 
 const AUTOMATION_KINDS = ["AUTO_SYNC", "GITHUB_AUTO_COMMIT"] as const;
 const ERROR_CODES = [
@@ -71,11 +72,14 @@ export interface AutomationStateInput {
 
 /** Construct the only state shape that may be published to the Extension. */
 export function sanitizeAutomationState(input: AutomationStateInput): CodeArchiveAutomationState {
+  const durable = durableAutomationProfile();
+  const durableMode = durable?.ownershipMode === "DURABLE_SERVER";
+  const durableSource = durableMode && durableSourceTransferEffective() && input.authenticated === true;
   return {
     protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
-    autoSyncEnabled: input.autoSyncEnabled === true,
-    githubAutoCommitEnabled: input.githubAutoCommitEnabled === true,
-    githubTargetConfigured: input.githubTargetConfigured === true,
+    autoSyncEnabled: durableMode ? durableSource : input.autoSyncEnabled === true,
+    githubAutoCommitEnabled: durableMode ? durableSource && durable.githubAutoCommitEnabled : input.githubAutoCommitEnabled === true,
+    githubTargetConfigured: durableMode ? durable.target !== null : input.githubTargetConfigured === true,
     authenticated: input.authenticated === true,
     connectionAvailable: input.connectionAvailable === true,
     errorCode: input.errorCode && isErrorCode(input.errorCode) ? input.errorCode : null,
