@@ -52,7 +52,8 @@ export function createAutoSyncSessionController(
   let activeAuthContextKey = "";
   let transition = Promise.resolve();
   let durableDetected = durableAutomationProfile()?.ownershipMode === "DURABLE_SERVER";
-  const durable = relayCapable(transport) ? new DurableAutomationController(mainApiDurableAutomationClient, transport) : null;
+  const relayTransport = relayCapable(transport) ? transport : null;
+  const durable = relayTransport ? new DurableAutomationController(mainApiDurableAutomationClient, relayTransport) : null;
 
   if (durable) {
     registerDurableAutomationController(durable);
@@ -96,11 +97,11 @@ export function createAutoSyncSessionController(
 
     if (!desiredEligible) return;
 
-    if (durable) {
+    if (durable && relayTransport) {
       const remembered = durableAutomationProfile();
       if (remembered?.ownershipMode === "DURABLE_SERVER") durableDetected = true;
       let pairing = null;
-      try { pairing = await transport.relayPairingInfo(); } catch { pairing = null; }
+      try { pairing = await relayTransport.relayPairingInfo(); } catch { pairing = null; }
       if (pairing) {
         durableDetected = true;
         if (pairing.state === "REVOCATION_PENDING") {
