@@ -6,3 +6,4 @@ export type { ProblemInfo } from "./models/problem";
 export type { CapturedSubmission } from "./models/submission";
 
 export * from "./contracts/extension-dashboard-sync";
+export * from "./contracts/extension-dashboard-relay";

@@ -39,6 +39,9 @@ jobs:
       - name: Install with frozen lockfile
         run: pnpm install --frozen-lockfile 2>&1 | tee install-frozen.log
 
+      - name: Typecheck shared types
+        run: pnpm --filter @codearchive/shared-types run typecheck
+
       - name: Typecheck extension
         run: pnpm --filter @codearchive/extension typecheck 2>&1 | tee typecheck.log
 
@@ -65,7 +68,7 @@ jobs:
           with open("apps/extension/dist/manifest.json", encoding="utf-8") as f:
               manifest = json.load(f)
           assert manifest["manifest_version"] == 3
-          assert manifest.get("permissions") == ["identity"], (
+          assert manifest.get("permissions") == ["identity", "alarms"], (
               f"unexpected extension permissions: {manifest.get('permissions')}"
           )
           expected_host_permissions = ["https://codearchive-api.onrender.com/*"]
