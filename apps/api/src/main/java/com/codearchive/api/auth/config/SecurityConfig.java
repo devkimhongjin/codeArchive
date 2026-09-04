@@ -53,8 +53,6 @@ public class SecurityConfig {
                 )
                 .authorizeHttpRequests(authorize ->
                         authorize
-                                .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/v1/beta/access")
-                                .permitAll()
                                 .requestMatchers(
                                         "/api/v1/status",
                                         "/api/v1/auth/github/login",
