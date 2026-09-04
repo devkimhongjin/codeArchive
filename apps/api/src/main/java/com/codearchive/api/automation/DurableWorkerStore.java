@@ -1,6 +1,7 @@
 package com.codearchive.api.automation;
 
 import java.time.Instant;
+import java.sql.Timestamp;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -72,7 +73,7 @@ public class DurableWorkerStore {
                         ORDER BY s.captured_at,s.id LIMIT 1
                         """, new MapSqlParameterSource("user", candidate.userId())
                         .addValue("generation", candidate.generation())
-                        .addValue("enabledAt", candidate.githubEnabledAt()),
+                        .addValue("enabledAt", Timestamp.from(candidate.githubEnabledAt())),
                         (rs, index) -> rs.getObject(1, UUID.class)).stream().findFirst().orElse(null);
                 if (solution == null) return Optional.empty();
 

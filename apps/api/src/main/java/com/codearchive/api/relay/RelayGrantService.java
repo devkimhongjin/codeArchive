@@ -1,6 +1,7 @@
 package com.codearchive.api.relay;
 
 import java.nio.charset.StandardCharsets;
+import java.sql.Timestamp;
 import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.Signature;
@@ -91,8 +92,8 @@ public class RelayGrantService {
                 .addValue("device", device)
                 .addValue("key", publicKey)
                 .addValue("hash", tokens.hash(rawChallenge))
-                .addValue("expires", expires)
-                .addValue("created", now)));
+                .addValue("expires", Timestamp.from(expires))
+                .addValue("created", Timestamp.from(now))));
         return new ChallengeResponse(id, rawChallenge, expires);
     }
 
@@ -131,11 +132,11 @@ public class RelayGrantService {
                 throw invalid();
             }
             db.update("UPDATE relay_pairing_challenges SET consumed_at=:now WHERE id=:id",
-                    new MapSqlParameterSource("now", now).addValue("id", challengeId));
+                    new MapSqlParameterSource("now", Timestamp.from(now)).addValue("id", challengeId));
 
             long generation = profileForDevice(principal.userId(), device, now);
             db.update("UPDATE relay_grants SET revoked_at=:now WHERE user_id=:user AND revoked_at IS NULL",
-                    new MapSqlParameterSource("now", now).addValue("user", principal.userId()));
+                    new MapSqlParameterSource("now", Timestamp.from(now)).addValue("user", principal.userId()));
 
             UUID grantId = UUID.randomUUID();
             String rawToken = grantId + "." + tokens.generate();
@@ -151,8 +152,8 @@ public class RelayGrantService {
                     .addValue("generation", generation)
                     .addValue("keyHash", tokens.hash(publicKey))
                     .addValue("tokenHash", tokens.hash(rawToken))
-                    .addValue("issued", now)
-                    .addValue("expires", expires));
+                    .addValue("issued", Timestamp.from(now))
+                    .addValue("expires", Timestamp.from(expires)));
             return new GrantResponse(grantId, rawToken, device, generation, expires);
         });
     }
@@ -163,10 +164,10 @@ public class RelayGrantService {
         tx.executeWithoutResult(status -> {
             Instant now = clock.instant();
             int revoked = db.update("UPDATE relay_grants SET revoked_at=:now WHERE id=:id AND user_id=:user AND revoked_at IS NULL",
-                    new MapSqlParameterSource("now", now).addValue("id", grantId).addValue("user", principal.userId()));
+                    new MapSqlParameterSource("now", Timestamp.from(now)).addValue("id", grantId).addValue("user", principal.userId()));
             if (revoked != 1) throw invalid();
             db.update("UPDATE relay_grants SET revoked_at=:now WHERE user_id=:user AND revoked_at IS NULL",
-                    new MapSqlParameterSource("now", now).addValue("user", principal.userId()));
+                    new MapSqlParameterSource("now", Timestamp.from(now)).addValue("user", principal.userId()));
             disableProfile(principal.userId(), now);
         });
     }
@@ -179,7 +180,7 @@ public class RelayGrantService {
             int revoked = db.update("""
                     UPDATE relay_grants SET revoked_at=:now
                     WHERE id=:id AND user_id=:user AND revoked_at IS NULL
-                    """, new MapSqlParameterSource("now", clock.instant()).addValue("id", currentGrantId)
+                    """, new MapSqlParameterSource("now", Timestamp.from(clock.instant())).addValue("id", currentGrantId)
                     .addValue("user", principal.userId()));
             if (revoked != 1) throw invalid();
         });
@@ -191,7 +192,7 @@ public class RelayGrantService {
         tx.executeWithoutResult(status -> {
             Instant now = clock.instant();
             db.update("UPDATE relay_grants SET revoked_at=:now WHERE user_id=:user AND revoked_at IS NULL",
-                    new MapSqlParameterSource("now", now).addValue("user", userId));
+                    new MapSqlParameterSource("now", Timestamp.from(now)).addValue("user", userId));
             disableProfile(userId, now);
         });
     }
@@ -203,7 +204,7 @@ public class RelayGrantService {
                 SELECT id,user_id,device_id,generation
                 FROM relay_grants
                 WHERE token_hash=:hash AND revoked_at IS NULL AND expires_at > :now
-                """, new MapSqlParameterSource("hash", tokens.hash(rawToken)).addValue("now", now),
+                """, new MapSqlParameterSource("hash", tokens.hash(rawToken)).addValue("now", Timestamp.from(now)),
                 (rs, index) -> new RelayGrantPrincipal(rs.getObject("user_id", UUID.class),
                         rs.getObject("id", UUID.class), rs.getString("device_id"), rs.getLong("generation")))
                 .stream().findFirst();
@@ -228,7 +229,7 @@ public class RelayGrantService {
                 .stream().findFirst();
         if (existing.isEmpty()) {
             db.update("INSERT INTO automation_profiles(user_id,device_id,generation,updated_at) VALUES(:user,:device,1,:now)",
-                    new MapSqlParameterSource("user", userId).addValue("device", device).addValue("now", now));
+                    new MapSqlParameterSource("user", userId).addValue("device", device).addValue("now", Timestamp.from(now)));
             return 1;
         }
         ProfileRow profile = existing.get();
@@ -240,7 +241,7 @@ public class RelayGrantService {
                     target=null,github_enabled_at=null,version=version+1,updated_at=:now
                     WHERE user_id=:user
                     """, new MapSqlParameterSource("device", device).addValue("generation", generation)
-                    .addValue("now", now).addValue("user", userId));
+                    .addValue("now", Timestamp.from(now)).addValue("user", userId));
             return generation;
         }
         return profile.generation();
@@ -252,7 +253,7 @@ public class RelayGrantService {
                 source_transfer_enabled=false,github_auto_commit_enabled=false,
                 github_enabled_at=null,version=version+1,updated_at=:now
                 WHERE user_id=:user
-                """, new MapSqlParameterSource("user", userId).addValue("now", now));
+                """, new MapSqlParameterSource("user", userId).addValue("now", Timestamp.from(now)));
     }
 
     private void requireDashboard(CodeArchivePrincipal principal, String origin) {

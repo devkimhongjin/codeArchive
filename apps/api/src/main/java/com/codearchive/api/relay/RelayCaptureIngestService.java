@@ -2,6 +2,7 @@ package com.codearchive.api.relay;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -100,14 +101,14 @@ public class RelayCaptureIngestService {
                 .addValue("language", required(item.language(), 64))
                 .addValue("code", item.code())
                 .addValue("result", "ACCEPTED")
-                .addValue("solvedAt", item.solvedAt())
-                .addValue("observedAt", item.observedAt())
+                .addValue("solvedAt", Timestamp.from(item.solvedAt()))
+                .addValue("observedAt", Timestamp.from(item.observedAt()))
                 .addValue("executionTime", optional(item.executionTime(), 128))
                 .addValue("memoryUsage", optional(item.memoryUsage(), 128))
                 .addValue("aiUsage", aiUsage(item.aiUsage()))
                 .addValue("generation", principal.generation())
-                .addValue("capturedAt", item.capturedAt())
-                .addValue("now", now);
+                .addValue("capturedAt", Timestamp.from(item.capturedAt()))
+                .addValue("now", Timestamp.from(now));
     }
 
     private boolean sameRelayCapture(RelayGrantPrincipal principal, Item item, String clientRecordId) {

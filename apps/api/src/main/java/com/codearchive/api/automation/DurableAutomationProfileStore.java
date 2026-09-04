@@ -1,6 +1,7 @@
 package com.codearchive.api.automation;
 
 import java.time.Instant;
+import java.sql.Timestamp;
 import java.util.Optional;
 import java.util.Objects;
 import java.util.UUID;
@@ -89,8 +90,9 @@ public class DurableAutomationProfileStore {
                     .addValue("automaticConsent", automaticTransferConsent)
                     .addValue("visibilityConsent", visibilityRiskConsent)
                     .addValue("publicConsent", publicUploadConsent)
-                    .addValue("enabledAt", githubEnabledAt).addValue("version", current.version() + 1)
-                    .addValue("now", now);
+                    .addValue("enabledAt", githubEnabledAt == null ? null : Timestamp.from(githubEnabledAt))
+                    .addValue("version", current.version() + 1)
+                    .addValue("now", Timestamp.from(now));
             db.update("""
                     UPDATE automation_profiles SET device_id=:device,generation=:generation,
                     source_transfer_enabled=:source,github_auto_commit_enabled=:github,
@@ -124,7 +126,7 @@ public class DurableAutomationProfileStore {
 
     private void revokeRelayGrantsInTransaction(UUID userId, Instant now) {
         db.update("UPDATE relay_grants SET revoked_at=:now WHERE user_id=:user AND revoked_at IS NULL",
-                new MapSqlParameterSource("user", userId).addValue("now", now));
+                new MapSqlParameterSource("user", userId).addValue("now", Timestamp.from(now)));
     }
 
     public boolean hasActiveDurableClaim(UUID userId) {
