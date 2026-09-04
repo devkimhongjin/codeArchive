@@ -5,6 +5,11 @@ import type { CodeArchiveAutomationControlErrorCode } from "../../../packages/sh
 
 type AutomationIntent = { enabled: boolean; nonce: number };
 type AutomationStateCallback = (enabled: boolean, errorCode: CodeArchiveAutomationControlErrorCode | null) => void;
+export interface DurableGitHubConsent {
+  readonly automaticTransferConsent: boolean;
+  readonly visibilityRiskConsent: boolean;
+  readonly publicUploadConsent: boolean;
+}
 
 function automationError(error: unknown): CodeArchiveAutomationControlErrorCode | null {
   if (!(error instanceof GitHubRequestError)) return null;
@@ -14,25 +19,31 @@ function automationError(error: unknown): CodeArchiveAutomationControlErrorCode 
   return null;
 }
 
-export function GitHubAutoCommit({ client, target, eligible, blocked, blockedReason, onLock, onSessionExpired, automationIntent, onAutomationStateChange, refreshTarget }: {
+export function GitHubAutoCommit({ client, target, eligible, blocked, blockedReason, onLock, onSessionExpired, automationIntent, onAutomationStateChange, refreshTarget,
+  durableMode = false, durableEnabled = false, onDurableEnable, onDurableDisable }: {
   client: GitHubClient; target: GitHubAutoTarget | null; eligible: boolean; blocked: boolean;
   blockedReason?: string | null;
   onLock: (locked: boolean) => void; onSessionExpired: () => void;
   automationIntent?: AutomationIntent | null; onAutomationStateChange?: AutomationStateCallback;
   refreshTarget?: (signal: AbortSignal) => Promise<GitHubAutoTarget>;
+  durableMode?: boolean;
+  durableEnabled?: boolean;
+  onDurableEnable?: (target: GitHubAutoTarget, consent: DurableGitHubConsent) => Promise<boolean>;
+  onDurableDisable?: () => Promise<boolean>;
 }) {
   const [status, setStatus] = useState<GitHubAutoStatus | null>(null);
-  const [phase, setPhase] = useState<"idle" | "enabling" | "running" | "stopping">("idle");
+  const [phase, setPhase] = useState<"idle" | "enabling" | "running" | "stopping">(durableMode && durableEnabled ? "running" : "idle");
   const [consent, setConsent] = useState(false);
   const [risk, setRisk] = useState(false);
   const [publicConsent, setPublicConsent] = useState(false);
   const [notice, setNotice] = useState("");
-  const [checked, setChecked] = useState(false);
+  const [checked, setChecked] = useState(durableMode);
   const run = useRef<string | null>(null);
   const active = useRef(true);
   const request = useRef<AbortController | null>(null);
   const phaseRef = useRef(phase); phaseRef.current = phase;
   const callbacks = useRef({ onLock, onSessionExpired, onAutomationStateChange }); callbacks.current = { onLock, onSessionExpired, onAutomationStateChange };
+  const durableCallbacks = useRef({ onDurableEnable, onDurableDisable }); durableCallbacks.current = { onDurableEnable, onDurableDisable };
   const fingerprint = JSON.stringify(target);
   const previousFingerprint = useRef(fingerprint);
   useEffect(() => {
@@ -46,15 +57,37 @@ export function GitHubAutoCommit({ client, target, eligible, blocked, blockedRea
 
   function report(error: unknown) {
     if (error instanceof ArchiveSessionExpiredError) callbacks.current.onSessionExpired();
-    else setNotice(githubErrorMessage(error));
+    else setNotice(error instanceof Error && error.message === "Durable automation transition failed"
+      ? "서버 자동화 상태를 안전하게 전환하지 못했습니다. 연결 상태를 확인한 뒤 다시 시도하세요."
+      : githubErrorMessage(error));
     callbacks.current.onAutomationStateChange?.(false, automationError(error));
   }
   async function stop() {
     if (phaseRef.current === "stopping") return;
-    const id = run.current ?? status?.runId;
     request.current?.abort();
     phaseRef.current = "stopping"; setPhase("stopping"); callbacks.current.onLock(true);
     setConsent(false); setRisk(false); setPublicConsent(false);
+
+    if (durableMode) {
+      setNotice("서버 자동 커밋 OFF 확인 중입니다. 이미 시작된 전송은 회수할 수 없습니다.");
+      try {
+        const confirmed = await durableCallbacks.current.onDurableDisable?.();
+        if (!active.current) return;
+        if (!confirmed) throw new Error("Durable automation transition failed");
+        phaseRef.current = "idle"; setPhase("idle"); callbacks.current.onLock(false);
+        callbacks.current.onAutomationStateChange?.(false, null);
+        setNotice("자동 커밋 OFF · 소스 자동 동기화 설정은 유지됩니다.");
+      } catch (error) {
+        if (!active.current) return;
+        phaseRef.current = durableEnabled ? "running" : "idle";
+        setPhase(phaseRef.current);
+        callbacks.current.onLock(durableEnabled);
+        report(error);
+      }
+      return;
+    }
+
+    const id = run.current ?? status?.runId;
     if (!id) { phaseRef.current = "idle"; setPhase("idle"); callbacks.current.onLock(false); callbacks.current.onAutomationStateChange?.(false, null); return; }
     run.current = id;
     setNotice("자동 요청을 멈췄습니다. 서버 OFF 확인 중입니다. 이미 시작된 전송은 회수할 수 없습니다.");
@@ -71,8 +104,16 @@ export function GitHubAutoCommit({ client, target, eligible, blocked, blockedRea
     }
   }
   const stopRef = useRef(stop); stopRef.current = stop;
+
   useEffect(() => {
     active.current = true;
+    if (durableMode) {
+      setChecked(true);
+      phaseRef.current = durableEnabled ? "running" : "idle";
+      setPhase(phaseRef.current);
+      callbacks.current.onLock(durableEnabled);
+      return () => { active.current = false; request.current?.abort(); callbacks.current.onLock(false); };
+    }
     const controller = new AbortController();
     void client.autoStatus(undefined, controller.signal).then(value => {
       if (!active.current || controller.signal.aborted) return;
@@ -88,11 +129,18 @@ export function GitHubAutoCommit({ client, target, eligible, blocked, blockedRea
       const id = run.current; run.current = null;
       if (id) void client.autoStop(id).catch(() => undefined);
     };
-  }, [client]);
-  useEffect(() => { if (!eligible && run.current && phaseRef.current !== "stopping") void stopRef.current(); }, [eligible]);
+  }, [client, durableMode]);
 
   useEffect(() => {
-    if (phase !== "running") return;
+    if (!durableMode || phaseRef.current === "enabling" || phaseRef.current === "stopping") return;
+    const next = durableEnabled ? "running" : "idle";
+    phaseRef.current = next; setPhase(next); setChecked(true); callbacks.current.onLock(durableEnabled);
+  }, [durableMode, durableEnabled]);
+
+  useEffect(() => { if (!eligible && !durableMode && run.current && phaseRef.current !== "stopping") void stopRef.current(); }, [eligible, durableMode]);
+
+  useEffect(() => {
+    if (durableMode || phase !== "running") return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     async function tick() {
@@ -122,11 +170,11 @@ export function GitHubAutoCommit({ client, target, eligible, blocked, blockedRea
     }
     timer = setTimeout(() => void tick(), 1_000);
     return () => { cancelled = true; clearTimeout(timer); request.current?.abort(); };
-  }, [phase, client, eligible]);
+  }, [phase, client, eligible, durableMode]);
 
   async function enable(automation = false) {
     if (!target || !eligible || blocked || !checked || phaseRef.current !== "idle") return;
-    if (status?.state === "ACTIVE" || status?.state === "STARTING") {
+    if (!durableMode && (status?.state === "ACTIVE" || status?.state === "STARTING")) {
       if (automation) { setNotice("다른 화면의 자동 커밋이 실행 중입니다. 먼저 OFF로 바꿔 주세요."); callbacks.current.onAutomationStateChange?.(false, "LEASE_FAILED"); }
       return;
     }
@@ -147,6 +195,27 @@ export function GitHubAutoCommit({ client, target, eligible, blocked, blockedRea
       report(error); request.current = null; return;
     }
     if (!active.current || controller.signal.aborted) return;
+
+    if (durableMode) {
+      phaseRef.current = "enabling"; setPhase("enabling"); callbacks.current.onLock(true); setNotice("");
+      try {
+        const confirmed = await durableCallbacks.current.onDurableEnable?.(currentTarget, {
+          automaticTransferConsent: consent,
+          visibilityRiskConsent: risk,
+          publicUploadConsent: publicConsent,
+        });
+        if (!active.current) return;
+        if (!confirmed) throw new Error("Durable automation transition failed");
+        phaseRef.current = "running"; setPhase("running"); callbacks.current.onLock(true);
+        callbacks.current.onAutomationStateChange?.(true, null);
+        setNotice("서버 자동 커밋 ON · Dashboard를 닫아도 이후 새 풀이가 durable 자동화 대상이 됩니다.");
+      } catch (error) {
+        if (!active.current) return;
+        phaseRef.current = "idle"; setPhase("idle"); callbacks.current.onLock(false); report(error);
+      }
+      return;
+    }
+
     const id = crypto.randomUUID(); run.current = id;
     phaseRef.current = "enabling"; setPhase("enabling"); callbacks.current.onLock(true); setNotice("");
     try {
@@ -169,24 +238,27 @@ export function GitHubAutoCommit({ client, target, eligible, blocked, blockedRea
     if (intent.enabled && (!checked || !target)) return;
     appliedIntent.current = intent.nonce;
     if (intent.enabled) void enable(true);
+    else if (durableMode && durableEnabled) void stop();
     else if (run.current || phaseRef.current !== "idle") void stop();
     else callbacks.current.onAutomationStateChange?.(false, null);
-  }, [automationIntent?.nonce, automationIntent?.enabled, checked, fingerprint]);
-  const otherRun = status?.state === "ACTIVE" || status?.state === "STARTING";
+  }, [automationIntent?.nonce, automationIntent?.enabled, checked, fingerprint, durableMode, durableEnabled]);
+  const otherRun = !durableMode && (status?.state === "ACTIVE" || status?.state === "STARTING");
   const locked = phase !== "idle";
   const diagnostic = blockedReason
     ?? (blocked ? "다른 GitHub 작업 또는 확인이 끝나지 않은 작업이 있어 자동 커밋을 시작할 수 없습니다."
       : !eligible ? "자동 커밋을 켜기 위한 Dashboard·Extension·온라인 상태 조건을 확인하세요."
-        : !target ? "GitHub 저장소와 안전한 브랜치를 먼저 선택하세요."
+        : !target && !(durableMode && durableEnabled) ? "GitHub 저장소와 안전한 브랜치를 먼저 선택하세요."
           : !checked ? "GitHub 연결 상태를 먼저 확인하세요."
             : otherRun ? "다른 화면의 자동 커밋이 실행 중입니다. 먼저 OFF로 바꿔 주세요."
-              : phase !== "idle" ? "자동 커밋 상태를 확인하는 중입니다."
-                : !consent ? "자동 전송 동의를 선택해야 자동 커밋을 켤 수 있습니다."
-                  : !risk ? "코드 공개 위험 확인을 선택해야 자동 커밋을 켤 수 있습니다."
-                    : !target.privateRepository && !publicConsent ? "공개 저장소 자동 공개 동의를 선택해야 자동 커밋을 켤 수 있습니다." : null);
+              : phase !== "idle" && phase !== "running" ? "자동 커밋 상태를 확인하는 중입니다."
+                : !durableEnabled && !consent ? "자동 전송 동의를 선택해야 자동 커밋을 켤 수 있습니다."
+                  : !durableEnabled && !risk ? "코드 공개 위험 확인을 선택해야 자동 커밋을 켤 수 있습니다."
+                    : !durableEnabled && target && !target.privateRepository && !publicConsent ? "공개 저장소 자동 공개 동의를 선택해야 자동 커밋을 켤 수 있습니다." : null);
   return <section className="github-auto" aria-label="자동 풀이 커밋">
     <div className="github-heading"><h3>자동 풀이 커밋</h3><strong className={`badge ${phase === "running" ? "github-on" : ""}`}>{phase === "running" ? "ON" : phase === "enabling" ? "ON 확인 중" : phase === "stopping" ? "OFF 확인 중" : otherRun ? "다른 화면에서 ON" : "OFF"}</strong></div>
-    <p>Dashboard가 살아 있고 자동 동기화·Extension 연결·온라인 상태가 유지되는 동안, background에서도 ON 이후 새로 수집·저장된 정답 풀이를 커밋합니다. 페이지 종료·연결 해제·로그아웃 시 꺼집니다.</p>
+    <p>{durableMode
+      ? "서버 durable 자동화가 새 풀이만 처리합니다. Dashboard 문서가 닫혀도 Extension relay와 서버 설정이 유효하면 계속 동작합니다."
+      : "Dashboard가 살아 있고 자동 동기화·Extension 연결·온라인 상태가 유지되는 동안, background에서도 ON 이후 새로 수집·저장된 정답 풀이를 커밋합니다. 페이지 종료·연결 해제·로그아웃 시 꺼집니다."}</p>
     <p>경로: <code>{target?.folder ? `${target.folder}/` : ""}{"{플랫폼}/{문제번호}/Solution.{언어 확장자}"}</code> · 기존 파일은 덮어쓰지 않습니다. 과거 풀이·실패한 요청은 자동 재시도하지 않습니다.</p>
     {diagnostic && <p role="status">{diagnostic}</p>}
     <fieldset disabled={locked || !!otherRun || blocked}>
@@ -197,10 +269,10 @@ export function GitHubAutoCommit({ client, target, eligible, blocked, blockedRea
     </fieldset>
     <div className="github-actions">
       <button type="button" disabled={!checked || !target || !eligible || blocked || locked || !!otherRun || !consent || !risk || (!target.privateRepository && !publicConsent)} onClick={() => void enable()}>자동 커밋 ON</button>
-      <button type="button" disabled={!locked && !otherRun} onClick={() => void stop()}>{phase === "stopping" ? "OFF 확인 다시 시도" : "자동 커밋 OFF"}</button>
+      <button type="button" disabled={durableMode ? !durableEnabled && phase === "idle" : !locked && !otherRun} onClick={() => void stop()}>{phase === "stopping" ? "OFF 확인 다시 시도" : "자동 커밋 OFF"}</button>
     </div>
     {notice && <p role="status">{notice}</p>}
-    {status?.lastResult && <p>마지막 자동 처리: {status.lastResult.status === "SUCCEEDED" ? "커밋 완료" : status.lastResult.status === "UNKNOWN" ? "결과 확인 필요 · 재전송 금지" : "중단됨"}
+    {!durableMode && status?.lastResult && <p>마지막 자동 처리: {status.lastResult.status === "SUCCEEDED" ? "커밋 완료" : status.lastResult.status === "UNKNOWN" ? "결과 확인 필요 · 재전송 금지" : "중단됨"}
       {status.lastResult.commitUrl && <a href={status.lastResult.commitUrl} target="_blank" rel="noopener noreferrer"> GitHub 커밋 보기</a>}</p>}
   </section>;
 }
