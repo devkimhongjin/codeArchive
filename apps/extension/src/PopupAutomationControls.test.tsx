@@ -41,4 +41,18 @@ describe("Popup automation controls", () => {
     expect(screen.getByLabelText("GitHub 자동 커밋")).toBeDisabled();
     expect(screen.getByText("Dashboard를 열어 연결한 뒤 자동화를 설정해주세요.")).toBeInTheDocument();
   });
+
+  it("allows local AUTO_SYNC stop while Dashboard is disconnected", async () => {
+    const unavailable = { ...state, autoSyncEnabled: false, connectionAvailable: false, errorCode: "DASHBOARD_DISCONNECTED" as const };
+    const requestRelayState = vi.fn(async () => ({ state: "ACTIVE" as const, autoSyncEnabled: true, grantId: "grant", generation: 2 }));
+    const stopRelayLocally = vi.fn(async () => ({ state: "REVOCATION_PENDING" as const, autoSyncEnabled: false, grantId: "grant", generation: 2 }));
+    const setAutomation = vi.fn();
+    render(<Popup repository={repository()} requestAutomationState={async () => ({ state: unavailable, forwarded: false })} setAutomation={setAutomation} requestRelayState={requestRelayState} stopRelayLocally={stopRelayLocally} />);
+
+    const stop = await screen.findByRole("button", { name: "자동 동기화 로컬 중지" });
+    fireEvent.click(stop);
+    await waitFor(() => expect(stopRelayLocally).toHaveBeenCalledOnce());
+    expect(setAutomation).not.toHaveBeenCalled();
+    expect(await screen.findByText("로컬 relay 상태: 해지 대기")).toBeInTheDocument();
+  });
 });

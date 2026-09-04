@@ -2,7 +2,7 @@ import { AuthLoginStageError } from "./authDiagnostics";
 import { AUTH_LOGIN, type AuthLoginResponse } from "./authMessages";
 import type { CodeArchiveAuthService } from "./authSession";
 import { backgroundCodeArchiveAuthService } from "./backgroundAuthRuntime";
-import { backgroundDashboardCaptureBridge, notifyDashboardCaptureChanged, registerExternalDashboardBridge, type ExternalDashboardPort } from "./dashboardCaptureBridge";
+import { backgroundDashboardCaptureBridge, notifyCaptureCommitted, registerExternalDashboardBridge, type ExternalDashboardPort } from "./dashboardCaptureBridge";
 import { CODEARCHIVE_DASHBOARD_ORIGIN } from "./dashboardConfig";
 import { SAVE_SWEA_ACCEPTED, type SaveResponse } from "./sweaAutoCapture";
 import { saveAcceptedCapture } from "./solutionRepository";
@@ -11,6 +11,8 @@ import { syncSolutionRecord, type SolutionSyncDependencies } from "./solutionSyn
 import { createProblemContestIdHandoffStore, SWEA_CONSUME_PROBLEM_CONTEST_ID, SWEA_STORE_PROBLEM_CONTEST_ID } from "./sweaProblemIdentityHandoff";
 import { SWEA_PROBLEM_DETAIL_PATH, SWEA_SOLVING_PATH } from "./adapters/swea/sweaSelectors";
 import { POPUP_AUTOMATION_SET, POPUP_AUTOMATION_STATE_GET } from "./automationControl";
+import { POPUP_RELAY_LOCAL_STOP, POPUP_RELAY_STATE_GET } from "./relay/relayPopupControl";
+import { backgroundRelayRuntime } from "./relay/relayRuntime";
 
 type BackgroundResponse = SaveResponse | AuthLoginResponse;
 
@@ -55,7 +57,7 @@ export async function runBackgroundLogin(authService: Pick<CodeArchiveAuthServic
 
 const defaultDependencies: CaptureSyncDependencies = {
   saveCapture: saveAcceptedCapture,
-  onCaptureCommitted: notifyDashboardCaptureChanged,
+  onCaptureCommitted: notifyCaptureCommitted,
 };
 
 registerExternalDashboardBridge(chrome.runtime, CODEARCHIVE_DASHBOARD_ORIGIN);
@@ -102,7 +104,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ accepted: false, state: backgroundDashboardCaptureBridge.getAutomationState(), forwarded: false });
       return;
     }
-    backgroundDashboardCaptureBridge.setAutomation(automation, enabled).then(sendResponse);
+    const forward = () => backgroundDashboardCaptureBridge.setAutomation(automation, enabled).then(sendResponse);
+    if (automation === "AUTO_SYNC" && !enabled) {
+      backgroundRelayRuntime.stopLocally().then(forward).catch(() => sendResponse({ accepted: false, state: backgroundDashboardCaptureBridge.getAutomationState(), forwarded: false }));
+    } else {
+      forward();
+    }
+    return true;
+  }
+
+  if (request.type === POPUP_RELAY_STATE_GET) {
+    backgroundRelayRuntime.getPopupState().then(sendResponse).catch(() => sendResponse({ state: "UNPAIRED", autoSyncEnabled: false }));
+    return true;
+  }
+
+  if (request.type === POPUP_RELAY_LOCAL_STOP) {
+    backgroundRelayRuntime.stopLocally().then(sendResponse).catch(() => sendResponse({ state: "UNPAIRED", autoSyncEnabled: false }));
     return true;
   }
 
