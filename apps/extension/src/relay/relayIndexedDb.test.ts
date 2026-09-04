@@ -1,6 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { markRelayConflicts, markRelayImportReceipts, openCodeArchiveDatabase } from "../solutionRepository";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  markRelayConflicts,
+  markRelayImportReceipts,
+  openCodeArchiveDatabase,
+  RELAY_STATE_KEY,
+  RELAY_STATE_STORE_NAME,
+} from "../solutionRepository";
 import type { SolutionRecord } from "../solution";
+import { indexedDbRelayStateRepository, type RelayStateRecord } from "./relayState";
 
 const DB_NAME = "codearchive";
 const SOLUTIONS_STORE = "solutions";
@@ -35,9 +42,45 @@ function transactionDone(transaction: IDBTransaction): Promise<void> {
   });
 }
 
+function deleteDatabase(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(DB_NAME);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB deletion failed."));
+    request.onblocked = () => reject(new Error("IndexedDB deletion blocked."));
+  });
+}
+
 const nativeIndexedDb = typeof indexedDB !== "undefined";
 
 describe.skipIf(!nativeIndexedDb)("relay IndexedDB receipt/conflict persistence", () => {
+  beforeEach(deleteDatabase);
+  afterEach(deleteDatabase);
+
+  it("initializes and round-trips a stable non-exportable signing key", async () => {
+    const initial = await indexedDbRelayStateRepository.get();
+    expect(initial.privateKey.extractable).toBe(false);
+
+    const db = await openCodeArchiveDatabase();
+    try {
+      const transaction = db.transaction(RELAY_STATE_STORE_NAME, "readonly");
+      const stored = await new Promise<RelayStateRecord>((resolve, reject) => {
+        const request = transaction.objectStore(RELAY_STATE_STORE_NAME).get(RELAY_STATE_KEY);
+        request.onsuccess = () => resolve(request.result as RelayStateRecord);
+        request.onerror = () => reject(request.error);
+      });
+      await transactionDone(transaction);
+      expect(stored.deviceId).toBe(initial.deviceId);
+      expect(stored.privateKey.extractable).toBe(false);
+    } finally {
+      db.close();
+    }
+
+    const restored = await indexedDbRelayStateRepository.get();
+    expect(restored.deviceId).toBe(initial.deviceId);
+    expect(restored.privateKey.extractable).toBe(false);
+  });
+
   it("updates relay metadata and capture revision in one real multi-store transaction", async () => {
     const db = await openCodeArchiveDatabase();
     try {
@@ -81,7 +124,6 @@ describe.skipIf(!nativeIndexedDb)("relay IndexedDB receipt/conflict persistence"
       expect(revision).toBe(2);
     } finally {
       verifyDb.close();
-      indexedDB.deleteDatabase(DB_NAME);
     }
   });
 });

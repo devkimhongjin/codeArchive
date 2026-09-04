@@ -102,12 +102,26 @@ export class IndexedDbRelayStateRepository implements RelayStateRepository {
   async update(mutate: (current: RelayStateRecord) => RelayStateRecord): Promise<RelayStateRecord> {
     let result!: RelayStateRecord;
     const write = this.writeQueue.then(async () => {
+      let initial: RelayStateRecord | undefined;
+      const readDb = await openCodeArchiveDatabase();
+      try {
+        const transaction = readDb.transaction(RELAY_STATE_STORE_NAME, "readonly");
+        const existing = await requestToPromise(
+          transaction.objectStore(RELAY_STATE_STORE_NAME).get(RELAY_STATE_KEY) as IDBRequest<RelayStateRecord | undefined>,
+        );
+        await transactionDone(transaction);
+        if (!existing) initial = await createInitialState();
+      } finally {
+        readDb.close();
+      }
+
       const db = await openCodeArchiveDatabase();
       try {
         const transaction = db.transaction(RELAY_STATE_STORE_NAME, "readwrite");
         const store = transaction.objectStore(RELAY_STATE_STORE_NAME);
         const existing = await requestToPromise(store.get(RELAY_STATE_KEY) as IDBRequest<RelayStateRecord | undefined>);
-        const current = existing ? normalizeState(existing) : await createInitialState();
+        const current = existing ? normalizeState(existing) : initial;
+        if (!current) throw new Error("Relay state initialization failed.");
         if (!current.privateKey || current.privateKey.extractable) throw new Error("Stored relay private key is unsafe.");
         result = { ...mutate(current), revision: current.revision + 1 };
         store.put(result, RELAY_STATE_KEY);
