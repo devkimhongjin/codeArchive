@@ -1,6 +1,7 @@
 package com.codearchive.api.integration.github;
 
 import java.time.Instant;
+import java.util.UUID;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -51,6 +52,44 @@ public class GitHubCommitExecutor {
         });
     }
 
+    /** Same conditional writer for a durable worker; no Dashboard session is fabricated. */
+    public GitHubAppClient.CommitResult executeForWorker(UUID userId, GitHubUploadIntentStore.Review review,
+            Instant expiresAt, Runnable authorization, Runnable beforeDispatch) {
+        gate();
+        if (userId == null || review == null || expiresAt == null) throw new CodeArchiveException(ErrorCode.INVALID_REQUEST);
+        var selection = review.selection();
+        var installation = integrations.requireInstallationForUser(userId, selection.installationId());
+        return tx.execute(transaction -> {
+            db.execute("SET LOCAL lock_timeout = '2s'");
+            authorization.run();
+            if (activeOwner(userId, true) != installation.account().id()) throw new CodeArchiveException(ErrorCode.ACCESS_DENIED);
+            var source = sources.findLocked(userId, selection.solutionId())
+                    .orElseThrow(() -> new CodeArchiveException(ErrorCode.GITHUB_PREVIEW_SOURCE_CHANGED));
+            if (!expiresAt.isAfter(Instant.now())) throw new CodeArchiveException(ErrorCode.GITHUB_UPLOAD_INTENT_EXPIRED);
+            if (!source.acceptedCapture() || !"ACCEPTED".equals(source.result())
+                    || !source.updatedAt().equals(selection.expectedUpdatedAt())
+                    || !GitHubUploadIntentStore.hash(source.code()).equals(review.sourceSha256())) {
+                throw new CodeArchiveException(ErrorCode.GITHUB_PREVIEW_SOURCE_CHANGED);
+            }
+            var inspected = github.inspectUploadTarget(selection.installationId(), selection.repositoryId(),
+                    installation.account().id(), selection.branch(), selection.expectedCommitSha(), selection.path());
+            String fullName = inspected.repository().owner().login() + "/" + inspected.repository().name();
+            if (inspected.protectedBranch() || inspected.obstruction() != null
+                    || !selection.branch().equals(inspected.branch())
+                    || !selection.expectedCommitSha().equals(inspected.commitSha())
+                    || inspected.repository().privateRepository() != review.privateRepository()
+                    || !review.fullName().equals(fullName)) {
+                throw new CodeArchiveException(ErrorCode.GITHUB_UPLOAD_TARGET_CHANGED);
+            }
+            var prepared = github.prepareCommit(new GitHubAppClient.CommitSelection(selection.installationId(), selection.repositoryId(),
+                    installation.account().id(), selection.branch(), selection.expectedCommitSha(), selection.path(),
+                    review.privateRepository(), review.fullName()));
+            gate();
+            beforeDispatch.run();
+            return prepared.create(source.code(), selection.commitMessage());
+        });
+    }
+
     boolean reserve() { return slots.tryAcquire(); }
     void release() { slots.release(); }
 
@@ -61,6 +100,13 @@ public class GitHubCommitExecutor {
                 WHERE s.id=? AND s.user_id=? AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
                 """+(lock ? " FOR SHARE OF s,u" : ""), (row,index)->row.getLong(1), principal.sessionId(),principal.userId())
                 .stream().findFirst().orElseThrow(()->new CodeArchiveException(ErrorCode.AUTH_REQUIRED));
+    }
+
+    long activeOwner(UUID userId, boolean lock) {
+        if (userId == null) throw new CodeArchiveException(ErrorCode.AUTH_REQUIRED);
+        return db.query("SELECT github_user_id FROM users WHERE id=?" + (lock ? " FOR SHARE" : ""),
+                (row, index) -> row.getLong(1), userId).stream().findFirst()
+                .orElseThrow(() -> new CodeArchiveException(ErrorCode.AUTH_REQUIRED));
     }
 
     void gate() {

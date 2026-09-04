@@ -106,7 +106,7 @@ public class GitHubUploadIntentStore {
         try { return json.readValue(value, Review.class); }
         catch (Exception ignored) { throw new CodeArchiveException(ErrorCode.INTERNAL_ERROR); }
     }
-    static String hash(String value) {
+    public static String hash(String value) {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
         catch (Exception ignored) { throw new CodeArchiveException(ErrorCode.INTERNAL_ERROR); }
     }

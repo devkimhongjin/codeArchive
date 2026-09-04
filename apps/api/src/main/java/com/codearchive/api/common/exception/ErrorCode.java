@@ -53,6 +53,12 @@ public enum ErrorCode {
     GITHUB_UPLOAD_ALREADY_ATTEMPTED(HttpStatus.CONFLICT, "이미 실행된 대상입니다. 기존 요청의 결과를 확인해 주세요."),
     GITHUB_UPLOAD_OUTCOME_UNKNOWN(HttpStatus.CONFLICT, "업로드 결과를 확정할 수 없습니다. 자동 재전송하지 말고 저장소를 확인해 주세요."),
 
+    RELAY_GRANT_INVALID(HttpStatus.UNAUTHORIZED, "수집 relay 인증이 올바르지 않습니다."),
+    RELAY_GRANT_REVOKED(HttpStatus.FORBIDDEN, "수집 relay 권한이 철회되었거나 세대가 만료되었습니다."),
+    AUTOMATION_GENERATION_STALE(HttpStatus.CONFLICT, "자동화 상태가 변경되었습니다. 최신 상태로 다시 확인해 주세요."),
+    AUTOMATION_OWNERSHIP_CONFLICT(HttpStatus.CONFLICT, "다른 자동화 실행 주체가 활성 상태입니다."),
+    AUTOMATION_NOT_ELIGIBLE(HttpStatus.CONFLICT, "현재 자동화 조건에서 실행할 수 없습니다."),
+
     GITHUB_PREVIEW_SOURCE_CHANGED(
             HttpStatus.CONFLICT,
             "풀이가 변경되었습니다. 최신 풀이로 미리보기를 다시 요청해 주세요."
