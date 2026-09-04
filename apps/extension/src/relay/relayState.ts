@@ -43,6 +43,15 @@ function base64Url(bytes: ArrayBuffer): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
+function normalizeState(value: RelayStateRecord): RelayStateRecord {
+  return {
+    ...value,
+    revision: Number.isSafeInteger(value.revision) && value.revision >= 0 ? value.revision : 0,
+    autoSyncEnabled: value.autoSyncEnabled === true,
+    failureCount: Number.isSafeInteger(value.failureCount) && value.failureCount >= 0 ? value.failureCount : 0,
+  };
+}
+
 async function generateDeviceIdentity(): Promise<Pick<RelayStateRecord, "deviceId" | "publicKey" | "privateKey">> {
   const subtle = globalThis.crypto?.subtle;
   if (!subtle) throw new Error("WebCrypto is unavailable.");
@@ -62,6 +71,7 @@ async function createInitialState(): Promise<RelayStateRecord> {
   const identity = await generateDeviceIdentity();
   return {
     ...identity,
+    revision: 0,
     state: "UNPAIRED",
     autoSyncEnabled: false,
     failureCount: 0,
@@ -81,7 +91,7 @@ export class IndexedDbRelayStateRepository implements RelayStateRepository {
       await transactionDone(transaction);
       if (existing) {
         if (!existing.privateKey || existing.privateKey.extractable) throw new Error("Stored relay private key is unsafe.");
-        return existing;
+        return normalizeState(existing);
       }
     } finally {
       db.close();
@@ -97,9 +107,9 @@ export class IndexedDbRelayStateRepository implements RelayStateRepository {
         const transaction = db.transaction(RELAY_STATE_STORE_NAME, "readwrite");
         const store = transaction.objectStore(RELAY_STATE_STORE_NAME);
         const existing = await requestToPromise(store.get(RELAY_STATE_KEY) as IDBRequest<RelayStateRecord | undefined>);
-        const current = existing ?? await createInitialState();
+        const current = existing ? normalizeState(existing) : await createInitialState();
         if (!current.privateKey || current.privateKey.extractable) throw new Error("Stored relay private key is unsafe.");
-        result = mutate(current);
+        result = { ...mutate(current), revision: current.revision + 1 };
         store.put(result, RELAY_STATE_KEY);
         await transactionDone(transaction);
       } finally {

@@ -9,6 +9,7 @@ function state(overrides: Partial<RelayStateRecord> = {}): RelayStateRecord {
     deviceId: "device-1234567890",
     publicKey: "public-key",
     privateKey: {} as CryptoKey,
+    revision: 0,
     state: "ACTIVE",
     grantId: "grant-1234",
     credential: "credential",
@@ -29,7 +30,7 @@ function record(id: string, generation = 7): SolutionRecord {
     title: "title",
     language: "Java",
     code: "class Main {}",
-    solvedAt: "1970-01-01T00:00:01.000Z",
+    solvedAt: "1970-01-01",
     aiUsage: "unknown",
     createdAt: "1970-01-01T00:00:01.000Z",
     updatedAt: "1970-01-01T00:00:01.000Z",
@@ -43,7 +44,7 @@ class MemoryState implements RelayStateRepository {
   constructor(public value: RelayStateRecord) {}
   async get(): Promise<RelayStateRecord> { return this.value; }
   async update(mutate: (current: RelayStateRecord) => RelayStateRecord): Promise<RelayStateRecord> {
-    this.value = mutate(this.value);
+    this.value = { ...mutate(this.value), revision: this.value.revision + 1 };
     return this.value;
   }
 }
@@ -58,8 +59,8 @@ class MemoryAlarms implements RelayAlarmApi {
   fire(): void { this.listener?.({ name: RELAY_DRAIN_ALARM }); }
 }
 
-function response(results: unknown[], status = 200): RelayFetchResponse {
-  return { status, headers: { get: () => null }, json: async () => ({ success: true, data: { results } }) };
+function response(results: unknown[], status = 200, retryAfter?: string): RelayFetchResponse {
+  return { status, headers: { get: (name) => name.toLowerCase() === "retry-after" ? retryAfter ?? null : null }, json: async () => ({ success: true, data: { results } }) };
 }
 
 describe("RelayRuntime", () => {
@@ -92,6 +93,7 @@ describe("RelayRuntime", () => {
     expect(requests).toHaveLength(1);
     expect(JSON.parse(String(requests[0].body)).records).toHaveLength(1);
     expect(requests[0].headers).toMatchObject({ Authorization: "Bearer credential" });
+    expect(JSON.parse(String(requests[0].body)).records[0].solvedAt).toBe("1969-12-31T15:00:00.000Z");
     expect(imported).toEqual([["fresh"]]);
   });
 
@@ -168,7 +170,7 @@ describe("RelayRuntime", () => {
       state: stateRepo,
       now: () => 1_000_000,
       listPending: async () => [oversized],
-      markConflicts: async (ids, _at, errorCode) => { conflicts.push({ ids: [...ids], errorCode }); },
+      markInvalid: async (records, _at, errorCode) => { conflicts.push({ ids: records.map((record) => record.clientRecordId!), errorCode }); },
       fetch: async () => { called = true; return response([]); },
     });
 
@@ -176,6 +178,66 @@ describe("RelayRuntime", () => {
 
     expect(called).toBe(false);
     expect(conflicts).toEqual([{ ids: ["oversized"], errorCode: "RELAY_RECORD_TOO_LARGE" }]);
+  });
+
+  it.each([
+    ["blank problem number", { problemNumber: "   " }],
+    ["invalid solved timestamp", { solvedAt: "not-a-date" }],
+    ["invalid observed timestamp", { autoCapture: { source: "SWEA_AUTO", result: "ACCEPTED", observedAt: "not-a-date" } }],
+    ["future captured timestamp", { relayCapture: { generation: 7, capturedAt: new Date(1_400_001).toISOString() } }],
+    ["invalid AI usage", { aiUsage: "maybe" as never }],
+  ])("isolates %s without invalidating the grant", async (_label, changes) => {
+    const stateRepo = new MemoryState(state());
+    const invalid: string[] = [];
+    let called = false;
+    const runtime = new RelayRuntime({
+      state: stateRepo,
+      now: () => 1_000_000,
+      listPending: async () => [{ ...record("invalid"), ...changes } as SolutionRecord],
+      markInvalid: async (records) => { invalid.push(...records.map((record) => record.id)); },
+      fetch: async () => { called = true; return response([]); },
+    });
+
+    await runtime.drain();
+
+    expect(called).toBe(false);
+    expect(invalid).toEqual(["invalid"]);
+    expect(stateRepo.value.credential).toBe("credential");
+  });
+
+  it("uses the greater of local backoff and Retry-After, including HTTP-date", async () => {
+    const now = 1_000_000;
+    const stateRepo = new MemoryState(state({ failureCount: 3 }));
+    const alarms = new MemoryAlarms();
+    const runtime = new RelayRuntime({ state: stateRepo, alarms, now: () => now, listPending: async () => [record("one")], fetch: async () => response([], 429, "120") });
+
+    await runtime.drain();
+
+    expect(alarms.created.at(-1)).toBe(now + 1_800_000);
+    const later = new Date(now + 2_400_000).toUTCString();
+    const laterRuntime = new RelayRuntime({ state: new MemoryState(state({ failureCount: 1 })), alarms: new MemoryAlarms(), now: () => now, listPending: async () => [record("two")], fetch: async () => response([], 429, later) });
+    await laterRuntime.drain();
+    expect((laterRuntime as unknown as { alarms: MemoryAlarms }).alarms.created.at(-1)).toBe(now + 2_400_000);
+
+    const shortRetryRuntime = new RelayRuntime({
+      state: new MemoryState(state({ failureCount: 1 })),
+      alarms: new MemoryAlarms(),
+      now: () => now,
+      listPending: async () => [record("short-retry")],
+      fetch: async () => response([], 429, "10"),
+    });
+    await shortRetryRuntime.drain();
+    expect((shortRetryRuntime as unknown as { alarms: MemoryAlarms }).alarms.created.at(-1)).toBe(now + 180_000);
+
+    const invalidRetryRuntime = new RelayRuntime({
+      state: new MemoryState(state({ failureCount: 2 })),
+      alarms: new MemoryAlarms(),
+      now: () => now,
+      listPending: async () => [record("invalid-retry")],
+      fetch: async () => response([], 429, "not-a-delay"),
+    });
+    await invalidRetryRuntime.drain();
+    expect((invalidRetryRuntime as unknown as { alarms: MemoryAlarms }).alarms.created.at(-1)).toBe(now + 600_000);
   });
 
   it("serializes overlapping alarm invocations", async () => {

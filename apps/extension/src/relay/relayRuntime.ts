@@ -1,5 +1,5 @@
 import { CODEARCHIVE_API_BASE_URL } from "../apiConfig";
-import { listRelayPendingCaptures, markRelayConflicts, markRelayImportReceipts, type RelayStateSnapshot } from "../solutionRepository";
+import { listRelayPendingCaptures, markRelayConflicts, markRelayConflictsForRecords, markRelayImportReceipts, type RelayStateSnapshot } from "../solutionRepository";
 import type { SolutionRecord } from "../solution";
 import { indexedDbRelayStateRepository, type RelayStateRecord, type RelayStateRepository } from "./relayState";
 import type { CodeArchiveAutomationState } from "../../../../packages/shared-types/src";
@@ -32,6 +32,14 @@ export interface RelayRuntimeDependencies {
   listPending?: (generation: number, limit?: number) => Promise<SolutionRecord[]>;
   markImported?: (ids: readonly string[], at: string) => Promise<void>;
   markConflicts?: (ids: readonly string[], at: string, errorCode?: string) => Promise<void>;
+  markInvalid?: (records: readonly SolutionRecord[], at: string, errorCode: string) => Promise<void>;
+}
+
+export interface RelayPopupState {
+  state: RelayStateRecord["state"];
+  autoSyncEnabled: boolean;
+  grantId?: string;
+  generation?: number;
 }
 
 function isStateActive(state: RelayStateRecord, now: number): boolean {
@@ -40,33 +48,63 @@ function isStateActive(state: RelayStateRecord, now: number): boolean {
     && typeof state.expiresAt === "string" && Date.parse(state.expiresAt) > now;
 }
 
-function validRecord(record: SolutionRecord): boolean {
-  return Boolean(record.clientRecordId && record.relayCapture?.generation && record.autoCapture?.result === "ACCEPTED");
+function validAbsoluteTimestamp(value: unknown): value is string {
+  return typeof value === "string" && /T.*(?:Z|[+-]\d{2}:?\d{2})$/.test(value.trim()) && Number.isFinite(Date.parse(value));
+}
+
+function solvedAtWireValue(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const trimmed = value.trim();
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(trimmed)
+    ? Date.parse(`${trimmed}T00:00:00+09:00`)
+    : validAbsoluteTimestamp(trimmed) ? Date.parse(trimmed) : Number.NaN;
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
+}
+
+function validBoundedText(value: unknown, max: number): value is string {
+  return typeof value === "string" && value.trim().length > 0 && value.trim().length <= max;
+}
+
+function relayRecordError(record: SolutionRecord, generation: number, now: number): string | undefined {
+  if (!validBoundedText(record.clientRecordId, 128)) return "RELAY_RECORD_INVALID";
+  if (record.platform !== "SWEA" && record.platform !== "PROGRAMMERS") return "RELAY_RECORD_INVALID";
+  if (!validBoundedText(record.problemNumber, 64) || !validBoundedText(record.title, 255) || !validBoundedText(record.language, 64)) return "RELAY_RECORD_INVALID";
+  if (typeof record.code !== "string" || record.code.trim().length === 0) return "RELAY_RECORD_INVALID";
+  if (record.code.length > MAX_RECORD_CODE_CHARS) return "RELAY_RECORD_TOO_LARGE";
+  if (record.autoCapture?.result !== "ACCEPTED") return "RELAY_RECORD_INVALID";
+  if (!solvedAtWireValue(record.solvedAt) || !validAbsoluteTimestamp(record.autoCapture.observedAt)) return "RELAY_RECORD_INVALID";
+  if (!validAbsoluteTimestamp(record.relayCapture?.capturedAt) || Date.parse(record.relayCapture.capturedAt) > now + 300_000) return "RELAY_RECORD_INVALID";
+  if (!Number.isSafeInteger(record.relayCapture?.generation) || record.relayCapture.generation !== generation) return "RELAY_RECORD_INVALID";
+  if (record.performance && (!validBoundedText(record.performance.executionTime, 128) || !validBoundedText(record.performance.memoryUsage, 128))) return "RELAY_RECORD_INVALID";
+  if (record.aiUsage !== "used" && record.aiUsage !== "not_used" && record.aiUsage !== "unknown") return "RELAY_RECORD_INVALID";
+  return undefined;
 }
 
 function payload(record: SolutionRecord) {
   return {
-    clientRecordId: record.clientRecordId,
+    clientRecordId: record.clientRecordId?.trim(),
     platform: record.platform,
-    problemNumber: record.problemNumber,
-    title: record.title,
-    language: record.language,
+    problemNumber: record.problemNumber.trim(),
+    title: record.title.trim(),
+    language: record.language.trim(),
     code: record.code,
     result: "ACCEPTED",
-    solvedAt: record.solvedAt,
+    solvedAt: solvedAtWireValue(record.solvedAt),
     observedAt: record.autoCapture?.observedAt ?? record.updatedAt,
     capturedAt: record.relayCapture?.capturedAt,
-    executionTime: record.performance?.executionTime ?? null,
-    memoryUsage: record.performance?.memoryUsage ?? null,
+    executionTime: record.performance?.executionTime.trim() ?? null,
+    memoryUsage: record.performance?.memoryUsage.trim() ?? null,
     aiUsage: record.aiUsage,
   };
 }
 
-function retryAfterMs(response: RelayFetchResponse): number | undefined {
+function retryAfterMs(response: RelayFetchResponse, now: number): number | undefined {
   const value = response.headers.get("Retry-After");
   if (!value) return undefined;
   const seconds = Number(value);
-  return Number.isFinite(seconds) && seconds >= 0 ? Math.max(RETRY_DELAYS_MS[0], seconds * 1000) : undefined;
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - now) : undefined;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -81,6 +119,7 @@ export class RelayRuntime {
   private readonly listPending: (generation: number, limit?: number) => Promise<SolutionRecord[]>;
   private readonly markImported: (ids: readonly string[], at: string) => Promise<void>;
   private readonly markConflicts: (ids: readonly string[], at: string, errorCode?: string) => Promise<void>;
+  private readonly markInvalid: (records: readonly SolutionRecord[], at: string, errorCode: string) => Promise<void>;
   private running = false;
   private blocked = false;
 
@@ -92,6 +131,7 @@ export class RelayRuntime {
     this.listPending = dependencies.listPending ?? listRelayPendingCaptures;
     this.markImported = dependencies.markImported ?? markRelayImportReceipts;
     this.markConflicts = dependencies.markConflicts ?? markRelayConflicts;
+    this.markInvalid = dependencies.markInvalid ?? markRelayConflictsForRecords;
   }
 
   start(): void {
@@ -103,6 +143,22 @@ export class RelayRuntime {
 
   async onCaptureCommitted(): Promise<void> {
     await this.scheduleIfEligible();
+  }
+
+  async getPopupState(): Promise<RelayPopupState> {
+    const state = await this.state.get();
+    return {
+      state: state.state,
+      autoSyncEnabled: state.autoSyncEnabled === true,
+      ...(state.grantId ? { grantId: state.grantId } : {}),
+      ...(state.generation ? { generation: state.generation } : {}),
+    };
+  }
+
+  async stopLocally(): Promise<RelayPopupState> {
+    this.blocked = true;
+    await this.disableLocalRelay();
+    return this.getPopupState();
   }
 
   async onAutomationState(state: CodeArchiveAutomationState): Promise<void> {
@@ -162,6 +218,8 @@ export class RelayRuntime {
       state: current.state === "ACTIVE" && current.grantId && current.generation ? "REVOCATION_PENDING" : current.state,
       credential: undefined,
       autoSyncEnabled: false,
+      signedChallengeId: undefined,
+      signedChallengeExpiresAt: undefined,
       nextRetryAt: undefined,
     }));
   }
@@ -181,14 +239,19 @@ export class RelayRuntime {
         return;
       }
       const generation = state.generation as number;
-      const candidates = (await this.listPending(generation, 25)).filter((record) => validRecord(record) && record.relayCapture?.generation === generation);
-      const oversized = candidates.filter((record) => record.code.length > MAX_RECORD_CODE_CHARS);
-      if (oversized.length) {
-        await this.markConflicts(oversized.map((record) => record.clientRecordId!), new Date(this.now()).toISOString(), "RELAY_RECORD_TOO_LARGE");
+      const candidates = (await this.listPending(generation, 25)).filter((record) => record.relayCapture?.generation === generation);
+      const invalidByReason = new Map<string, SolutionRecord[]>();
+      const validRecords: SolutionRecord[] = [];
+      for (const record of candidates) {
+        const errorCode = relayRecordError(record, generation, this.now());
+        if (errorCode) invalidByReason.set(errorCode, [...(invalidByReason.get(errorCode) ?? []), record]);
+        else validRecords.push(record);
+      }
+      for (const [errorCode, invalidRecords] of invalidByReason) {
+        await this.markInvalid(invalidRecords, new Date(this.now()).toISOString(), errorCode);
       }
       let batchCodeChars = 0;
-      const records = candidates
-        .filter((record) => record.code.length <= MAX_RECORD_CODE_CHARS)
+      const records = validRecords
         .filter((record) => {
           if (batchCodeChars + record.code.length > MAX_BATCH_CODE_CHARS) return false;
           batchCodeChars += record.code.length;
@@ -218,7 +281,7 @@ export class RelayRuntime {
         return;
       }
       if (response.status === 429 || response.status >= 500) {
-        await this.retry(retryAfterMs(response));
+        await this.retry(retryAfterMs(response, this.now()));
         return;
       }
       if (!response.status.toString().startsWith("2")) {
@@ -259,14 +322,15 @@ export class RelayRuntime {
   private async retry(retryAfter?: number): Promise<void> {
     const next = await this.state.update((current) => {
       const index = Math.min(Math.max(current.failureCount, 0), RETRY_DELAYS_MS.length - 1);
-      return { ...current, failureCount: current.failureCount + 1, nextRetryAt: new Date(this.now() + (retryAfter ?? RETRY_DELAYS_MS[index])).toISOString() };
+      const delay = Math.max(RETRY_DELAYS_MS[0], RETRY_DELAYS_MS[index], retryAfter ?? 0);
+      return { ...current, failureCount: current.failureCount + 1, nextRetryAt: new Date(this.now() + delay).toISOString() };
     });
     await this.scheduleIfEligible(Math.max(0, Date.parse(next.nextRetryAt!) - this.now()));
   }
 
   private async invalidate(state: RelayStateSnapshot["state"]): Promise<void> {
     await this.cancelAlarm();
-    await this.state.update((current) => ({ ...current, state, credential: undefined, autoSyncEnabled: false, nextRetryAt: undefined }));
+    await this.state.update((current) => ({ ...current, state, credential: undefined, autoSyncEnabled: false, signedChallengeId: undefined, signedChallengeExpiresAt: undefined, nextRetryAt: undefined }));
   }
 }
 

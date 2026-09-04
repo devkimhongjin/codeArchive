@@ -16,6 +16,7 @@ export const RELAY_STATE_KEY = "singleton";
 const REVISION_KEY = "revision";
 
 export interface RelayStateSnapshot {
+  revision: number;
   state: "UNPAIRED" | "ACTIVE" | "REVOCATION_PENDING" | "EXPIRED" | "INVALIDATED";
   grantId?: string;
   credential?: string;
@@ -436,12 +437,31 @@ export async function markRelayConflicts(clientRecordIds: readonly string[], occ
   }));
 }
 
+export async function markRelayConflictsForRecords(records: readonly SolutionRecord[], occurredAt: string, errorCode?: string): Promise<void> {
+  const ids = new Set(records.map((record) => record.id));
+  if (ids.size === 0) return;
+  const db = await openDatabase();
+  try {
+    const transaction = db.transaction([STORE_NAME, META_STORE_NAME], "readwrite");
+    const store = transaction.objectStore(STORE_NAME);
+    const stored = await requestToPromise(store.getAll()) as SolutionRecord[];
+    let changed = false;
+    for (const record of stored) {
+      if (!ids.has(record.id)) continue;
+      store.put({ ...record, relayConflict: { occurredAt, ...(errorCode ? { errorCode } : {}) } });
+      changed = true;
+    }
+    if (changed) await incrementRevision(transaction);
+    await transactionDone(transaction);
+  } finally { db.close(); }
+}
+
 async function updateRelayRecords(clientRecordIds: readonly string[], mutate: (record: SolutionRecord) => SolutionRecord): Promise<void> {
   const requested = new Set(clientRecordIds);
   if (requested.size === 0) return;
   const db = await openDatabase();
   try {
-    const transaction = db.transaction(STORE_NAME, "readwrite");
+    const transaction = db.transaction([STORE_NAME, META_STORE_NAME], "readwrite");
     const store = transaction.objectStore(STORE_NAME);
     const records = await requestToPromise(store.getAll()) as SolutionRecord[];
     let changed = false;

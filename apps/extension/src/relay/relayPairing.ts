@@ -6,8 +6,6 @@ import {
   CODEARCHIVE_RELAY_DEVICE_ID_MAX_LENGTH,
   CODEARCHIVE_RELAY_DEVICE_ID_MIN_LENGTH,
   CODEARCHIVE_RELAY_GRANT_ID_MAX_LENGTH,
-  CODEARCHIVE_RELAY_PUBLIC_KEY_MAX_LENGTH,
-  CODEARCHIVE_RELAY_SIGNATURE_MAX_LENGTH,
   type ExtensionToDashboardRelayPairingMessage,
 } from "../../../../packages/shared-types/src";
 import { indexedDbRelayStateRepository, signRelayChallenge, type RelayStateRecord, type RelayStateRepository } from "./relayState";
@@ -51,6 +49,12 @@ function validGeneration(value: unknown): value is number {
 
 function validUuidLike(value: unknown, max: number): value is string {
   return boundedString(value, max) && /^[0-9a-f-]+$/i.test(value);
+}
+
+class RelayStateRejected extends Error {}
+
+function rejectState(): never {
+  throw new RelayStateRejected("Relay state changed.");
 }
 
 function pairingInfo(state: RelayStateRecord): ExtensionToDashboardRelayPairingMessage {
@@ -104,13 +108,21 @@ export class RelayPairingController {
       || !validDate(raw.expiresAt, Date.now())) return undefined;
     const state = await this.repository.get();
     if (state.deviceId !== raw.deviceId) return undefined;
-    if (state.state === "EXPIRED" || state.state === "INVALIDATED") return undefined;
     const signature = await signRelayChallenge(state, raw.challenge);
-    const signed = await this.repository.update((current) => ({
-      ...current,
-      signedChallengeId: raw.challengeId as string,
-      signedChallengeExpiresAt: raw.expiresAt as string,
-    }));
+    let signed: RelayStateRecord;
+    try {
+      signed = await this.repository.update((current) => {
+        if (current.revision !== state.revision || current.deviceId !== state.deviceId || current.publicKey !== state.publicKey) rejectState();
+        return {
+          ...current,
+          signedChallengeId: raw.challengeId as string,
+          signedChallengeExpiresAt: raw.expiresAt as string,
+        };
+      });
+    } catch (error) {
+      if (error instanceof RelayStateRejected) return undefined;
+      throw error;
+    }
     if (signed.deviceId !== raw.deviceId) return undefined;
     return {
       type: "CODEARCHIVE_RELAY_SIGN_CHALLENGE",
@@ -130,21 +142,28 @@ export class RelayPairingController {
       || !validGeneration(raw.generation)
       || !validDate(raw.expiresAt, Date.now())
       || !boundedString(raw.credential, CODEARCHIVE_RELAY_CREDENTIAL_MAX_LENGTH)) return undefined;
-    const state = await this.repository.get();
-    if (state.deviceId !== raw.deviceId || state.signedChallengeId !== raw.challengeId
-      || !validDate(state.signedChallengeExpiresAt, Date.now())) return undefined;
-    const next = await this.repository.update((current) => ({
-      ...current,
-      state: "ACTIVE",
-      grantId: raw.grantId as string,
-      generation: raw.generation as number,
-      expiresAt: raw.expiresAt as string,
-      credential: raw.credential as string,
-      signedChallengeId: undefined,
-      signedChallengeExpiresAt: undefined,
-      failureCount: 0,
-      nextRetryAt: undefined,
-    }));
+    let next: RelayStateRecord;
+    try {
+      next = await this.repository.update((current) => {
+        if (current.deviceId !== raw.deviceId || current.signedChallengeId !== raw.challengeId
+          || !validDate(current.signedChallengeExpiresAt, Date.now())) rejectState();
+        return {
+          ...current,
+          state: "ACTIVE",
+          grantId: raw.grantId as string,
+          generation: raw.generation as number,
+          expiresAt: raw.expiresAt as string,
+          credential: raw.credential as string,
+          signedChallengeId: undefined,
+          signedChallengeExpiresAt: undefined,
+          failureCount: 0,
+          nextRetryAt: undefined,
+        };
+      });
+    } catch (error) {
+      if (error instanceof RelayStateRejected) return undefined;
+      throw error;
+    }
     return {
       type: "CODEARCHIVE_RELAY_GRANT_PROVISION",
       phase: "STORED",
@@ -161,15 +180,24 @@ export class RelayPairingController {
       || raw.phase !== "REQUEST" || !validDeviceId(raw.deviceId)
       || !validUuidLike(raw.grantId, CODEARCHIVE_RELAY_GRANT_ID_MAX_LENGTH)
       || !validGeneration(raw.generation) || !validAbsoluteDate(raw.revokedAt)) return undefined;
-    const state = await this.repository.get();
-    if (state.deviceId !== raw.deviceId || state.grantId !== raw.grantId || state.generation !== raw.generation) return undefined;
-    const next = await this.repository.update((current) => ({
-      ...current,
-      state: "INVALIDATED",
-      credential: undefined,
-      autoSyncEnabled: false,
-      nextRetryAt: undefined,
-    }));
+    let next: RelayStateRecord;
+    try {
+      next = await this.repository.update((current) => {
+        if (current.deviceId !== raw.deviceId || current.grantId !== raw.grantId || current.generation !== raw.generation) rejectState();
+        return {
+          ...current,
+          state: "INVALIDATED",
+          credential: undefined,
+          autoSyncEnabled: false,
+          signedChallengeId: undefined,
+          signedChallengeExpiresAt: undefined,
+          nextRetryAt: undefined,
+        };
+      });
+    } catch (error) {
+      if (error instanceof RelayStateRejected) return undefined;
+      throw error;
+    }
     return {
       type: "CODEARCHIVE_RELAY_REVOKE_CONFIRMED",
       phase: "APPLIED",

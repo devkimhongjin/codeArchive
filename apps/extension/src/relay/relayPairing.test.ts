@@ -9,7 +9,7 @@ class MemoryState implements RelayStateRepository {
   constructor(public value: RelayStateRecord) {}
   async get(): Promise<RelayStateRecord> { return this.value; }
   async update(mutate: (current: RelayStateRecord) => RelayStateRecord): Promise<RelayStateRecord> {
-    this.value = mutate(this.value);
+    this.value = { ...mutate(this.value), revision: this.value.revision + 1 };
     return this.value;
   }
 }
@@ -19,6 +19,7 @@ function state(overrides: Partial<RelayStateRecord> = {}): RelayStateRecord {
     deviceId: "device-1234567890",
     publicKey: "public-key",
     privateKey: {} as CryptoKey,
+    revision: 0,
     state: "UNPAIRED",
     autoSyncEnabled: false,
     failureCount: 0,
@@ -27,6 +28,10 @@ function state(overrides: Partial<RelayStateRecord> = {}): RelayStateRecord {
 }
 
 describe("RelayPairingController", () => {
+  const challengeA = "a0000000-0000-4000-8000-000000000010";
+  const challengeB = "a0000000-0000-4000-8000-000000000011";
+  const grantA = "a0000000-0000-4000-8000-000000000012";
+
   it("answers only an explicit pairing-info request and never exposes a credential", async () => {
     const repository = new MemoryState(state({ state: "ACTIVE", grantId: "a0000000-0000-4000-8000-000000000001", generation: 2, expiresAt: FUTURE, credential: "secret" }));
     const controller = new RelayPairingController(repository);
@@ -87,5 +92,32 @@ describe("RelayPairingController", () => {
     expect(response).toMatchObject({ phase: "APPLIED", grantId: "a0000000-0000-4000-8000-000000000004", generation: 2 });
     expect(repository.value).toMatchObject({ state: "INVALIDATED", autoSyncEnabled: false });
     expect(repository.value.credential).toBeUndefined();
+  });
+
+  it("rejects a stale provision when a newer challenge is current", async () => {
+    const repository = new MemoryState(state({ signedChallengeId: challengeB, signedChallengeExpiresAt: FUTURE }));
+    const controller = new RelayPairingController(repository);
+
+    const response = await controller.handle({
+      type: "CODEARCHIVE_RELAY_GRANT_PROVISION", phase: "REQUEST", protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+      deviceId: "device-1234567890", grantId: grantA, generation: 4, expiresAt: FUTURE, challengeId: challengeA, credential: "secret",
+    }, true);
+
+    expect(response).toBeUndefined();
+    expect(repository.value.state).toBe("UNPAIRED");
+    expect(repository.value.credential).toBeUndefined();
+  });
+
+  it("does not reactivate after invalidation when an old challenge remains in the request", async () => {
+    const repository = new MemoryState(state({ state: "INVALIDATED", signedChallengeId: undefined, signedChallengeExpiresAt: undefined }));
+    const controller = new RelayPairingController(repository);
+
+    const response = await controller.handle({
+      type: "CODEARCHIVE_RELAY_GRANT_PROVISION", phase: "REQUEST", protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+      deviceId: "device-1234567890", grantId: grantA, generation: 4, expiresAt: FUTURE, challengeId: challengeA, credential: "secret",
+    }, true);
+
+    expect(response).toBeUndefined();
+    expect(repository.value.state).toBe("INVALIDATED");
   });
 });
