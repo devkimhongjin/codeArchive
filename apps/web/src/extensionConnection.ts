@@ -1,6 +1,12 @@
 import {
   CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
   CODEARCHIVE_CAPTURE_PAGE_MAX_LIMIT,
+  CODEARCHIVE_RELAY_CHALLENGE_ID_MAX_LENGTH,
+  CODEARCHIVE_RELAY_DEVICE_ID_MAX_LENGTH,
+  CODEARCHIVE_RELAY_DEVICE_ID_MIN_LENGTH,
+  CODEARCHIVE_RELAY_GRANT_ID_MAX_LENGTH,
+  CODEARCHIVE_RELAY_PUBLIC_KEY_MAX_LENGTH,
+  CODEARCHIVE_RELAY_SIGNATURE_MAX_LENGTH,
   type ClientRecordId,
   type CodeArchiveBridgeFailure,
   type CodeArchiveCaptureAckResponse,
@@ -10,6 +16,13 @@ import {
   type CodeArchiveAutomationState,
   type CodeArchiveImportBeginResponse,
   type CodeArchivePingResponse,
+  type CodeArchiveRelayGrantProvisionRequest,
+  type CodeArchiveRelayGrantProvisionResponse,
+  type CodeArchiveRelayPairingInfoResponse,
+  type CodeArchiveRelayRevokeConfirmedRequest,
+  type CodeArchiveRelayRevokeConfirmedResponse,
+  type CodeArchiveRelaySignChallengeRequest,
+  type CodeArchiveRelaySignChallengeResponse,
   type CodeArchiveSyncSessionEndResponse,
   type CodeArchiveSyncSessionStartResponse,
   type ExtensionToDashboardAutomationMessage,
@@ -57,6 +70,10 @@ export interface DashboardExtensionConnection {
   beginImport?(syncSessionId: string): Promise<string | null>;
   readPendingPage?(capability: string, cursor?: string): Promise<unknown>;
   ackImported?(capability: string, importBatchId: string, clientRecordIds: readonly ClientRecordId[]): Promise<boolean>;
+  relayPairingInfo(): Promise<CodeArchiveRelayPairingInfoResponse | null>;
+  relaySignChallenge(request: CodeArchiveRelaySignChallengeRequest): Promise<CodeArchiveRelaySignChallengeResponse | null>;
+  relayProvisionGrant(request: CodeArchiveRelayGrantProvisionRequest): Promise<CodeArchiveRelayGrantProvisionResponse | null>;
+  relayConfirmRevoke(request: CodeArchiveRelayRevokeConfirmedRequest): Promise<CodeArchiveRelayRevokeConfirmedResponse | null>;
 }
 
 function safeFailure(value: unknown): value is CodeArchiveBridgeFailure {
@@ -67,6 +84,33 @@ function safeFailure(value: unknown): value is CodeArchiveBridgeFailure {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const expected = new Set(keys);
+  return Object.keys(value).length === expected.size && Object.keys(value).every((key) => expected.has(key));
+}
+
+function bounded(value: unknown, max: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= max;
+}
+
+function validDevice(value: unknown): value is string {
+  return bounded(value, CODEARCHIVE_RELAY_DEVICE_ID_MAX_LENGTH)
+    && value.length >= CODEARCHIVE_RELAY_DEVICE_ID_MIN_LENGTH
+    && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function validUuid(value: unknown, max: number): value is string {
+  return bounded(value, max) && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function validGeneration(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function validDate(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
 
 function isPingResponse(value: unknown): value is CodeArchivePingResponse {
@@ -120,6 +164,51 @@ function isAckResponse(value: unknown, importBatchId: string, requestedIds: read
   return data.acknowledgedClientRecordIds.every((id) => typeof id === "string" && requested.has(id));
 }
 
+function isPairingInfo(value: unknown): value is CodeArchiveRelayPairingInfoResponse {
+  if (!isObject(value) || value.type !== "CODEARCHIVE_RELAY_PAIRING_INFO" || value.phase !== "INFO"
+    || value.protocolVersion !== CODEARCHIVE_BRIDGE_PROTOCOL_VERSION || !validDevice(value.deviceId)
+    || !bounded(value.publicKey, CODEARCHIVE_RELAY_PUBLIC_KEY_MAX_LENGTH)
+    || !["UNPAIRED", "ACTIVE", "REVOCATION_PENDING", "EXPIRED", "INVALIDATED"].includes(String(value.state))) return false;
+  if (value.state === "UNPAIRED") return exactKeys(value, ["type", "phase", "protocolVersion", "deviceId", "publicKey", "state"]);
+  return exactKeys(value, ["type", "phase", "protocolVersion", "deviceId", "publicKey", "state", "grantId", "generation", "expiresAt"])
+    && validUuid(value.grantId, CODEARCHIVE_RELAY_GRANT_ID_MAX_LENGTH)
+    && validGeneration(value.generation)
+    && validDate(value.expiresAt);
+}
+
+function isSignedChallenge(value: unknown): value is CodeArchiveRelaySignChallengeResponse {
+  return isObject(value)
+    && exactKeys(value, ["type", "phase", "protocolVersion", "deviceId", "challengeId", "signature"])
+    && value.type === "CODEARCHIVE_RELAY_SIGN_CHALLENGE" && value.phase === "SIGNED"
+    && value.protocolVersion === CODEARCHIVE_BRIDGE_PROTOCOL_VERSION
+    && validDevice(value.deviceId)
+    && validUuid(value.challengeId, CODEARCHIVE_RELAY_CHALLENGE_ID_MAX_LENGTH)
+    && bounded(value.signature, CODEARCHIVE_RELAY_SIGNATURE_MAX_LENGTH)
+    && /^[A-Za-z0-9_-]+$/.test(value.signature);
+}
+
+function isStoredGrant(value: unknown): value is CodeArchiveRelayGrantProvisionResponse {
+  return isObject(value)
+    && exactKeys(value, ["type", "phase", "protocolVersion", "deviceId", "grantId", "generation", "expiresAt"])
+    && value.type === "CODEARCHIVE_RELAY_GRANT_PROVISION" && value.phase === "STORED"
+    && value.protocolVersion === CODEARCHIVE_BRIDGE_PROTOCOL_VERSION
+    && validDevice(value.deviceId)
+    && validUuid(value.grantId, CODEARCHIVE_RELAY_GRANT_ID_MAX_LENGTH)
+    && validGeneration(value.generation)
+    && validDate(value.expiresAt);
+}
+
+function isAppliedRevoke(value: unknown): value is CodeArchiveRelayRevokeConfirmedResponse {
+  return isObject(value)
+    && exactKeys(value, ["type", "phase", "protocolVersion", "deviceId", "grantId", "generation", "revokedAt"])
+    && value.type === "CODEARCHIVE_RELAY_REVOKE_CONFIRMED" && value.phase === "APPLIED"
+    && value.protocolVersion === CODEARCHIVE_BRIDGE_PROTOCOL_VERSION
+    && validDevice(value.deviceId)
+    && validUuid(value.grantId, CODEARCHIVE_RELAY_GRANT_ID_MAX_LENGTH)
+    && validGeneration(value.generation)
+    && validDate(value.revokedAt);
+}
+
 function runtimeFromPage(): ChromeRuntime | null {
   const candidate = (globalThis as { chrome?: { runtime?: ChromeRuntime } }).chrome?.runtime;
   return candidate && typeof candidate.connect === "function" ? candidate : null;
@@ -157,6 +246,7 @@ export function createDashboardExtensionConnection(
         let active = true;
         let port: RuntimePort;
         const pending: Array<(message: unknown) => void> = [];
+        let requestTail: Promise<void> = Promise.resolve();
 
         try {
           port = runtime.connect(extensionId, { name: "codearchive-dashboard" });
@@ -168,26 +258,31 @@ export function createDashboardExtensionConnection(
         }
 
         const request = <T>(message: unknown) => new Promise<T | null>((resolve) => {
-          if (!active) { resolve(null); return; }
-          const complete = (response: unknown) => {
-            globalThis.clearTimeout(timeout);
-            resolve(response as T | null);
-          };
-          const timeout = globalThis.setTimeout(() => {
-            const index = pending.indexOf(complete);
-            if (index >= 0) pending.splice(index, 1);
-            resolve(null);
-            terminalError();
-          }, BRIDGE_RESPONSE_TIMEOUT_MS);
-          pending.push(complete);
-          try {
-            port.postMessage(message);
-          } catch {
-            const index = pending.indexOf(complete);
-            if (index >= 0) pending.splice(index, 1);
-            complete(null);
-            terminalError();
-          }
+          const execute = () => new Promise<void>((done) => {
+            if (!active || disposed) { resolve(null); done(); return; }
+            const complete = (response: unknown) => {
+              globalThis.clearTimeout(timeout);
+              resolve(response as T | null);
+              done();
+            };
+            const timeout = globalThis.setTimeout(() => {
+              const index = pending.indexOf(complete);
+              if (index >= 0) pending.splice(index, 1);
+              resolve(null);
+              done();
+              terminalError();
+            }, BRIDGE_RESPONSE_TIMEOUT_MS);
+            pending.push(complete);
+            try {
+              port.postMessage(message);
+            } catch {
+              const index = pending.indexOf(complete);
+              if (index >= 0) pending.splice(index, 1);
+              complete(null);
+              terminalError();
+            }
+          });
+          requestTail = requestTail.then(execute, execute);
         });
 
         const bridge: ActiveBridge = {
@@ -217,7 +312,7 @@ export function createDashboardExtensionConnection(
           if (!active) return;
           active = false;
           if (activeBridge === bridge) activeBridge = null;
-          pending.splice(0).forEach((resolve) => resolve(null));
+          pending.splice(0).forEach((resolvePending) => resolvePending(null));
           onState({ status: runtime.lastError ? "error" : "unavailable" });
           retry();
         });
@@ -226,7 +321,7 @@ export function createDashboardExtensionConnection(
           if (!active) return;
           active = false;
           if (activeBridge === bridge) activeBridge = null;
-          pending.splice(0).forEach((resolve) => resolve(null));
+          pending.splice(0).forEach((resolvePending) => resolvePending(null));
           port.disconnect();
           onState({ status: "error" });
           retry();
@@ -262,7 +357,7 @@ export function createDashboardExtensionConnection(
           if (!active) return;
           active = false;
           if (activeBridge === bridge) activeBridge = null;
-          pending.splice(0).forEach((resolve) => resolve(null));
+          pending.splice(0).forEach((resolvePending) => resolvePending(null));
           port.disconnect();
         };
       };
@@ -347,6 +442,38 @@ export function createDashboardExtensionConnection(
         clientRecordIds,
       });
       return Boolean(response && !safeFailure(response) && isAckResponse(response, importBatchId, clientRecordIds));
+    },
+
+    async relayPairingInfo() {
+      const bridge = activeBridge;
+      if (!bridge) return null;
+      const response = await bridge.request<unknown>({
+        type: "CODEARCHIVE_RELAY_PAIRING_INFO",
+        phase: "REQUEST",
+        protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+      });
+      return response && !safeFailure(response) && isPairingInfo(response) ? response : null;
+    },
+
+    async relaySignChallenge(request) {
+      const bridge = activeBridge;
+      if (!bridge) return null;
+      const response = await bridge.request<unknown>(request);
+      return response && !safeFailure(response) && isSignedChallenge(response) ? response : null;
+    },
+
+    async relayProvisionGrant(request) {
+      const bridge = activeBridge;
+      if (!bridge) return null;
+      const response = await bridge.request<unknown>(request);
+      return response && !safeFailure(response) && isStoredGrant(response) ? response : null;
+    },
+
+    async relayConfirmRevoke(request) {
+      const bridge = activeBridge;
+      if (!bridge) return null;
+      const response = await bridge.request<unknown>(request);
+      return response && !safeFailure(response) && isAppliedRevoke(response) ? response : null;
     },
   };
 }
