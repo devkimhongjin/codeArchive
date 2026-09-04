@@ -3,8 +3,14 @@ import type { DashboardSolution } from "./archiveTypes";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
 import { GitHubAutoCommit, type DurableGitHubConsent } from "./GitHubAutoCommit";
 import { githubErrorMessage, GitHubRequestError, type GitHubAutoTarget, type GitHubBranch, type GitHubClient, type GitHubCommitResult, type GitHubConfirmation, type GitHubDirectory, type GitHubInstallation, type GitHubPage, type GitHubRepository } from "./githubClient";
+import { DurableAutomationController } from "./durableAutomation";
+import { mainApiDurableAutomationClient } from "./durableAutomationClient";
+import { durableAutomationProfile, setDurableAutomationProfile, subscribeDurableAutomationProfile } from "./durableAutomationState";
+import { dashboardExtensionConnection } from "./extensionConnection";
 
 type AutomationIntent = { enabled: boolean; nonce: number };
+
+const defaultDurableController = new DurableAutomationController(mainApiDurableAutomationClient, dashboardExtensionConnection);
 
 type GitHubUploadProps = {
   solution: DashboardSolution | null;
@@ -77,6 +83,7 @@ function GitHubUploadBody({ open, solution, client, syncEligible, automationBloc
   const [autoLocked, setAutoLocked] = useState(false);
   const [notice, setNotice] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [observedDurableProfile, setObservedDurableProfile] = useState(() => durableAutomationProfile());
   const generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
   const mounted = useRef(true);
@@ -89,7 +96,23 @@ function GitHubUploadBody({ open, solution, client, syncEligible, automationBloc
   const locked = busy || autoLocked || !!unresolved;
   const target: GitHubAutoTarget | null = repository && branch ? { installationId: installation, repositoryId: repository.id, branch: branch.name, expectedCommitSha: branch.commitSha, folder, privateRepository: repository.private, fullName: repository.fullName } : null;
   const targetGuidance = branchGuidance(repository, branches, branch);
-  useEffect(() => { onTargetConfiguredChange?.(Boolean(target) || (durableMode && durableEnabled)); }, [onTargetConfiguredChange, durableMode, durableEnabled, target?.installationId, target?.repositoryId, target?.branch, target?.expectedCommitSha, target?.folder, target?.privateRepository, target?.fullName]);
+  const effectiveDurableMode = durableMode || observedDurableProfile?.ownershipMode === "DURABLE_SERVER";
+  const effectiveDurableEnabled = durableEnabled || Boolean(effectiveDurableMode && observedDurableProfile?.githubAutoCommitEnabled);
+  const enableDurable = onDurableEnable ?? (async (freshTarget: GitHubAutoTarget, durableConsent: DurableGitHubConsent) => {
+    const result = await defaultDurableController.enableGitHubAutoCommit(freshTarget, durableConsent);
+    setDurableAutomationProfile(result.profile);
+    return result.relayPaired;
+  });
+  const disableDurable = onDurableDisable ?? (async () => {
+    const result = await defaultDurableController.disableGitHubAutoCommit();
+    setDurableAutomationProfile(result.profile);
+    return result.profile.githubAutoCommitEnabled === false;
+  });
+  useEffect(() => subscribeDurableAutomationProfile(setObservedDurableProfile), []);
+  useEffect(() => { onTargetConfiguredChange?.(Boolean(target) || Boolean(effectiveDurableMode && observedDurableProfile?.target)); }, [onTargetConfiguredChange, effectiveDurableMode, observedDurableProfile?.target, target?.installationId, target?.repositoryId, target?.branch, target?.expectedCommitSha, target?.folder, target?.privateRepository, target?.fullName]);
+  useEffect(() => {
+    if (effectiveDurableMode) onAutomationStateChange?.(effectiveDurableEnabled, null);
+  }, [effectiveDurableMode, effectiveDurableEnabled, onAutomationStateChange]);
   async function fetchFreshSelectedTarget(signal: AbortSignal): Promise<{ repositories: GitHubPage<GitHubRepository>; repository: GitHubRepository; branches: GitHubPage<GitHubBranch>; branch: GitHubBranch; target: GitHubAutoTarget }> {
     if (!target || !repository || !branch) throw new GitHubRequestError("GITHUB_REFERENCE_CHANGED");
     const latestRepositories = await client.repositories(installation, repositories.page, signal);
@@ -214,7 +237,7 @@ function GitHubUploadBody({ open, solution, client, syncEligible, automationBloc
     </div>
     <div hidden={!open}>
       <GitHubAutoCommit client={client} target={target} eligible={syncEligible} blocked={busy || !!unresolved} blockedReason={automationBlockedReason ?? targetGuidance} automationIntent={automationIntent} onAutomationStateChange={onAutomationStateChange} refreshTarget={refreshAutomationTarget} onSessionExpired={() => callback.current()}
-        durableMode={durableMode} durableEnabled={durableEnabled} onDurableEnable={onDurableEnable} onDurableDisable={onDurableDisable}
+        durableMode={effectiveDurableMode} durableEnabled={effectiveDurableEnabled} onDurableEnable={enableDurable} onDurableDisable={disableDurable}
         onLock={value => { setAutoLocked(value); invalidate(); if (!value) { setBranch(null); setDirectory(null); } }} />
     </div>
   </>;
