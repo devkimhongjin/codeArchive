@@ -71,9 +71,11 @@ public class DurableAutomationWorker {
                     GitHubUploadPath.commitMessage(null, source.platform(), source.problemNumber()));
             var review = new GitHubUploadIntentStore.Review(selection,
                     GitHubUploadIntentStore.hash(source.code()), claim.target().privateRepository(), claim.target().fullName());
+            // The uncertainty fence must commit before any provider mutation can start.
+            store.markAttempted(claim);
             GitHubAppClient.CommitResult result = executor.executeForWorker(claim.userId(), review,
                     claim.leaseUntil(),
-                    () -> store.requireLive(claim), () -> { store.markAttempted(claim); dispatched.set(true); });
+                    () -> store.requireLiveForDispatch(claim), () -> dispatched.set(true));
             if (result == null) {
                 store.finish(claim, null, ErrorCode.GITHUB_UPLOAD_OUTCOME_UNKNOWN, true);
                 return Result.unknown(claim.solutionId());

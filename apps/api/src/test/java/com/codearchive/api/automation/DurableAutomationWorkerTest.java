@@ -70,6 +70,7 @@ class DurableAutomationWorkerTest {
 
         assertThat(result.status()).isEqualTo("SUCCEEDED");
         verify(store).requireLive(claim);
+        verify(store).markAttempted(claim);
         verify(store).finish(eq(claim), any(GitHubAppClient.CommitResult.class), isNull(), eq(true));
         verify(executor).executeForWorker(eq(userId), any(GitHubUploadIntentStore.Review.class),
                 eq(claim.leaseUntil()), any(Runnable.class), any(Runnable.class));
@@ -88,6 +89,24 @@ class DurableAutomationWorkerTest {
         assertThat(result.status()).isEqualTo("UNKNOWN");
         verify(store).finish(eq(claim), isNull(), eq(ErrorCode.INTERNAL_ERROR), eq(true));
         verify(store, never()).finish(eq(claim), any(GitHubAppClient.CommitResult.class), isNull(), eq(true));
+    }
+
+    @Test
+    void finalAuthorizationFailureAfterAttemptFenceRemainsRejectedNotUnknown() {
+        doThrow(new CodeArchiveException(ErrorCode.AUTOMATION_GENERATION_STALE))
+                .when(store).requireLiveForDispatch(claim);
+        when(executor.executeForWorker(eq(userId), any(GitHubUploadIntentStore.Review.class),
+                eq(claim.leaseUntil()), any(Runnable.class), any(Runnable.class)))
+                .thenAnswer(invocation -> {
+                    invocation.<Runnable>getArgument(3).run();
+                    return new GitHubAppClient.CommitResult("d".repeat(40), "https://example.test/commit");
+                });
+
+        DurableAutomationWorker.Result result = worker.runOnce();
+
+        assertThat(result.status()).isEqualTo("REJECTED");
+        verify(store).markAttempted(claim);
+        verify(store).finish(eq(claim), isNull(), eq(ErrorCode.AUTOMATION_GENERATION_STALE), eq(false));
     }
 
     @Test

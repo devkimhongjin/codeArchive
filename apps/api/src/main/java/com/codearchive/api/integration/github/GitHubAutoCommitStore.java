@@ -122,6 +122,10 @@ public class GitHubAutoCommitStore {
         if (!"PAGE_OWNED".equals(mode)) {
             throw new CodeArchiveException(ErrorCode.AUTOMATION_OWNERSHIP_CONFLICT);
         }
+        if (db.queryForObject("SELECT count(*) FROM durable_github_attempts WHERE user_id=? AND state IN ('CLAIMED','ATTEMPTED','UNKNOWN')",
+                Integer.class, userId) > 0) {
+            throw new CodeArchiveException(ErrorCode.GITHUB_UPLOAD_OUTCOME_UNKNOWN);
+        }
     }
     private String encode(Target target) { try { return json.writeValueAsString(target); } catch(Exception ignored) { throw new CodeArchiveException(ErrorCode.INTERNAL_ERROR); } }
     private Target decode(String value) { try { return value==null?null:json.readValue(value,Target.class); } catch(Exception ignored) { throw new CodeArchiveException(ErrorCode.INTERNAL_ERROR); } }

@@ -122,16 +122,25 @@ public class DurableWorkerStore {
     }
 
     public void requireLive(Claim claim) {
+        requireLive(claim, "CLAIMED");
+    }
+
+    /** Final authorization check after the committed ATTEMPTED fence and before provider dispatch. */
+    public void requireLiveForDispatch(Claim claim) {
+        requireLive(claim, "ATTEMPTED");
+    }
+
+    private void requireLive(Claim claim, String state) {
         boolean live = db.query("""
                 SELECT 1 FROM automation_profiles p JOIN durable_github_attempts a ON a.user_id=p.user_id
-                WHERE a.id=:id AND a.claim_token=:claimToken AND a.state='CLAIMED'
+                WHERE a.id=:id AND a.claim_token=:claimToken AND a.state=:state
                   AND a.lease_until>clock_timestamp() AND p.user_id=:user
                   AND p.ownership_mode='DURABLE_SERVER' AND p.source_transfer_enabled=true
                   AND p.github_auto_commit_enabled=true AND p.generation=a.profile_generation
                   AND p.target_generation=a.target_generation
                 FOR SHARE OF p,a
                 """, new MapSqlParameterSource("id", claim.id()).addValue("claimToken", claim.claimToken())
-                .addValue("user", claim.userId()), (rs, index) -> 1).stream().findFirst().isPresent();
+                .addValue("user", claim.userId()).addValue("state", state), (rs, index) -> 1).stream().findFirst().isPresent();
         if (!live) throw new CodeArchiveException(ErrorCode.AUTOMATION_GENERATION_STALE);
     }
 
@@ -169,7 +178,7 @@ public class DurableWorkerStore {
     }
 
     public boolean hasBlockingAttempt(UUID userId) {
-        return db.query("SELECT 1 FROM durable_github_attempts WHERE user_id=:user AND state IN ('ATTEMPTED','UNKNOWN') LIMIT 1",
+        return db.query("SELECT 1 FROM durable_github_attempts WHERE user_id=:user AND state IN ('CLAIMED','ATTEMPTED','UNKNOWN') LIMIT 1",
                 new MapSqlParameterSource("user", userId), (rs, index) -> 1).stream().findFirst().isPresent();
     }
 

@@ -377,11 +377,11 @@ public class AuthService {
             );
         }
         Instant now = clock.instant();
+        if (relayGrantService != null) relayGrantService.revokeForUser(principal.userId());
         authSessionRepository.revoke(
                 principal.sessionId(),
                 now
         );
-        if (relayGrantService != null) relayGrantService.revokeForUser(principal.userId());
     }
 
     @Autowired(required = false)

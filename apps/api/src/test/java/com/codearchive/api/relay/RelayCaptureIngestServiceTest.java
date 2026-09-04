@@ -77,9 +77,6 @@ class RelayCaptureIngestServiceTest {
         when(row.getString("memory_usage")).thenReturn("25,472 kb");
         when(row.getString("ai_usage")).thenReturn("unknown");
         when(row.getBoolean("accepted_capture")).thenReturn(true);
-        when(row.getLong("capture_generation")).thenReturn(8L);
-        when(row.wasNull()).thenReturn(false);
-        when(row.getTimestamp("captured_at")).thenReturn(Timestamp.from(NOW));
         when(db.query(contains("SELECT platform"), any(MapSqlParameterSource.class),
                 any(org.springframework.jdbc.core.RowMapper.class))).thenAnswer(invocation -> {
                     @SuppressWarnings("unchecked") org.springframework.jdbc.core.RowMapper<Object> mapper =
@@ -116,6 +113,19 @@ class RelayCaptureIngestServiceTest {
                         "ACCEPTED", NOW, NOW, NOW, null, null, "unknown")))))
                 .isInstanceOfSatisfying(CodeArchiveException.class,
                         error -> assertThat(error.getErrorCode()).isEqualTo(ErrorCode.PLATFORM_NOT_SUPPORTED));
+        verify(db, never()).update(anyString(), any(MapSqlParameterSource.class));
+    }
+
+    @Test
+    void missingSolvedAtFailsClosedBeforePersistence() {
+        RelayCaptureIngestService.Item invalid = new RelayCaptureIngestService.Item(
+                "client-1", "SWEA", "1206", "title", "Java", "class Main {}",
+                "ACCEPTED", null, NOW, NOW, "78 ms", "25,472 kb", "unknown");
+
+        assertThatThrownBy(() -> service.ingest(principal,
+                new RelayCaptureIngestService.Request(List.of(invalid))))
+                .isInstanceOfSatisfying(CodeArchiveException.class,
+                        error -> assertThat(error.getErrorCode()).isEqualTo(ErrorCode.INVALID_REQUEST));
         verify(db, never()).update(anyString(), any(MapSqlParameterSource.class));
     }
 

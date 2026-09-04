@@ -66,6 +66,10 @@ public class DurableAutomationProfileStore {
         return tx.execute(status -> {
             Profile current = locked(userId);
             if (current.version() != expectedVersion) throw new CodeArchiveException(ErrorCode.AUTOMATION_GENERATION_STALE);
+            boolean blockingDurableAttempt = hasBlockingDurableAttemptInTransaction(userId);
+            if (blockingDurableAttempt && githubAutoCommitEnabled && !current.githubAutoCommitEnabled()) {
+                throw new CodeArchiveException(ErrorCode.GITHUB_UPLOAD_OUTCOME_UNKNOWN);
+            }
             boolean changed = current.sourceTransferEnabled() != sourceTransferEnabled
                     || current.githubAutoCommitEnabled() != githubAutoCommitEnabled
                     || !Objects.equals(current.deviceId(), deviceId)
@@ -78,7 +82,7 @@ public class DurableAutomationProfileStore {
                 stopPageOwnedRunsInTransaction(userId);
             }
             if ("PAGE_OWNED".equals(ownershipMode) && "DURABLE_SERVER".equals(current.ownershipMode())
-                    && hasActiveDurableClaimInTransaction(userId)) {
+                    && blockingDurableAttempt) {
                 throw new CodeArchiveException(ErrorCode.AUTOMATION_OWNERSHIP_CONFLICT);
             }
             if (changed) revokeRelayGrantsInTransaction(userId, now);
@@ -134,9 +138,13 @@ public class DurableAutomationProfileStore {
     }
 
     private boolean hasActiveDurableClaimInTransaction(UUID userId) {
+        return hasBlockingDurableAttemptInTransaction(userId);
+    }
+
+    private boolean hasBlockingDurableAttemptInTransaction(UUID userId) {
         return db.queryForObject("""
                 SELECT count(*) FROM durable_github_attempts
-                WHERE user_id=:user AND state='CLAIMED' AND lease_until > clock_timestamp()
+                WHERE user_id=:user AND state IN ('CLAIMED','ATTEMPTED','UNKNOWN')
                 """, new MapSqlParameterSource("user", userId), Integer.class) > 0;
     }
 

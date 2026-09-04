@@ -59,9 +59,6 @@ public class GitHubCommitExecutor {
         if (userId == null || review == null || expiresAt == null) throw new CodeArchiveException(ErrorCode.INVALID_REQUEST);
         var selection = review.selection();
         var installation = integrations.requireInstallationForUser(userId, selection.installationId());
-        var prepared = github.prepareCommit(new GitHubAppClient.CommitSelection(selection.installationId(), selection.repositoryId(),
-                installation.account().id(), selection.branch(), selection.expectedCommitSha(), selection.path(),
-                review.privateRepository(), review.fullName()));
         return tx.execute(transaction -> {
             db.execute("SET LOCAL lock_timeout = '2s'");
             authorization.run();
@@ -74,6 +71,19 @@ public class GitHubCommitExecutor {
                     || !GitHubUploadIntentStore.hash(source.code()).equals(review.sourceSha256())) {
                 throw new CodeArchiveException(ErrorCode.GITHUB_PREVIEW_SOURCE_CHANGED);
             }
+            var inspected = github.inspectUploadTarget(selection.installationId(), selection.repositoryId(),
+                    installation.account().id(), selection.branch(), selection.expectedCommitSha(), selection.path());
+            String fullName = inspected.repository().owner().login() + "/" + inspected.repository().name();
+            if (inspected.protectedBranch() || inspected.obstruction() != null
+                    || !selection.branch().equals(inspected.branch())
+                    || !selection.expectedCommitSha().equals(inspected.commitSha())
+                    || inspected.repository().privateRepository() != review.privateRepository()
+                    || !review.fullName().equals(fullName)) {
+                throw new CodeArchiveException(ErrorCode.GITHUB_UPLOAD_TARGET_CHANGED);
+            }
+            var prepared = github.prepareCommit(new GitHubAppClient.CommitSelection(selection.installationId(), selection.repositoryId(),
+                    installation.account().id(), selection.branch(), selection.expectedCommitSha(), selection.path(),
+                    review.privateRepository(), review.fullName()));
             gate();
             beforeDispatch.run();
             return prepared.create(source.code(), selection.commitMessage());

@@ -114,16 +114,14 @@ public class RelayCaptureIngestService {
     private boolean sameRelayCapture(RelayGrantPrincipal principal, Item item, String clientRecordId) {
         return db.query("""
                 SELECT platform,problem_number,title,language,code,solved_at,observed_at,
-                       execution_time,memory_usage,ai_usage,accepted_capture,capture_generation,captured_at
+                       execution_time,memory_usage,ai_usage,accepted_capture
                 FROM solutions WHERE user_id=:user AND client_record_id=:client
                 """, new MapSqlParameterSource("user", principal.userId()).addValue("client", clientRecordId),
                 (rs, index) -> new Existing(
                         rs.getString("platform"), rs.getString("problem_number"), rs.getString("title"),
                         rs.getString("language"), rs.getString("code"), instant(rs, "solved_at"),
                         instant(rs, "observed_at"), rs.getString("execution_time"), rs.getString("memory_usage"),
-                        rs.getString("ai_usage"), rs.getBoolean("accepted_capture"),
-                        nullableLong(rs, "capture_generation"),
-                        instant(rs, "captured_at")))
+                        rs.getString("ai_usage"), rs.getBoolean("accepted_capture")))
                 .stream().findFirst()
                 .map(existing -> existing.acceptedCapture()
                         && Objects.equals(existing.platform(), normalized(item.platform()))
@@ -135,15 +133,8 @@ public class RelayCaptureIngestService {
                         && Objects.equals(existing.observedAt(), item.observedAt())
                         && Objects.equals(existing.executionTime(), optional(item.executionTime(), 128))
                         && Objects.equals(existing.memoryUsage(), optional(item.memoryUsage(), 128))
-                        && Objects.equals(existing.aiUsage(), aiUsage(item.aiUsage()))
-                        && Objects.equals(existing.generation(), principal.generation())
-                        && Objects.equals(existing.capturedAt(), item.capturedAt()))
+                        && Objects.equals(existing.aiUsage(), aiUsage(item.aiUsage())))
                 .orElse(false);
-    }
-
-    private Long nullableLong(java.sql.ResultSet result, String column) throws java.sql.SQLException {
-        long value = result.getLong(column);
-        return result.wasNull() ? null : value;
     }
 
     private Instant instant(java.sql.ResultSet result, String column) throws java.sql.SQLException {
@@ -165,7 +156,7 @@ public class RelayCaptureIngestService {
         required(item.title(), 255);
         required(item.language(), 64);
         if (item.code() == null || item.code().isBlank() || item.code().length() > 200_000) throw invalid();
-        if (item.observedAt() == null || item.capturedAt() == null
+        if (item.solvedAt() == null || item.observedAt() == null || item.capturedAt() == null
                 || item.capturedAt().isAfter(now.plusSeconds(300))) throw invalid();
         optional(item.executionTime(), 128);
         optional(item.memoryUsage(), 128);
@@ -238,6 +229,6 @@ public class RelayCaptureIngestService {
 
     private record Existing(String platform, String problemNumber, String title, String language, String code,
             Instant solvedAt, Instant observedAt, String executionTime, String memoryUsage, String aiUsage,
-            boolean acceptedCapture, Long generation, Instant capturedAt) {}
+            boolean acceptedCapture) {}
     private record RateWindow(Instant windowStart, int count) {}
 }
