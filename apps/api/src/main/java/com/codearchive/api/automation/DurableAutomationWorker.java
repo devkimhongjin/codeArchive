@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.codearchive.api.common.exception.CodeArchiveException;
@@ -29,6 +30,7 @@ public class DurableAutomationWorker {
     private final GitHubPreviewSolutionReader sources;
     private final Clock clock;
 
+    @Autowired
     public DurableAutomationWorker(DurableWorkerStore store, GitHubIntegrationService integrations,
             GitHubAppClient github, GitHubCommitExecutor executor, GitHubPreviewSolutionReader sources) {
         this(store, integrations, github, executor, sources, Clock.systemUTC());
