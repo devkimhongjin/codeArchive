@@ -1,4 +1,5 @@
 import { notifyExplicitAutoSyncOff } from "./durableAutomationIntent";
+import { durableAutomationProfile, setDurableAutomationProfile } from "./durableAutomationState";
 
 export const ACCOUNT_CONSENT_KEY = "codearchive.autoSyncConsent.v1";
 const BINDING_PREFIX = "v1:sha256:";
@@ -88,12 +89,17 @@ export function createAccountConsentController(
     revision += 1;
     verifiedId = undefined;
     onChange(false);
-    if (clearStored) write(false);
+    if (clearStored) {
+      write(false);
+      void notifyExplicitAutoSyncOff();
+    }
   };
   return {
     async verify(id: unknown) {
       const current = ++revision;
       verifiedId = validatedAccountId(id);
+      const durable = durableAutomationProfile();
+      if (durable && durable.userId !== verifiedId) setDurableAutomationProfile(null, false);
       onChange(false);
       const binding = await bindingFor(verifiedId);
       if (current !== revision) return;
