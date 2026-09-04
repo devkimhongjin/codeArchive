@@ -2,7 +2,7 @@ import { AuthLoginStageError } from "./authDiagnostics";
 import { AUTH_LOGIN, type AuthLoginResponse } from "./authMessages";
 import type { CodeArchiveAuthService } from "./authSession";
 import { backgroundCodeArchiveAuthService } from "./backgroundAuthRuntime";
-import { backgroundDashboardCaptureBridge, notifyDashboardCaptureChanged, registerExternalDashboardBridge, type ExternalDashboardPort } from "./dashboardCaptureBridge";
+import { backgroundDashboardCaptureBridge, notifyCaptureCommitted, registerExternalDashboardBridge, type ExternalDashboardPort } from "./dashboardCaptureBridge";
 import { CODEARCHIVE_DASHBOARD_ORIGIN } from "./dashboardConfig";
 import { SAVE_SWEA_ACCEPTED, type SaveResponse } from "./sweaAutoCapture";
 import { saveAcceptedCapture } from "./solutionRepository";
@@ -55,7 +55,7 @@ export async function runBackgroundLogin(authService: Pick<CodeArchiveAuthServic
 
 const defaultDependencies: CaptureSyncDependencies = {
   saveCapture: saveAcceptedCapture,
-  onCaptureCommitted: notifyDashboardCaptureChanged,
+  onCaptureCommitted: notifyCaptureCommitted,
 };
 
 registerExternalDashboardBridge(chrome.runtime, CODEARCHIVE_DASHBOARD_ORIGIN);

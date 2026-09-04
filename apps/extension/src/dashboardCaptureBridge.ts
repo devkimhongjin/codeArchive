@@ -22,6 +22,8 @@ import {
   indexedDbCaptureBridgeRepository,
   type CaptureBridgeRepository,
 } from "./solutionRepository";
+import { backgroundRelayPairingController, type RelayPort } from "./relay/relayPairing";
+import { backgroundRelayRuntime } from "./relay/relayRuntime";
 
 const CAPABILITY_IDLE_MS = 2 * 60 * 1000;
 const CAPABILITY_ABSOLUTE_MS = 15 * 60 * 1000;
@@ -154,6 +156,8 @@ export class ExtensionDashboardCaptureBridge {
     private readonly repository: CaptureBridgeRepository,
     private readonly now: () => number = () => Date.now(),
     private readonly uuid: () => string = () => crypto.randomUUID(),
+    private readonly relayPairing = backgroundRelayPairingController,
+    private readonly relayRuntime = backgroundRelayRuntime,
   ) {}
 
   connect(port: ExternalDashboardPort, allowedOriginValue: string): boolean {
@@ -173,7 +177,18 @@ export class ExtensionDashboardCaptureBridge {
     this.sessions.set(port, session);
     this.automation.connect(port);
     port.onMessage.addListener((message) => {
-      if (this.automation.receive(port, message)) return;
+      const relayResponse = this.relayPairing.handle(message, this.sessions.size === 1 && this.sessions.get(port) === session);
+      if (relayResponse) {
+        void relayResponse.then((response) => {
+          if (response) (port as RelayPort).postMessage(response);
+          void this.relayRuntime.onCaptureCommitted();
+        });
+        return;
+      }
+      if (this.automation.receive(port, message)) {
+        void this.relayRuntime.onAutomationState(this.automation.getState());
+        return;
+      }
       void this.handleMessage(session, message);
     });
     port.onDisconnect.addListener(() => this.disconnect(port));
@@ -204,6 +219,7 @@ export class ExtensionDashboardCaptureBridge {
   }
 
   private invalidateAllSessions(): void {
+    this.relayRuntime.onMultipleDashboardTabs();
     for (const session of this.sessions.values()) {
       delete session.syncSessionId;
       delete session.capability;
@@ -375,7 +391,15 @@ export function registerExternalDashboardBridge(
 }
 
 export const backgroundDashboardCaptureBridge = new ExtensionDashboardCaptureBridge(indexedDbCaptureBridgeRepository);
+backgroundRelayRuntime.start();
 
 export async function notifyDashboardCaptureChanged(): Promise<void> {
   await backgroundDashboardCaptureBridge.notifyCaptureChanged();
+}
+
+export async function notifyCaptureCommitted(): Promise<void> {
+  await Promise.all([
+    notifyDashboardCaptureChanged(),
+    backgroundRelayRuntime.onCaptureCommitted(),
+  ]);
 }

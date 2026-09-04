@@ -3,15 +3,26 @@ import type {
   CaptureSyncScope,
   ProgrammingLanguage,
 } from "../../../packages/shared-types/src";
-import type { NewSolutionInput, SolutionRecord, SolutionSyncMetadata } from "./solution";
+import type { NewSolutionInput, SolutionRecord, SolutionSyncMetadata, RelayCaptureProvenance } from "./solution";
 import type { SaveResponse, SweaAcceptedCapture } from "./sweaAutoCapture";
 import { captureSource, type AcceptedCapture } from "./acceptedCapture";
 
 const DB_NAME = "codearchive";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_NAME = "solutions";
 const META_STORE_NAME = "captureMeta";
+export const RELAY_STATE_STORE_NAME = "relayState";
+export const RELAY_STATE_KEY = "singleton";
 const REVISION_KEY = "revision";
+
+export interface RelayStateSnapshot {
+  state: "UNPAIRED" | "ACTIVE" | "REVOCATION_PENDING" | "EXPIRED" | "INVALIDATED";
+  grantId?: string;
+  credential?: string;
+  generation?: number;
+  expiresAt?: string;
+  autoSyncEnabled?: boolean;
+}
 
 export interface SolutionRepository {
   create(input: NewSolutionInput): Promise<SolutionRecord>;
@@ -78,7 +89,7 @@ export function migrateCaptureIdentity(record: SolutionRecord): SolutionRecord {
   return { ...record, clientRecordId: record.id };
 }
 
-function openDatabase(): Promise<IDBDatabase> {
+export function openCodeArchiveDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = (event) => {
@@ -107,11 +118,16 @@ function openDatabase(): Promise<IDBDatabase> {
           cursor.continue();
         };
       }
+      if (!db.objectStoreNames.contains(RELAY_STATE_STORE_NAME)) {
+        db.createObjectStore(RELAY_STATE_STORE_NAME);
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("IndexedDB open failed."));
   });
 }
+
+const openDatabase = openCodeArchiveDatabase;
 
 function solutionFields(input: NewSolutionInput): Omit<NewSolutionInput, "performance"> & Pick<NewSolutionInput, "performance"> {
   const { performance, ...fields } = input;
@@ -218,7 +234,7 @@ export async function saveAcceptedCapture(capture: AcceptedCapture): Promise<Sav
   const id = `${capture.platform.toLowerCase()}-auto:${capture.captureId}`;
   const db = await openDatabase();
   try {
-    const transaction = db.transaction([STORE_NAME, META_STORE_NAME], "readwrite");
+    const transaction = db.transaction([STORE_NAME, META_STORE_NAME, RELAY_STATE_STORE_NAME], "readwrite");
     const done = transactionDone(transaction);
     const store = transaction.objectStore(STORE_NAME);
     const existing = await requestToPromise(store.get(id) as IDBRequest<SolutionRecord | undefined>);
@@ -228,6 +244,18 @@ export async function saveAcceptedCapture(capture: AcceptedCapture): Promise<Sav
       return matches ? { status: "duplicate", solutionId: id, savedAt: existing.createdAt } : { status: "rejected", reason: "idempotency_conflict" };
     }
     const now = new Date().toISOString();
+    const relayState = await requestToPromise(
+      transaction.objectStore(RELAY_STATE_STORE_NAME).get(RELAY_STATE_KEY) as IDBRequest<RelayStateSnapshot | undefined>,
+    );
+    const relayGeneration = relayState?.generation;
+    const relayCapture: RelayCaptureProvenance | undefined = relayState?.state === "ACTIVE"
+      && typeof relayState.credential === "string"
+      && typeof relayGeneration === "number"
+      && Number.isSafeInteger(relayGeneration)
+      && typeof relayState.expiresAt === "string"
+      && Date.parse(relayState.expiresAt) > Date.now()
+      ? { generation: relayGeneration, capturedAt: now }
+      : undefined;
     const record: SolutionRecord = {
       id,
       clientRecordId: crypto.randomUUID(),
@@ -245,6 +273,7 @@ export async function saveAcceptedCapture(capture: AcceptedCapture): Promise<Sav
         ...(capture.problemUrl ? { problemUrl: capture.problemUrl } : {}),
       },
       ...(capture.performance ? { performance: capture.performance } : {}),
+      ...(relayCapture ? { relayCapture } : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -375,3 +404,53 @@ export const indexedDbCaptureBridgeRepository: CaptureBridgeRepository = {
     } finally { db.close(); }
   },
 };
+
+export async function listRelayPendingCaptures(generation: number, limit = 25): Promise<SolutionRecord[]> {
+  const db = await openDatabase();
+  try {
+    const transaction = db.transaction(STORE_NAME, "readonly");
+    const records = await requestToPromise(transaction.objectStore(STORE_NAME).getAll()) as SolutionRecord[];
+    await transactionDone(transaction);
+    return records
+      .filter((record) => isAcceptedCaptureRecord(record)
+        && record.relayCapture?.generation === generation
+        && !record.relayImportReceipt
+        && !record.relayConflict)
+      .sort(captureOrder)
+      .slice(0, limit);
+  } finally { db.close(); }
+}
+
+export async function markRelayImportReceipts(clientRecordIds: readonly string[], importedAt: string): Promise<void> {
+  await updateRelayRecords(clientRecordIds, (record) => ({
+    ...record,
+    relayImportReceipt: { importedAt },
+    relayConflict: undefined,
+  }));
+}
+
+export async function markRelayConflicts(clientRecordIds: readonly string[], occurredAt: string, errorCode?: string): Promise<void> {
+  await updateRelayRecords(clientRecordIds, (record) => ({
+    ...record,
+    relayConflict: { occurredAt, ...(errorCode ? { errorCode } : {}) },
+  }));
+}
+
+async function updateRelayRecords(clientRecordIds: readonly string[], mutate: (record: SolutionRecord) => SolutionRecord): Promise<void> {
+  const requested = new Set(clientRecordIds);
+  if (requested.size === 0) return;
+  const db = await openDatabase();
+  try {
+    const transaction = db.transaction(STORE_NAME, "readwrite");
+    const store = transaction.objectStore(STORE_NAME);
+    const records = await requestToPromise(store.getAll()) as SolutionRecord[];
+    let changed = false;
+    for (const record of records) {
+      if (!record.clientRecordId || !requested.has(record.clientRecordId)) continue;
+      store.put(mutate(record));
+      changed = true;
+    }
+    if (changed) await incrementRevision(transaction);
+    await transactionDone(transaction);
+  } finally { db.close(); }
+}
