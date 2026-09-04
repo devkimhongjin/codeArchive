@@ -3,6 +3,7 @@ package com.codearchive.api.integration.github;
 import java.util.List;
 import java.util.Optional;
 import java.util.ArrayList;
+import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 
@@ -89,8 +90,21 @@ public class GitHubIntegrationService {
                 .orElseThrow(() -> new CodeArchiveException(ErrorCode.GITHUB_INTEGRATION_NOT_FOUND));
     }
 
+    public GitHubAppClient.Installation requireInstallationForUser(UUID userId, long installationId) {
+        return ownedInstallationForUser(userId).filter(value -> value.id() == installationId)
+                .orElseThrow(() -> new CodeArchiveException(ErrorCode.GITHUB_INTEGRATION_NOT_FOUND));
+    }
+
     private Optional<GitHubAppClient.Installation> ownedInstallation(CodeArchivePrincipal principal) {
         CodeArchiveUser user = authService.currentUser(principal);
+        return client.findPersonalInstallation(user.getGithubLogin())
+                // A renamed/reused login must never grant the previous account's installation.
+                .filter(value -> value.account().id() == user.getGithubUserId()
+                        && "User".equals(value.account().type()) && !value.suspended());
+    }
+
+    private Optional<GitHubAppClient.Installation> ownedInstallationForUser(UUID userId) {
+        CodeArchiveUser user = authService.currentUser(new CodeArchivePrincipal(userId, null, "worker"));
         return client.findPersonalInstallation(user.getGithubLogin())
                 // A renamed/reused login must never grant the previous account's installation.
                 .filter(value -> value.account().id() == user.getGithubUserId()

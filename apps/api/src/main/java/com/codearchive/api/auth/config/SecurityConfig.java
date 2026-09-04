@@ -3,6 +3,7 @@ package com.codearchive.api.auth.config;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -17,6 +18,8 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import com.codearchive.api.auth.AuthService;
 import com.codearchive.api.auth.security.ApiAuthenticationFilter;
 import com.codearchive.api.auth.security.JsonAuthenticationEntryPoint;
+import com.codearchive.api.relay.RelayGrantAuthenticationFilter;
+import com.codearchive.api.relay.RelayGrantService;
 
 @Configuration
 @EnableWebSecurity
@@ -29,6 +32,7 @@ public class SecurityConfig {
     SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             AuthService authService,
+            ObjectProvider<RelayGrantService> relayGrantServices,
             CorsConfigurationSource corsConfigurationSource,
             @Value("${codearchive.auth.dashboard-origin:}")
             String configuredDashboardOrigin
@@ -78,6 +82,14 @@ public class SecurityConfig {
                         UsernamePasswordAuthenticationFilter.class
                 );
 
+        RelayGrantService relayGrantService = relayGrantServices.getIfAvailable();
+        if (relayGrantService != null) {
+            http.addFilterBefore(
+                    new RelayGrantAuthenticationFilter(relayGrantService),
+                    ApiAuthenticationFilter.class
+            );
+        }
+
         return http.build();
     }
 
@@ -126,7 +138,7 @@ public class SecurityConfig {
                 List.of(allowedOrigin)
         );
         configuration.setAllowedMethods(
-                List.of("GET", "POST", "DELETE", "OPTIONS")
+                List.of("GET", "POST", "PUT", "DELETE", "OPTIONS")
         );
         configuration.setAllowedHeaders(
                 List.of("Authorization", "Content-Type")

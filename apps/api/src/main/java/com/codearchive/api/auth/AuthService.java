@@ -26,6 +26,7 @@ import com.codearchive.api.auth.session.AuthSession;
 import com.codearchive.api.auth.session.AuthSessionRepository;
 import com.codearchive.api.auth.user.CodeArchiveUser;
 import com.codearchive.api.auth.user.UserService;
+import com.codearchive.api.relay.RelayGrantService;
 import com.codearchive.api.common.exception.CodeArchiveException;
 import com.codearchive.api.common.exception.ErrorCode;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -44,6 +45,7 @@ public class AuthService {
     private final UserService userService;
     private final SecureTokenCodec tokenCodec;
     private final Clock clock;
+    private RelayGrantService relayGrantService;
 
     @Autowired
     public AuthService(
@@ -374,10 +376,17 @@ public class AuthService {
                     ErrorCode.AUTH_REQUIRED
             );
         }
+        Instant now = clock.instant();
         authSessionRepository.revoke(
                 principal.sessionId(),
-                clock.instant()
+                now
         );
+        if (relayGrantService != null) relayGrantService.revokeForUser(principal.userId());
+    }
+
+    @Autowired(required = false)
+    public void setRelayGrantService(RelayGrantService relayGrantService) {
+        this.relayGrantService = relayGrantService;
     }
 
     public CodeArchiveUser currentUser(

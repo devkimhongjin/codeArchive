@@ -9,16 +9,16 @@ import java.util.Map;
 import com.codearchive.api.common.exception.CodeArchiveException;
 import com.codearchive.api.common.exception.ErrorCode;
 
-final class GitHubUploadPath {
+public final class GitHubUploadPath {
     private static final Map<String, String> EXTENSIONS = Map.of(
             "java", "java", "python", "py", "javascript", "js", "typescript", "ts", "c++", "cpp");
     private GitHubUploadPath() {}
 
-    static String extension(String language) {
+    public static String extension(String language) {
         return EXTENSIONS.getOrDefault(language.trim().toLowerCase(Locale.ROOT), "txt");
     }
 
-    static String choose(String requested, String platform, String problem, String language) {
+    public static String choose(String requested, String platform, String problem, String language) {
         String extension = extension(language);
         String path = requested == null ? platform + "/" + problem + "/Solution." + extension : requested;
         segments(path);
@@ -26,7 +26,7 @@ final class GitHubUploadPath {
         return path;
     }
 
-    static List<String> segments(String path) {
+    public static List<String> segments(String path) {
         if (path == null || path.isEmpty() || path.getBytes(StandardCharsets.UTF_8).length > 1024) invalid();
         String[] segments = path.split("/", -1);
         if (segments.length > GitHubBrowseInput.MAX_DEPTH + 1) invalid();
@@ -41,7 +41,7 @@ final class GitHubUploadPath {
         return List.of(segments);
     }
 
-    static String commitMessage(String requested, String platform, String problem) {
+    public static String commitMessage(String requested, String platform, String problem) {
         String message = requested == null ? "Add " + platform + " " + problem + " solution" : requested;
         if (message.isBlank() || message.getBytes(StandardCharsets.UTF_8).length > 200
                 || message.codePoints().anyMatch(c -> Character.isISOControl(c)
