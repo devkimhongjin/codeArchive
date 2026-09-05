@@ -24,7 +24,7 @@ projects:
             runtime: docker
             plan: free
             region: singapore
-            branch: master
+            branch: develop
             repo: https://github.com/devkimhongjin/codeArchive
             dockerfilePath: ./apps/api/Dockerfile
             dockerContext: ./apps/api
@@ -77,10 +77,37 @@ projects:
                 value: 10m
               - key: CODEARCHIVE_EXCHANGE_TTL
                 value: 2m
+              - key: CODEARCHIVE_DURABLE_INVOCATION_TOKEN
+                sync: false
 
               # Redis is intentionally absent from the MVP beta topology.
               - key: MANAGEMENT_HEALTH_REDIS_ENABLED
                 value: "false"
+
+          - type: cron
+            name: codearchive-durable-automation
+            runtime: node
+            plan: starter
+            region: singapore
+            branch: develop
+            repo: https://github.com/devkimhongjin/codeArchive
+            autoDeployTrigger: "off"
+            buildCommand: "true"
+            schedule: "* * * * *"
+            startCommand: >-
+              node -e 'const base = process.env.CODEARCHIVE_AUTOMATION_API_URL.replace(/\/$/, "");
+              const url = base + "/api/v1/internal/automation/invoke";
+              fetch(url, { method: "POST", headers: { "X-CodeArchive-Invocation-Token": process.env.CODEARCHIVE_DURABLE_INVOCATION_TOKEN } })
+              .then(response => { if (!response.ok) { console.error("automation invocation failed (" + response.status + ")"); process.exitCode = 1; } })
+              .catch(() => { console.error("automation invocation unavailable"); process.exitCode = 1; });'
+            envVars:
+              - key: CODEARCHIVE_AUTOMATION_API_URL
+                fromService:
+                  type: web
+                  name: codearchive-api
+                  envVarKey: RENDER_EXTERNAL_URL
+              - key: CODEARCHIVE_DURABLE_INVOCATION_TOKEN
+                sync: false
 
           - type: web
             name: codearchive-analysis

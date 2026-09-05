@@ -58,6 +58,9 @@ public enum ErrorCode {
     AUTOMATION_GENERATION_STALE(HttpStatus.CONFLICT, "자동화 상태가 변경되었습니다. 최신 상태로 다시 확인해 주세요."),
     AUTOMATION_OWNERSHIP_CONFLICT(HttpStatus.CONFLICT, "다른 자동화 실행 주체가 활성 상태입니다."),
     AUTOMATION_NOT_ELIGIBLE(HttpStatus.CONFLICT, "현재 자동화 조건에서 실행할 수 없습니다."),
+    AUTOMATION_INVOCATION_INVALID(HttpStatus.UNAUTHORIZED, "자동화 실행 인증이 올바르지 않습니다."),
+    AUTOMATION_INVOCATION_REQUEST_INVALID(HttpStatus.BAD_REQUEST, "자동화 실행 요청이 올바르지 않습니다."),
+    AUTOMATION_INVOCATION_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "자동화 실행을 사용할 수 없습니다."),
 
     GITHUB_PREVIEW_SOURCE_CHANGED(
             HttpStatus.CONFLICT,
