@@ -57,6 +57,8 @@ codearchive:
     exchange-ttl: ${CODEARCHIVE_EXCHANGE_TTL:2m}
   ai:
     daily-request-limit: ${AI_DAILY_REQUEST_LIMIT:20}
+  automation:
+    invocation-token: ${CODEARCHIVE_DURABLE_INVOCATION_TOKEN:}
   analysis:
     base-url: ${ANALYSIS_BASE_URL:http://localhost:8000}
     internal-token: ${ANALYSIS_INTERNAL_TOKEN:}

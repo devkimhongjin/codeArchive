@@ -24,6 +24,8 @@ public class RelayGrantAuthenticationFilter extends OncePerRequestFilter {
 
     public static final String RELAY_INGEST_PATH = "/api/v1/relay/captures";
     public static final String RELAY_AUTHORITY = "RELAY_INGEST";
+    private static final String DURABLE_INVOCATION_PATH =
+            "/api/v1/internal/automation/invoke";
 
     private final RelayGrantService grants;
     private final JsonAuthenticationEntryPoint entryPoint =
@@ -39,6 +41,11 @@ public class RelayGrantAuthenticationFilter extends OncePerRequestFilter {
             HttpServletResponse response,
             FilterChain filterChain
     ) throws ServletException, IOException {
+        if (isDurableInvocation(request)) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String bearer = bearer(request);
         if (bearer == null) {
             filterChain.doFilter(request, response);
@@ -69,6 +76,15 @@ public class RelayGrantAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
         filterChain.doFilter(request, response);
+    }
+
+    private boolean isDurableInvocation(HttpServletRequest request) {
+        String context = request.getContextPath() == null
+                ? "" : request.getContextPath();
+        return "POST".equals(request.getMethod())
+                && (context + DURABLE_INVOCATION_PATH).equals(
+                        request.getRequestURI()
+                );
     }
 
     private boolean isIngest(HttpServletRequest request) {
