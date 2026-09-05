@@ -2,6 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { DurableAutomationController, type DashboardRelayPairingConnection } from "./durableAutomation";
 import type { DurableAutomationClient, DurableAutomationProfile } from "./durableAutomationClient";
 import type { GitHubAutoTarget } from "./githubClient";
+import type {
+  CodeArchiveRelayGrantProvisionResponse,
+  CodeArchiveRelayPairingInfoResponse,
+  CodeArchiveRelayRevokeConfirmedResponse,
+  CodeArchiveRelaySignChallengeResponse,
+} from "../../../packages/shared-types/src";
 
 const USER = "550e8400-e29b-41d4-a716-446655440000";
 const DEVICE = "device_identity_1234";
@@ -73,19 +79,19 @@ function fixture(initial = profile()) {
     revokeRelayGrant: vi.fn(async () => undefined),
   };
   const bridge: DashboardRelayPairingConnection = {
-    relayPairingInfo: vi.fn(async () => ({
+    relayPairingInfo: vi.fn(async (): Promise<CodeArchiveRelayPairingInfoResponse> => ({
       type: "CODEARCHIVE_RELAY_PAIRING_INFO", phase: "INFO", protocolVersion: 1,
       deviceId: DEVICE, publicKey: "public_key", state: "UNPAIRED",
     })),
-    relaySignChallenge: vi.fn(async request => ({
+    relaySignChallenge: vi.fn(async (request): Promise<CodeArchiveRelaySignChallengeResponse> => ({
       type: "CODEARCHIVE_RELAY_SIGN_CHALLENGE", phase: "SIGNED", protocolVersion: 1,
       deviceId: DEVICE, challengeId: request.challengeId, signature: "signature",
     })),
-    relayProvisionGrant: vi.fn(async request => ({
+    relayProvisionGrant: vi.fn(async (request): Promise<CodeArchiveRelayGrantProvisionResponse> => ({
       type: "CODEARCHIVE_RELAY_GRANT_PROVISION", phase: "STORED", protocolVersion: 1,
       deviceId: DEVICE, grantId: request.grantId, generation: request.generation, expiresAt: request.expiresAt,
     })),
-    relayConfirmRevoke: vi.fn(async request => ({
+    relayConfirmRevoke: vi.fn(async (request): Promise<CodeArchiveRelayRevokeConfirmedResponse> => ({
       type: "CODEARCHIVE_RELAY_REVOKE_CONFIRMED", phase: "APPLIED", protocolVersion: 1,
       deviceId: request.deviceId, grantId: request.grantId, generation: request.generation, revokedAt: request.revokedAt,
     })),
