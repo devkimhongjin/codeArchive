@@ -135,7 +135,12 @@ public class DurableWorkerStore {
     }
 
     private void requireLive(Claim claim, String state) {
-        boolean live = db.query("""
+        Boolean liveResult = tx.execute(status -> {
+            if (claim.authSessionId() != null) {
+                db.query("SELECT 1 FROM auth_sessions WHERE id=:session FOR SHARE",
+                        new MapSqlParameterSource("session", claim.authSessionId()), (rs, index) -> 1);
+            }
+            return db.query("""
                 SELECT 1 FROM automation_profiles p
                 JOIN durable_github_attempts a ON a.user_id=p.user_id
                 JOIN auth_sessions s ON s.id=p.auth_session_id
@@ -147,11 +152,13 @@ public class DurableWorkerStore {
                   AND (:device IS NULL OR p.device_id=:device)
                   AND (:session IS NULL OR p.auth_session_id=:session)
                   AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
-                FOR SHARE OF p,a,s
+                FOR SHARE OF p,a
                 """, new MapSqlParameterSource("id", claim.id()).addValue("claimToken", claim.claimToken())
                 .addValue("user", claim.userId()).addValue("state", state)
                 .addValue("device", claim.deviceId()).addValue("session", claim.authSessionId()),
                 (rs, index) -> 1).stream().findFirst().isPresent();
+        });
+        boolean live = Boolean.TRUE.equals(liveResult);
         if (!live) throw new CodeArchiveException(ErrorCode.AUTOMATION_GENERATION_STALE);
     }
 
