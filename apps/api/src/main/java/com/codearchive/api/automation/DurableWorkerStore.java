@@ -58,7 +58,8 @@ public class DurableWorkerStore {
                         """, (rs, index) -> new Candidate(rs.getObject("user_id", UUID.class),
                                 rs.getLong("generation"), rs.getLong("target_generation"), decode(rs.getString("target")),
                                 rs.getTimestamp("github_enabled_at").toInstant(), rs.getLong("version"),
-                                rs.getString("device_id"))).stream().findFirst().orElse(null);
+                                rs.getString("device_id"), rs.getObject("auth_session_id", UUID.class))).stream()
+                        .findFirst().orElse(null);
                 if (candidate == null) return Optional.empty();
 
                 UUID solution = db.query("""
@@ -108,7 +109,8 @@ public class DurableWorkerStore {
                         new MapSqlParameterSource("id", id),
                         (rs, index) -> rs.getTimestamp(1).toInstant());
                 return Optional.of(new Claim(id, candidate.userId(), solution, candidate.generation(),
-                        candidate.targetGeneration(), candidate.target(), candidate.githubEnabledAt(), leaseUntil, claimToken));
+                        candidate.targetGeneration(), candidate.target(), candidate.githubEnabledAt(), leaseUntil,
+                        claimToken, candidate.deviceId(), candidate.authSessionId()));
             });
         } catch (DuplicateKeyException ignored) {
             return Optional.empty();
@@ -142,10 +144,13 @@ public class DurableWorkerStore {
                   AND p.ownership_mode='DURABLE_SERVER' AND p.source_transfer_enabled=true
                   AND p.github_auto_commit_enabled=true AND p.generation=a.profile_generation
                   AND p.target_generation=a.target_generation
+                  AND p.device_id=:device AND p.auth_session_id=:session
                   AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
-                FOR SHARE OF p,a
+                FOR SHARE OF p,a,s
                 """, new MapSqlParameterSource("id", claim.id()).addValue("claimToken", claim.claimToken())
-                .addValue("user", claim.userId()).addValue("state", state), (rs, index) -> 1).stream().findFirst().isPresent();
+                .addValue("user", claim.userId()).addValue("state", state)
+                .addValue("device", claim.deviceId()).addValue("session", claim.authSessionId()),
+                (rs, index) -> 1).stream().findFirst().isPresent();
         if (!live) throw new CodeArchiveException(ErrorCode.AUTOMATION_GENERATION_STALE);
     }
 
@@ -207,9 +212,17 @@ public class DurableWorkerStore {
     }
 
     private record Candidate(UUID userId, long generation, long targetGeneration,
-            GitHubAutoCommitStore.Target target, Instant githubEnabledAt, long version, String deviceId) {}
+            GitHubAutoCommitStore.Target target, Instant githubEnabledAt, long version,
+            String deviceId, UUID authSessionId) {}
 
     public record Claim(UUID id, UUID userId, UUID solutionId, long profileGeneration,
             long targetGeneration, GitHubAutoCommitStore.Target target, Instant githubEnabledAt,
-            Instant leaseUntil, String claimToken) {}
+            Instant leaseUntil, String claimToken, String deviceId, UUID authSessionId) {
+        public Claim(UUID id, UUID userId, UUID solutionId, long profileGeneration,
+                long targetGeneration, GitHubAutoCommitStore.Target target, Instant githubEnabledAt,
+                Instant leaseUntil, String claimToken) {
+            this(id, userId, solutionId, profileGeneration, targetGeneration, target, githubEnabledAt,
+                    leaseUntil, claimToken, null, null);
+        }
+    }
 }

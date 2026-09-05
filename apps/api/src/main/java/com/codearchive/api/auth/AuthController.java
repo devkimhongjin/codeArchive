@@ -105,21 +105,23 @@ public class AuthController {
                     name = OAUTH_STATE_COOKIE_NAME,
                     required = false
             ) String preAuthStateCookie,
+            @CookieValue(
+                    name = ApiAuthenticationFilter.SESSION_COOKIE_NAME,
+                    required = false
+            ) String priorDashboardSessionCookie,
             @RequestAttribute(
                     RequestIdFilter.REQUEST_ID_ATTRIBUTE
             ) String requestId
     ) {
-        AuthService.CallbackExchange completion =
-                preAuthStateCookie == null
-                        ? authService.completeGitHubCallback(
-                                code,
-                                state
-                        )
-                        : authService.completeGitHubCallback(
-                                code,
-                                state,
-                                preAuthStateCookie
-                        );
+        AuthService.CallbackExchange completion;
+        if (priorDashboardSessionCookie == null) {
+            completion = preAuthStateCookie == null
+                    ? authService.completeGitHubCallback(code, state)
+                    : authService.completeGitHubCallback(code, state, preAuthStateCookie);
+        } else {
+            completion = authService.completeGitHubCallback(code, state,
+                    preAuthStateCookie, priorDashboardSessionCookie);
+        }
 
         if (completion.dashboardSession() != null) {
             ResponseCookie sessionCookie = ResponseCookie

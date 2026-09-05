@@ -42,6 +42,7 @@ import com.codearchive.api.integration.github.GitHubAutoCommitStore.Target;
 import com.codearchive.api.relay.RelayCaptureIngestService;
 import com.codearchive.api.relay.RelayGrantPrincipal;
 import com.codearchive.api.relay.RelayGrantService;
+import com.codearchive.api.auth.session.AuthSessionReplacementService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @SpringBootTest(properties = {
@@ -74,6 +75,9 @@ class DurableAutomationPostgresIntegrationTest {
 
     @Autowired
     private DurableAutomationProfileStore profiles;
+
+    @Autowired
+    private AuthSessionReplacementService sessionReplacement;
 
     @Autowired
     private RelayCaptureIngestService relay;
@@ -135,6 +139,52 @@ class DurableAutomationPostgresIntegrationTest {
 
         assertThat(worker.runOnce().status()).isEqualTo("IDLE");
         verify(github, never()).prepareCommit(any());
+    }
+
+    @Test
+    void accountReplacementFencesPriorAndNewAccountBeforeIssuingSession() {
+        UUID accountA = user();
+        UUID accountB = user();
+        profile(accountA, 3, 4, TARGET, true, "DURABLE_SERVER");
+        profile(accountB, 5, 6, TARGET, true, "DURABLE_SERVER");
+        UUID oldSession = db.queryForObject("SELECT auth_session_id FROM automation_profiles WHERE user_id=?",
+                UUID.class, accountA);
+        Instant now = Instant.now();
+
+        AuthSessionReplacementService.Issued issued = sessionReplacement.replace(accountA, oldSession, accountB,
+                UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", ""),
+                now.plusSeconds(3600), now);
+
+        assertThat(db.queryForObject("SELECT revoked_at IS NOT NULL FROM auth_sessions WHERE id=?", Boolean.class, oldSession))
+                .isTrue();
+        assertThat(db.queryForObject("SELECT source_transfer_enabled FROM automation_profiles WHERE user_id=?", Boolean.class, accountA))
+                .isFalse();
+        assertThat(db.queryForObject("SELECT source_transfer_enabled FROM automation_profiles WHERE user_id=?", Boolean.class, accountB))
+                .isFalse();
+        assertThat(db.queryForObject("SELECT count(*) FROM auth_sessions WHERE user_id=? AND revoked_at IS NULL", Integer.class, accountB))
+                .isEqualTo(1);
+        assertThat(db.queryForObject("SELECT revoked_at FROM auth_sessions WHERE id=?", Timestamp.class, issued.sessionId()))
+                .isNull();
+    }
+
+    @Test
+    void concurrentSameAccountReplacementLeavesOnlyLastSessionActive() throws Exception {
+        UUID account = user();
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            var first = pool.submit(() -> sessionReplacement.replace(null, null, account,
+                    UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-"),
+                    Instant.now().plusSeconds(3600), Instant.now()));
+            var second = pool.submit(() -> sessionReplacement.replace(null, null, account,
+                    UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-"),
+                    Instant.now().plusSeconds(3600), Instant.now()));
+            first.get(15, TimeUnit.SECONDS);
+            second.get(15, TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(db.queryForObject("SELECT count(*) FROM auth_sessions WHERE user_id=? AND revoked_at IS NULL", Integer.class, account))
+                .isEqualTo(1);
     }
 
     @Test
