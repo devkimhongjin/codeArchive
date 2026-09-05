@@ -207,6 +207,31 @@ class DashboardAuthSecurityMockMvcTest {
     }
 
     @Test
+    void dashboardCallbackForwardsOnlyExistingSessionCookieToReplacementService()
+            throws Exception {
+        Instant expiresAt = Instant.parse("2026-09-27T06:30:00Z");
+        when(authService.completeGitHubCallback(
+                "replacement-code", "replacement-state", "replacement-state", "prior-dashboard-session"
+        )).thenReturn(new AuthService.CallbackExchange(
+                null, expiresAt, DASHBOARD_ORIGIN + "/",
+                new AuthService.IssuedSession("replacement-session", expiresAt)
+        ));
+        when(authService.sessionTtl()).thenReturn(Duration.ofDays(30));
+
+        mockMvc.perform(get("/api/v1/auth/github/callback")
+                        .queryParam("code", "replacement-code")
+                        .queryParam("state", "replacement-state")
+                        .cookie(new Cookie(AuthController.OAUTH_STATE_COOKIE_NAME, "replacement-state"))
+                        .cookie(new Cookie(ApiAuthenticationFilter.SESSION_COOKIE_NAME, "prior-dashboard-session"))
+                        .requestAttr(RequestIdFilter.REQUEST_ID_ATTRIBUTE, REQUEST_ID))
+                .andExpect(status().isSeeOther())
+                .andExpect(header().string(HttpHeaders.LOCATION, DASHBOARD_ORIGIN + "/"));
+
+        verify(authService).completeGitHubCallback(
+                "replacement-code", "replacement-state", "replacement-state", "prior-dashboard-session");
+    }
+
+    @Test
     void dashboardSessionCookieAuthenticatesMe()
             throws Exception {
         GitHubUserProfile profile =
