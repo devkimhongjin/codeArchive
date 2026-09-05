@@ -259,7 +259,15 @@ export function createDashboardExtensionConnection(
         let active = true;
         let port: RuntimePort;
         const pending: Array<(message: unknown) => void> = [];
-        let requestTail: Promise<void> = Promise.resolve();
+        const requestQueue: Array<() => void> = [];
+        let requestBusy = false;
+        const runNextRequest = () => {
+          if (requestBusy) return;
+          const next = requestQueue.shift();
+          if (!next) return;
+          requestBusy = true;
+          next();
+        };
 
         try {
           port = runtime.connect(extensionId, { name: "codearchive-dashboard" });
@@ -271,7 +279,11 @@ export function createDashboardExtensionConnection(
         }
 
         const requestInternal = <T>(message: unknown, fatalTimeout = true) => new Promise<T | null>((resolve) => {
-          const execute = () => new Promise<void>((done) => {
+          const execute = () => {
+            const done = () => {
+              requestBusy = false;
+              runNextRequest();
+            };
             if (!active || disposed) { resolve(null); done(); return; }
             const complete = (response: unknown) => {
               globalThis.clearTimeout(timeout);
@@ -294,8 +306,9 @@ export function createDashboardExtensionConnection(
               complete(null);
               if (fatalTimeout) terminalError();
             }
-          });
-          requestTail = requestTail.then(execute, execute);
+          };
+          requestQueue.push(execute);
+          runNextRequest();
         });
 
         const bridge: ActiveBridge = {

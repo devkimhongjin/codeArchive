@@ -139,16 +139,16 @@ export function createDurableAutomationClient(fetcher: FetchLike = globalThis.fe
 
   return {
     profile: (signal) => request("/api/v1/automation", "GET", profile, undefined, signal),
-    update: (body, signal) => {
+    update: async (body, signal) => {
       if (!device(body.deviceId) || !safeNonNegative(body.expectedVersion)) throw new DurableAutomationRequestError("INVALID_REQUEST");
       if (body.target !== null && !target(body.target)) throw new DurableAutomationRequestError("INVALID_REQUEST");
       return request("/api/v1/automation", "PUT", profile, body, signal);
     },
-    relayChallenge: (deviceId, publicKey, signal) => {
+    relayChallenge: async (deviceId, publicKey, signal) => {
       if (!device(deviceId) || !str(publicKey) || !publicKey || publicKey.length > 2048) throw new DurableAutomationRequestError("INVALID_REQUEST");
       return request("/api/v1/relay/grants/challenge", "POST", challenge, { deviceId, publicKey }, signal);
     },
-    relayGrant: (body, signal) => {
+    relayGrant: async (body, signal) => {
       if (!device(body.deviceId) || !uuid(body.challengeId) || !body.challenge || body.challenge.length > 256 || !body.publicKey || body.publicKey.length > 2048 || !body.signature || body.signature.length > 512) {
         throw new DurableAutomationRequestError("INVALID_REQUEST");
       }
