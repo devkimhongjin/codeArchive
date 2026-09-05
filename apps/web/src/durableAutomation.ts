@@ -80,6 +80,14 @@ function pairedForProfile(info: CodeArchiveRelayPairingInfoResponse, profile: Du
     && Date.parse(info.expiresAt) > now;
 }
 
+function sameRevocationContext(a: DurableAutomationProfile, b: DurableAutomationProfile): boolean {
+  return a.ownershipMode === "DURABLE_SERVER"
+    && b.ownershipMode === "DURABLE_SERVER"
+    && a.userId === b.userId
+    && a.deviceId === b.deviceId
+    && a.generation === b.generation;
+}
+
 export class DurableAutomationController {
   constructor(
     private readonly client: DurableAutomationClient,
@@ -168,10 +176,21 @@ export class DurableAutomationController {
     cachedProfile: DurableAutomationProfile | null = null,
   ): Promise<DurableTransitionResult> {
     const pairing = await (this.bridge.relayPairingInfo?.().catch(() => null) ?? Promise.resolve(null));
-    const localRevocationConfirmed = await this.confirmLocalRevoke(pairing);
+    const localRevocationConfirmed = await this.confirmLocalRevoke(pairing, cachedProfile);
     let current = cachedProfile;
     try {
-      current = await this.client.profile(signal);
+      const discovered = await this.client.profile(signal);
+      if (cachedProfile && !sameRevocationContext(cachedProfile, discovered)) {
+        // A new account/session must never authorize OFF for the cached old context.
+        // Keep the old profile stopped and pending until its own server transition is confirmed.
+        return {
+          profile: cachedProfile,
+          relayPaired: false,
+          localRevocationConfirmed,
+          serverRevocationConfirmed: false,
+        };
+      }
+      current = discovered;
     } catch {
       if (!current) throw new DurableAutomationTransitionError("PROFILE_UNAVAILABLE");
     }
@@ -207,7 +226,17 @@ export class DurableAutomationController {
     }
   }
 
-  private async confirmLocalRevoke(pairing: CodeArchiveRelayPairingInfoResponse | null): Promise<boolean> {
+  private async confirmLocalRevoke(
+    pairing: CodeArchiveRelayPairingInfoResponse | null,
+    cachedProfile: DurableAutomationProfile | null = null,
+  ): Promise<boolean> {
+    if (cachedProfile && (
+      cachedProfile.ownershipMode !== "DURABLE_SERVER"
+      || !pairing
+      || pairing.state === "UNPAIRED"
+      || pairing.deviceId !== cachedProfile.deviceId
+      || pairing.generation !== cachedProfile.generation
+    )) return false;
     if (!pairing || pairing.state === "UNPAIRED") return Boolean(pairing);
     const applied = await (this.bridge.relayConfirmRevoke?.({
       type: "CODEARCHIVE_RELAY_REVOKE_CONFIRMED",

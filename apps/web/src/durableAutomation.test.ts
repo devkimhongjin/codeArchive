@@ -210,6 +210,30 @@ describe("DurableAutomationController", () => {
     }), undefined);
   });
 
+  it("retains cached account context when discovery returns a different account", async () => {
+    const f = fixture(profile());
+    const otherDevice = "device_identity_5678";
+    const otherProfile = profile({ userId: "650e8400-e29b-41d4-a716-446655440000", deviceId: otherDevice, generation: 9 });
+    vi.mocked(f.bridge.relayPairingInfo).mockResolvedValue({
+      type: "CODEARCHIVE_RELAY_PAIRING_INFO", phase: "INFO", protocolVersion: 1,
+      deviceId: otherDevice, publicKey: "public_key", state: "ACTIVE",
+      grantId: GRANT, generation: otherProfile.generation, expiresAt: "2026-10-04T08:00:00Z",
+    });
+    vi.mocked(f.client.profile).mockResolvedValue(otherProfile);
+    const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);
+
+    const result = await controller.disableAll(undefined, profile());
+
+    expect(result.profile.userId).toBe(USER);
+    expect(result.profile.deviceId).toBe(DEVICE);
+    expect(result.profile.generation).toBe(4);
+    expect(result.profile.sourceTransferEnabled).toBe(true);
+    expect(result.localRevocationConfirmed).toBe(false);
+    expect(result.serverRevocationConfirmed).toBe(false);
+    expect(f.bridge.relayConfirmRevoke).not.toHaveBeenCalled();
+    expect(f.client.update).not.toHaveBeenCalled();
+  });
+
   it("fails closed when the issued grant generation does not match the committed profile", async () => {
     const f = fixture(profile({ ownershipMode: "PAGE_OWNED", sourceTransferEnabled: false }));
     vi.mocked(f.client.relayGrant).mockImplementation(async () => ({
