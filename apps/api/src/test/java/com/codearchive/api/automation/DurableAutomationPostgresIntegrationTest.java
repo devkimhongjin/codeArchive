@@ -97,7 +97,7 @@ class DurableAutomationPostgresIntegrationTest {
     void setUpProvider() {
         prepared = org.mockito.Mockito.mock(GitHubAppClient.PreparedCommit.class);
         when(integrations.requireInstallationForUser(any(UUID.class), eq(701L)))
-                .thenReturn(installation());
+                .thenAnswer(invocation -> installation(invocation.getArgument(0, UUID.class)));
         when(github.inspectUploadTarget(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString()))
                 .thenReturn(uploadTarget());
         when(github.prepareCommit(any())).thenReturn(prepared);
@@ -400,9 +400,10 @@ class DurableAutomationPostgresIntegrationTest {
                 githubEnabled ? Instant.now() : null, generation, Instant.now());
     }
 
-    private GitHubAppClient.Installation installation() {
+    private GitHubAppClient.Installation installation(UUID user) {
+        long githubUserId = db.queryForObject("SELECT github_user_id FROM users WHERE id=?", Long.class, user);
         return new GitHubAppClient.Installation(701,
-                new GitHubAppClient.Account(9001, "tester", "User"), "selected", false);
+                new GitHubAppClient.Account(githubUserId, "tester", "User"), "selected", false);
     }
 
     private GitHubAppClient.UploadTarget uploadTarget() {
