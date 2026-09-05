@@ -278,10 +278,11 @@ class DurableAutomationPostgresIntegrationTest {
             releaseProvider.countDown();
 
             var completed = workerResult.get(10, TimeUnit.SECONDS);
-            assertThat(completed.status()).withFailMessage("worker error=%s", completed.errorCode()).isEqualTo("SUCCEEDED");
-            transition.get(10, TimeUnit.SECONDS);
+            assertThat(completed.status()).isEqualTo("SUCCEEDED");
+            assertThatThrownBy(() -> transition.get(10, TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(CodeArchiveException.class);
             assertThat(db.queryForObject("SELECT ownership_mode FROM automation_profiles WHERE user_id=?",
-                    String.class, user)).isEqualTo("PAGE_OWNED");
+                    String.class, user)).isEqualTo("DURABLE_SERVER");
             assertThat(db.queryForObject("SELECT state FROM durable_github_attempts WHERE user_id=?",
                     String.class, user)).isEqualTo("SUCCEEDED");
         } finally {
