@@ -119,7 +119,7 @@ class DurableAutomationPostgresIntegrationTest {
 
         DurableAutomationWorker.Result result = worker.runOnce();
 
-        assertThat(result.status()).isEqualTo("SUCCEEDED");
+        assertThat(result.status()).withFailMessage("worker error=%s", result.errorCode()).isEqualTo("SUCCEEDED");
         assertThat(db.queryForObject(
                 "SELECT state FROM durable_github_attempts WHERE user_id=? AND solution_id=?",
                 String.class, user, solution)).isEqualTo("SUCCEEDED");
@@ -277,7 +277,8 @@ class DurableAutomationPostgresIntegrationTest {
             var transition = pool.submit(() -> updateProfile(user, false, "PAGE_OWNED", 3, TARGET, 0));
             releaseProvider.countDown();
 
-            assertThat(workerResult.get(10, TimeUnit.SECONDS).status()).isEqualTo("SUCCEEDED");
+            var completed = workerResult.get(10, TimeUnit.SECONDS);
+            assertThat(completed.status()).withFailMessage("worker error=%s", completed.errorCode()).isEqualTo("SUCCEEDED");
             transition.get(10, TimeUnit.SECONDS);
             assertThat(db.queryForObject("SELECT ownership_mode FROM automation_profiles WHERE user_id=?",
                     String.class, user)).isEqualTo("PAGE_OWNED");
