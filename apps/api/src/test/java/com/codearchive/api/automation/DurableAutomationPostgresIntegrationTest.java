@@ -270,7 +270,8 @@ class DurableAutomationPostgresIntegrationTest {
         Instant enabled = Instant.now().minusSeconds(2);
         UUID session = UUID.randomUUID();
         db.update("INSERT INTO auth_sessions(id,user_id,token_hash,expires_at,created_at) VALUES(?,?,?,?,?)",
-                session, user, UUID.randomUUID().toString().replace("-", "").substring(0, 64),
+                session, user, UUID.randomUUID().toString().replace("-", "")
+                        + UUID.randomUUID().toString().replace("-", ""),
                 Timestamp.from(Instant.now().plusSeconds(3600)), Timestamp.from(enabled));
         db.update("""
                 INSERT INTO automation_profiles(user_id,device_id,generation,source_transfer_enabled,
