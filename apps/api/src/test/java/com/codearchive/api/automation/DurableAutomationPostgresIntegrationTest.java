@@ -119,7 +119,8 @@ class DurableAutomationPostgresIntegrationTest {
 
         DurableAutomationWorker.Result result = worker.runOnce();
 
-        assertThat(result.status()).withFailMessage("worker error=%s", result.errorCode()).isEqualTo("SUCCEEDED");
+        assertThat(result.status()).withFailMessage("worker error=%s snapshot=%s", result.errorCode(),
+                db.queryForMap("SELECT p.device_id,p.generation,p.auth_session_id,p.source_transfer_enabled,p.github_auto_commit_enabled,a.state,a.profile_generation,a.target_generation FROM automation_profiles p JOIN durable_github_attempts a ON a.user_id=p.user_id WHERE p.user_id=?", user)).isEqualTo("SUCCEEDED");
         assertThat(db.queryForObject(
                 "SELECT state FROM durable_github_attempts WHERE user_id=? AND solution_id=?",
                 String.class, user, solution)).isEqualTo("SUCCEEDED");
