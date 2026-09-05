@@ -98,7 +98,7 @@ class DurableAutomationWorkerTest {
         when(executor.executeForWorker(eq(userId), any(GitHubUploadIntentStore.Review.class),
                 eq(claim.leaseUntil()), any(Runnable.class), any(Runnable.class)))
                 .thenAnswer(invocation -> {
-                    invocation.<Runnable>getArgument(3).run();
+                    invocation.<Runnable>getArgument(4).run();
                     return new GitHubAppClient.CommitResult("d".repeat(40), "https://example.test/commit");
                 });
 

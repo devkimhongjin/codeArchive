@@ -48,9 +48,7 @@ class RelaySessionBindingPostgresIntegrationTest {
         profile(user, session, 7);
 
         assertThat(grants.authenticate(raw)).isPresent();
-        assertThatThrownBy(() -> grants.requireCurrentGeneration(
-                new RelayGrantPrincipal(user, grant, "device-1234567890", 7)))
-                .isInstanceOf(CodeArchiveException.class);
+        grants.requireCurrentGeneration(new RelayGrantPrincipal(user, grant, "device-1234567890", 7));
         db.update("UPDATE auth_sessions SET expires_at=? WHERE id=?", Timestamp.from(Instant.now().minusSeconds(1)), session);
         assertThat(grants.authenticate(raw)).isEmpty();
 

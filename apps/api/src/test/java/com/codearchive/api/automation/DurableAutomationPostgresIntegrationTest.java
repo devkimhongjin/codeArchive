@@ -310,7 +310,7 @@ class DurableAutomationPostgresIntegrationTest {
         UUID id = UUID.randomUUID();
         Instant now = Instant.now();
         db.update("INSERT INTO users(id,github_user_id,github_login,display_name,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-                id, 9001L, "tester", "Tester",
+                id, Math.abs(UUID.randomUUID().getMostSignificantBits()), "tester-" + id, "Tester",
                 Timestamp.from(now), Timestamp.from(now));
         return id;
     }
