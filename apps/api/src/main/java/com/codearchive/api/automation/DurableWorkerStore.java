@@ -43,20 +43,23 @@ public class DurableWorkerStore {
                 db.getJdbcTemplate().execute("SET LOCAL lock_timeout = '2s'");
                 Candidate candidate = db.query("""
                         SELECT p.user_id,p.generation,p.target_generation,p.target,p.github_enabled_at,
-                               p.version,p.device_id
+                               p.version,p.device_id,p.auth_session_id
                         FROM automation_profiles p
+                        JOIN auth_sessions s ON s.id=p.auth_session_id
                         WHERE p.ownership_mode='DURABLE_SERVER'
                           AND p.source_transfer_enabled=true
                           AND p.github_auto_commit_enabled=true
                           AND p.automatic_transfer_consent=true
                           AND p.visibility_risk_consent=true
                           AND p.target IS NOT NULL AND p.github_enabled_at IS NOT NULL
+                          AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
                         ORDER BY p.updated_at,p.user_id
                         FOR UPDATE SKIP LOCKED
                         """, (rs, index) -> new Candidate(rs.getObject("user_id", UUID.class),
                                 rs.getLong("generation"), rs.getLong("target_generation"), decode(rs.getString("target")),
                                 rs.getTimestamp("github_enabled_at").toInstant(), rs.getLong("version"),
-                                rs.getString("device_id"))).stream().findFirst().orElse(null);
+                                rs.getString("device_id"), rs.getObject("auth_session_id", UUID.class))).stream()
+                        .findFirst().orElse(null);
                 if (candidate == null) return Optional.empty();
 
                 UUID solution = db.query("""
@@ -106,7 +109,8 @@ public class DurableWorkerStore {
                         new MapSqlParameterSource("id", id),
                         (rs, index) -> rs.getTimestamp(1).toInstant());
                 return Optional.of(new Claim(id, candidate.userId(), solution, candidate.generation(),
-                        candidate.targetGeneration(), candidate.target(), candidate.githubEnabledAt(), leaseUntil, claimToken));
+                        candidate.targetGeneration(), candidate.target(), candidate.githubEnabledAt(), leaseUntil,
+                        claimToken, candidate.deviceId(), candidate.authSessionId()));
             });
         } catch (DuplicateKeyException ignored) {
             return Optional.empty();
@@ -122,25 +126,39 @@ public class DurableWorkerStore {
     }
 
     public void requireLive(Claim claim) {
-        requireLive(claim, "CLAIMED");
+        requireLive(claim, "CLAIMED", false);
+    }
+
+    /** Authorization check after the committed ATTEMPTED fence, without holding provider-preparation locks. */
+    public void requireLiveAfterAttempt(Claim claim) {
+        requireLive(claim, "ATTEMPTED", false);
     }
 
     /** Final authorization check after the committed ATTEMPTED fence and before provider dispatch. */
     public void requireLiveForDispatch(Claim claim) {
-        requireLive(claim, "ATTEMPTED");
+        // This query deliberately runs on the caller's transaction.  The executor
+        // keeps these row locks until prepared.create() returns, fencing revocation
+        // and generation changes across the provider mutation boundary.
+        requireLive(claim, "ATTEMPTED", true);
     }
 
-    private void requireLive(Claim claim, String state) {
+    private void requireLive(Claim claim, String state, boolean lockRows) {
+        String lockClause = lockRows ? " FOR SHARE OF p,a,s" : "";
         boolean live = db.query("""
-                SELECT 1 FROM automation_profiles p JOIN durable_github_attempts a ON a.user_id=p.user_id
+                SELECT 1 FROM automation_profiles p
+                JOIN durable_github_attempts a ON a.user_id=p.user_id
+                JOIN auth_sessions s ON s.id=p.auth_session_id
                 WHERE a.id=:id AND a.claim_token=:claimToken AND a.state=:state
                   AND a.lease_until>clock_timestamp() AND p.user_id=:user
+                  AND p.device_id=:device AND p.auth_session_id=:session
                   AND p.ownership_mode='DURABLE_SERVER' AND p.source_transfer_enabled=true
                   AND p.github_auto_commit_enabled=true AND p.generation=a.profile_generation
                   AND p.target_generation=a.target_generation
-                FOR SHARE OF p,a
-                """, new MapSqlParameterSource("id", claim.id()).addValue("claimToken", claim.claimToken())
-                .addValue("user", claim.userId()).addValue("state", state), (rs, index) -> 1).stream().findFirst().isPresent();
+                  AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
+                """ + lockClause, new MapSqlParameterSource("id", claim.id()).addValue("claimToken", claim.claimToken())
+                .addValue("user", claim.userId()).addValue("state", state)
+                .addValue("device", claim.deviceId()).addValue("session", claim.authSessionId()),
+                (rs, index) -> 1).stream().findFirst().isPresent();
         if (!live) throw new CodeArchiveException(ErrorCode.AUTOMATION_GENERATION_STALE);
     }
 
@@ -202,9 +220,17 @@ public class DurableWorkerStore {
     }
 
     private record Candidate(UUID userId, long generation, long targetGeneration,
-            GitHubAutoCommitStore.Target target, Instant githubEnabledAt, long version, String deviceId) {}
+            GitHubAutoCommitStore.Target target, Instant githubEnabledAt, long version,
+            String deviceId, UUID authSessionId) {}
 
     public record Claim(UUID id, UUID userId, UUID solutionId, long profileGeneration,
             long targetGeneration, GitHubAutoCommitStore.Target target, Instant githubEnabledAt,
-            Instant leaseUntil, String claimToken) {}
+            Instant leaseUntil, String claimToken, String deviceId, UUID authSessionId) {
+        public Claim(UUID id, UUID userId, UUID solutionId, long profileGeneration,
+                long targetGeneration, GitHubAutoCommitStore.Target target, Instant githubEnabledAt,
+                Instant leaseUntil, String claimToken) {
+            this(id, userId, solutionId, profileGeneration, targetGeneration, target, githubEnabledAt,
+                    leaseUntil, claimToken, null, null);
+        }
+    }
 }

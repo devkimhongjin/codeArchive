@@ -62,7 +62,11 @@ public class GitHubCommitExecutor {
         return tx.execute(transaction -> {
             db.execute("SET LOCAL lock_timeout = '2s'");
             authorization.run();
-            if (activeOwner(userId, true) != installation.account().id()) throw new CodeArchiveException(ErrorCode.ACCESS_DENIED);
+            // Do not hold the user row lock across provider preparation. The
+            // final worker liveness fence locks the bound session/profile/attempt
+            // rows immediately before create(), allowing account replacement to
+            // revoke the session while preparation is in flight.
+            if (activeOwner(userId, false) != installation.account().id()) throw new CodeArchiveException(ErrorCode.ACCESS_DENIED);
             var source = sources.findLocked(userId, selection.solutionId())
                     .orElseThrow(() -> new CodeArchiveException(ErrorCode.GITHUB_PREVIEW_SOURCE_CHANGED));
             if (!expiresAt.isAfter(Instant.now())) throw new CodeArchiveException(ErrorCode.GITHUB_UPLOAD_INTENT_EXPIRED);

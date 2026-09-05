@@ -24,6 +24,7 @@ import com.codearchive.api.auth.security.CodeArchivePrincipal;
 import com.codearchive.api.auth.security.SecureTokenCodec;
 import com.codearchive.api.auth.session.AuthSession;
 import com.codearchive.api.auth.session.AuthSessionRepository;
+import com.codearchive.api.auth.session.AuthSessionReplacementService;
 import com.codearchive.api.auth.user.CodeArchiveUser;
 import com.codearchive.api.auth.user.UserService;
 import com.codearchive.api.relay.RelayGrantService;
@@ -46,6 +47,7 @@ public class AuthService {
     private final SecureTokenCodec tokenCodec;
     private final Clock clock;
     private RelayGrantService relayGrantService;
+    private AuthSessionReplacementService sessionReplacementService;
 
     @Autowired
     public AuthService(
@@ -186,6 +188,15 @@ public class AuthService {
             String rawState,
             String preAuthStateCookie
     ) {
+        return completeGitHubCallback(authorizationCode, rawState, preAuthStateCookie, null);
+    }
+
+    public CallbackExchange completeGitHubCallback(
+            String authorizationCode,
+            String rawState,
+            String preAuthStateCookie,
+            String priorDashboardSessionCookie
+    ) {
         ensureProviderConfigured();
 
         if (isBlank(authorizationCode)
@@ -239,10 +250,8 @@ public class AuthService {
         CodeArchiveUser user = userService.upsert(profile);
 
         if (flowType == OAuthState.FlowType.DASHBOARD) {
-            IssuedSession session = issueSession(
-                    user,
-                    now
-            );
+            CodeArchivePrincipal prior = authenticate(priorDashboardSessionCookie).orElse(null);
+            IssuedSession session = issueSession(user, now, prior);
             return new CallbackExchange(
                     null,
                     session.expiresAt(),
@@ -317,10 +326,31 @@ public class AuthService {
             CodeArchiveUser user,
             Instant now
     ) {
+        return issueSession(user, now, null);
+    }
+
+    private IssuedSession issueSession(
+            CodeArchiveUser user,
+            Instant now,
+            CodeArchivePrincipal prior
+    ) {
         String rawAccessToken = tokenCodec.generate();
         Instant expiresAt = now.plus(
                 authProperties.getSessionTtl()
         );
+        if (sessionReplacementService != null) {
+            AuthSessionReplacementService.Issued issued = sessionReplacementService.replace(
+                    prior == null ? null : prior.userId(),
+                    prior == null ? null : prior.sessionId(),
+                    user.getId(), tokenCodec.hash(rawAccessToken), expiresAt, now);
+            return new IssuedSession(rawAccessToken, issued.expiresAt());
+        }
+        // OAuth/session replacement is an authorization transition: fence any
+        // prior durable generation before revoking its active sessions.
+        if (relayGrantService != null) relayGrantService.revokeForUser(user.getId());
+        if (prior != null && relayGrantService != null) relayGrantService.revokeForUser(prior.userId());
+        authSessionRepository.revokeActiveForUser(user.getId(), now);
+        if (prior != null) authSessionRepository.revoke(prior.sessionId(), now);
 
         authSessionRepository.save(
                 AuthSession.create(
@@ -387,6 +417,11 @@ public class AuthService {
     @Autowired(required = false)
     public void setRelayGrantService(RelayGrantService relayGrantService) {
         this.relayGrantService = relayGrantService;
+    }
+
+    @Autowired(required = false)
+    public void setSessionReplacementService(AuthSessionReplacementService service) {
+        this.sessionReplacementService = service;
     }
 
     public CodeArchiveUser currentUser(

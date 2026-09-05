@@ -75,7 +75,14 @@ public class DurableAutomationWorker {
             store.markAttempted(claim);
             GitHubAppClient.CommitResult result = executor.executeForWorker(claim.userId(), review,
                     claim.leaseUntil(),
-                    () -> store.requireLiveForDispatch(claim), () -> dispatched.set(true));
+                    () -> store.requireLiveAfterAttempt(claim),
+                    () -> {
+                        // This is the final server-authoritative fence, after
+                        // target inspection/preparation and immediately before
+                        // provider mutation can begin.
+                        store.requireLiveForDispatch(claim);
+                        dispatched.set(true);
+                    });
             if (result == null) {
                 store.finish(claim, null, ErrorCode.GITHUB_UPLOAD_OUTCOME_UNKNOWN, true);
                 return Result.unknown(claim.solutionId());

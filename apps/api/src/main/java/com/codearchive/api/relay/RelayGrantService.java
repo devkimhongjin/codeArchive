@@ -134,27 +134,29 @@ public class RelayGrantService {
             db.update("UPDATE relay_pairing_challenges SET consumed_at=:now WHERE id=:id",
                     new MapSqlParameterSource("now", Timestamp.from(now)).addValue("id", challengeId));
 
-            long generation = profileForDevice(principal.userId(), device, now);
+            SessionGrantContext binding = profileForDevice(principal.userId(), principal.sessionId(), device, now);
             db.update("UPDATE relay_grants SET revoked_at=:now WHERE user_id=:user AND revoked_at IS NULL",
                     new MapSqlParameterSource("now", Timestamp.from(now)).addValue("user", principal.userId()));
 
             UUID grantId = UUID.randomUUID();
             String rawToken = grantId + "." + tokens.generate();
-            Instant expires = now.plus(GRANT_TTL);
+            Instant expires = now.plus(GRANT_TTL).isBefore(binding.sessionExpiresAt())
+                    ? now.plus(GRANT_TTL) : binding.sessionExpiresAt();
             db.update("""
                     INSERT INTO relay_grants
-                        (id,user_id,device_id,generation,public_key_hash,token_hash,issued_at,expires_at)
-                    VALUES (:id,:user,:device,:generation,:keyHash,:tokenHash,:issued,:expires)
+                        (id,user_id,auth_session_id,device_id,generation,public_key_hash,token_hash,issued_at,expires_at)
+                    VALUES (:id,:user,:session,:device,:generation,:keyHash,:tokenHash,:issued,:expires)
                     """, new MapSqlParameterSource()
                     .addValue("id", grantId)
                     .addValue("user", principal.userId())
+                    .addValue("session", principal.sessionId())
                     .addValue("device", device)
-                    .addValue("generation", generation)
+                    .addValue("generation", binding.generation())
                     .addValue("keyHash", tokens.hash(publicKey))
                     .addValue("tokenHash", tokens.hash(rawToken))
                     .addValue("issued", Timestamp.from(now))
                     .addValue("expires", Timestamp.from(expires)));
-            return new GrantResponse(grantId, rawToken, device, generation, expires);
+            return new GrantResponse(grantId, rawToken, device, binding.generation(), expires);
         });
     }
 
@@ -201,9 +203,10 @@ public class RelayGrantService {
         if (rawToken == null || rawToken.isBlank()) return Optional.empty();
         Instant now = clock.instant();
         return db.query("""
-                SELECT id,user_id,device_id,generation
-                FROM relay_grants
-                WHERE token_hash=:hash AND revoked_at IS NULL AND expires_at > :now
+                SELECT g.id,g.user_id,g.device_id,g.generation
+                FROM relay_grants g JOIN auth_sessions s ON s.id=g.auth_session_id
+                WHERE g.token_hash=:hash AND g.revoked_at IS NULL AND g.expires_at > :now
+                  AND s.revoked_at IS NULL AND s.expires_at > :now
                 """, new MapSqlParameterSource("hash", tokens.hash(rawToken)).addValue("now", Timestamp.from(now)),
                 (rs, index) -> new RelayGrantPrincipal(rs.getObject("user_id", UUID.class),
                         rs.getObject("id", UUID.class), rs.getString("device_id"), rs.getLong("generation")))
@@ -213,45 +216,69 @@ public class RelayGrantService {
     public void requireCurrentGeneration(RelayGrantPrincipal principal) {
         if (principal == null) throw new CodeArchiveException(ErrorCode.RELAY_GRANT_INVALID);
         boolean valid = db.query("""
-                SELECT generation FROM automation_profiles
-                WHERE user_id=:user AND device_id=:device
-                  AND source_transfer_enabled=true
-                """, new MapSqlParameterSource("user", principal.userId()).addValue("device", principal.deviceId()),
-                (rs, index) -> rs.getLong(1)).stream().findFirst()
-                .map(generation -> generation == principal.generation())
-                .orElse(false);
+                SELECT 1 FROM relay_grants g
+                JOIN automation_profiles p ON p.user_id=g.user_id
+                    AND p.auth_session_id=g.auth_session_id
+                JOIN auth_sessions s ON s.id=g.auth_session_id
+                WHERE g.id=:grant AND g.user_id=:user AND g.device_id=:device
+                  AND g.generation=:generation AND g.revoked_at IS NULL
+                  AND g.expires_at > clock_timestamp()
+                  AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
+                  AND p.ownership_mode='DURABLE_SERVER'
+                  AND p.source_transfer_enabled=true
+                  AND p.device_id=:device AND p.generation=g.generation
+                """, new MapSqlParameterSource("grant", principal.grantId())
+                        .addValue("user", principal.userId()).addValue("device", principal.deviceId())
+                        .addValue("generation", principal.generation()),
+                (rs, index) -> 1).stream().findFirst().isPresent();
         if (!valid) throw new CodeArchiveException(ErrorCode.RELAY_GRANT_REVOKED);
     }
 
-    private long profileForDevice(UUID userId, String device, Instant now) {
-        var existing = db.query("SELECT device_id,generation FROM automation_profiles WHERE user_id=:user FOR UPDATE",
-                new MapSqlParameterSource("user", userId), (rs, index) -> new ProfileRow(rs.getString(1), rs.getLong(2)))
+    private SessionGrantContext profileForDevice(UUID userId, UUID sessionId, String device, Instant now) {
+        var session = db.query("""
+                SELECT expires_at FROM auth_sessions
+                WHERE id=:session AND user_id=:user AND revoked_at IS NULL AND expires_at > :now
+                """, new MapSqlParameterSource("user", userId).addValue("session", sessionId)
+                .addValue("now", Timestamp.from(now)), (rs, index) -> rs.getTimestamp(1).toInstant())
+                .stream().findFirst().orElseThrow(() -> new CodeArchiveException(ErrorCode.AUTH_REQUIRED));
+        var existing = db.query("""
+                SELECT device_id,generation,auth_session_id,ownership_mode,source_transfer_enabled
+                FROM automation_profiles WHERE user_id=:user FOR UPDATE
+                """, new MapSqlParameterSource("user", userId), (rs, index) -> new ProfileRow(rs.getString(1),
+                        rs.getLong(2), rs.getObject(3, UUID.class), rs.getString(4), rs.getBoolean(5)))
                 .stream().findFirst();
         if (existing.isEmpty()) {
-            db.update("INSERT INTO automation_profiles(user_id,device_id,generation,updated_at) VALUES(:user,:device,1,:now)",
-                    new MapSqlParameterSource("user", userId).addValue("device", device).addValue("now", Timestamp.from(now)));
-            return 1;
+            throw new CodeArchiveException(ErrorCode.RELAY_GRANT_REVOKED);
         }
         ProfileRow profile = existing.get();
+        if (!"DURABLE_SERVER".equals(profile.ownershipMode()) || !profile.sourceTransferEnabled()
+                || !sessionId.equals(profile.authSessionId())) {
+            throw new CodeArchiveException(ErrorCode.RELAY_GRANT_REVOKED);
+        }
         if (!device.equals(profile.deviceId())) {
             long generation = profile.generation() + 1;
             db.update("""
                     UPDATE automation_profiles SET device_id=:device,generation=:generation,
                     source_transfer_enabled=false,github_auto_commit_enabled=false,
-                    target=null,github_enabled_at=null,version=version+1,updated_at=:now
+                    target=null,automatic_transfer_consent=false,visibility_risk_consent=false,
+                    public_upload_consent=false,github_enabled_at=null,auth_session_id=null,
+                    version=version+1,updated_at=:now
                     WHERE user_id=:user
                     """, new MapSqlParameterSource("device", device).addValue("generation", generation)
                     .addValue("now", Timestamp.from(now)).addValue("user", userId));
-            return generation;
+            throw new CodeArchiveException(ErrorCode.RELAY_GRANT_REVOKED);
         }
-        return profile.generation();
+        return new SessionGrantContext(profile.generation(), session);
     }
 
     private void disableProfile(UUID userId, Instant now) {
         db.update("""
                 UPDATE automation_profiles SET generation=generation+1,
                 source_transfer_enabled=false,github_auto_commit_enabled=false,
-                github_enabled_at=null,version=version+1,updated_at=:now
+                ownership_mode='PAGE_OWNED',target=null,
+                automatic_transfer_consent=false,visibility_risk_consent=false,
+                public_upload_consent=false,github_enabled_at=null,auth_session_id=null,
+                version=version+1,updated_at=:now
                 WHERE user_id=:user
                 """, new MapSqlParameterSource("user", userId).addValue("now", Timestamp.from(now)));
     }
@@ -311,7 +338,9 @@ public class RelayGrantService {
 
     private record ChallengeRow(String publicKey, String challengeHash, Instant expiresAt,
             java.sql.Timestamp consumedAt) {}
-    private record ProfileRow(String deviceId, long generation) {}
+    private record ProfileRow(String deviceId, long generation, UUID authSessionId,
+            String ownershipMode, boolean sourceTransferEnabled) {}
+    private record SessionGrantContext(long generation, Instant sessionExpiresAt) {}
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = false)
     public record ChallengeRequest(String deviceId, String publicKey) {}

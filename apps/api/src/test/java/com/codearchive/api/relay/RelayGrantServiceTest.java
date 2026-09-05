@@ -79,8 +79,8 @@ class RelayGrantServiceTest {
 
     @Test
     void generationMismatchFailsClosedAfterDeviceOrAccountTransition() {
-        when(db.query(contains("SELECT generation"), any(MapSqlParameterSource.class),
-                any(org.springframework.jdbc.core.RowMapper.class))).thenReturn(java.util.List.of(9L));
+        when(db.query(contains("SELECT 1 FROM relay_grants"), any(MapSqlParameterSource.class),
+                any(org.springframework.jdbc.core.RowMapper.class))).thenReturn(java.util.List.of());
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.requireCurrentGeneration(
                 new RelayGrantPrincipal(principal.userId(), UUID.randomUUID(), "device-1234567890", 8)))

@@ -42,6 +42,7 @@ import com.codearchive.api.integration.github.GitHubAutoCommitStore.Target;
 import com.codearchive.api.relay.RelayCaptureIngestService;
 import com.codearchive.api.relay.RelayGrantPrincipal;
 import com.codearchive.api.relay.RelayGrantService;
+import com.codearchive.api.auth.session.AuthSessionReplacementService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @SpringBootTest(properties = {
@@ -76,6 +77,9 @@ class DurableAutomationPostgresIntegrationTest {
     private DurableAutomationProfileStore profiles;
 
     @Autowired
+    private AuthSessionReplacementService sessionReplacement;
+
+    @Autowired
     private RelayCaptureIngestService relay;
 
     @MockitoBean
@@ -93,7 +97,7 @@ class DurableAutomationPostgresIntegrationTest {
     void setUpProvider() {
         prepared = org.mockito.Mockito.mock(GitHubAppClient.PreparedCommit.class);
         when(integrations.requireInstallationForUser(any(UUID.class), eq(701L)))
-                .thenReturn(installation());
+                .thenAnswer(invocation -> installation(invocation.getArgument(0, UUID.class)));
         when(github.inspectUploadTarget(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString()))
                 .thenReturn(uploadTarget());
         when(github.prepareCommit(any())).thenReturn(prepared);
@@ -123,6 +127,64 @@ class DurableAutomationPostgresIntegrationTest {
                 "SELECT target->>'expectedCommitSha' FROM automation_profiles WHERE user_id=?",
                 String.class, user)).isEqualTo(COMMIT);
         verify(prepared).create("class Main {}", "Add SWEA 1206 solution");
+    }
+
+    @Test
+    void expiredBoundAuthSessionBlocksDurableWorkerClaim() {
+        UUID user = user();
+        acceptedSolution(user, 3, Instant.now().minusSeconds(1));
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+        db.update("UPDATE auth_sessions SET expires_at=? WHERE id=(SELECT auth_session_id FROM automation_profiles WHERE user_id=?)",
+                Timestamp.from(Instant.now().minusSeconds(1)), user);
+
+        assertThat(worker.runOnce().status()).isEqualTo("IDLE");
+        verify(github, never()).prepareCommit(any());
+    }
+
+    @Test
+    void accountReplacementFencesPriorAndNewAccountBeforeIssuingSession() {
+        UUID accountA = user();
+        UUID accountB = user();
+        profile(accountA, 3, 4, TARGET, true, "DURABLE_SERVER");
+        profile(accountB, 5, 6, TARGET, true, "DURABLE_SERVER");
+        UUID oldSession = db.queryForObject("SELECT auth_session_id FROM automation_profiles WHERE user_id=?",
+                UUID.class, accountA);
+        Instant now = Instant.now();
+
+        AuthSessionReplacementService.Issued issued = sessionReplacement.replace(accountA, oldSession, accountB,
+                UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", ""),
+                now.plusSeconds(3600), now);
+
+        assertThat(db.queryForObject("SELECT revoked_at IS NOT NULL FROM auth_sessions WHERE id=?", Boolean.class, oldSession))
+                .isTrue();
+        assertThat(db.queryForObject("SELECT source_transfer_enabled FROM automation_profiles WHERE user_id=?", Boolean.class, accountA))
+                .isFalse();
+        assertThat(db.queryForObject("SELECT source_transfer_enabled FROM automation_profiles WHERE user_id=?", Boolean.class, accountB))
+                .isFalse();
+        assertThat(db.queryForObject("SELECT count(*) FROM auth_sessions WHERE user_id=? AND revoked_at IS NULL", Integer.class, accountB))
+                .isEqualTo(1);
+        assertThat(db.queryForObject("SELECT revoked_at FROM auth_sessions WHERE id=?", Timestamp.class, issued.sessionId()))
+                .isNull();
+    }
+
+    @Test
+    void concurrentSameAccountReplacementLeavesOnlyLastSessionActive() throws Exception {
+        UUID account = user();
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            var first = pool.submit(() -> sessionReplacement.replace(null, null, account,
+                    UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", ""),
+                    Instant.now().plusSeconds(3600), Instant.now()));
+            var second = pool.submit(() -> sessionReplacement.replace(null, null, account,
+                    UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", ""),
+                    Instant.now().plusSeconds(3600), Instant.now()));
+            first.get(15, TimeUnit.SECONDS);
+            second.get(15, TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(db.queryForObject("SELECT count(*) FROM auth_sessions WHERE user_id=? AND revoked_at IS NULL", Integer.class, account))
+                .isEqualTo(1);
     }
 
     @Test
@@ -212,17 +274,110 @@ class DurableAutomationPostgresIntegrationTest {
         try {
             var workerResult = pool.submit(worker::runOnce);
             assertThat(providerEntered.await(10, TimeUnit.SECONDS)).isTrue();
-            var transition = pool.submit(() -> updateProfile(user, false, "PAGE_OWNED", 3, TARGET, 0));
+            CountDownLatch transitionStarted = new CountDownLatch(1);
+            var transition = pool.submit(() -> {
+                transitionStarted.countDown();
+                return updateProfile(user, false, "PAGE_OWNED", 3, TARGET, 0);
+            });
+            assertThat(transitionStarted.await(10, TimeUnit.SECONDS)).isTrue();
+            assertThat(transition.isDone()).isFalse();
             releaseProvider.countDown();
 
-            assertThat(workerResult.get(10, TimeUnit.SECONDS).status()).isEqualTo("SUCCEEDED");
-            transition.get(10, TimeUnit.SECONDS);
-            assertThat(db.queryForObject("SELECT ownership_mode FROM automation_profiles WHERE user_id=?",
-                    String.class, user)).isEqualTo("PAGE_OWNED");
-            assertThat(db.queryForObject("SELECT state FROM durable_github_attempts WHERE user_id=?",
-                    String.class, user)).isEqualTo("SUCCEEDED");
+            var completed = workerResult.get(10, TimeUnit.SECONDS);
+            boolean transitionSucceeded;
+            try {
+                transition.get(10, TimeUnit.SECONDS);
+                transitionSucceeded = true;
+            } catch (java.util.concurrent.ExecutionException failure) {
+                transitionSucceeded = false;
+                assertThat(failure.getCause()).isInstanceOfSatisfying(CodeArchiveException.class,
+                        error -> assertThat(error.getErrorCode())
+                                .isEqualTo(ErrorCode.AUTOMATION_OWNERSHIP_CONFLICT));
+            }
+            String mode = db.queryForObject("SELECT ownership_mode FROM automation_profiles WHERE user_id=?",
+                    String.class, user);
+            String attemptState = db.queryForObject("SELECT state FROM durable_github_attempts WHERE user_id=?",
+                    String.class, user);
+            if ("SUCCEEDED".equals(completed.status())) {
+                assertThat(attemptState).isEqualTo("SUCCEEDED");
+                assertThat(mode).isIn("DURABLE_SERVER", "PAGE_OWNED");
+                assertThat(transitionSucceeded || "DURABLE_SERVER".equals(mode)).isTrue();
+            } else {
+                assertThat(completed.status()).isEqualTo("REJECTED");
+                assertThat(completed.errorCode()).isEqualTo(ErrorCode.AUTOMATION_GENERATION_STALE.name());
+                assertThat(transitionSucceeded).isTrue();
+                assertThat(mode).isEqualTo("PAGE_OWNED");
+                assertThat(attemptState).isEqualTo("REJECTED");
+            }
         } finally {
             releaseProvider.countDown();
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void authSessionExpiryDuringProviderPreparationBlocksCreate() throws Exception {
+        UUID user = user();
+        acceptedSolution(user, 3, Instant.now().minusSeconds(1));
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+        DurableAutomationWorker.Result completed = runPreparationRace(user, () ->
+                db.update("UPDATE auth_sessions SET expires_at=? WHERE id=(SELECT auth_session_id FROM automation_profiles WHERE user_id=?)",
+                        Timestamp.from(Instant.now().minusSeconds(1)), user));
+        assertThat(completed.status()).isEqualTo("REJECTED");
+        assertThat(completed.errorCode()).isEqualTo(ErrorCode.AUTOMATION_GENERATION_STALE.name());
+        assertThat(db.queryForObject("SELECT state FROM durable_github_attempts WHERE user_id=?",
+                String.class, user)).isEqualTo("REJECTED");
+    }
+
+    @Test
+    void authSessionReplacementDuringProviderPreparationBlocksCreate() throws Exception {
+        UUID user = user();
+        acceptedSolution(user, 3, Instant.now().minusSeconds(1));
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+        DurableAutomationWorker.Result completed = runPreparationRace(user, () ->
+                sessionReplacement.replace(null, null, user,
+                        UUID.randomUUID().toString().replace("-", "")
+                                + UUID.randomUUID().toString().replace("-", ""),
+                        Instant.now().plusSeconds(3600), Instant.now()));
+        assertThat(completed.status()).isEqualTo("REJECTED");
+        assertThat(completed.errorCode()).isEqualTo(ErrorCode.AUTOMATION_GENERATION_STALE.name());
+        assertThat(db.queryForObject("SELECT state FROM durable_github_attempts WHERE user_id=?",
+                String.class, user)).isEqualTo("REJECTED");
+    }
+
+    @Test
+    void profileGenerationAndTargetChangeDuringProviderPreparationBlocksCreate() throws Exception {
+        UUID user = user();
+        acceptedSolution(user, 3, Instant.now().minusSeconds(1));
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+        Target changed = TARGET.withHead("b".repeat(40));
+        DurableAutomationWorker.Result completed = runPreparationRace(user, () ->
+                updateProfile(user, true, "DURABLE_SERVER", 4, changed, 0));
+        assertThat(completed.status()).isEqualTo("REJECTED");
+        assertThat(completed.errorCode()).isEqualTo(ErrorCode.AUTOMATION_GENERATION_STALE.name());
+        assertThat(db.queryForObject("SELECT state FROM durable_github_attempts WHERE user_id=?",
+                String.class, user)).isEqualTo("REJECTED");
+    }
+
+    private DurableAutomationWorker.Result runPreparationRace(UUID user, Runnable mutation) throws Exception {
+        CountDownLatch preparationEntered = new CountDownLatch(1);
+        CountDownLatch releasePreparation = new CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            preparationEntered.countDown();
+            assertThat(releasePreparation.await(10, TimeUnit.SECONDS)).isTrue();
+            return prepared;
+        }).when(github).prepareCommit(any());
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            var workerResult = pool.submit(worker::runOnce);
+            assertThat(preparationEntered.await(10, TimeUnit.SECONDS)).isTrue();
+            mutation.run();
+            releasePreparation.countDown();
+            DurableAutomationWorker.Result completed = workerResult.get(10, TimeUnit.SECONDS);
+            verify(prepared, never()).create(anyString(), anyString());
+            return completed;
+        } finally {
+            releasePreparation.countDown();
             pool.shutdownNow();
         }
     }
@@ -248,7 +403,7 @@ class DurableAutomationPostgresIntegrationTest {
         UUID id = UUID.randomUUID();
         Instant now = Instant.now();
         db.update("INSERT INTO users(id,github_user_id,github_login,display_name,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-                id, 9001L, "tester", "Tester",
+                id, Math.abs(UUID.randomUUID().getMostSignificantBits()), "tester-" + id, "Tester",
                 Timestamp.from(now), Timestamp.from(now));
         return id;
     }
@@ -256,13 +411,18 @@ class DurableAutomationPostgresIntegrationTest {
     private void profile(UUID user, long generation, long targetGeneration, Target target,
             boolean githubEnabled, String mode) {
         Instant enabled = Instant.now().minusSeconds(2);
+        UUID session = UUID.randomUUID();
+        db.update("INSERT INTO auth_sessions(id,user_id,token_hash,expires_at,created_at) VALUES(?,?,?,?,?)",
+                session, user, UUID.randomUUID().toString().replace("-", "")
+                        + UUID.randomUUID().toString().replace("-", ""),
+                Timestamp.from(Instant.now().plusSeconds(3600)), Timestamp.from(enabled));
         db.update("""
                 INSERT INTO automation_profiles(user_id,device_id,generation,source_transfer_enabled,
                     github_auto_commit_enabled,ownership_mode,target_generation,target,automatic_transfer_consent,
-                    visibility_risk_consent,public_upload_consent,github_enabled_at,version,updated_at)
-                VALUES(?,?,?,?,?,?,?,CAST(? AS jsonb),TRUE,TRUE,TRUE,?,?,?)
+                    visibility_risk_consent,public_upload_consent,github_enabled_at,version,updated_at,auth_session_id)
+                VALUES(?,?,?,?,?,?,?,CAST(? AS jsonb),TRUE,TRUE,TRUE,?,?,?,?)
                 """, user, "device-1234567890", generation, true, githubEnabled, mode, targetGeneration,
-                target == null ? null : jsonValue(target), Timestamp.from(enabled), 0, Timestamp.from(enabled));
+                target == null ? null : jsonValue(target), Timestamp.from(enabled), 0, Timestamp.from(enabled), session);
     }
 
     private UUID attempt(UUID user, UUID solution, long generation, long targetGeneration, String state) {
@@ -293,14 +453,17 @@ class DurableAutomationPostgresIntegrationTest {
 
     private DurableAutomationProfileStore.Profile updateProfile(UUID user, boolean githubEnabled, String mode,
             long generation, Target target, long expectedVersion) {
-        return profiles.update(user, "device-1234567890", true, githubEnabled, mode,
+        UUID session = db.queryForObject("SELECT auth_session_id FROM automation_profiles WHERE user_id=?",
+                UUID.class, user);
+        return profiles.update(user, session, "device-1234567890", true, githubEnabled, mode,
                 target == null ? 0 : 4, target, true, true, true, expectedVersion,
                 githubEnabled ? Instant.now() : null, generation, Instant.now());
     }
 
-    private GitHubAppClient.Installation installation() {
+    private GitHubAppClient.Installation installation(UUID user) {
+        long githubUserId = db.queryForObject("SELECT github_user_id FROM users WHERE id=?", Long.class, user);
         return new GitHubAppClient.Installation(701,
-                new GitHubAppClient.Account(9001, "tester", "User"), "selected", false);
+                new GitHubAppClient.Account(githubUserId, "tester", "User"), "selected", false);
     }
 
     private GitHubAppClient.UploadTarget uploadTarget() {
