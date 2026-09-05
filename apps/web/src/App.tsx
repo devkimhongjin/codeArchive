@@ -156,6 +156,8 @@ export function App({
     ),
     [extensionConnection, syncSessionIdGenerator],
   );
+  const syncControllerRef = useRef(syncController);
+  syncControllerRef.current = syncController;
 
   const pendingDrainController = useMemo(
     () => createPendingDrainController(
@@ -211,7 +213,7 @@ export function App({
         const wasConnected = extensionStateRef.current.status === "connected";
         extensionStateRef.current = state;
         setExtensionState(state);
-        if (wasConnected && state.status !== "connected") void syncController.revokeDurableAutomation();
+        if (wasConnected && state.status !== "connected") void syncControllerRef.current.revokeDurableAutomation();
       },
       (event) => {
         setExtensionState((current) => current.status === "connected"
@@ -227,7 +229,7 @@ export function App({
       },
       (message) => automationMessageRef.current(message),
     ),
-    [connectionAttempt, extensionConnection, syncController],
+    [connectionAttempt, extensionConnection],
   );
 
   useEffect(() => {
