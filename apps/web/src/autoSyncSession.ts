@@ -24,6 +24,7 @@ export interface AutoSyncSessionController {
   setEligibility(eligible: boolean, authContextKey: string): Promise<void>;
   teardown(): Promise<void>;
   revokeDurableAutomation(): Promise<boolean>;
+  rearmDurableReconnect(): void;
   hasActiveSession(): boolean;
 }
 
@@ -53,12 +54,14 @@ export function createAutoSyncSessionController(
   let activeAuthContextKey = "";
   let transition = Promise.resolve();
   let durableDetected = durableAutomationProfile()?.ownershipMode === "DURABLE_SERVER";
+  let durableReconnectBlocked = false;
   const relayTransport = relayCapable(transport) ? transport : null;
   const durable = relayTransport ? new DurableAutomationController(mainApiDurableAutomationClient, relayTransport) : null;
 
   const revokeDurableAutomation = async (): Promise<boolean> => {
     const current = durableAutomationProfile();
     if (!durable || !current || current.ownershipMode !== "DURABLE_SERVER") return false;
+    durableReconnectBlocked = true;
     markDurableLocalSourceStopped();
     try {
       const result = await durable.disableAll(undefined, current);
@@ -124,6 +127,12 @@ export function createAutoSyncSessionController(
           await endPageOwnedSession();
           return;
         }
+        if (durableReconnectBlocked) {
+          // A disconnect-triggered revoke is a durable stop even when its server/local
+          // confirmation is unavailable. Reconnect requires a fresh explicit AUTO_SYNC ON.
+          await endPageOwnedSession();
+          return;
+        }
         try {
           const result = await durable.enableSourceTransfer();
           setDurableAutomationProfile(result.profile);
@@ -185,6 +194,9 @@ export function createAutoSyncSessionController(
       return schedule();
     },
     revokeDurableAutomation,
+    rearmDurableReconnect() {
+      durableReconnectBlocked = false;
+    },
     hasActiveSession() {
       return activeSessionId !== null;
     },

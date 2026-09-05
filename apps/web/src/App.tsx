@@ -213,7 +213,15 @@ export function App({
         const wasConnected = extensionStateRef.current.status === "connected";
         extensionStateRef.current = state;
         setExtensionState(state);
-        if (wasConnected && state.status !== "connected") void syncControllerRef.current.revokeDurableAutomation();
+        if (wasConnected && state.status !== "connected") {
+          setAutomationAutoSyncEnabled(false);
+          setGithubAutoCommitEnabled(false);
+          nextAutomationIntent(false);
+          drainEligibilityRef.current.eligible = false;
+          pendingDrainController.invalidate();
+          void syncControllerRef.current.teardown();
+          void syncControllerRef.current.revokeDurableAutomation();
+        }
       },
       (event) => {
         setExtensionState((current) => current.status === "connected"
@@ -481,6 +489,7 @@ export function App({
       automationSafetyStoppedRef.current = false;
       setAutomationSafetyStopped(false);
       setAutomationError(null);
+      syncControllerRef.current.rearmDurableReconnect();
       setAutomationAutoSyncEnabled(true);
       return;
     }
