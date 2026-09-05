@@ -97,10 +97,17 @@ export function createAccountConsentController(
   return {
     async verify(id: unknown) {
       const current = ++revision;
-      verifiedId = validatedAccountId(id);
-      const durable = durableAutomationProfile();
-      if (durable && durable.userId !== verifiedId) setDurableAutomationProfile(null, false);
+      const nextId = validatedAccountId(id);
       onChange(false);
+      const durable = durableAutomationProfile();
+      if (durable && durable.userId !== nextId) {
+        const revoked = await notifyExplicitAutoSyncOff();
+        if (revoked && durableAutomationProfile()?.userId === durable.userId) {
+          setDurableAutomationProfile(null, false);
+        }
+      }
+      if (current !== revision) return;
+      verifiedId = nextId;
       const binding = await bindingFor(verifiedId);
       if (current !== revision) return;
       if (!binding) { write(false); return; }

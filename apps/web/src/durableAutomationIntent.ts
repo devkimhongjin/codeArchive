@@ -1,6 +1,6 @@
 import { markDurableLocalSourceStopped } from "./durableAutomationState";
 
-type ExplicitAutoSyncOffHandler = () => Promise<void> | void;
+type ExplicitAutoSyncOffHandler = () => Promise<boolean | void> | boolean | void;
 
 let handler: ExplicitAutoSyncOffHandler | null = null;
 
@@ -9,7 +9,9 @@ export function registerExplicitAutoSyncOffHandler(next: ExplicitAutoSyncOffHand
   return () => { if (handler === next) handler = null; };
 }
 
-export async function notifyExplicitAutoSyncOff(): Promise<void> {
+export async function notifyExplicitAutoSyncOff(): Promise<boolean> {
   markDurableLocalSourceStopped();
-  try { await handler?.(); } catch { /* Local consent OFF remains authoritative even while server revoke is pending. */ }
+  if (!handler) return false;
+  try { return (await handler()) !== false; }
+  catch { return false; /* Local consent OFF remains authoritative even while server revoke is pending. */ }
 }

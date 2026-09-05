@@ -119,6 +119,26 @@ describe("DurableAutomationController", () => {
     expect(result.profile.sourceTransferEnabled).toBe(true);
   });
 
+  it("forces GitHub automation off when migrating PAGE_OWNED source transfer", async () => {
+    const f = fixture(profile({
+      ownershipMode: "PAGE_OWNED",
+      githubAutoCommitEnabled: true,
+      target: TARGET,
+      visibilityRiskConsent: true,
+      publicUploadConsent: true,
+    }));
+    const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);
+    const result = await controller.enableSourceTransfer();
+    expect(f.client.update).toHaveBeenCalledWith(expect.objectContaining({
+      githubAutoCommitEnabled: false,
+      target: null,
+      visibilityRiskConsent: false,
+      publicUploadConsent: false,
+    }), undefined);
+    expect(result.profile.githubAutoCommitEnabled).toBe(false);
+    expect(result.profile.target).toBeNull();
+  });
+
   it("enables GitHub with fresh target consent then provisions the new generation", async () => {
     const f = fixture();
     const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);

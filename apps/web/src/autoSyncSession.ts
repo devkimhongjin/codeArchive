@@ -63,9 +63,11 @@ export function createAutoSyncSessionController(
       try {
         const result = await durable.disableAll();
         setDurableAutomationProfile(result.profile, false);
+        return result.localRevocationConfirmed !== false;
       } catch {
         // Local Extension state is stopped by the metadata update immediately.
         // Server OFF remains pending and will be reconciled from the next authenticated Dashboard.
+        return false;
       }
     });
   }

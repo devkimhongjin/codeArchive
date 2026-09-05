@@ -97,15 +97,16 @@ export class DurableAutomationController {
   async enableSourceTransfer(signal?: AbortSignal): Promise<DurableTransitionResult> {
     const pairing = await this.requirePairingInfo();
     const current = await this.client.profile(signal);
+    const migratingFromPageOwned = current.ownershipMode === "PAGE_OWNED";
     const desired = {
       deviceId: pairing.deviceId,
       sourceTransferEnabled: true,
-      githubAutoCommitEnabled: current.githubAutoCommitEnabled,
+      githubAutoCommitEnabled: migratingFromPageOwned ? false : current.githubAutoCommitEnabled,
       ownershipMode: "DURABLE_SERVER" as const,
-      target: current.target,
+      target: migratingFromPageOwned ? null : current.target,
       automaticTransferConsent: true,
-      visibilityRiskConsent: current.visibilityRiskConsent,
-      publicUploadConsent: current.publicUploadConsent,
+      visibilityRiskConsent: migratingFromPageOwned ? false : current.visibilityRiskConsent,
+      publicUploadConsent: migratingFromPageOwned ? false : current.publicUploadConsent,
     };
     const profile = await this.updateIfNeeded(current, desired, signal);
     await this.ensureRelayGrant(profile, signal);

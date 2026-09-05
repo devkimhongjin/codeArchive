@@ -1,17 +1,38 @@
 import { webcrypto } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACCOUNT_CONSENT_KEY, createAccountConsentController, createAutoSyncConsentStore, deriveAccountBinding } from "./accountConsent";
+import { registerExplicitAutoSyncOffHandler } from "./durableAutomationIntent";
+import { durableAutomationProfile, durableLocalSourceStopped, setDurableAutomationProfile } from "./durableAutomationState";
 
 const id = "550e8400-e29b-41d4-a716-446655440000";
 const otherId = "550e8400-e29b-41d4-a716-446655440001";
 const binding = `v1:sha256:${"a".repeat(64)}`;
+const DURABLE_PROFILE = {
+  userId: id,
+  deviceId: "device_identity_1234",
+  generation: 4,
+  sourceTransferEnabled: true,
+  githubAutoCommitEnabled: true,
+  ownershipMode: "DURABLE_SERVER" as const,
+  targetGeneration: 2,
+  target: null,
+  automaticTransferConsent: true,
+  visibilityRiskConsent: true,
+  publicUploadConsent: false,
+  githubEnabledAt: "2026-09-04T07:00:00Z",
+  version: 7,
+  updatedAt: "2026-09-04T08:00:00Z",
+};
 
 function memoryStorage() {
   const values = new Map<string, string>();
   return { values, getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  setDurableAutomationProfile(null, false);
+});
 
 describe("account-bound remembered consent", () => {
   it("hashes an immutable UUID with a versioned domain separator, never storing raw identity", async () => {
@@ -95,6 +116,34 @@ describe("account-bound remembered consent", () => {
     expect(changed).toHaveBeenLastCalledWith(false);
     await controller.choose(true);
     expect(changed).toHaveBeenLastCalledWith(true);
+  });
+
+  it("revokes the previous durable account before clearing its profile", async () => {
+    setDurableAutomationProfile(DURABLE_PROFILE);
+    const off = vi.fn(async () => {
+      setDurableAutomationProfile({ ...DURABLE_PROFILE, sourceTransferEnabled: false, githubAutoCommitEnabled: false }, false);
+      return true;
+    });
+    const unregister = registerExplicitAutoSyncOffHandler(off);
+    const controller = createAccountConsentController({ read: () => false, write: vi.fn() }, vi.fn(), async () => binding);
+
+    await controller.verify(otherId);
+
+    expect(off).toHaveBeenCalledOnce();
+    expect(durableAutomationProfile()).toBeNull();
+    unregister();
+  });
+
+  it("retains a stopped durable profile when account/session revocation is unconfirmed", async () => {
+    setDurableAutomationProfile(DURABLE_PROFILE);
+    const unregister = registerExplicitAutoSyncOffHandler(async () => false);
+    const controller = createAccountConsentController({ read: () => false, write: vi.fn() }, vi.fn(), async () => binding);
+
+    await controller.verify(undefined);
+
+    expect(durableAutomationProfile()?.userId).toBe(id);
+    expect(durableLocalSourceStopped()).toBe(true);
+    unregister();
   });
 
   it("invalidates on other-tab key changes and storage clear, never on unrelated keys", () => {
