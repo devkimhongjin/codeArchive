@@ -195,6 +195,7 @@ describe("DurableAutomationController", () => {
       grantId: GRANT, generation: 4, expiresAt: "2026-10-04T08:00:00Z",
     });
     vi.mocked(f.client.profile).mockRejectedValue(new Error("session expired"));
+    vi.mocked(f.client.update).mockRejectedValue(new Error("session expired"));
     const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);
 
     const result = await controller.disableAll(undefined, profile({ githubAutoCommitEnabled: true }));
