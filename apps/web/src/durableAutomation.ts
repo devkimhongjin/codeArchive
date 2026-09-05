@@ -55,6 +55,7 @@ export interface DurableTransitionResult {
   readonly profile: DurableAutomationProfile;
   readonly relayPaired: boolean;
   readonly localRevocationConfirmed?: boolean;
+  readonly serverRevocationConfirmed?: boolean;
 }
 
 function sameTarget(a: GitHubAutoTarget | null, b: GitHubAutoTarget | null): boolean {
@@ -162,12 +163,30 @@ export class DurableAutomationController {
     return { profile, relayPaired: false };
   }
 
-  async disableAll(signal?: AbortSignal): Promise<DurableTransitionResult> {
-    const current = await this.client.profile(signal);
+  async disableAll(
+    signal?: AbortSignal,
+    cachedProfile: DurableAutomationProfile | null = null,
+  ): Promise<DurableTransitionResult> {
     const pairing = await (this.bridge.relayPairingInfo?.().catch(() => null) ?? Promise.resolve(null));
-    if (current.ownershipMode !== "DURABLE_SERVER") return { profile: current, relayPaired: false };
+    const localRevocationConfirmed = await this.confirmLocalRevoke(pairing);
+    let current = cachedProfile;
+    try {
+      current = await this.client.profile(signal);
+    } catch {
+      if (!current) throw new DurableAutomationTransitionError("PROFILE_UNAVAILABLE");
+    }
+    if (!current || current.ownershipMode !== "DURABLE_SERVER") {
+      return {
+        profile: current ?? cachedProfile!,
+        relayPaired: false,
+        localRevocationConfirmed,
+        serverRevocationConfirmed: true,
+      };
+    }
     const deviceId = pairing?.deviceId ?? current.deviceId;
-    if (!deviceId) throw new DurableAutomationTransitionError("RELAY_PAIRING_UNAVAILABLE");
+    if (!deviceId) {
+      return { profile: current, relayPaired: false, localRevocationConfirmed, serverRevocationConfirmed: false };
+    }
     const desired = {
       deviceId,
       sourceTransferEnabled: false,
@@ -178,24 +197,31 @@ export class DurableAutomationController {
       visibilityRiskConsent: false,
       publicUploadConsent: false,
     };
-    const profile = await this.updateIfNeeded(current, desired, signal);
-    let localRevocationConfirmed = false;
-    if (pairing && pairing.state !== "UNPAIRED") {
-      const applied = await (this.bridge.relayConfirmRevoke?.({
-        type: "CODEARCHIVE_RELAY_REVOKE_CONFIRMED",
-        phase: "REQUEST",
-        protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
-        deviceId: pairing.deviceId,
-        grantId: pairing.grantId,
-        generation: pairing.generation,
-        revokedAt: profile.updatedAt,
-      }).catch(() => null) ?? Promise.resolve(null));
-      localRevocationConfirmed = Boolean(applied
-        && applied.deviceId === pairing.deviceId
-        && applied.grantId === pairing.grantId
-        && applied.generation === pairing.generation);
+    try {
+      const profile = await this.updateIfNeeded(current, desired, signal);
+      return { profile, relayPaired: false, localRevocationConfirmed, serverRevocationConfirmed: true };
+    } catch {
+      // Local source transfer is already stopped and the cached profile is kept
+      // as REVOCATION_PENDING until an authenticated reconciliation succeeds.
+      return { profile: current, relayPaired: false, localRevocationConfirmed, serverRevocationConfirmed: false };
     }
-    return { profile, relayPaired: false, localRevocationConfirmed };
+  }
+
+  private async confirmLocalRevoke(pairing: CodeArchiveRelayPairingInfoResponse | null): Promise<boolean> {
+    if (!pairing || pairing.state === "UNPAIRED") return Boolean(pairing);
+    const applied = await (this.bridge.relayConfirmRevoke?.({
+      type: "CODEARCHIVE_RELAY_REVOKE_CONFIRMED",
+      phase: "REQUEST",
+      protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+      deviceId: pairing.deviceId,
+      grantId: pairing.grantId,
+      generation: pairing.generation,
+      revokedAt: new Date(this.now()).toISOString(),
+    }).catch(() => null) ?? Promise.resolve(null));
+    return Boolean(applied
+      && applied.deviceId === pairing.deviceId
+      && applied.grantId === pairing.grantId
+      && applied.generation === pairing.generation);
   }
 
   private async requirePairingInfo(): Promise<CodeArchiveRelayPairingInfoResponse> {

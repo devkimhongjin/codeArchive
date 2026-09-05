@@ -146,6 +146,20 @@ describe("account-bound remembered consent", () => {
     unregister();
   });
 
+  it("keeps the old account stopped when local relay revoke is attempted but server OFF is unavailable", async () => {
+    setDurableAutomationProfile(DURABLE_PROFILE);
+    const localRevokeAttempt = vi.fn(async () => false);
+    const unregister = registerExplicitAutoSyncOffHandler(localRevokeAttempt);
+    const controller = createAccountConsentController({ read: () => false, write: vi.fn() }, vi.fn(), async () => binding);
+
+    await controller.verify(otherId);
+
+    expect(localRevokeAttempt).toHaveBeenCalledOnce();
+    expect(durableAutomationProfile()?.userId).toBe(id);
+    expect(durableLocalSourceStopped()).toBe(true);
+    unregister();
+  });
+
   it("invalidates on other-tab key changes and storage clear, never on unrelated keys", () => {
     const listener = vi.fn();
     const stop = createAutoSyncConsentStore(memoryStorage()).subscribe!(listener);

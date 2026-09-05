@@ -48,6 +48,7 @@ import {
   sanitizeAutomationState,
   type AutomationStateInput,
 } from "./automationControl";
+import { notifyExplicitAutoSyncOff } from "./durableAutomationIntent";
 import type {
   CodeArchiveAutomationControlErrorCode,
   ExtensionToDashboardAutomationMessage,
@@ -110,6 +111,7 @@ export function App({
   const [archiveRefreshAttempt, setArchiveRefreshAttempt] = useState(0);
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const [extensionState, setExtensionState] = useState<ExtensionConnectionState>({ status: "connecting" });
+  const extensionStateRef = useRef<ExtensionConnectionState>({ status: "connecting" });
   const [authAttempt, setAuthAttempt] = useState(0);
   const [authState, setAuthState] = useState<AuthState>({ status: "loading" });
   const [verifiedAuthClient, setVerifiedAuthClient] = useState<DashboardAuthClient | null>(null);
@@ -206,7 +208,12 @@ export function App({
 
   useEffect(
     () => extensionConnection.start(
-      setExtensionState,
+      (state) => {
+        const wasConnected = extensionStateRef.current.status === "connected";
+        extensionStateRef.current = state;
+        setExtensionState(state);
+        if (wasConnected && state.status !== "connected") void notifyExplicitAutoSyncOff();
+      },
       (event) => {
         setExtensionState((current) => current.status === "connected"
           ? {

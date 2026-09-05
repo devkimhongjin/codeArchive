@@ -184,6 +184,26 @@ describe("DurableAutomationController", () => {
     expect(result.profile.sourceTransferEnabled).toBe(false);
     expect(result.profile.githubAutoCommitEnabled).toBe(false);
     expect(result.localRevocationConfirmed).toBe(true);
+    expect(result.serverRevocationConfirmed).toBe(true);
+  });
+
+  it("revokes the cached old grant even when profile discovery expires, retaining a stopped pending profile", async () => {
+    const f = fixture(profile({ githubAutoCommitEnabled: true, githubEnabledAt: "2026-09-04T07:00:00Z" }));
+    vi.mocked(f.bridge.relayPairingInfo).mockResolvedValue({
+      type: "CODEARCHIVE_RELAY_PAIRING_INFO", phase: "INFO", protocolVersion: 1,
+      deviceId: DEVICE, publicKey: "public_key", state: "ACTIVE",
+      grantId: GRANT, generation: 4, expiresAt: "2026-10-04T08:00:00Z",
+    });
+    vi.mocked(f.client.profile).mockRejectedValue(new Error("session expired"));
+    const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);
+
+    const result = await controller.disableAll(undefined, profile({ githubAutoCommitEnabled: true }));
+
+    expect(f.bridge.relayConfirmRevoke).toHaveBeenCalledTimes(1);
+    expect(result.localRevocationConfirmed).toBe(true);
+    expect(result.serverRevocationConfirmed).toBe(false);
+    expect(result.profile.sourceTransferEnabled).toBe(true);
+    expect(f.client.update).not.toHaveBeenCalled();
   });
 
   it("fails closed when the issued grant generation does not match the committed profile", async () => {

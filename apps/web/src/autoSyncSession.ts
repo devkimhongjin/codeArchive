@@ -61,9 +61,9 @@ export function createAutoSyncSessionController(
       const current = durableAutomationProfile();
       if (!current || current.ownershipMode !== "DURABLE_SERVER") return;
       try {
-        const result = await durable.disableAll();
+        const result = await durable.disableAll(undefined, current);
         setDurableAutomationProfile(result.profile, false);
-        return result.localRevocationConfirmed !== false;
+        return result.serverRevocationConfirmed === true && result.localRevocationConfirmed === true;
       } catch {
         // Local Extension state is stopped by the metadata update immediately.
         // Server OFF remains pending and will be reconciled from the next authenticated Dashboard.
@@ -111,7 +111,7 @@ export function createAutoSyncSessionController(
           // back on merely because the Dashboard reopened and remembered consent exists.
           markDurableLocalSourceStopped();
           try {
-            const result = await durable.disableAll();
+            const result = await durable.disableAll(undefined, remembered);
             setDurableAutomationProfile(result.profile, false);
           } catch {
             // Keep the local stop latched. A later authenticated reconciliation may finish

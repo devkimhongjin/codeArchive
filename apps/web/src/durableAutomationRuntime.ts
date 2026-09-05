@@ -40,9 +40,12 @@ export async function disableAllDurableAutomation(): Promise<boolean> {
   const controller = current;
   if (!controller) return false;
   markDurableLocalSourceStopped();
-  const result = await controller.disableAll();
+  const result = await controller.disableAll(undefined, durableAutomationProfile());
   setDurableAutomationProfile(result.profile, false);
-  return !result.profile.sourceTransferEnabled && !result.profile.githubAutoCommitEnabled;
+  return result.serverRevocationConfirmed === true
+    && result.localRevocationConfirmed === true
+    && !result.profile.sourceTransferEnabled
+    && !result.profile.githubAutoCommitEnabled;
 }
 
 /**
