@@ -149,8 +149,6 @@ public class DurableWorkerStore {
                   AND p.ownership_mode='DURABLE_SERVER' AND p.source_transfer_enabled=true
                   AND p.github_auto_commit_enabled=true AND p.generation=a.profile_generation
                   AND p.target_generation=a.target_generation
-                  AND (:device IS NULL OR p.device_id=:device)
-                  AND (:session IS NULL OR p.auth_session_id=:session)
                   AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
                 FOR SHARE OF p,a
                 """, new MapSqlParameterSource("id", claim.id()).addValue("claimToken", claim.claimToken())
