@@ -204,7 +204,10 @@ describe("DurableAutomationController", () => {
     expect(result.localRevocationConfirmed).toBe(true);
     expect(result.serverRevocationConfirmed).toBe(false);
     expect(result.profile.sourceTransferEnabled).toBe(true);
-    expect(f.client.update).not.toHaveBeenCalled();
+    expect(f.client.update).toHaveBeenCalledWith(expect.objectContaining({
+      sourceTransferEnabled: false,
+      githubAutoCommitEnabled: false,
+    }), undefined);
   });
 
   it("fails closed when the issued grant generation does not match the committed profile", async () => {
