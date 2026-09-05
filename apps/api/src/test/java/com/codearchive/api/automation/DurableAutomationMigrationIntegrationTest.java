@@ -57,9 +57,11 @@ class DurableAutomationMigrationIntegrationTest {
 
         assertThat(jdbc.queryForObject("SELECT revoked_at IS NOT NULL FROM relay_grants WHERE id=?",
                 Boolean.class, grant)).isTrue();
-        assertThat(jdbc.queryForMap("SELECT generation,source_transfer_enabled,github_auto_commit_enabled,
-                ownership_mode,target,automatic_transfer_consent,visibility_risk_consent,public_upload_consent,
-                github_enabled_at,auth_session_id FROM automation_profiles WHERE user_id=?", user))
+        assertThat(jdbc.queryForMap("""
+                SELECT generation,source_transfer_enabled,github_auto_commit_enabled,
+                       ownership_mode,target,automatic_transfer_consent,visibility_risk_consent,public_upload_consent,
+                       github_enabled_at,auth_session_id FROM automation_profiles WHERE user_id=?
+                """, user))
                 .containsEntry("generation", 8L)
                 .containsEntry("source_transfer_enabled", false)
                 .containsEntry("github_auto_commit_enabled", false)
