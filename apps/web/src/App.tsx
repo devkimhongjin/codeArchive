@@ -48,7 +48,6 @@ import {
   sanitizeAutomationState,
   type AutomationStateInput,
 } from "./automationControl";
-import { notifyExplicitAutoSyncOff } from "./durableAutomationIntent";
 import type {
   CodeArchiveAutomationControlErrorCode,
   ExtensionToDashboardAutomationMessage,
@@ -212,7 +211,7 @@ export function App({
         const wasConnected = extensionStateRef.current.status === "connected";
         extensionStateRef.current = state;
         setExtensionState(state);
-        if (wasConnected && state.status !== "connected") void notifyExplicitAutoSyncOff();
+        if (wasConnected && state.status !== "connected") void syncController.revokeDurableAutomation();
       },
       (event) => {
         setExtensionState((current) => current.status === "connected"
@@ -228,7 +227,7 @@ export function App({
       },
       (message) => automationMessageRef.current(message),
     ),
-    [extensionConnection, connectionAttempt],
+    [connectionAttempt, extensionConnection, syncController],
   );
 
   useEffect(() => {

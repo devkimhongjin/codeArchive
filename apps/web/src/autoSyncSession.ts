@@ -23,6 +23,7 @@ export interface AutoSyncSessionTransport {
 export interface AutoSyncSessionController {
   setEligibility(eligible: boolean, authContextKey: string): Promise<void>;
   teardown(): Promise<void>;
+  revokeDurableAutomation(): Promise<boolean>;
   hasActiveSession(): boolean;
 }
 
@@ -55,21 +56,24 @@ export function createAutoSyncSessionController(
   const relayTransport = relayCapable(transport) ? transport : null;
   const durable = relayTransport ? new DurableAutomationController(mainApiDurableAutomationClient, relayTransport) : null;
 
+  const revokeDurableAutomation = async (): Promise<boolean> => {
+    const current = durableAutomationProfile();
+    if (!durable || !current || current.ownershipMode !== "DURABLE_SERVER") return false;
+    markDurableLocalSourceStopped();
+    try {
+      const result = await durable.disableAll(undefined, current);
+      setDurableAutomationProfile(result.profile, false);
+      return result.serverRevocationConfirmed === true && result.localRevocationConfirmed === true;
+    } catch {
+      // Local Extension state is stopped by the metadata update immediately.
+      // Server OFF remains pending and will be reconciled from the next authenticated Dashboard.
+      return false;
+    }
+  };
+
   if (durable) {
     registerDurableAutomationController(durable);
-    registerExplicitAutoSyncOffHandler(async () => {
-      const current = durableAutomationProfile();
-      if (!current || current.ownershipMode !== "DURABLE_SERVER") return;
-      try {
-        const result = await durable.disableAll(undefined, current);
-        setDurableAutomationProfile(result.profile, false);
-        return result.serverRevocationConfirmed === true && result.localRevocationConfirmed === true;
-      } catch {
-        // Local Extension state is stopped by the metadata update immediately.
-        // Server OFF remains pending and will be reconciled from the next authenticated Dashboard.
-        return false;
-      }
-    });
+    registerExplicitAutoSyncOffHandler(revokeDurableAutomation);
   }
 
   const clearActive = (expectedSessionId: string) => {
@@ -180,6 +184,7 @@ export function createAutoSyncSessionController(
       desiredAuthContextKey = "";
       return schedule();
     },
+    revokeDurableAutomation,
     hasActiveSession() {
       return activeSessionId !== null;
     },
