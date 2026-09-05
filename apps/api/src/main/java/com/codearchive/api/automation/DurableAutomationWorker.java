@@ -75,7 +75,7 @@ public class DurableAutomationWorker {
             store.markAttempted(claim);
             GitHubAppClient.CommitResult result = executor.executeForWorker(claim.userId(), review,
                     claim.leaseUntil(),
-                    () -> store.requireLive(claim),
+                    () -> store.requireLiveAfterAttempt(claim),
                     () -> {
                         // This is the final server-authoritative fence, after
                         // target inspection/preparation and immediately before

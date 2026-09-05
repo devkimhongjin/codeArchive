@@ -126,37 +126,39 @@ public class DurableWorkerStore {
     }
 
     public void requireLive(Claim claim) {
-        requireLive(claim, "CLAIMED");
+        requireLive(claim, "CLAIMED", false);
+    }
+
+    /** Authorization check after the committed ATTEMPTED fence, without holding provider-preparation locks. */
+    public void requireLiveAfterAttempt(Claim claim) {
+        requireLive(claim, "ATTEMPTED", false);
     }
 
     /** Final authorization check after the committed ATTEMPTED fence and before provider dispatch. */
     public void requireLiveForDispatch(Claim claim) {
-        requireLive(claim, "ATTEMPTED");
+        // This query deliberately runs on the caller's transaction.  The executor
+        // keeps these row locks until prepared.create() returns, fencing revocation
+        // and generation changes across the provider mutation boundary.
+        requireLive(claim, "ATTEMPTED", true);
     }
 
-    private void requireLive(Claim claim, String state) {
-        Boolean liveResult = tx.execute(status -> {
-            if (claim.authSessionId() != null) {
-                db.query("SELECT 1 FROM auth_sessions WHERE id=:session FOR SHARE",
-                        new MapSqlParameterSource("session", claim.authSessionId()), (rs, index) -> 1);
-            }
-            return db.query("""
+    private void requireLive(Claim claim, String state, boolean lockRows) {
+        String lockClause = lockRows ? " FOR SHARE OF p,a,s" : "";
+        boolean live = db.query("""
                 SELECT 1 FROM automation_profiles p
                 JOIN durable_github_attempts a ON a.user_id=p.user_id
                 JOIN auth_sessions s ON s.id=p.auth_session_id
                 WHERE a.id=:id AND a.claim_token=:claimToken AND a.state=:state
                   AND a.lease_until>clock_timestamp() AND p.user_id=:user
+                  AND p.device_id=:device AND p.auth_session_id=:session
                   AND p.ownership_mode='DURABLE_SERVER' AND p.source_transfer_enabled=true
                   AND p.github_auto_commit_enabled=true AND p.generation=a.profile_generation
                   AND p.target_generation=a.target_generation
                   AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
-                FOR SHARE OF p,a
-                """, new MapSqlParameterSource("id", claim.id()).addValue("claimToken", claim.claimToken())
+                """ + lockClause, new MapSqlParameterSource("id", claim.id()).addValue("claimToken", claim.claimToken())
                 .addValue("user", claim.userId()).addValue("state", state)
                 .addValue("device", claim.deviceId()).addValue("session", claim.authSessionId()),
                 (rs, index) -> 1).stream().findFirst().isPresent();
-        });
-        boolean live = Boolean.TRUE.equals(liveResult);
         if (!live) throw new CodeArchiveException(ErrorCode.AUTOMATION_GENERATION_STALE);
     }
 

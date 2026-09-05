@@ -119,8 +119,7 @@ class DurableAutomationPostgresIntegrationTest {
 
         DurableAutomationWorker.Result result = worker.runOnce();
 
-        assertThat(result.status()).withFailMessage("worker error=%s snapshot=%s", result.errorCode(),
-                db.queryForMap("SELECT p.device_id,p.generation,p.auth_session_id,p.source_transfer_enabled,p.github_auto_commit_enabled,a.state,a.profile_generation,a.target_generation FROM automation_profiles p JOIN durable_github_attempts a ON a.user_id=p.user_id WHERE p.user_id=?", user)).isEqualTo("SUCCEEDED");
+        assertThat(result.status()).isEqualTo("SUCCEEDED");
         assertThat(db.queryForObject(
                 "SELECT state FROM durable_github_attempts WHERE user_id=? AND solution_id=?",
                 String.class, user, solution)).isEqualTo("SUCCEEDED");
@@ -287,6 +286,38 @@ class DurableAutomationPostgresIntegrationTest {
                     String.class, user)).isEqualTo("SUCCEEDED");
         } finally {
             releaseProvider.countDown();
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void authSessionExpiryDuringProviderPreparationBlocksCreate() throws Exception {
+        UUID user = user();
+        acceptedSolution(user, 3, Instant.now().minusSeconds(1));
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+        CountDownLatch preparationEntered = new CountDownLatch(1);
+        CountDownLatch releasePreparation = new CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            preparationEntered.countDown();
+            assertThat(releasePreparation.await(10, TimeUnit.SECONDS)).isTrue();
+            return prepared;
+        }).when(github).prepareCommit(any());
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            var workerResult = pool.submit(worker::runOnce);
+            assertThat(preparationEntered.await(10, TimeUnit.SECONDS)).isTrue();
+            db.update("UPDATE auth_sessions SET expires_at=? WHERE id=(SELECT auth_session_id FROM automation_profiles WHERE user_id=?)",
+                    Timestamp.from(Instant.now().minusSeconds(1)), user);
+            releasePreparation.countDown();
+
+            DurableAutomationWorker.Result completed = workerResult.get(10, TimeUnit.SECONDS);
+            assertThat(completed.status()).isEqualTo("REJECTED");
+            verify(prepared, never()).create(anyString(), anyString());
+            assertThat(db.queryForObject("SELECT state FROM durable_github_attempts WHERE user_id=?",
+                    String.class, user)).isEqualTo("REJECTED");
+        } finally {
+            releasePreparation.countDown();
             pool.shutdownNow();
         }
     }
