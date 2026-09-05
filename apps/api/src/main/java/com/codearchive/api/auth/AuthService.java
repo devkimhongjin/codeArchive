@@ -317,6 +317,10 @@ public class AuthService {
             CodeArchiveUser user,
             Instant now
     ) {
+        // OAuth/session replacement is an authorization transition: fence any
+        // prior durable generation before revoking its active sessions.
+        if (relayGrantService != null) relayGrantService.revokeForUser(user.getId());
+        authSessionRepository.revokeActiveForUser(user.getId(), now);
         String rawAccessToken = tokenCodec.generate();
         Instant expiresAt = now.plus(
                 authProperties.getSessionTtl()

@@ -50,7 +50,7 @@ class DurableAutomationProfileServiceTest {
         DurableAutomationProfileStore.Profile updated = new DurableAutomationProfileStore.Profile(
                 principal.userId(), current.deviceId(), 4, true, false, "PAGE_OWNED", 2, null,
                 true, true, true, null, 8, NOW);
-        when(store.update(any(), any(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), anyBoolean(),
+        when(store.update(any(), any(), any(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), anyBoolean(),
                 anyBoolean(), anyBoolean(), anyLong(), any(), anyLong(), any())).thenReturn(updated);
 
         service.update(principal, ORIGIN, new DurableAutomationProfileService.UpdateRequest(
@@ -58,20 +58,20 @@ class DurableAutomationProfileServiceTest {
 
         verify(store, never()).stopPageOwnedRuns(any());
         verify(store, never()).revokeRelayGrants(any(), any());
-        verify(store).update(eq(principal.userId()), eq(current.deviceId()), eq(true), eq(false), eq("PAGE_OWNED"),
+        verify(store).update(eq(principal.userId()), eq(principal.sessionId()), eq(current.deviceId()), eq(true), eq(false), eq("PAGE_OWNED"),
                 eq(2L), isNull(), eq(true), eq(true), eq(true), eq(7L), isNull(), eq(4L), eq(NOW));
     }
 
     @Test
     void switchingToDurableServerStopsPageOwnedRunsBeforePersistingMode() {
-        when(store.update(any(), any(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), anyBoolean(),
+        when(store.update(any(), any(), any(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), anyBoolean(),
                 anyBoolean(), anyBoolean(), anyLong(), any(), anyLong(), any())).thenReturn(current);
 
         service.update(principal, ORIGIN, new DurableAutomationProfileService.UpdateRequest(
                 current.deviceId(), true, false, "DURABLE_SERVER", null, true, true, true, current.version()));
 
         verify(store, never()).stopPageOwnedRuns(any());
-        verify(store).update(eq(principal.userId()), eq(current.deviceId()), eq(true), eq(false), eq("DURABLE_SERVER"),
+        verify(store).update(eq(principal.userId()), eq(principal.sessionId()), eq(current.deviceId()), eq(true), eq(false), eq("DURABLE_SERVER"),
                 eq(2L), isNull(), eq(true), eq(true), eq(true), eq(7L), isNull(), eq(5L), eq(NOW));
     }
 
@@ -81,7 +81,7 @@ class DurableAutomationProfileServiceTest {
                 principal.userId(), current.deviceId(), 5, true, true, "DURABLE_SERVER", 2, TARGET,
                 true, true, true, NOW, 8, NOW);
         when(store.withLock(principal.userId())).thenReturn(durable);
-        when(store.update(any(), any(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), anyBoolean(),
+        when(store.update(any(), any(), any(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), anyBoolean(),
                 anyBoolean(), anyBoolean(), anyLong(), any(), anyLong(), any()))
                 .thenThrow(new CodeArchiveException(ErrorCode.AUTOMATION_OWNERSHIP_CONFLICT));
 
@@ -90,7 +90,7 @@ class DurableAutomationProfileServiceTest {
                 .isInstanceOfSatisfying(CodeArchiveException.class,
                         e -> org.assertj.core.api.Assertions.assertThat(e.getErrorCode())
                                 .isEqualTo(ErrorCode.AUTOMATION_OWNERSHIP_CONFLICT));
-        verify(store).update(any(), any(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), anyBoolean(),
+        verify(store).update(any(), any(), any(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), anyBoolean(),
                 anyBoolean(), anyBoolean(), anyLong(), any(), anyLong(), any());
     }
 
@@ -102,7 +102,7 @@ class DurableAutomationProfileServiceTest {
                         e -> org.assertj.core.api.Assertions.assertThat(e.getErrorCode())
                                 .isEqualTo(ErrorCode.AUTOMATION_GENERATION_STALE));
         verify(store, never()).stopPageOwnedRuns(any());
-        verify(store, never()).update(any(), any(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), anyBoolean(),
+        verify(store, never()).update(any(), any(), any(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), anyBoolean(),
                 anyBoolean(), anyBoolean(), anyLong(), any(), anyLong(), any());
     }
 }

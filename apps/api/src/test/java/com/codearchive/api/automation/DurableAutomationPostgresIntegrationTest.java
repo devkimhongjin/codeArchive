@@ -126,6 +126,18 @@ class DurableAutomationPostgresIntegrationTest {
     }
 
     @Test
+    void expiredBoundAuthSessionBlocksDurableWorkerClaim() {
+        UUID user = user();
+        acceptedSolution(user, 3, Instant.now().minusSeconds(1));
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+        db.update("UPDATE auth_sessions SET expires_at=? WHERE id=(SELECT auth_session_id FROM automation_profiles WHERE user_id=?)",
+                Timestamp.from(Instant.now().minusSeconds(1)), user);
+
+        assertThat(worker.runOnce().status()).isEqualTo("IDLE");
+        verify(github, never()).prepareCommit(any());
+    }
+
+    @Test
     void relayDuplicateWithHistoricalNullProvenanceIsExistingButNotDurableEligible() {
         UUID user = user();
         Instant observed = Instant.now().minusSeconds(1).truncatedTo(ChronoUnit.MICROS);
@@ -256,13 +268,17 @@ class DurableAutomationPostgresIntegrationTest {
     private void profile(UUID user, long generation, long targetGeneration, Target target,
             boolean githubEnabled, String mode) {
         Instant enabled = Instant.now().minusSeconds(2);
+        UUID session = UUID.randomUUID();
+        db.update("INSERT INTO auth_sessions(id,user_id,token_hash,expires_at,created_at) VALUES(?,?,?,?,?)",
+                session, user, UUID.randomUUID().toString().replace("-", "").substring(0, 64),
+                Timestamp.from(Instant.now().plusSeconds(3600)), Timestamp.from(enabled));
         db.update("""
                 INSERT INTO automation_profiles(user_id,device_id,generation,source_transfer_enabled,
                     github_auto_commit_enabled,ownership_mode,target_generation,target,automatic_transfer_consent,
-                    visibility_risk_consent,public_upload_consent,github_enabled_at,version,updated_at)
-                VALUES(?,?,?,?,?,?,?,CAST(? AS jsonb),TRUE,TRUE,TRUE,?,?,?)
+                    visibility_risk_consent,public_upload_consent,github_enabled_at,version,updated_at,auth_session_id)
+                VALUES(?,?,?,?,?,?,?,CAST(? AS jsonb),TRUE,TRUE,TRUE,?,?,?,?)
                 """, user, "device-1234567890", generation, true, githubEnabled, mode, targetGeneration,
-                target == null ? null : jsonValue(target), Timestamp.from(enabled), 0, Timestamp.from(enabled));
+                target == null ? null : jsonValue(target), Timestamp.from(enabled), 0, Timestamp.from(enabled), session);
     }
 
     private UUID attempt(UUID user, UUID solution, long generation, long targetGeneration, String state) {
@@ -293,7 +309,9 @@ class DurableAutomationPostgresIntegrationTest {
 
     private DurableAutomationProfileStore.Profile updateProfile(UUID user, boolean githubEnabled, String mode,
             long generation, Target target, long expectedVersion) {
-        return profiles.update(user, "device-1234567890", true, githubEnabled, mode,
+        UUID session = db.queryForObject("SELECT auth_session_id FROM automation_profiles WHERE user_id=?",
+                UUID.class, user);
+        return profiles.update(user, session, "device-1234567890", true, githubEnabled, mode,
                 target == null ? 0 : 4, target, true, true, true, expectedVersion,
                 githubEnabled ? Instant.now() : null, generation, Instant.now());
     }

@@ -43,14 +43,16 @@ public class DurableWorkerStore {
                 db.getJdbcTemplate().execute("SET LOCAL lock_timeout = '2s'");
                 Candidate candidate = db.query("""
                         SELECT p.user_id,p.generation,p.target_generation,p.target,p.github_enabled_at,
-                               p.version,p.device_id
+                               p.version,p.device_id,p.auth_session_id
                         FROM automation_profiles p
+                        JOIN auth_sessions s ON s.id=p.auth_session_id
                         WHERE p.ownership_mode='DURABLE_SERVER'
                           AND p.source_transfer_enabled=true
                           AND p.github_auto_commit_enabled=true
                           AND p.automatic_transfer_consent=true
                           AND p.visibility_risk_consent=true
                           AND p.target IS NOT NULL AND p.github_enabled_at IS NOT NULL
+                          AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
                         ORDER BY p.updated_at,p.user_id
                         FOR UPDATE SKIP LOCKED
                         """, (rs, index) -> new Candidate(rs.getObject("user_id", UUID.class),
@@ -132,12 +134,15 @@ public class DurableWorkerStore {
 
     private void requireLive(Claim claim, String state) {
         boolean live = db.query("""
-                SELECT 1 FROM automation_profiles p JOIN durable_github_attempts a ON a.user_id=p.user_id
+                SELECT 1 FROM automation_profiles p
+                JOIN durable_github_attempts a ON a.user_id=p.user_id
+                JOIN auth_sessions s ON s.id=p.auth_session_id
                 WHERE a.id=:id AND a.claim_token=:claimToken AND a.state=:state
                   AND a.lease_until>clock_timestamp() AND p.user_id=:user
                   AND p.ownership_mode='DURABLE_SERVER' AND p.source_transfer_enabled=true
                   AND p.github_auto_commit_enabled=true AND p.generation=a.profile_generation
                   AND p.target_generation=a.target_generation
+                  AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
                 FOR SHARE OF p,a
                 """, new MapSqlParameterSource("id", claim.id()).addValue("claimToken", claim.claimToken())
                 .addValue("user", claim.userId()).addValue("state", state), (rs, index) -> 1).stream().findFirst().isPresent();

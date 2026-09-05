@@ -34,12 +34,15 @@ public class DurableAutomationProfileService {
 
     public DurableAutomationProfileStore.Profile get(CodeArchivePrincipal principal, String origin) {
         requireDashboard(principal, origin);
-        return store.find(principal.userId());
+        DurableAutomationProfileStore.Profile guarded =
+                store.ensureSessionBinding(principal.userId(), principal.sessionId(), clock.instant());
+        return guarded == null ? store.find(principal.userId()) : guarded;
     }
 
     public DurableAutomationProfileStore.Profile update(CodeArchivePrincipal principal, String origin, UpdateRequest request) {
         requireDashboard(principal, origin);
         if (request == null || request.expectedVersion() < 0) throw invalid();
+        store.ensureSessionBinding(principal.userId(), principal.sessionId(), clock.instant());
         String device = requiredDevice(request.deviceId());
         String mode = request.ownershipMode();
         if (!"PAGE_OWNED".equals(mode) && !"DURABLE_SERVER".equals(mode)) throw invalid();
@@ -66,7 +69,7 @@ public class DurableAutomationProfileService {
                 ? current.targetGeneration() : current.targetGeneration() + 1;
         Instant enabledAt = request.githubAutoCommitEnabled()
                 ? (current.githubAutoCommitEnabled() && !changed ? current.githubEnabledAt() : clock.instant()) : null;
-        return store.update(principal.userId(), device, request.sourceTransferEnabled(), request.githubAutoCommitEnabled(),
+        return store.update(principal.userId(), principal.sessionId(), device, request.sourceTransferEnabled(), request.githubAutoCommitEnabled(),
                 mode, targetGeneration, request.target(), request.automaticTransferConsent(),
                 request.visibilityRiskConsent(), request.publicUploadConsent(), request.expectedVersion(),
                 enabledAt, generation, clock.instant());
