@@ -173,10 +173,10 @@ class DurableAutomationPostgresIntegrationTest {
         ExecutorService pool = Executors.newFixedThreadPool(2);
         try {
             var first = pool.submit(() -> sessionReplacement.replace(null, null, account,
-                    UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-"),
+                    UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", ""),
                     Instant.now().plusSeconds(3600), Instant.now()));
             var second = pool.submit(() -> sessionReplacement.replace(null, null, account,
-                    UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-"),
+                    UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", ""),
                     Instant.now().plusSeconds(3600), Instant.now()));
             first.get(15, TimeUnit.SECONDS);
             second.get(15, TimeUnit.SECONDS);
