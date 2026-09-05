@@ -1,10 +1,11 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
 import type { DashboardServerSolution } from "./archiveTypes";
 import type { DashboardAuthClient } from "./authClient";
 import type { DashboardExtensionConnection } from "./extensionConnection";
+import { mainApiGitHubClient } from "./githubClient";
 import { createMainApiSolutionDeleteClient, type DashboardSolutionDeleteClient } from "./solutionDeleteClient";
 
 const solution: DashboardServerSolution = {
@@ -32,6 +33,13 @@ function bridge(): DashboardExtensionConnection {
     beginImport: vi.fn(), readPendingPage: vi.fn(), ackImported: vi.fn(),
   };
 }
+
+beforeEach(() => {
+  vi.spyOn(mainApiGitHubClient, "autoStatus").mockResolvedValue({
+    runId: null, state: "OFF", target: null, enabledAt: null, leaseUntil: null, errorCode: null, lastResult: null,
+  });
+});
+afterEach(() => vi.restoreAllMocks());
 
 async function openConfirmation() {
   fireEvent.click(await screen.findByRole("button", { name: "서버에서 삭제" }));

@@ -6,11 +6,32 @@ import {
   secureSyncSessionId,
   type AutoSyncSessionTransport,
 } from "./autoSyncSession";
+import { mainApiDurableAutomationClient, type DurableAutomationProfile } from "./durableAutomationClient";
+import { setDurableAutomationProfile } from "./durableAutomationState";
 
 function transport() {
   const startSyncSession = vi.fn(async () => true);
   const endSyncSession = vi.fn(async () => undefined);
   return { value: { startSyncSession, endSyncSession } satisfies AutoSyncSessionTransport, startSyncSession, endSyncSession };
+}
+
+function durableProfile(): DurableAutomationProfile {
+  return {
+    userId: "550e8400-e29b-41d4-a716-446655440000",
+    deviceId: "device_identity_1234",
+    generation: 4,
+    sourceTransferEnabled: true,
+    githubAutoCommitEnabled: false,
+    ownershipMode: "DURABLE_SERVER",
+    targetGeneration: 2,
+    target: null,
+    automaticTransferConsent: true,
+    visibilityRiskConsent: true,
+    publicUploadConsent: false,
+    githubEnabledAt: null,
+    version: 7,
+    updatedAt: "2026-09-04T07:59:00Z",
+  };
 }
 
 describe("Dashboard auto-sync session controller", () => {
@@ -86,6 +107,48 @@ describe("Dashboard auto-sync session controller", () => {
     await controller.setEligibility(true, "octocat");
 
     expect(bridge.startSyncSession.mock.calls).toEqual([["session-a"], ["session-b"]]);
+  });
+
+  it("does not resume durable transfer after an unconfirmed disconnect revoke until explicit ON rearms it", async () => {
+    setDurableAutomationProfile(durableProfile());
+    const profile = vi.spyOn(mainApiDurableAutomationClient, "profile").mockRejectedValue(new Error("session unavailable"));
+    const update = vi.spyOn(mainApiDurableAutomationClient, "update").mockRejectedValue(new Error("server unavailable"));
+    const bridge: AutoSyncSessionTransport = {
+      startSyncSession: vi.fn(async () => true),
+      endSyncSession: vi.fn(async () => undefined),
+      relayPairingInfo: vi.fn(async () => ({
+        type: "CODEARCHIVE_RELAY_PAIRING_INFO" as const,
+        phase: "INFO" as const,
+        protocolVersion: 1 as const,
+        deviceId: "device_identity_1234",
+        publicKey: "public_key",
+        state: "ACTIVE" as const,
+        grantId: "22222222-2222-4222-8222-222222222222",
+        generation: 4,
+        expiresAt: "2026-10-04T08:00:00Z",
+      })),
+      relaySignChallenge: vi.fn(async () => null),
+      relayProvisionGrant: vi.fn(async () => null),
+      relayConfirmRevoke: vi.fn(async () => null),
+    };
+    try {
+      const controller = createAutoSyncSessionController(bridge, () => "session-a");
+      await expect(controller.revokeDurableAutomation()).resolves.toBe(false);
+      const callsAfterRevoke = profile.mock.calls.length;
+
+      await controller.setEligibility(true, "account-a");
+      expect(profile).toHaveBeenCalledTimes(callsAfterRevoke);
+      expect(bridge.startSyncSession).not.toHaveBeenCalled();
+
+      controller.rearmDurableReconnect();
+      await controller.setEligibility(false, "");
+      await controller.setEligibility(true, "account-a");
+      expect(profile.mock.calls.length).toBeGreaterThan(callsAfterRevoke);
+    } finally {
+      profile.mockRestore();
+      update.mockRestore();
+      setDurableAutomationProfile(null, false);
+    }
   });
 
   it("uses Web Crypto randomUUID through the production generator boundary", () => {

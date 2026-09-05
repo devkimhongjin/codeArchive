@@ -110,6 +110,7 @@ export function App({
   const [archiveRefreshAttempt, setArchiveRefreshAttempt] = useState(0);
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const [extensionState, setExtensionState] = useState<ExtensionConnectionState>({ status: "connecting" });
+  const extensionStateRef = useRef<ExtensionConnectionState>({ status: "connecting" });
   const [authAttempt, setAuthAttempt] = useState(0);
   const [authState, setAuthState] = useState<AuthState>({ status: "loading" });
   const [verifiedAuthClient, setVerifiedAuthClient] = useState<DashboardAuthClient | null>(null);
@@ -155,6 +156,8 @@ export function App({
     ),
     [extensionConnection, syncSessionIdGenerator],
   );
+  const syncControllerRef = useRef(syncController);
+  syncControllerRef.current = syncController;
 
   const pendingDrainController = useMemo(
     () => createPendingDrainController(
@@ -206,7 +209,20 @@ export function App({
 
   useEffect(
     () => extensionConnection.start(
-      setExtensionState,
+      (state) => {
+        const wasConnected = extensionStateRef.current.status === "connected";
+        extensionStateRef.current = state;
+        setExtensionState(state);
+        if (wasConnected && state.status !== "connected") {
+          setAutomationAutoSyncEnabled(false);
+          setGithubAutoCommitEnabled(false);
+          nextAutomationIntent(false);
+          drainEligibilityRef.current.eligible = false;
+          pendingDrainController.invalidate();
+          void syncControllerRef.current.teardown();
+          void syncControllerRef.current.revokeDurableAutomation();
+        }
+      },
       (event) => {
         setExtensionState((current) => current.status === "connected"
           ? {
@@ -221,7 +237,7 @@ export function App({
       },
       (message) => automationMessageRef.current(message),
     ),
-    [extensionConnection, connectionAttempt],
+    [connectionAttempt, extensionConnection],
   );
 
   useEffect(() => {
@@ -473,6 +489,7 @@ export function App({
       automationSafetyStoppedRef.current = false;
       setAutomationSafetyStopped(false);
       setAutomationError(null);
+      syncControllerRef.current.rearmDurableReconnect();
       setAutomationAutoSyncEnabled(true);
       return;
     }

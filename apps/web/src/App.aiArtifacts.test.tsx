@@ -1,10 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
 import type { DashboardServerSolution } from "./archiveTypes";
 import type { DashboardAuthClient } from "./authClient";
 import type { DashboardExtensionConnection } from "./extensionConnection";
+import { mainApiGitHubClient } from "./githubClient";
 import { AI_TASK_LABELS, AiArtifactRequestError, type AiArtifact, type AiTaskType, type DashboardAiArtifactClient } from "./aiArtifactClient";
 
 const solution: DashboardServerSolution = {
@@ -21,6 +22,14 @@ function bridge(): DashboardExtensionConnection {
   return { start(onState) { onState({ status: "unavailable" }); return () => {}; }, startSyncSession: vi.fn(), endSyncSession: vi.fn(), beginImport: vi.fn(), readPendingPage: vi.fn(), ackImported: vi.fn() };
 }
 function client(): DashboardAiArtifactClient { return { list: vi.fn(async () => []), create: vi.fn(async (_id, type) => ({ ...artifact, type })) }; }
+
+beforeEach(() => {
+  vi.spyOn(mainApiGitHubClient, "autoStatus").mockResolvedValue({
+    runId: null, state: "OFF", target: null, enabledAt: null, leaseUntil: null, errorCode: null, lastResult: null,
+  });
+});
+afterEach(() => vi.restoreAllMocks());
+
 async function open(type: AiTaskType = "CODE_REVIEW") {
   fireEvent.click(await screen.findByRole("button", { name: "AI 도우미 열기" }));
   await waitFor(() => expect(screen.getByRole("button", { name: AI_TASK_LABELS[type] })).toBeEnabled());
@@ -71,7 +80,7 @@ describe("Dashboard AI artifacts", () => {
     expect(ai.create).toHaveBeenCalledTimes(1);
     for (const name of ["수정", "서버에서 삭제", "AI 요청 취소"]) expect(screen.getByRole("button", { name })).toBeDisabled();
     await act(async () => finish(artifact));
-    expect(screen.getByRole("button", { name: "수정" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "수정" })).toBeEnabled());
   });
   it.each([new Error("private source/token detail"), new AiArtifactRequestError("rate_limit")])("requires a refresh after failed generation without automatic retry %#", async (error) => {
     const ai = client(); ai.create = vi.fn().mockRejectedValue(error);
