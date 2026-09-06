@@ -6,6 +6,7 @@ import {
 } from "../adapters/swea/sweaSubmissionResult";
 
 type ObserveSubmissionResult = typeof observeSweaSubmissionResult;
+type ObservationHandler = Parameters<ObserveSubmissionResult>[1];
 
 export interface SweaSubmissionResultStore {
   getState(): SweaSubmissionResultState;
@@ -45,7 +46,7 @@ export function createSweaSubmissionResultStore(
   document: Document,
   url: URL,
   observe: ObserveSubmissionResult = observeSweaSubmissionResult,
-  onObservation?: (state: Extract<SweaSubmissionResultState, { status: "observed" }>) => void,
+  onObservation?: ObservationHandler,
   storage: Storage | undefined = typeof sessionStorage === "undefined" ? undefined : sessionStorage,
 ): SweaSubmissionResultStore {
   const key = getSweaPageKind(url) === "solving" ? cacheKey(document, url) : null;
@@ -54,7 +55,7 @@ export function createSweaSubmissionResultStore(
     ? observe(document, (observation) => {
         state = observation;
         writeCachedState(storage, key, observation);
-        onObservation?.(observation);
+        return onObservation?.(observation);
       })
     : () => undefined;
 

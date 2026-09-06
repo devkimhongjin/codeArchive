@@ -30,10 +30,12 @@ const problemContestIdPromise: Promise<string | null> = pageKind === "solving"
   : Promise.resolve(null);
 
 const submissionResultStore = createSweaSubmissionResultStore(document, initialUrl, undefined, async (observation) => {
-  if (observation.submission.result !== "ACCEPTED") return;
+  if (observation.submission.result !== "ACCEPTED") return true;
   autoSave = { status: "saving", observedAt: observation.submission.observedAt };
   const problemContestId = await problemContestIdPromise;
   autoSave = await captureAccepted(document, new URL(window.location.href), observation, (message) => chrome.runtime.sendMessage(message) as Promise<any>, undefined, undefined, undefined, problemContestId);
+  return autoSave.status !== "failed"
+    || !["metadata_untrusted", "editor_sync_failed", "editor_incomplete", "empty_code"].includes(autoSave.reason);
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
