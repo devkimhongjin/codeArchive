@@ -181,7 +181,6 @@ export function App({
   );
 
   const consentController = useMemo(() => createAccountConsentController(consentStore, (enabled) => {
-    automationOffLatchedRef.current = !enabled;
     if (!enabled) {
       drainEligibilityRef.current.eligible = false;
       pendingDrainController.invalidate();
@@ -195,11 +194,13 @@ export function App({
     setAutomationAutoSyncEnabled(false);
     if (enabled) setAutomationError(null);
   }, undefined, () => {
+    automationOffLatchedRef.current = true;
     setAuthState({ status: "loading" });
     setAuthAttempt((value) => value + 1);
   }), [consentStore, pendingDrainController, syncController]);
 
   function expireSession() {
+    automationOffLatchedRef.current = true;
     consentController.reset(true);
     setGithubTargetConfigured(false);
     setGithubAutoCommitEnabled(false);
@@ -219,6 +220,7 @@ export function App({
         extensionStateRef.current = state;
         setExtensionState(state);
         if (wasConnected && state.status !== "connected") {
+          automationOffLatchedRef.current = true;
           setAutomationAutoSyncEnabled(false);
           setGithubAutoCommitEnabled(false);
           nextAutomationIntent(false);
@@ -529,10 +531,9 @@ export function App({
 
   useEffect(() => {
     if (!autoSyncActivationReady || automationAutoSyncEnabled) return;
-    // Re-arm only after the exact-origin authenticated connection is active.
-    // This restores remembered Dashboard consent after a transient Port
-    // reconnect without overriding an explicit AUTO_SYNC OFF latch.
-    syncControllerRef.current.rearmDurableReconnect();
+    // Remembered Dashboard consent may establish the first eligible session,
+    // but it must not clear a disconnect/revocation fence. Only an explicit
+    // eligible Extension AUTO_SYNC ON below may re-arm that durable state.
     setAutomationAutoSyncEnabled(true);
   }, [autoSyncActivationReady, automationAutoSyncEnabled]);
 
@@ -632,6 +633,7 @@ export function App({
     }
 
     setConsentPending(true);
+    automationOffLatchedRef.current = true;
     invalidateManualSync();
     await consentController.choose(false);
     await syncController.teardown();
@@ -640,6 +642,7 @@ export function App({
 
   async function logout() {
     accountRef.current = "";
+    automationOffLatchedRef.current = true;
     const manualCleanup = invalidateManualSync();
     drainEligibilityRef.current.eligible = false;
     setLogoutPending(true);

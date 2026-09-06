@@ -1,9 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import type { DashboardAuthClient, SessionDiscovery } from "./authClient";
+import { mainApiDurableAutomationClient, type DurableAutomationProfile } from "./durableAutomationClient";
+import { setDurableAutomationProfile } from "./durableAutomationState";
 import type { DashboardExtensionConnection, ExtensionConnectionState } from "./extensionConnection";
-import type { ExtensionToDashboardAutomationMessage } from "../../../packages/shared-types/src";
+import type { CodeArchiveRelayPairingInfoResponse, ExtensionToDashboardAutomationMessage } from "../../../packages/shared-types/src";
 import { githubTestClient } from "./githubTestFixtures";
 
 const ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -12,6 +14,11 @@ const session: SessionDiscovery = { status: "authenticated", user: { id: ID, git
 function auth(): DashboardAuthClient {
   return { discoverSession: async () => session, login: vi.fn(), logout: vi.fn(async (before) => { await before?.(); return true; }) };
 }
+
+afterEach(() => {
+  setDurableAutomationProfile(null);
+  vi.restoreAllMocks();
+});
 
 function bridge() {
   let control: ((message: ExtensionToDashboardAutomationMessage) => void) | undefined;
@@ -32,15 +39,13 @@ function bridge() {
 }
 
 describe("Dashboard automation authority", () => {
-  it("reactivates remembered AUTO_SYNC only after an eligible Extension reconnect", async () => {
+  it("does not reactivate remembered AUTO_SYNC after a plain Extension reconnect", async () => {
     let setState: ((state: ExtensionConnectionState) => void) | undefined;
-    let sendAutomation: ((message: ExtensionToDashboardAutomationMessage) => void) | undefined;
     const published: unknown[] = [];
     const startSyncSession = vi.fn(async () => true);
     const extensionConnection: DashboardExtensionConnection = {
-      start(onState, _onCaptureChanged, onAutomationMessage) {
+      start(onState, _onCaptureChanged, _onAutomationMessage) {
         setState = onState;
-        sendAutomation = onAutomationMessage;
         onState({ status: "connected", summary: { protocolVersion: 1, pendingCount: 1, allCount: 1, revision: 1 } });
         return () => undefined;
       },
@@ -64,14 +69,74 @@ describe("Dashboard automation authority", () => {
     await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: false, connectionAvailable: false }));
 
     await act(async () => setState?.({ status: "connected", summary: { protocolVersion: 1, pendingCount: 1, allCount: 1, revision: 2 } }));
-    await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: true, connectionAvailable: true }));
-    expect(startSyncSession).toHaveBeenCalledTimes(2);
-
-    await act(async () => sendAutomation?.({ type: "CODEARCHIVE_AUTOMATION_SET_REQUEST", protocolVersion: 1, automation: "AUTO_SYNC", enabled: false }));
-    await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: false }));
-    await act(async () => setState?.({ status: "unavailable" }));
-    await act(async () => setState?.({ status: "connected", summary: { protocolVersion: 1, pendingCount: 1, allCount: 1, revision: 3 } }));
     await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: false, connectionAvailable: true }));
+    expect(startSyncSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps AUTO_SYNC stopped after an unconfirmed durable revoke without a fresh Extension ON", async () => {
+    const deviceId = "device_identity_1234";
+    const profile: DurableAutomationProfile = {
+      userId: ID,
+      deviceId,
+      generation: 4,
+      sourceTransferEnabled: true,
+      githubAutoCommitEnabled: false,
+      ownershipMode: "DURABLE_SERVER",
+      targetGeneration: 0,
+      target: null,
+      automaticTransferConsent: true,
+      visibilityRiskConsent: false,
+      publicUploadConsent: false,
+      githubEnabledAt: null,
+      version: 7,
+      updatedAt: "2026-09-06T00:00:00.000Z",
+    };
+    const pairing: CodeArchiveRelayPairingInfoResponse = {
+      type: "CODEARCHIVE_RELAY_PAIRING_INFO",
+      phase: "INFO",
+      protocolVersion: 1,
+      deviceId,
+      publicKey: "public-key",
+      state: "ACTIVE",
+      grantId: "grant-identity-1234",
+      generation: profile.generation,
+      expiresAt: "2099-09-06T00:00:00.000Z",
+    };
+    vi.spyOn(mainApiDurableAutomationClient, "profile").mockResolvedValue(profile);
+    vi.spyOn(mainApiDurableAutomationClient, "update").mockRejectedValue(new Error("revocation unavailable"));
+    setDurableAutomationProfile(profile);
+
+    let setState: ((state: ExtensionConnectionState) => void) | undefined;
+    const published: unknown[] = [];
+    const extensionConnection: DashboardExtensionConnection = {
+      start(onState, _onCaptureChanged, _onAutomationMessage) {
+        setState = onState;
+        onState({ status: "connected", summary: { protocolVersion: 1, pendingCount: 0, allCount: 0, revision: 1 } });
+        return () => undefined;
+      },
+      publishAutomationState(state) { published.push(state); return true; },
+      startSyncSession: vi.fn(async () => true),
+      endSyncSession: vi.fn(async () => undefined),
+      relayPairingInfo: vi.fn(async () => pairing),
+      relaySignChallenge: vi.fn(async () => null),
+      relayProvisionGrant: vi.fn(async () => null),
+      relayConfirmRevoke: vi.fn(async () => null),
+    };
+
+    render(<App
+      dataSource={{ listSolutions: async () => [] }}
+      authClient={auth()}
+      extensionConnection={extensionConnection}
+      consentStore={{ read: () => true, write: vi.fn() }}
+      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+    />);
+
+    await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: true, connectionAvailable: true }));
+    await act(async () => setState?.({ status: "unavailable" }));
+    await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: false, connectionAvailable: false }));
+    await act(async () => setState?.({ status: "connected", summary: { protocolVersion: 1, pendingCount: 0, allCount: 0, revision: 2 } }));
+    await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: false, connectionAvailable: true }));
+    expect(extensionConnection.relayConfirmRevoke).toHaveBeenCalled();
   });
 
   it("publishes fresh sanitized automation state after a manual reconnect", async () => {
