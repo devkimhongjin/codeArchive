@@ -56,6 +56,36 @@ describe("AutomationControlController", () => {
     await expect(pending).resolves.toEqual({ accepted: true, state: nextState, forwarded: true });
   });
 
+  it("does not accept a cached opposite state as the result of a new SET", async () => {
+    vi.useFakeTimers();
+    const controller = new AutomationControlController();
+    const port = new TestPort();
+    controller.connect(port);
+    controller.receive(port, stateUpdate(connectedState));
+
+    const pending = controller.setAutomation("AUTO_SYNC", false);
+    // A stale publication that still says ON must not complete the OFF command.
+    controller.receive(port, stateUpdate(connectedState));
+    await vi.advanceTimersByTimeAsync(749);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toMatchObject({ accepted: false, forwarded: true });
+    expect(controller.getState()).toEqual(connectedState);
+    vi.useRealTimers();
+  });
+
+  it("requires a fresh authoritative publication before accepting an ON command", async () => {
+    const controller = new AutomationControlController();
+    const port = new TestPort();
+    controller.connect(port);
+    controller.receive(port, stateUpdate({ ...connectedState, autoSyncEnabled: false }));
+
+    const pending = controller.setAutomation("AUTO_SYNC", true);
+    const nextState = { ...connectedState, autoSyncEnabled: true };
+    controller.receive(port, stateUpdate(nextState));
+    await expect(pending).resolves.toEqual({ accepted: true, state: nextState, forwarded: true });
+  });
+
   it("sends the safety stop and invalidates the source session when a second port connects", () => {
     const onSafetyStop = vi.fn();
     const controller = new AutomationControlController(onSafetyStop);

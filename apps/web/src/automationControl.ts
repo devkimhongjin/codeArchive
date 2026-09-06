@@ -4,7 +4,6 @@ import {
   type CodeArchiveAutomationState,
   type ExtensionToDashboardAutomationMessage,
 } from "../../../packages/shared-types/src";
-import { handleExplicitDurableAutomationOff } from "./durableAutomationRuntime";
 import { durableAutomationProfile, durableSourceTransferEffective } from "./durableAutomationState";
 
 const AUTOMATION_KINDS = ["AUTO_SYNC", "GITHUB_AUTO_COMMIT"] as const;
@@ -47,9 +46,6 @@ export function parseAutomationMessage(value: unknown): ExtensionToDashboardAuto
       && (AUTOMATION_KINDS as readonly string[]).includes(value.automation as string)
       && typeof value.enabled === "boolean";
     if (!valid) return null;
-    if (value.enabled === false) {
-      void handleExplicitDurableAutomationOff(value.automation as "AUTO_SYNC" | "GITHUB_AUTO_COMMIT", false);
-    }
     return value as unknown as ExtensionToDashboardAutomationMessage;
   }
   if (value.type === "CODEARCHIVE_AUTOMATION_SAFETY_STOP") {
