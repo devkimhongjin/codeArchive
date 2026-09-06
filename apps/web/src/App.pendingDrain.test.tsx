@@ -239,6 +239,42 @@ describe("Dashboard automatic pending catch-up", () => {
     expect(bridge.beginImport).toHaveBeenCalledTimes(1);
   });
 
+  it("explains the reconnect re-enable fence and drains after an explicit Extension ON", async () => {
+    const bridge = pendingConnection(1, [pendingRecord]);
+    render(<App
+      dataSource={{ listSolutions: async () => [] }}
+      extensionConnection={bridge.connection}
+      authClient={authenticated}
+      consentStore={consent(true)}
+      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      syncSessionIdGenerator={() => "session-a"}
+      importBatchIdGenerator={() => "batch-a"}
+      pendingDrainApiClient={{ upsert: vi.fn(async () => ["one"]) }}
+    />);
+
+    await screen.findByText("Octo Cat");
+    await waitFor(() => expect(bridge.beginImport).toHaveBeenCalledTimes(1));
+
+    await act(async () => bridge.setState({ status: "unavailable" }));
+    await waitFor(() => expect(screen.getByText("사용자 동의됨 · Extension 연결 후 자동 전송")).toBeInTheDocument());
+
+    await act(async () => bridge.setState({
+      status: "connected",
+      summary: { protocolVersion: 1, pendingCount: 1, allCount: 1, revision: 2 },
+    }));
+    await waitFor(() => expect(screen.getByText("동의 저장됨 · Extension에서 자동 동기화 ON을 눌러 자동 전송을 재개하세요")).toBeInTheDocument());
+    expect(bridge.beginImport).toHaveBeenCalledTimes(1);
+
+    await act(async () => bridge.sendAutomation({
+      type: "CODEARCHIVE_AUTOMATION_SET_REQUEST",
+      protocolVersion: 1,
+      automation: "AUTO_SYNC",
+      enabled: true,
+    }));
+    await waitFor(() => expect(bridge.beginImport).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("자동 동기화 활성 · pending 풀이 자동 전송됩니다")).toBeInTheDocument();
+  });
+
   it("signed-out stored consent never requests source", async () => {
     const bridge = pendingConnection(2);
     render(<App

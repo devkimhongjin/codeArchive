@@ -319,6 +319,20 @@ export function App({
                     ? "자동 동기화가 OFF 상태입니다. 자동 동기화를 먼저 켠 뒤 GitHub 자동 커밋을 활성화하세요."
                     : null;
 
+  const autoSyncConsentStatus = !autoSyncConsent
+    ? "꺼짐 · 직접 켜야 시작됨"
+    : !connected
+      ? "사용자 동의됨 · Extension 연결 후 자동 전송"
+      : !online
+        ? "사용자 동의됨 · 온라인 복귀 후 자동 전송"
+        : automationSafetyStopped
+          ? "안전 중지됨 · 다른 Dashboard 탭을 닫고 Extension에서 다시 켜야 합니다"
+          : automationOffLatchedRef.current || !automationAutoSyncEnabled
+            ? "동의 저장됨 · Extension에서 자동 동기화 ON을 눌러 자동 전송을 재개하세요"
+            : effectiveAutoSyncEnabled
+              ? "자동 동기화 활성 · pending 풀이 자동 전송됩니다"
+              : "사용자 동의됨 · 연결 조건 충족 시 자동 전송";
+
   drainEligibilityRef.current = { eligible, activeSyncSessionId };
   if (manualSyncSessionRef.current) {
     manualSyncSessionRef.current.eligible = authenticated
@@ -705,7 +719,7 @@ export function App({
                   />
                   <span>
                     <strong>자동 동기화</strong>
-                    <small>{autoSyncConsent ? "사용자 동의됨 · 연결 조건 충족 시 자동 전송" : "꺼짐 · 직접 켜야 시작됨"}</small>
+                    <small>{autoSyncConsentStatus}</small>
                     <small>이 브라우저에서 같은 계정으로 다시 접속하면 동의를 기억합니다. 로그아웃·계정 변경·끄기 시 해제됩니다.</small>
                   </span>
                 </label>
