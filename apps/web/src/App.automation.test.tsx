@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import type { DashboardAuthClient, SessionDiscovery } from "./authClient";
-import type { DashboardExtensionConnection } from "./extensionConnection";
+import type { DashboardExtensionConnection, ExtensionConnectionState } from "./extensionConnection";
 import type { ExtensionToDashboardAutomationMessage } from "../../../packages/shared-types/src";
 import { githubTestClient } from "./githubTestFixtures";
 
@@ -32,6 +32,48 @@ function bridge() {
 }
 
 describe("Dashboard automation authority", () => {
+  it("reactivates remembered AUTO_SYNC only after an eligible Extension reconnect", async () => {
+    let setState: ((state: ExtensionConnectionState) => void) | undefined;
+    let sendAutomation: ((message: ExtensionToDashboardAutomationMessage) => void) | undefined;
+    const published: unknown[] = [];
+    const startSyncSession = vi.fn(async () => true);
+    const extensionConnection: DashboardExtensionConnection = {
+      start(onState, _onCaptureChanged, onAutomationMessage) {
+        setState = onState;
+        sendAutomation = onAutomationMessage;
+        onState({ status: "connected", summary: { protocolVersion: 1, pendingCount: 1, allCount: 1, revision: 1 } });
+        return () => undefined;
+      },
+      publishAutomationState(state) { published.push(state); return true; },
+      startSyncSession,
+      endSyncSession: vi.fn(async () => undefined),
+    };
+
+    render(<App
+      dataSource={{ listSolutions: async () => [] }}
+      authClient={auth()}
+      extensionConnection={extensionConnection}
+      consentStore={{ read: () => true, write: vi.fn() }}
+      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+    />);
+
+    await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: true, connectionAvailable: true }));
+    expect(startSyncSession).toHaveBeenCalledTimes(1);
+
+    await act(async () => setState?.({ status: "unavailable" }));
+    await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: false, connectionAvailable: false }));
+
+    await act(async () => setState?.({ status: "connected", summary: { protocolVersion: 1, pendingCount: 1, allCount: 1, revision: 2 } }));
+    await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: true, connectionAvailable: true }));
+    expect(startSyncSession).toHaveBeenCalledTimes(2);
+
+    await act(async () => sendAutomation?.({ type: "CODEARCHIVE_AUTOMATION_SET_REQUEST", protocolVersion: 1, automation: "AUTO_SYNC", enabled: false }));
+    await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: false }));
+    await act(async () => setState?.({ status: "unavailable" }));
+    await act(async () => setState?.({ status: "connected", summary: { protocolVersion: 1, pendingCount: 1, allCount: 1, revision: 3 } }));
+    await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: false, connectionAvailable: true }));
+  });
+
   it("publishes fresh sanitized automation state after a manual reconnect", async () => {
     let attempts = 0;
     const published: unknown[] = [];
