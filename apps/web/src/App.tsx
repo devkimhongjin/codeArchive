@@ -48,7 +48,6 @@ import {
   sanitizeAutomationState,
   type AutomationStateInput,
 } from "./automationControl";
-import { markDurableLocalSourceStopped } from "./durableAutomationState";
 import type {
   CodeArchiveAutomationControlErrorCode,
   ExtensionToDashboardAutomationMessage,
@@ -189,7 +188,7 @@ export function App({
       void syncController.teardown();
       setGithubAutoCommitEnabled(false);
       automationNonceRef.current += 1;
-      setAutomationIntent({ enabled: false, nonce: automationNonceRef.current, durableDisable: true });
+      setAutomationIntent({ enabled: false, nonce: automationNonceRef.current });
     }
     setAutoSyncConsent(enabled);
     setAutomationAutoSyncEnabled(false);
@@ -198,6 +197,8 @@ export function App({
     automationOffLatchedRef.current = true;
     setAuthState({ status: "loading" });
     setAuthAttempt((value) => value + 1);
+  }, () => {
+    nextAutomationIntent(false, true);
   }), [consentStore, pendingDrainController, syncController]);
 
   function expireSession() {
@@ -222,7 +223,6 @@ export function App({
         setExtensionState(state);
         if (wasConnected && state.status !== "connected") {
           automationOffLatchedRef.current = true;
-          markDurableLocalSourceStopped();
           setAutomationAutoSyncEnabled(false);
           setGithubAutoCommitEnabled(false);
           drainEligibilityRef.current.eligible = false;
@@ -347,7 +347,6 @@ export function App({
 
   function invalidateAutomation(clearConsent: boolean) {
     automationOffLatchedRef.current = true;
-    markDurableLocalSourceStopped();
     setAutomationAutoSyncEnabled(false);
     setGithubAutoCommitEnabled(false);
     drainEligibilityRef.current.eligible = false;

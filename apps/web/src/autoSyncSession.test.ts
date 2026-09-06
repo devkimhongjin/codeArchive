@@ -109,6 +109,33 @@ describe("Dashboard auto-sync session controller", () => {
     expect(bridge.startSyncSession.mock.calls).toEqual([["session-a"], ["session-b"]]);
   });
 
+  it("teardown preserves an active durable relay route without revoke or profile mutation", async () => {
+    setDurableAutomationProfile(durableProfile());
+    const profile = vi.spyOn(mainApiDurableAutomationClient, "profile");
+    const update = vi.spyOn(mainApiDurableAutomationClient, "update");
+    const relayConfirmRevoke = vi.fn(async () => null);
+    const bridge: AutoSyncSessionTransport = {
+      startSyncSession: vi.fn(async () => true),
+      endSyncSession: vi.fn(async () => undefined),
+      relayPairingInfo: vi.fn(async () => null),
+      relaySignChallenge: vi.fn(async () => null),
+      relayProvisionGrant: vi.fn(async () => null),
+      relayConfirmRevoke,
+    };
+    try {
+      const controller = createAutoSyncSessionController(bridge, () => "session-a");
+      await controller.teardown();
+
+      expect(profile).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+      expect(relayConfirmRevoke).not.toHaveBeenCalled();
+    } finally {
+      profile.mockRestore();
+      update.mockRestore();
+      setDurableAutomationProfile(null, false);
+    }
+  });
+
   it("does not resume durable transfer after an unconfirmed disconnect revoke until explicit ON rearms it", async () => {
     setDurableAutomationProfile(durableProfile());
     const profile = vi.spyOn(mainApiDurableAutomationClient, "profile").mockRejectedValue(new Error("session unavailable"));

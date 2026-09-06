@@ -133,9 +133,9 @@ describe("Dashboard automation authority", () => {
 
     await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: true, connectionAvailable: true }));
     await act(async () => setState?.({ status: "unavailable" }));
-    await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: false, connectionAvailable: false }));
+    await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: true, connectionAvailable: false }));
     await act(async () => setState?.({ status: "connected", summary: { protocolVersion: 1, pendingCount: 0, allCount: 0, revision: 2 } }));
-    await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: false, connectionAvailable: true }));
+    await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: true, connectionAvailable: true }));
     expect(extensionConnection.relayConfirmRevoke).not.toHaveBeenCalled();
   });
 
