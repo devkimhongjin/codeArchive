@@ -45,6 +45,21 @@ describe("background capture validation", () => {
     expect(valid({ ...capture, platform: "OTHER" })).toBe(false);
   });
 
+  it("accepts only normalized SWEA performance update metrics", async () => {
+    setupChrome();
+    const { validPerformanceUpdate } = await import("./background");
+    expect(validPerformanceUpdate({
+      solutionId: "swea-auto:capture-1",
+      expectedSavedAt: "2026-08-25T06:00:00Z",
+      performance: { executionTime: "123 ms", memoryUsage: "12,345 kb" },
+    })).toBe(true);
+    expect(validPerformanceUpdate({
+      solutionId: "swea-auto:capture-1",
+      expectedSavedAt: "2026-08-25T06:00:00Z",
+      performance: { executionTime: "123.0 ms", memoryUsage: "12,345 kb" },
+    })).toBe(false);
+  });
+
   it("completes the local commit before bridge notification or legacy sync", async () => {
     setupChrome();
     const { saveThenSyncAcceptedCapture } = await import("./background");

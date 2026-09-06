@@ -1,6 +1,6 @@
 import { createSweaSubmissionResultStore } from "./sweaSubmissionResultStore";
 import { getSweaPageContext } from "./sweaPageContext";
-import { captureAccepted, type SweaAutoSaveState } from "../sweaAutoCapture";
+import { captureAccepted, UPDATE_SWEA_CAPTURE_PERFORMANCE, type SweaAutoSaveState } from "../sweaAutoCapture";
 import { GET_PAGE_CONTEXT, PAGE_CONTEXT, type GetPageContextMessage, type PageContextMessage } from "./messages";
 import { getSweaPageKind } from "../adapters/swea/sweaAdapter";
 import { detailProblemContestId, SWEA_CONSUME_PROBLEM_CONTEST_ID, SWEA_STORE_PROBLEM_CONTEST_ID } from "../sweaProblemIdentityHandoff";
@@ -33,7 +33,22 @@ const submissionResultStore = createSweaSubmissionResultStore(document, initialU
   if (observation.submission.result !== "ACCEPTED") return true;
   autoSave = { status: "saving", observedAt: observation.submission.observedAt };
   const problemContestId = await problemContestIdPromise;
-  autoSave = await captureAccepted(document, new URL(window.location.href), observation, (message) => chrome.runtime.sendMessage(message) as Promise<any>, undefined, undefined, undefined, problemContestId);
+  autoSave = await captureAccepted(
+    document,
+    new URL(window.location.href),
+    observation,
+    (message) => chrome.runtime.sendMessage(message) as Promise<any>,
+    undefined,
+    undefined,
+    undefined,
+    problemContestId,
+    (solutionId, savedAt, performance) => chrome.runtime.sendMessage({
+      type: UPDATE_SWEA_CAPTURE_PERFORMANCE,
+      solutionId,
+      expectedSavedAt: savedAt,
+      performance,
+    }),
+  );
   return autoSave.status !== "failed"
     || !["metadata_untrusted", "editor_sync_failed", "editor_incomplete", "empty_code"].includes(autoSave.reason);
 });
