@@ -3,7 +3,7 @@ import type {
   CaptureSyncScope,
   ProgrammingLanguage,
 } from "../../../packages/shared-types/src";
-import type { NewSolutionInput, SolutionRecord, SolutionSyncMetadata, RelayCaptureProvenance } from "./solution";
+import type { NewSolutionInput, SolutionRecord, SolutionSyncMetadata, RelayCaptureProvenance, SubmissionPerformance } from "./solution";
 import type { SaveResponse, SweaAcceptedCapture } from "./sweaAutoCapture";
 import { captureSource, type AcceptedCapture } from "./acceptedCapture";
 
@@ -282,6 +282,36 @@ export async function saveAcceptedCapture(capture: AcceptedCapture): Promise<Sav
     await incrementRevision(transaction);
     await done;
     return { status: "saved", solutionId: id, savedAt: now };
+  } finally { db.close(); }
+}
+
+export function canEnrichAcceptedCapturePerformance(record: SolutionRecord, expectedSavedAt: string): boolean {
+  return isAcceptedCaptureRecord(record)
+    && record.platform === "SWEA"
+    && record.createdAt === expectedSavedAt
+    && record.updatedAt === expectedSavedAt
+    && !record.performance;
+}
+
+export async function enrichAcceptedCapturePerformance(
+  id: string,
+  expectedSavedAt: string,
+  performance: SubmissionPerformance,
+): Promise<"updated" | "skipped"> {
+  const db = await openDatabase();
+  try {
+    const transaction = db.transaction([STORE_NAME, META_STORE_NAME], "readwrite");
+    const done = transactionDone(transaction);
+    const store = transaction.objectStore(STORE_NAME);
+    const existing = await requestToPromise(store.get(id) as IDBRequest<SolutionRecord | undefined>);
+    if (!existing || !canEnrichAcceptedCapturePerformance(existing, expectedSavedAt)) {
+      await done;
+      return "skipped";
+    }
+    store.put({ ...existing, performance, updatedAt: new Date().toISOString() });
+    await incrementRevision(transaction);
+    await done;
+    return "updated";
   } finally { db.close(); }
 }
 

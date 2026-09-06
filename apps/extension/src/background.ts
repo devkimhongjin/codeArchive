@@ -4,9 +4,10 @@ import type { CodeArchiveAuthService } from "./authSession";
 import { backgroundCodeArchiveAuthService } from "./backgroundAuthRuntime";
 import { backgroundDashboardCaptureBridge, notifyCaptureCommitted, registerExternalDashboardBridge, type ExternalDashboardPort } from "./dashboardCaptureBridge";
 import { CODEARCHIVE_DASHBOARD_ORIGIN } from "./dashboardConfig";
-import { SAVE_SWEA_ACCEPTED, type SaveResponse } from "./sweaAutoCapture";
-import { saveAcceptedCapture } from "./solutionRepository";
+import { SAVE_SWEA_ACCEPTED, UPDATE_SWEA_CAPTURE_PERFORMANCE, type SaveResponse } from "./sweaAutoCapture";
+import { enrichAcceptedCapturePerformance, saveAcceptedCapture } from "./solutionRepository";
 import { isAutoCapturePlatform, SAVE_ACCEPTED_CAPTURE, type AcceptedCapture } from "./acceptedCapture";
+import type { SubmissionPerformance } from "./solution";
 import { syncSolutionRecord, type SolutionSyncDependencies } from "./solutionSync";
 import { createProblemContestIdHandoffStore, SWEA_CONSUME_PROBLEM_CONTEST_ID, SWEA_STORE_PROBLEM_CONTEST_ID } from "./sweaProblemIdentityHandoff";
 import { SWEA_PROBLEM_DETAIL_PATH, SWEA_SOLVING_PATH } from "./adapters/swea/sweaSelectors";
@@ -27,6 +28,22 @@ export function valid(value: unknown): value is AcceptedCapture {
   if (!value || typeof value !== "object") return false;
   const c = value as Record<string, unknown>;
   return isAutoCapturePlatform(c.platform) && c.result === "ACCEPTED" && ["captureId", "problemNumber", "title", "language", "code", "observedAt", "solvedAt"].every((k) => typeof c[k] === "string" && (c[k] as string).trim()) && (c.problemUrl === undefined || typeof c.problemUrl === "string");
+}
+
+export function validPerformanceUpdate(value: unknown): value is { solutionId: string; expectedSavedAt: string; performance: SubmissionPerformance } {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  const performance = candidate.performance;
+  if (!performance || typeof performance !== "object") return false;
+  const metrics = performance as Record<string, unknown>;
+  return typeof candidate.solutionId === "string"
+    && /^swea-auto:.+/.test(candidate.solutionId)
+    && typeof candidate.expectedSavedAt === "string"
+    && Number.isFinite(Date.parse(candidate.expectedSavedAt))
+    && typeof metrics.executionTime === "string"
+    && /^(0|[1-9]\d*) ms$/.test(metrics.executionTime)
+    && typeof metrics.memoryUsage === "string"
+    && /^(0|[1-9]\d{0,2}(?:,\d{3})*) kb$/.test(metrics.memoryUsage);
 }
 
 interface CaptureSyncDependencies {
@@ -120,6 +137,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (request.type === POPUP_RELAY_LOCAL_STOP) {
     backgroundRelayRuntime.stopLocally().then(sendResponse).catch(() => sendResponse({ state: "UNPAIRED", autoSyncEnabled: false }));
+    return true;
+  }
+
+  if (request.type === UPDATE_SWEA_CAPTURE_PERFORMANCE) {
+    const update = message as { solutionId?: unknown; expectedSavedAt?: unknown; performance?: unknown };
+    if (!validPerformanceUpdate(update)) {
+      sendResponse({ status: "skipped" });
+      return;
+    }
+    enrichAcceptedCapturePerformance(update.solutionId, update.expectedSavedAt, update.performance)
+      .then((status) => sendResponse({ status }))
+      .catch(() => sendResponse({ status: "skipped" }));
     return true;
   }
 
