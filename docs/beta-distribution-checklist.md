@@ -1,6 +1,8 @@
 # 지인 베타 배포·전달 점검표
 
-운영자용입니다. 문서/로컬 ZIP 준비, 서비스 배포, 실사용 검증, 실제 전달은 서로 다른 단계입니다. 체크되지 않은 항목을 자동 테스트 결과로 대체하지 않습니다. **이 문서 작성이나 후보 ZIP 생성은 배포·초대 승인이 아닙니다.**
+운영자용입니다. 문서/로컬 ZIP 준비, 서비스 배포, 실사용 검증, Release Note 확정, 실제 전달은 서로 다른 단계입니다. 체크되지 않은 항목을 자동 테스트 결과로 대체하지 않습니다. **이 문서 작성이나 후보 ZIP 생성은 배포·초대 승인이 아닙니다.**
+
+버전 규칙, candidate와 지인 전달본 구분, Release Note 형식과 업데이트 중요도는 [`beta-release-update-policy.md`](beta-release-update-policy.md)를 기준으로 합니다.
 
 ## 현재 기준과 남은 작업
 
@@ -8,7 +10,7 @@
 
 사용자 로컬 Extension 갱신, 두 계정의 실제 Chrome 수집·전송·격리, 승인된 재시작 후 데이터 보존은 아직 별도 증거가 필요합니다. #31/#37/#84를 문서 완료만으로 닫거나 #86 정리를 앞당기지 않습니다. master 승격·실제 AI 활성화도 포함하지 않습니다.
 
-## 1. 검증 가능한 후보 ZIP 만들기
+## 1. 검증 가능한 candidate 만들기
 
 운영자 개발 환경: PowerShell 7, Node.js 22 또는 24, 저장소에 고정된 pnpm 10.15.0과 이미 준비된 의존성. 테스터에게는 이 도구가 필요 없습니다. 새 설치가 필요한 환경은 [개발자 README](https://github.com/devkimhongjin/codeArchive/blob/develop/README.md)의 준비 절차를 먼저 따르세요.
 
@@ -22,16 +24,30 @@ pwsh -NoProfile -File ./scripts/package-beta.ps1
 
 결과는 Git에서 제외되는 `artifacts/beta/codearchive-beta-버전-커밋[-라벨]` 아래 폴더와 같은 이름의 ZIP·`.zip.sha256`입니다.
 
+현재 자동 생성 candidate는 다음을 포함합니다.
+
 - `extension/`: 빌드된 확장 프로그램만 포함, 이 폴더를 Chrome에 로드
 - `docs/`: 설치·사용·문제 해결·운영자 점검표·AI 검증·초대 양식
 - `README.md`: 인터넷 없이도 읽는 시작 안내
 - `release-info.json`: 정확한 소스 커밋, 버전, Extension ID, URL, 도구 버전, 파일별 SHA-256, `distributionStatus: candidate`
+
+### 지인 전달용 ZIP 전환 주의
+
+지인에게 실제 전달하는 패키지는 `docs/`를 제외하고 `extension/`, `README.md`, `release-info.json` 중심으로 단순화하는 것을 목표로 합니다. 운영 문서의 source of truth는 GitHub `docs/`입니다.
+
+단, **현재 `package-beta.ps1`은 아직 `docs/` 포함 candidate를 기준으로 검증합니다.** 생성 후 `docs/`를 수동 삭제하면 기존 ZIP SHA-256과 `release-info.json.sha256`의 per-file 목록이 더 이상 원본 candidate와 일치하지 않습니다.
+
+- [ ] `docs/`를 제거한 지인 전달본이면 원래 candidate와 구분해 기록
+- [ ] 수정된 ZIP의 SHA-256을 새로 계산해 전달
+- [ ] `release-info.json`의 per-file manifest까지 일치한다고 주장하지 않음
+- [ ] 패키징 자동화가 바뀌기 전에는 `distributionStatus: candidate`를 사람이 임의로 `approved-beta`로 수정하지 않음
 
 `candidate`는 실사용 배포 승인이 아닙니다. 소스 코드 ZIP/서비스 비밀정보/Chrome 프로필/수집 기록은 넣지 않습니다. manifest의 `key`는 ID를 고정하는 **공개 키**이며 OAuth 비밀 키가 아닙니다. 파일 목록 검사는 임의 바이너리의 비밀정보 탐지나 코드 보안 감사를 대신하지 않습니다.
 
 - [ ] 기능 PR이 develop에 반영되고 검토된 정확한 develop SHA 기록 (기능 브랜치 ZIP은 검증 후보 전용)
 - [ ] 해당 SHA의 Extension typecheck/test/build, 문서/패키지 검사 통과
 - [ ] 해당 SHA의 Dashboard CI typecheck/test/build 증거 기록
+- [ ] 필요한 API CI/통합 테스트 증거 기록
 - [ ] ZIP 무결성, manifest ID `oohlcmihldmfninmdcmanddfmhoonmdl`, exact Dashboard origin 확인
 - [ ] 압축 해제 후 안내 링크와 Chrome 설치/기존 설치 업데이트 확인
 - [ ] Main API의 `CODEARCHIVE_BETA_ACCESS_PASSWORD` 비밀 설정(8~128자)과 API/Web 반영 확인; 실제 값은 공개 자료에 없음
@@ -55,6 +71,7 @@ pwsh -NoProfile -File ./scripts/package-beta.ps1
 | 두 계정의 풀이/AI 목록·상세·수정·삭제 교차 접근 차단 | 미검증: |
 | 풀이별 복사/Source/Markdown, 서버 수정·삭제 확인/취소와 로컬 보존 | 미검증: |
 | AI 3종 동의/취소·결과·오류/한도·원본 보존 ([세부 항목](dashboard-ai-beta-acceptance.md)) | 미검증: |
+| 데스크톱·모바일 크기에서 주요 Dashboard 화면 overflow/가독성/조작 확인 | 미검증: |
 | 별도 승인된 재시작/재배포 뒤 PostgreSQL 풀이·AI 결과 유지 | 미검증: |
 | 로그/화면에 코드·토큰·쿠키 등 민감정보 노출 없음 | 미검증: |
 
@@ -62,22 +79,36 @@ pwsh -NoProfile -File ./scripts/package-beta.ps1
 - [ ] 정리된 후속 패키지에서 Extension token/Main API 요청 부재, 로컬 보존 재검증
 - [ ] 중단/복구 담당자와 이전 검증 커밋·패키지 확보 (배포 rollback 별도 승인; Chrome 저장소 임의 다운그레이드 금지)
 
-## 3. 전달 기록
+## 3. Release Note와 업데이트 등급 확정
+
+지인에게 ZIP만 보내지 않습니다. [`beta-release-update-policy.md`](beta-release-update-policy.md)의 형식으로 사람이 읽는 Release Note를 함께 준비합니다.
+
+- [ ] 버전 `0.MINOR.PATCH` 확정
+- [ ] 업데이트 중요도 `필수 / 권장 / 선택` 중 하나 선택
+- [ ] 주요 변경, 보안·개인정보 영향, 알려진 문제, 후속 Issue 기록
+- [ ] 기존 사용자는 Extension 제거 금지 및 Source/Markdown 사전 백업 안내
+- [ ] Dashboard 초대 비밀번호는 Release Note/ZIP/GitHub에 넣지 않고 별도 전달
+- [ ] RC/candidate와 실제 지인 전달본 파일명을 혼동하지 않음
+
+## 4. 전달 기록
 
 ```text
+버전 / 업데이트 중요도:
 패키지 파일명 / ZIP SHA-256:
+원본 candidate 또는 수동 파생 지인 전달본 여부:
 소스 full SHA / develop 포함 여부:
-버전 / Extension ID:
+Extension ID:
 Dashboard / API / Analysis 실제 배포 SHA:
 검증 일시 / 담당자 / E2E 증거 링크:
-현재 AI provider / 알려진 문제:
+실제 브라우저 desktop/mobile 검증 근거:
+현재 AI provider / 알려진 문제 / 후속 Issue:
 사용 승인 일시 / 승인자:
 테스트 기간 / 문의 창구:
 전달 대상 범위 / 전달 경로 / 전달 일시:
 중단·복구 담당자 / 검증된 이전 버전:
 ```
 
-- [ ] 실제 다운로드 권한을 확인한 ZIP/해시/설치·사용 안내 준비 (공개 업로드를 기본값으로 삼지 않음)
+- [ ] 실제 다운로드 권한을 확인한 ZIP/새 SHA-256/Release Note 준비 (공개 업로드를 기본값으로 삼지 않음)
 - [ ] [초대 메시지](beta-invite-template.md)의 모든 빈칸을 실제 값으로 채움
 - [ ] AI `fake`, 전체 pending 전송, 중요한 코드 별도 보관, 알려진 제한 안내
 - [ ] 약 20명에게 실제 전달하기 직전 승인 확인 후 운영자가 전달
