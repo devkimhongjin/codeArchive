@@ -140,6 +140,10 @@ export function App({
   const manualSyncPendingBeforeRef = useRef(0);
   const sessionExpiredRef = useRef(() => {});
   const automationSafetyStoppedRef = useRef(false);
+  // A remembered Dashboard consent may reactivate AUTO_SYNC after a transient
+  // Extension disconnect, but an explicit OFF/pagehide/safety stop must stay
+  // latched until the user enables it again.
+  const automationOffLatchedRef = useRef(false);
   const automationStateRef = useRef(sanitizeAutomationState({
     autoSyncEnabled: false, githubAutoCommitEnabled: false, githubTargetConfigured: false,
     authenticated: false, connectionAvailable: false,
@@ -187,14 +191,16 @@ export function App({
       setAutomationIntent({ enabled: false, nonce: automationNonceRef.current });
     }
     setAutoSyncConsent(enabled);
-    setAutomationAutoSyncEnabled(enabled && !automationSafetyStoppedRef.current);
+    setAutomationAutoSyncEnabled(false);
     if (enabled) setAutomationError(null);
   }, undefined, () => {
+    automationOffLatchedRef.current = true;
     setAuthState({ status: "loading" });
     setAuthAttempt((value) => value + 1);
   }), [consentStore, pendingDrainController, syncController]);
 
   function expireSession() {
+    automationOffLatchedRef.current = true;
     consentController.reset(true);
     setGithubTargetConfigured(false);
     setGithubAutoCommitEnabled(false);
@@ -214,6 +220,7 @@ export function App({
         extensionStateRef.current = state;
         setExtensionState(state);
         if (wasConnected && state.status !== "connected") {
+          automationOffLatchedRef.current = true;
           setAutomationAutoSyncEnabled(false);
           setGithubAutoCommitEnabled(false);
           nextAutomationIntent(false);
@@ -276,6 +283,15 @@ export function App({
     ? "MULTIPLE_DASHBOARD_TABS"
     : baseAutomationError ?? automationError;
   const effectiveAutoSyncEnabled = automationAutoSyncEnabled && autoSyncConsent && authenticated && exactOrigin && connected && online && !logoutPending && !consentPending && !automationSafetyStoppedRef.current;
+  const autoSyncActivationReady = autoSyncConsent
+    && authenticated
+    && exactOrigin
+    && connected
+    && online
+    && !logoutPending
+    && !consentPending
+    && !automationSafetyStoppedRef.current
+    && !automationOffLatchedRef.current;
   const effectiveGitHubAutoCommitEnabled = githubAutoCommitEnabled && effectiveAutoSyncEnabled && githubTargetConfigured;
   const eligible = authenticated
     && effectiveAutoSyncEnabled
@@ -330,6 +346,7 @@ export function App({
   }
 
   function invalidateAutomation(clearConsent: boolean) {
+    automationOffLatchedRef.current = true;
     setAutomationAutoSyncEnabled(false);
     setGithubAutoCommitEnabled(false);
     nextAutomationIntent(false);
@@ -466,6 +483,7 @@ export function App({
       return;
     }
     if (message.type === "CODEARCHIVE_AUTOMATION_SAFETY_STOP") {
+      automationOffLatchedRef.current = true;
       automationSafetyStoppedRef.current = true;
       setAutomationSafetyStopped(true);
       setAutomationError("MULTIPLE_DASHBOARD_TABS");
@@ -475,6 +493,7 @@ export function App({
     }
     if (message.automation === "AUTO_SYNC") {
       if (!message.enabled) {
+        automationOffLatchedRef.current = true;
         setAutomationError(null);
         setAutomationAutoSyncEnabled(false);
         setGithubAutoCommitEnabled(false);
@@ -486,6 +505,7 @@ export function App({
       }
       const errorCode = automationGuard("AUTO_SYNC");
       if (errorCode) { setAutomationAutoSyncEnabled(false); setAutomationError(errorCode); return; }
+      automationOffLatchedRef.current = false;
       automationSafetyStoppedRef.current = false;
       setAutomationSafetyStopped(false);
       setAutomationError(null);
@@ -508,6 +528,14 @@ export function App({
   useEffect(() => {
     extensionConnection.publishAutomationState?.(automationStateRef.current);
   }, [extensionConnection, effectiveAutoSyncEnabled, effectiveGitHubAutoCommitEnabled, githubTargetConfigured, authenticated, connected, online, currentAutomationError]);
+
+  useEffect(() => {
+    if (!autoSyncActivationReady || automationAutoSyncEnabled) return;
+    // Remembered Dashboard consent may establish the first eligible session,
+    // but it must not clear a disconnect/revocation fence. Only an explicit
+    // eligible Extension AUTO_SYNC ON below may re-arm that durable state.
+    setAutomationAutoSyncEnabled(true);
+  }, [autoSyncActivationReady, automationAutoSyncEnabled]);
 
   useEffect(() => {
     const becameOffline = () => setOnline(false);
@@ -537,6 +565,7 @@ export function App({
     setManualSyncMessage("");
     nextAutomationIntent(false);
     setAutomationAutoSyncEnabled(false);
+    automationOffLatchedRef.current = true;
   }, [account, pendingDrainController]);
 
   useEffect(() => {
@@ -604,6 +633,7 @@ export function App({
     }
 
     setConsentPending(true);
+    automationOffLatchedRef.current = true;
     invalidateManualSync();
     await consentController.choose(false);
     await syncController.teardown();
@@ -612,6 +642,7 @@ export function App({
 
   async function logout() {
     accountRef.current = "";
+    automationOffLatchedRef.current = true;
     const manualCleanup = invalidateManualSync();
     drainEligibilityRef.current.eligible = false;
     setLogoutPending(true);
