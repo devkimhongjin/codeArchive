@@ -76,6 +76,7 @@ export function createAccountConsentController(
   onChange: (enabled: boolean) => void,
   derive: (id: unknown) => Promise<string | null> = deriveAccountBinding,
   onInvalidated: () => void = () => {},
+  onExplicitDisable: () => void = () => {},
 ) {
   let revision = 0;
   let verifiedId: string | undefined;
@@ -117,6 +118,7 @@ export function createAccountConsentController(
       const current = ++revision;
       onChange(enabled);
       if (!enabled) {
+        onExplicitDisable();
         write(false);
         await notifyExplicitAutoSyncOff();
         return;

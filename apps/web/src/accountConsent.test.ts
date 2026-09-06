@@ -134,6 +134,40 @@ describe("account-bound remembered consent", () => {
     unregister();
   });
 
+  it("does not classify hydration or same-account verification as explicit durable OFF", async () => {
+    setDurableAutomationProfile(DURABLE_PROFILE);
+    const explicitDisable = vi.fn();
+    const controller = createAccountConsentController(
+      { read: () => false, write: vi.fn() },
+      vi.fn(),
+      async () => binding,
+      undefined,
+      explicitDisable,
+    );
+
+    controller.reset(false);
+    await controller.verify(id);
+
+    expect(explicitDisable).not.toHaveBeenCalled();
+    expect(durableAutomationProfile()?.githubAutoCommitEnabled).toBe(true);
+    expect(durableLocalSourceStopped()).toBe(false);
+  });
+
+  it("classifies an explicit consent OFF as durable disable intent", async () => {
+    const explicitDisable = vi.fn();
+    const controller = createAccountConsentController(
+      { read: () => true, write: vi.fn() },
+      vi.fn(),
+      async () => binding,
+      undefined,
+      explicitDisable,
+    );
+
+    await controller.choose(false);
+
+    expect(explicitDisable).toHaveBeenCalledOnce();
+  });
+
   it("retains a stopped durable profile when account/session revocation is unconfirmed", async () => {
     setDurableAutomationProfile(DURABLE_PROFILE);
     const unregister = registerExplicitAutoSyncOffHandler(async () => false);

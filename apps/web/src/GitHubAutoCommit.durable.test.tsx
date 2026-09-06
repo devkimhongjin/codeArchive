@@ -76,4 +76,38 @@ describe("GitHub durable automation presentation", () => {
     await waitFor(() => expect(screen.getByText("OFF")).toBeInTheDocument());
     expect(client.autoStop).not.toHaveBeenCalled();
   });
+
+  it("ignores page-local OFF intent while preserving an explicitly enabled durable profile", async () => {
+    const client = githubTestClient();
+    const disable = vi.fn(async () => true);
+    const view = render(<GitHubAutoCommit
+      client={client}
+      target={null}
+      eligible={false}
+      blocked={false}
+      onLock={() => undefined}
+      onSessionExpired={() => undefined}
+      durableMode
+      durableEnabled
+      onDurableDisable={disable}
+      automationIntent={{ enabled: false, nonce: 1 }}
+    />);
+
+    await screen.findByText("ON");
+    expect(disable).not.toHaveBeenCalled();
+
+    view.rerender(<GitHubAutoCommit
+      client={client}
+      target={null}
+      eligible={false}
+      blocked={false}
+      onLock={() => undefined}
+      onSessionExpired={() => undefined}
+      durableMode
+      durableEnabled
+      onDurableDisable={disable}
+      automationIntent={{ enabled: false, nonce: 2, durableDisable: true }}
+    />);
+    await waitFor(() => expect(disable).toHaveBeenCalledTimes(1));
+  });
 });
