@@ -14,7 +14,7 @@ import {
 
 export type { DurableGitHubConsent } from "./durableAutomationRuntime";
 
-type AutomationIntent = { enabled: boolean; nonce: number };
+type AutomationIntent = { enabled: boolean; nonce: number; durableDisable?: boolean };
 type AutomationStateCallback = (enabled: boolean, errorCode: CodeArchiveAutomationControlErrorCode | null) => void;
 
 function automationError(error: unknown): CodeArchiveAutomationControlErrorCode | null {
@@ -292,10 +292,10 @@ export function GitHubAutoCommit({ client, target, eligible, blocked, blockedRea
     // intents (initial auth/consent loading, pagehide, disconnect). Explicit popup OFF
     // is handled by durableAutomationRuntime; an explicitly-propped durable owner may
     // still use this intent channel.
-    else if (durableMode && effectiveDurableEnabled) void stop();
+    else if (durableMode && effectiveDurableEnabled && intent.durableDisable === true) void stop();
     else if (!effectiveDurableMode && (run.current || phaseRef.current !== "idle")) void stop();
     else if (!effectiveDurableMode) callbacks.current.onAutomationStateChange?.(false, null);
-  }, [automationIntent?.nonce, automationIntent?.enabled, checked, fingerprint, durableMode, effectiveDurableMode, effectiveDurableEnabled]);
+  }, [automationIntent?.nonce, automationIntent?.enabled, automationIntent?.durableDisable, checked, fingerprint, durableMode, effectiveDurableMode, effectiveDurableEnabled]);
 
   const otherRun = !effectiveDurableMode && (status?.state === "ACTIVE" || status?.state === "STARTING");
   const locked = phase !== "idle";

@@ -48,6 +48,7 @@ import {
   sanitizeAutomationState,
   type AutomationStateInput,
 } from "./automationControl";
+import { markDurableLocalSourceStopped } from "./durableAutomationState";
 import type {
   CodeArchiveAutomationControlErrorCode,
   ExtensionToDashboardAutomationMessage,
@@ -123,7 +124,7 @@ export function App({
   const [githubAutoCommitEnabled, setGithubAutoCommitEnabled] = useState(false);
   const [githubTargetConfigured, setGithubTargetConfigured] = useState(false);
   const [automationError, setAutomationError] = useState<CodeArchiveAutomationControlErrorCode | null>(null);
-  const [automationIntent, setAutomationIntent] = useState<{ enabled: boolean; nonce: number } | null>(null);
+  const [automationIntent, setAutomationIntent] = useState<{ enabled: boolean; nonce: number; durableDisable?: boolean } | null>(null);
   const [automationSafetyStopped, setAutomationSafetyStopped] = useState(false);
   const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine !== false);
   const [manualSyncStatus, setManualSyncStatus] = useState<"idle" | "running" | "success" | "partial" | "blocked" | "failed">("idle");
@@ -188,7 +189,7 @@ export function App({
       void syncController.teardown();
       setGithubAutoCommitEnabled(false);
       automationNonceRef.current += 1;
-      setAutomationIntent({ enabled: false, nonce: automationNonceRef.current });
+      setAutomationIntent({ enabled: false, nonce: automationNonceRef.current, durableDisable: true });
     }
     setAutoSyncConsent(enabled);
     setAutomationAutoSyncEnabled(false);
@@ -204,7 +205,7 @@ export function App({
     consentController.reset(true);
     setGithubTargetConfigured(false);
     setGithubAutoCommitEnabled(false);
-    nextAutomationIntent(false);
+    nextAutomationIntent(false, true);
     setDeleteNotice({ account: "", message: "" });
     setSelectedId(null);
     setAuthState({ status: "signed_out" });
@@ -221,13 +222,12 @@ export function App({
         setExtensionState(state);
         if (wasConnected && state.status !== "connected") {
           automationOffLatchedRef.current = true;
+          markDurableLocalSourceStopped();
           setAutomationAutoSyncEnabled(false);
           setGithubAutoCommitEnabled(false);
-          nextAutomationIntent(false);
           drainEligibilityRef.current.eligible = false;
           pendingDrainController.invalidate();
           void syncControllerRef.current.teardown();
-          void syncControllerRef.current.revokeDurableAutomation();
         }
       },
       (event) => {
@@ -340,16 +340,16 @@ export function App({
     errorCode: currentAutomationError,
   } satisfies AutomationStateInput);
 
-  function nextAutomationIntent(enabled: boolean) {
+  function nextAutomationIntent(enabled: boolean, durableDisable = false) {
     automationNonceRef.current += 1;
-    setAutomationIntent({ enabled, nonce: automationNonceRef.current });
+    setAutomationIntent({ enabled, nonce: automationNonceRef.current, durableDisable });
   }
 
   function invalidateAutomation(clearConsent: boolean) {
     automationOffLatchedRef.current = true;
+    markDurableLocalSourceStopped();
     setAutomationAutoSyncEnabled(false);
     setGithubAutoCommitEnabled(false);
-    nextAutomationIntent(false);
     drainEligibilityRef.current.eligible = false;
     if (manualSyncSessionRef.current) manualSyncSessionRef.current.eligible = false;
     pendingDrainController.invalidate();
@@ -497,7 +497,7 @@ export function App({
         setAutomationError(null);
         setAutomationAutoSyncEnabled(false);
         setGithubAutoCommitEnabled(false);
-        nextAutomationIntent(false);
+        nextAutomationIntent(false, true);
         drainEligibilityRef.current.eligible = false;
         pendingDrainController.invalidate();
         void syncController.teardown();
@@ -516,7 +516,7 @@ export function App({
     if (!message.enabled) {
       setGithubAutoCommitEnabled(false);
       setAutomationError(null);
-      nextAutomationIntent(false);
+      nextAutomationIntent(false, true);
       return;
     }
     const errorCode = automationGuard("GITHUB_AUTO_COMMIT");
@@ -563,7 +563,7 @@ export function App({
     setGithubTargetConfigured(false);
     setManualSyncStatus("idle");
     setManualSyncMessage("");
-    nextAutomationIntent(false);
+    nextAutomationIntent(false, true);
     setAutomationAutoSyncEnabled(false);
     automationOffLatchedRef.current = true;
   }, [account, pendingDrainController]);
@@ -571,9 +571,8 @@ export function App({
   useEffect(() => {
     if (!effectiveAutoSyncEnabled || !githubTargetConfigured) {
       if (githubAutoCommitEnabled) setGithubAutoCommitEnabled(false);
-      if (automationIntent?.enabled) nextAutomationIntent(false);
     }
-  }, [effectiveAutoSyncEnabled, githubTargetConfigured, githubAutoCommitEnabled, automationIntent?.enabled]);
+  }, [effectiveAutoSyncEnabled, githubTargetConfigured, githubAutoCommitEnabled]);
 
   useEffect(() => {
     const authContextKey = account;
@@ -650,7 +649,7 @@ export function App({
     consentController.reset(true);
     setGithubTargetConfigured(false);
     setGithubAutoCommitEnabled(false);
-    nextAutomationIntent(false);
+    nextAutomationIntent(false, true);
     setArchive({ account: "", records: [] });
     setSelectedId(null);
     pendingDrainController.invalidate();

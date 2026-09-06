@@ -73,7 +73,7 @@ describe("Dashboard automation authority", () => {
     expect(startSyncSession).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps AUTO_SYNC stopped after an unconfirmed durable revoke without a fresh Extension ON", async () => {
+  it("keeps page AUTO_SYNC stopped after reconnect without revoking durable GitHub intent", async () => {
     const deviceId = "device_identity_1234";
     const profile: DurableAutomationProfile = {
       userId: ID,
@@ -103,7 +103,7 @@ describe("Dashboard automation authority", () => {
       expiresAt: "2099-09-06T00:00:00.000Z",
     };
     vi.spyOn(mainApiDurableAutomationClient, "profile").mockResolvedValue(profile);
-    vi.spyOn(mainApiDurableAutomationClient, "update").mockRejectedValue(new Error("revocation unavailable"));
+    vi.spyOn(mainApiDurableAutomationClient, "update").mockRejectedValue(new Error("unexpected durable update"));
     setDurableAutomationProfile(profile);
 
     let setState: ((state: ExtensionConnectionState) => void) | undefined;
@@ -136,7 +136,7 @@ describe("Dashboard automation authority", () => {
     await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: false, connectionAvailable: false }));
     await act(async () => setState?.({ status: "connected", summary: { protocolVersion: 1, pendingCount: 0, allCount: 0, revision: 2 } }));
     await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: false, connectionAvailable: true }));
-    expect(extensionConnection.relayConfirmRevoke).toHaveBeenCalled();
+    expect(extensionConnection.relayConfirmRevoke).not.toHaveBeenCalled();
   });
 
   it("publishes fresh sanitized automation state after a manual reconnect", async () => {
