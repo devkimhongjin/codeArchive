@@ -42,4 +42,14 @@ class DurableAutomationSignalDispatcherTest {
         verify(worker, times(DurableAutomationSignalDispatcher.MAX_INVOCATIONS_PER_SIGNAL)).runOnce();
         assertThat(DurableAutomationSignalDispatcher.MAX_INVOCATIONS_PER_SIGNAL).isEqualTo(25);
     }
+
+    @Test
+    void workerRuntimeFailureDoesNotEscapePostCommitDispatcher() {
+        when(worker.runOnce()).thenThrow(new IllegalStateException("temporary worker failure"));
+        DurableAutomationSignalDispatcher dispatcher = new DurableAutomationSignalDispatcher(worker);
+
+        dispatcher.afterRelayCaptureCommit(new RelayCapturePersistedEvent(UUID.randomUUID()));
+
+        verify(worker).runOnce();
+    }
 }

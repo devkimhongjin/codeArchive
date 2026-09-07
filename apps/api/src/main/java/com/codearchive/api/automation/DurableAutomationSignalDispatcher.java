@@ -38,7 +38,14 @@ public class DurableAutomationSignalDispatcher {
 
     private void drain() {
         for (int attempt = 0; attempt < MAX_INVOCATIONS_PER_SIGNAL; attempt++) {
-            DurableAutomationWorker.Result result = worker.runOnce();
+            DurableAutomationWorker.Result result;
+            try {
+                result = worker.runOnce();
+            } catch (RuntimeException ignored) {
+                // Capture persistence has already committed; retry on a later
+                // signal or application restart instead of failing the caller.
+                return;
+            }
             if (result == null || !"SUCCEEDED".equals(result.status())) return;
         }
     }
