@@ -109,7 +109,7 @@ public class DurableWorkerStore {
                 String claimToken = tokens();
                 try {
                     int reclaimed = db.update("""
-                            UPDATE durable_github_attempts SET id=:id,profile_generation=:generation,
+                            UPDATE durable_github_attempts SET id=:id,solution_id=:solution,profile_generation=:generation,
                             target_generation=:targetGeneration,state='CLAIMED',claim_token=:claimToken,
                             lease_until=clock_timestamp()+interval '60 seconds',created_at=clock_timestamp(),
                             completed_at=NULL,commit_sha=NULL,commit_url=NULL,error_code=NULL
