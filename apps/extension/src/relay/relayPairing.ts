@@ -146,7 +146,14 @@ export class RelayPairingController {
     try {
       next = await this.repository.update((current) => {
         if (current.deviceId !== raw.deviceId || current.signedChallengeId !== raw.challengeId
-          || !validDate(current.signedChallengeExpiresAt, Date.now())) rejectState();
+          || !validDate(current.signedChallengeExpiresAt, Date.now())
+          // A late response from an older Dashboard grant request must never
+          // replace a newer ACTIVE authority. The server generation is
+          // monotonic within the active account/device context; only compare
+          // it while an ACTIVE credential is still authoritative so a fresh
+          // account can pair after an explicit local stop/account change.
+          || (current.state === "ACTIVE" && validGeneration(current.generation)
+            && (raw.generation as number) < current.generation)) rejectState();
         return {
           ...current,
           state: "ACTIVE",

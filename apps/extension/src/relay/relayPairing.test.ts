@@ -120,4 +120,30 @@ describe("RelayPairingController", () => {
     expect(response).toBeUndefined();
     expect(repository.value.state).toBe("INVALIDATED");
   });
+
+  it("rejects a late lower-generation provision without replacing the active authority", async () => {
+    const repository = new MemoryState(state({
+      state: "ACTIVE",
+      grantId: "a0000000-0000-4000-8000-000000000020",
+      generation: 19,
+      expiresAt: FUTURE,
+      credential: "current-secret",
+      signedChallengeId: challengeA,
+      signedChallengeExpiresAt: FUTURE,
+      autoSyncEnabled: true,
+    }));
+    const controller = new RelayPairingController(repository);
+
+    const response = await controller.handle({
+      type: "CODEARCHIVE_RELAY_GRANT_PROVISION", phase: "REQUEST", protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+      deviceId: "device-1234567890", grantId: grantA, generation: 17, expiresAt: FUTURE,
+      challengeId: challengeA, credential: "stale-secret",
+    }, true);
+
+    expect(response).toBeUndefined();
+    expect(repository.value).toMatchObject({
+      state: "ACTIVE", grantId: "a0000000-0000-4000-8000-000000000020", generation: 19,
+      credential: "current-secret", autoSyncEnabled: true,
+    });
+  });
 });

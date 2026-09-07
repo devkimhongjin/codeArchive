@@ -245,6 +245,19 @@ describe("DurableAutomationController", () => {
     expect(f.bridge.relayProvisionGrant).not.toHaveBeenCalled();
   });
 
+  it("does not provision a grant after the server profile advances during issuance", async () => {
+    const f = fixture();
+    let profileReads = 0;
+    vi.mocked(f.client.profile).mockImplementation(async () => {
+      profileReads += 1;
+      return profile({ generation: profileReads >= 2 ? 5 : 4 });
+    });
+    const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);
+
+    await expect(controller.enableSourceTransfer()).rejects.toMatchObject({ code: "GRANT_GENERATION_MISMATCH" });
+    expect(f.bridge.relayProvisionGrant).not.toHaveBeenCalled();
+  });
+
   it("requires explicit visibility/public consent before a durable GitHub ON", async () => {
     const f = fixture();
     const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);

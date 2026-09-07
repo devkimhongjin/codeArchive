@@ -58,6 +58,18 @@ export interface DurableTransitionResult {
   readonly serverRevocationConfirmed?: boolean;
 }
 
+// Auto-reconnect and the GitHub durable toggle can originate from different
+// component instances in the same Dashboard document. Serialize their
+// profile/challenge/grant transitions so an older grant response cannot race a
+// newer profile generation and become the last local provision request.
+let durableTransitionQueue: Promise<void> = Promise.resolve();
+
+function serializeDurableTransition<T>(operation: () => Promise<T>): Promise<T> {
+  const next = durableTransitionQueue.then(operation, operation);
+  durableTransitionQueue = next.then(() => undefined, () => undefined);
+  return next;
+}
+
 function sameTarget(a: GitHubAutoTarget | null, b: GitHubAutoTarget | null): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -104,6 +116,10 @@ export class DurableAutomationController {
   }
 
   async enableSourceTransfer(signal?: AbortSignal): Promise<DurableTransitionResult> {
+    return serializeDurableTransition(() => this.enableSourceTransferInternal(signal));
+  }
+
+  private async enableSourceTransferInternal(signal?: AbortSignal): Promise<DurableTransitionResult> {
     const pairing = await this.requirePairingInfo();
     const current = await this.client.profile(signal);
     const migratingFromPageOwned = current.ownershipMode === "PAGE_OWNED";
@@ -123,6 +139,14 @@ export class DurableAutomationController {
   }
 
   async enableGitHubAutoCommit(target: GitHubAutoTarget, consent: {
+    automaticTransferConsent: boolean;
+    visibilityRiskConsent: boolean;
+    publicUploadConsent: boolean;
+  }, signal?: AbortSignal): Promise<DurableTransitionResult> {
+    return serializeDurableTransition(() => this.enableGitHubAutoCommitInternal(target, consent, signal));
+  }
+
+  private async enableGitHubAutoCommitInternal(target: GitHubAutoTarget, consent: {
     automaticTransferConsent: boolean;
     visibilityRiskConsent: boolean;
     publicUploadConsent: boolean;
@@ -148,6 +172,10 @@ export class DurableAutomationController {
   }
 
   async disableGitHubAutoCommit(signal?: AbortSignal): Promise<DurableTransitionResult> {
+    return serializeDurableTransition(() => this.disableGitHubAutoCommitInternal(signal));
+  }
+
+  private async disableGitHubAutoCommitInternal(signal?: AbortSignal): Promise<DurableTransitionResult> {
     const current = await this.client.profile(signal);
     if (current.ownershipMode !== "DURABLE_SERVER") return { profile: current, relayPaired: false };
     const pairing = await (this.bridge.relayPairingInfo?.().catch(() => null) ?? Promise.resolve(null));
@@ -172,6 +200,13 @@ export class DurableAutomationController {
   }
 
   async disableAll(
+    signal?: AbortSignal,
+    cachedProfile: DurableAutomationProfile | null = null,
+  ): Promise<DurableTransitionResult> {
+    return serializeDurableTransition(() => this.disableAllInternal(signal, cachedProfile));
+  }
+
+  private async disableAllInternal(
     signal?: AbortSignal,
     cachedProfile: DurableAutomationProfile | null = null,
   ): Promise<DurableTransitionResult> {
@@ -300,6 +335,14 @@ export class DurableAutomationController {
       signature: signed.signature,
     }, signal);
     if (grant.deviceId !== profile.deviceId || grant.generation !== profile.generation || Date.parse(grant.expiresAt) <= this.now()) {
+      throw new DurableAutomationTransitionError("GRANT_GENERATION_MISMATCH");
+    }
+    // The profile may have advanced while the challenge/grant round trip was
+    // in flight (for example, another tab or a second control path changed
+    // consent). Do not provision a grant that is no longer current.
+    const latest = await this.client.profile(signal);
+    if (latest.ownershipMode !== "DURABLE_SERVER" || !latest.sourceTransferEnabled
+      || latest.deviceId !== profile.deviceId || latest.generation !== profile.generation) {
       throw new DurableAutomationTransitionError("GRANT_GENERATION_MISMATCH");
     }
     const stored = await this.bridge.relayProvisionGrant?.({
