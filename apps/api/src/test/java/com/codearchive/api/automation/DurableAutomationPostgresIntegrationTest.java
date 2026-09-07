@@ -157,10 +157,15 @@ class DurableAutomationPostgresIntegrationTest {
     void blockedProviderCallForOneAccountDoesNotBlockAnotherAccount() throws Exception {
         UUID blockedUser = user();
         UUID progressingUser = user();
-        acceptedSolution(blockedUser, 3, Instant.now().minusSeconds(2), "1206", "class Blocked {}");
-        UUID progressingSolution = acceptedSolution(progressingUser, 3, Instant.now().minusSeconds(1), "1206", "class Progressing {}");
         profile(blockedUser, 3, 4, TARGET, true, "DURABLE_SERVER");
         profile(progressingUser, 3, 4, TARGET, true, "DURABLE_SERVER");
+        UUID blockedSolution = acceptedSolution(blockedUser, 3, Instant.now().minusSeconds(1), "1206", "class Blocked {}");
+        UUID progressingSolution = acceptedSolution(progressingUser, 3, Instant.now().minusSeconds(1), "1206", "class Progressing {}");
+        Instant orderingBase = Instant.now().minusSeconds(10);
+        db.update("UPDATE automation_profiles SET updated_at=? WHERE user_id=?",
+                Timestamp.from(orderingBase), blockedUser);
+        db.update("UPDATE automation_profiles SET updated_at=? WHERE user_id=?",
+                Timestamp.from(orderingBase.plusSeconds(1)), progressingUser);
         CountDownLatch blocked = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         when(prepared.create(anyString(), anyString())).thenAnswer(invocation -> {
@@ -178,12 +183,16 @@ class DurableAutomationPostgresIntegrationTest {
             var blockedResult = pool.submit(worker::runOnce);
             assertThat(blocked.await(10, TimeUnit.SECONDS)).isTrue();
             var progressingResult = pool.submit(worker::runOnce);
-            assertThat(progressingResult.get(10, TimeUnit.SECONDS).status()).isEqualTo("SUCCEEDED");
+            DurableAutomationWorker.Result progressing = progressingResult.get(10, TimeUnit.SECONDS);
+            assertThat(progressing.status()).isEqualTo("SUCCEEDED");
+            assertThat(progressing.solutionId()).isEqualTo(progressingSolution);
             assertThat(db.queryForObject(
                     "SELECT state FROM durable_github_attempts WHERE user_id=? AND solution_id=?",
                     String.class, progressingUser, progressingSolution)).isEqualTo("SUCCEEDED");
             release.countDown();
-            assertThat(blockedResult.get(10, TimeUnit.SECONDS).status()).isEqualTo("SUCCEEDED");
+            DurableAutomationWorker.Result blockedCompletion = blockedResult.get(10, TimeUnit.SECONDS);
+            assertThat(blockedCompletion.status()).isEqualTo("SUCCEEDED");
+            assertThat(blockedCompletion.solutionId()).isEqualTo(blockedSolution);
         } finally {
             release.countDown();
             pool.shutdownNow();
