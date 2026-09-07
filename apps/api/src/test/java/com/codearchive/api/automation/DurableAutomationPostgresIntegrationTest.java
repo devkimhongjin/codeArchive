@@ -74,6 +74,9 @@ class DurableAutomationPostgresIntegrationTest {
     private DurableAutomationWorker worker;
 
     @Autowired
+    private DurableWorkerStore store;
+
+    @Autowired
     private DurableAutomationProfileStore profiles;
 
     @Autowired
@@ -127,6 +130,156 @@ class DurableAutomationPostgresIntegrationTest {
                 "SELECT target->>'expectedCommitSha' FROM automation_profiles WHERE user_id=?",
                 String.class, user)).isEqualTo(COMMIT);
         verify(prepared).create("class Main {}", "Add SWEA 1206 solution");
+    }
+
+    @Test
+    void expiredClaimForOldSolutionIsReboundToNewlySelectedSolution() {
+        UUID user = user();
+        UUID oldSolution = acceptedSolution(user, 2, Instant.now().minusSeconds(120), "1205", "class Old {}");
+        UUID newSolution = acceptedSolution(user, 3, Instant.now().minusSeconds(1), "1206", "class Main {}");
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+        UUID oldAttempt = attempt(user, oldSolution, 2, 4, "CLAIMED");
+        db.update("UPDATE durable_github_attempts SET lease_until=clock_timestamp()-interval '1 second' WHERE id=?", oldAttempt);
+
+        DurableAutomationWorker.Result result = worker.runOnce();
+
+        assertThat(result.status()).isEqualTo("SUCCEEDED");
+        assertThat(result.solutionId()).isEqualTo(newSolution);
+        assertThat(db.queryForObject(
+                "SELECT solution_id FROM durable_github_attempts WHERE user_id=? AND state='SUCCEEDED'",
+                UUID.class, user)).isEqualTo(newSolution);
+        assertThat(db.queryForObject(
+                "SELECT count(*) FROM durable_github_attempts WHERE user_id=? AND solution_id=?",
+                Integer.class, user, oldSolution)).isZero();
+    }
+
+    @Test
+    void blockedProviderCallForOneAccountDoesNotBlockAnotherAccount() throws Exception {
+        UUID blockedUser = user();
+        UUID progressingUser = user();
+        profile(blockedUser, 3, 4, TARGET, true, "DURABLE_SERVER");
+        profile(progressingUser, 3, 4, TARGET, true, "DURABLE_SERVER");
+        UUID blockedSolution = acceptedSolution(blockedUser, 3, Instant.now().minusSeconds(1), "1206", "class Blocked {}");
+        UUID progressingSolution = acceptedSolution(progressingUser, 3, Instant.now().minusSeconds(1), "1206", "class Progressing {}");
+        Instant orderingBase = Instant.now().minusSeconds(10);
+        db.update("UPDATE automation_profiles SET updated_at=? WHERE user_id=?",
+                Timestamp.from(orderingBase), blockedUser);
+        db.update("UPDATE automation_profiles SET updated_at=? WHERE user_id=?",
+                Timestamp.from(orderingBase.plusSeconds(1)), progressingUser);
+        CountDownLatch blocked = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(prepared.create(anyString(), anyString())).thenAnswer(invocation -> {
+            String source = invocation.getArgument(0, String.class);
+            if (source.equals("class Blocked {}")) {
+                blocked.countDown();
+                assertThat(release.await(10, TimeUnit.SECONDS)).isTrue();
+            }
+            return new GitHubAppClient.CommitResult(COMMIT,
+                    "https://github.com/tester/solutions/commit/" + COMMIT);
+        });
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            var blockedResult = pool.submit(worker::runOnce);
+            assertThat(blocked.await(10, TimeUnit.SECONDS)).isTrue();
+            var progressingResult = pool.submit(worker::runOnce);
+            DurableAutomationWorker.Result progressing = progressingResult.get(10, TimeUnit.SECONDS);
+            assertThat(progressing.status()).isEqualTo("SUCCEEDED");
+            assertThat(progressing.solutionId()).isEqualTo(progressingSolution);
+            assertThat(db.queryForObject(
+                    "SELECT state FROM durable_github_attempts WHERE user_id=? AND solution_id=?",
+                    String.class, progressingUser, progressingSolution)).isEqualTo("SUCCEEDED");
+            release.countDown();
+            DurableAutomationWorker.Result blockedCompletion = blockedResult.get(10, TimeUnit.SECONDS);
+            assertThat(blockedCompletion.status()).isEqualTo("SUCCEEDED");
+            assertThat(blockedCompletion.solutionId()).isEqualTo(blockedSolution);
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void pendingAccountIsNotStarvedByOlderOnAccountWithNoEligibleWork() {
+        UUID idleAccount = user();
+        profile(idleAccount, 3, 4, TARGET, true, "DURABLE_SERVER");
+
+        UUID pendingAccount = user();
+        UUID solution = acceptedSolution(pendingAccount, 3, Instant.now().minusSeconds(1));
+        profile(pendingAccount, 3, 4, TARGET, true, "DURABLE_SERVER");
+
+        DurableAutomationWorker.Result result = worker.runOnce();
+
+        assertThat(result.status()).isEqualTo("SUCCEEDED");
+        assertThat(result.solutionId()).isEqualTo(solution);
+        assertThat(db.queryForObject("SELECT user_id FROM durable_github_attempts WHERE solution_id=?",
+                UUID.class, solution)).isEqualTo(pendingAccount);
+    }
+
+    @Test
+    void concurrentInvocationsSerializeProviderDispatchPerAccount() throws Exception {
+        UUID user = user();
+        acceptedSolution(user, 3, Instant.now().minusSeconds(2));
+        acceptedSolution(user, 3, Instant.now().minusSeconds(1));
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+
+        CountDownLatch inspectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseInspection = new CountDownLatch(1);
+        when(github.inspectUploadTarget(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString()))
+                .thenAnswer(invocation -> {
+                    inspectionEntered.countDown();
+                    assertThat(releaseInspection.await(10, TimeUnit.SECONDS)).isTrue();
+                    return uploadTarget();
+                });
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            var first = pool.submit(worker::runOnce);
+            assertThat(inspectionEntered.await(10, TimeUnit.SECONDS)).isTrue();
+
+            var second = pool.submit(worker::runOnce);
+            assertThat(second.get(10, TimeUnit.SECONDS).status()).isEqualTo("IDLE");
+
+            releaseInspection.countDown();
+            assertThat(first.get(10, TimeUnit.SECONDS).status()).isEqualTo("SUCCEEDED");
+        } finally {
+            releaseInspection.countDown();
+            pool.shutdownNow();
+        }
+
+        assertThat(db.queryForObject("SELECT count(*) FROM durable_github_attempts WHERE user_id=?",
+                Integer.class, user)).isEqualTo(1);
+        verify(prepared).create(anyString(), anyString());
+    }
+
+    @Test
+    void expiredClaimIsReclaimed() {
+        UUID user = user();
+        UUID solution = acceptedSolution(user, 3, Instant.now().minusSeconds(1));
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+
+        DurableWorkerStore.Claim expired = store.claimNext().orElseThrow();
+        db.update("UPDATE durable_github_attempts SET lease_until=clock_timestamp()-interval '1 second' WHERE id=?",
+                expired.id());
+
+        DurableWorkerStore.Claim reclaimed = store.claimNext().orElseThrow();
+        assertThat(reclaimed.id()).isNotEqualTo(expired.id());
+        assertThat(reclaimed.solutionId()).isEqualTo(solution);
+        assertThat(db.queryForObject("SELECT count(*) FROM durable_github_attempts WHERE user_id=?",
+                Integer.class, user)).isEqualTo(1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"ATTEMPTED", "UNKNOWN"})
+    void attemptedAndUnknownAreNotRetried(String state) {
+        UUID user = user();
+        UUID solution = acceptedSolution(user, 3, Instant.now().minusSeconds(1));
+        acceptedSolution(user, 3, Instant.now());
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+        attempt(user, solution, 3, 4, state);
+
+        assertThat(worker.runOnce().status()).isEqualTo("IDLE");
+        verify(github, never()).inspectUploadTarget(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -439,13 +592,17 @@ class DurableAutomationPostgresIntegrationTest {
     }
 
     private UUID acceptedSolution(UUID user, long generation, Instant capturedAt) {
+        return acceptedSolution(user, generation, capturedAt, "1206", "class Main {}");
+    }
+
+    private UUID acceptedSolution(UUID user, long generation, Instant capturedAt, String problemNumber, String code) {
         UUID id = UUID.randomUUID();
         db.update("""
                 INSERT INTO solutions(id,user_id,client_record_id,platform,problem_number,title,language,code,result,
                     solved_at,observed_at,execution_time,memory_usage,ai_usage,accepted_capture,community_public,
                     published_at,capture_generation,captured_at,created_at,updated_at)
                 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, FALSE, NULL, ?, ?, ?, ?)
-                """, id, user, "client-" + id, "SWEA", "1206", "title", "Java", "class Main {}", "ACCEPTED",
+                """, id, user, "client-" + id, "SWEA", problemNumber, "title", "Java", code, "ACCEPTED",
                 Timestamp.from(capturedAt), Timestamp.from(capturedAt), "78 ms", "25,472 kb", "unknown", generation,
                 Timestamp.from(capturedAt), Timestamp.from(capturedAt), Timestamp.from(capturedAt));
         return id;
