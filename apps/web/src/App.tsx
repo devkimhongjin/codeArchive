@@ -773,7 +773,7 @@ export function App({
         </div>
       </header>
 
-      {authenticated && authState.status === "authenticated" && <GitHubUpload key={`${authState.user.id ?? "missing"}:${authState.user.githubLogin}`} accountIdValid={Boolean(immutableAccountId)} automationBlockedReason={githubAutomationBlockedReason} solution={selected ?? null} client={githubClient} syncEligible={eligible} automationIntent={automationIntent}
+      {authenticated && authState.status === "authenticated" && <GitHubUpload key={`${authState.user.id ?? "missing"}:${authState.user.githubLogin}`} durableContextKey={account} accountIdValid={Boolean(immutableAccountId)} automationBlockedReason={githubAutomationBlockedReason} solution={selected ?? null} client={githubClient} syncEligible={eligible} automationIntent={automationIntent}
         onAutomationStateChange={(enabled, errorCode) => { setGithubAutoCommitEnabled(enabled); setAutomationError(errorCode); }}
         onTargetConfiguredChange={setGithubTargetConfigured}
         onSessionExpired={() => { if (accountRef.current === account) expireSession(); }} />}

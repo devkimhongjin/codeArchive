@@ -258,6 +258,65 @@ describe("DurableAutomationController", () => {
     expect(f.bridge.relayProvisionGrant).not.toHaveBeenCalled();
   });
 
+  it("does not provision a grant after an account/session context switch", async () => {
+    const f = fixture();
+    const otherUser = "650e8400-e29b-41d4-a716-446655440000";
+    let profileReads = 0;
+    vi.mocked(f.client.profile).mockImplementation(async () => {
+      profileReads += 1;
+      return profile({ userId: profileReads >= 2 ? otherUser : USER, generation: 4, deviceId: DEVICE });
+    });
+    const controller = new DurableAutomationController(f.client, f.bridge, () => NOW, () => "session-a");
+
+    await expect(controller.enableSourceTransfer()).rejects.toMatchObject({ code: "GRANT_GENERATION_MISMATCH" });
+    expect(f.bridge.relayProvisionGrant).not.toHaveBeenCalled();
+  });
+
+  it("cancels issuance when the authenticated session key changes with a colliding profile", async () => {
+    const f = fixture();
+    let context = "session-a";
+    let profileReads = 0;
+    vi.mocked(f.client.profile).mockImplementation(async () => {
+      profileReads += 1;
+      if (profileReads >= 2) context = "session-b";
+      return profile({ userId: USER, generation: 4, deviceId: DEVICE });
+    });
+    const controller = new DurableAutomationController(f.client, f.bridge, () => NOW, () => context);
+
+    await expect(controller.enableSourceTransfer()).rejects.toMatchObject({ code: "TRANSITION_CANCELLED" });
+    expect(f.bridge.relayProvisionGrant).not.toHaveBeenCalled();
+  });
+
+  it("cancels queued transitions across controllers when the authenticated context changes", async () => {
+    const first = fixture();
+    const second = fixture();
+    let releaseChallenge!: (value: { challengeId: string; challenge: string; expiresAt: string }) => void;
+    const challengeStarted = new Promise<void>((resolve) => {
+      vi.mocked(first.client.relayChallenge).mockImplementation(async () => {
+        resolve();
+        return new Promise((release) => { releaseChallenge = release; });
+      });
+    });
+    let context = "account-a";
+    const firstController = new DurableAutomationController(first.client, first.bridge, () => NOW, () => context);
+    const secondController = new DurableAutomationController(second.client, second.bridge, () => NOW, () => context);
+
+    const firstTransition = firstController.enableSourceTransfer();
+    await challengeStarted;
+    const queuedTransition = secondController.enableSourceTransfer();
+    context = "account-b";
+    firstController.cancelPendingTransitions();
+    secondController.cancelPendingTransitions();
+    releaseChallenge({ challengeId: CHALLENGE, challenge: "proof", expiresAt: "2026-09-04T08:01:00Z" });
+
+    await expect(firstTransition).rejects.toMatchObject({ code: "TRANSITION_CANCELLED" });
+    await expect(queuedTransition).rejects.toMatchObject({ code: "TRANSITION_CANCELLED" });
+
+    const stopped = await firstController.disableAll();
+    expect(stopped.profile.sourceTransferEnabled).toBe(false);
+    expect(second.client.relayGrant).not.toHaveBeenCalled();
+  });
+
   it("requires explicit visibility/public consent before a durable GitHub ON", async () => {
     const f = fixture();
     const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);

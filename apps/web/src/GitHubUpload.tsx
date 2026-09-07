@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DashboardSolution } from "./archiveTypes";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
 import { GitHubAutoCommit, type DurableGitHubConsent } from "./GitHubAutoCommit";
@@ -10,14 +10,13 @@ import { dashboardExtensionConnection } from "./extensionConnection";
 
 type AutomationIntent = { enabled: boolean; nonce: number };
 
-const defaultDurableController = new DurableAutomationController(mainApiDurableAutomationClient, dashboardExtensionConnection);
-
 type GitHubUploadProps = {
   solution: DashboardSolution | null;
   client: GitHubClient;
   syncEligible: boolean;
   automationBlockedReason?: string | null;
   accountIdValid?: boolean;
+  durableContextKey?: string;
   onSessionExpired: () => void;
   automationIntent?: AutomationIntent | null;
   onAutomationStateChange?: (enabled: boolean, errorCode: import("../../../packages/shared-types/src").CodeArchiveAutomationControlErrorCode | null) => void;
@@ -63,7 +62,7 @@ export function GitHubUpload({ accountIdValid = true, automationBlockedReason, .
   </section>;
 }
 function GitHubUploadBody({ open, solution, client, syncEligible, automationBlockedReason, onSessionExpired, automationIntent, onAutomationStateChange, onTargetConfiguredChange,
-  durableMode = false, durableEnabled = false, onDurableEnable, onDurableDisable }: GitHubUploadProps & { open: boolean }) {
+  durableMode = false, durableEnabled = false, durableContextKey = "", onDurableEnable, onDurableDisable }: GitHubUploadProps & { open: boolean }) {
   const [installations, setInstallations] = useState<GitHubInstallation[]>([]);
   const [installation, setInstallation] = useState("");
   const [repositories, setRepositories] = useState<GitHubPage<GitHubRepository>>({ page: 1, hasMore: false, items: [] });
@@ -96,18 +95,23 @@ function GitHubUploadBody({ open, solution, client, syncEligible, automationBloc
   const locked = busy || autoLocked || !!unresolved;
   const target: GitHubAutoTarget | null = repository && branch ? { installationId: installation, repositoryId: repository.id, branch: branch.name, expectedCommitSha: branch.commitSha, folder, privateRepository: repository.private, fullName: repository.fullName } : null;
   const targetGuidance = branchGuidance(repository, branches, branch);
+  const durableController = useMemo(
+    () => new DurableAutomationController(mainApiDurableAutomationClient, dashboardExtensionConnection, undefined, () => durableContextKey),
+    [durableContextKey],
+  );
   const effectiveDurableMode = durableMode || observedDurableProfile?.ownershipMode === "DURABLE_SERVER";
   const effectiveDurableEnabled = durableEnabled || Boolean(effectiveDurableMode && observedDurableProfile?.githubAutoCommitEnabled);
   const enableDurable = onDurableEnable ?? (async (freshTarget: GitHubAutoTarget, durableConsent: DurableGitHubConsent) => {
-    const result = await defaultDurableController.enableGitHubAutoCommit(freshTarget, durableConsent);
+    const result = await durableController.enableGitHubAutoCommit(freshTarget, durableConsent);
     setDurableAutomationProfile(result.profile);
     return result.relayPaired;
   });
   const disableDurable = onDurableDisable ?? (async () => {
-    const result = await defaultDurableController.disableGitHubAutoCommit();
+    const result = await durableController.disableGitHubAutoCommit();
     setDurableAutomationProfile(result.profile);
     return result.profile.githubAutoCommitEnabled === false;
   });
+  useEffect(() => () => durableController.cancelPendingTransitions(), [durableController]);
   useEffect(() => subscribeDurableAutomationProfile(setObservedDurableProfile), []);
   useEffect(() => { onTargetConfiguredChange?.(Boolean(target) || Boolean(effectiveDurableMode && observedDurableProfile?.target)); }, [onTargetConfiguredChange, effectiveDurableMode, observedDurableProfile?.target, target?.installationId, target?.repositoryId, target?.branch, target?.expectedCommitSha, target?.folder, target?.privateRepository, target?.fullName]);
   useEffect(() => {

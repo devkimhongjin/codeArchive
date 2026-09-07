@@ -70,6 +70,12 @@ function serializeDurableTransition<T>(operation: () => Promise<T>): Promise<T> 
   return next;
 }
 
+interface TransitionFence {
+  readonly epoch: number;
+  readonly contextKey: string;
+  readonly signal?: AbortSignal;
+}
+
 function sameTarget(a: GitHubAutoTarget | null, b: GitHubAutoTarget | null): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -101,11 +107,29 @@ function sameRevocationContext(a: DurableAutomationProfile, b: DurableAutomation
 }
 
 export class DurableAutomationController {
+  private transitionEpoch = 0;
+
   constructor(
     private readonly client: DurableAutomationClient,
     private readonly bridge: Partial<DashboardRelayPairingConnection>,
     private readonly now: () => number = () => Date.now(),
+    private readonly contextKey: () => string = () => "",
   ) {}
+
+  /** Cancel queued and in-flight transitions for a closed/auth-changed context. */
+  cancelPendingTransitions(): void {
+    this.transitionEpoch += 1;
+  }
+
+  private fence(signal?: AbortSignal): TransitionFence {
+    return { epoch: this.transitionEpoch, contextKey: this.contextKey(), signal };
+  }
+
+  private assertFence(fence: TransitionFence): void {
+    if (fence.signal?.aborted || fence.epoch !== this.transitionEpoch || fence.contextKey !== this.contextKey()) {
+      throw new DurableAutomationTransitionError("TRANSITION_CANCELLED");
+    }
+  }
 
   async discover(signal?: AbortSignal): Promise<{ profile: DurableAutomationProfile; pairing: CodeArchiveRelayPairingInfoResponse | null }> {
     const [profile, pairing] = await Promise.all([
@@ -116,12 +140,18 @@ export class DurableAutomationController {
   }
 
   async enableSourceTransfer(signal?: AbortSignal): Promise<DurableTransitionResult> {
-    return serializeDurableTransition(() => this.enableSourceTransferInternal(signal));
+    const fence = this.fence(signal);
+    return serializeDurableTransition(async () => {
+      this.assertFence(fence);
+      return this.enableSourceTransferInternal(signal, fence);
+    });
   }
 
-  private async enableSourceTransferInternal(signal?: AbortSignal): Promise<DurableTransitionResult> {
+  private async enableSourceTransferInternal(signal: AbortSignal | undefined, fence: TransitionFence): Promise<DurableTransitionResult> {
+    this.assertFence(fence);
     const pairing = await this.requirePairingInfo();
     const current = await this.client.profile(signal);
+    this.assertFence(fence);
     const migratingFromPageOwned = current.ownershipMode === "PAGE_OWNED";
     const desired = {
       deviceId: pairing.deviceId,
@@ -134,7 +164,9 @@ export class DurableAutomationController {
       publicUploadConsent: migratingFromPageOwned ? false : current.publicUploadConsent,
     };
     const profile = await this.updateIfNeeded(current, desired, signal);
-    await this.ensureRelayGrant(profile, signal);
+    this.assertFence(fence);
+    await this.ensureRelayGrant(profile, signal, fence);
+    this.assertFence(fence);
     return { profile, relayPaired: true };
   }
 
@@ -143,19 +175,25 @@ export class DurableAutomationController {
     visibilityRiskConsent: boolean;
     publicUploadConsent: boolean;
   }, signal?: AbortSignal): Promise<DurableTransitionResult> {
-    return serializeDurableTransition(() => this.enableGitHubAutoCommitInternal(target, consent, signal));
+    const fence = this.fence(signal);
+    return serializeDurableTransition(async () => {
+      this.assertFence(fence);
+      return this.enableGitHubAutoCommitInternal(target, consent, signal, fence);
+    });
   }
 
   private async enableGitHubAutoCommitInternal(target: GitHubAutoTarget, consent: {
     automaticTransferConsent: boolean;
     visibilityRiskConsent: boolean;
     publicUploadConsent: boolean;
-  }, signal?: AbortSignal): Promise<DurableTransitionResult> {
+  }, signal: AbortSignal | undefined, fence: TransitionFence): Promise<DurableTransitionResult> {
+    this.assertFence(fence);
     if (!consent.automaticTransferConsent || !consent.visibilityRiskConsent || (!target.privateRepository && !consent.publicUploadConsent)) {
       throw new DurableAutomationTransitionError("CONSENT_REQUIRED");
     }
     const pairing = await this.requirePairingInfo();
     const current = await this.client.profile(signal);
+    this.assertFence(fence);
     const desired = {
       deviceId: pairing.deviceId,
       sourceTransferEnabled: true,
@@ -167,16 +205,24 @@ export class DurableAutomationController {
       publicUploadConsent: target.privateRepository ? consent.publicUploadConsent : true,
     };
     const profile = await this.updateIfNeeded(current, desired, signal);
-    await this.ensureRelayGrant(profile, signal);
+    this.assertFence(fence);
+    await this.ensureRelayGrant(profile, signal, fence);
+    this.assertFence(fence);
     return { profile, relayPaired: true };
   }
 
   async disableGitHubAutoCommit(signal?: AbortSignal): Promise<DurableTransitionResult> {
-    return serializeDurableTransition(() => this.disableGitHubAutoCommitInternal(signal));
+    const fence = this.fence(signal);
+    return serializeDurableTransition(async () => {
+      this.assertFence(fence);
+      return this.disableGitHubAutoCommitInternal(signal, fence);
+    });
   }
 
-  private async disableGitHubAutoCommitInternal(signal?: AbortSignal): Promise<DurableTransitionResult> {
+  private async disableGitHubAutoCommitInternal(signal: AbortSignal | undefined, fence: TransitionFence): Promise<DurableTransitionResult> {
+    this.assertFence(fence);
     const current = await this.client.profile(signal);
+    this.assertFence(fence);
     if (current.ownershipMode !== "DURABLE_SERVER") return { profile: current, relayPaired: false };
     const pairing = await (this.bridge.relayPairingInfo?.().catch(() => null) ?? Promise.resolve(null));
     const deviceId = pairing?.deviceId ?? current.deviceId;
@@ -192,8 +238,10 @@ export class DurableAutomationController {
       publicUploadConsent: current.publicUploadConsent,
     };
     const profile = await this.updateIfNeeded(current, desired, signal);
+    this.assertFence(fence);
     if (profile.sourceTransferEnabled) {
-      await this.ensureRelayGrant(profile, signal);
+      await this.ensureRelayGrant(profile, signal, fence);
+      this.assertFence(fence);
       return { profile, relayPaired: true };
     }
     return { profile, relayPaired: false };
@@ -203,18 +251,27 @@ export class DurableAutomationController {
     signal?: AbortSignal,
     cachedProfile: DurableAutomationProfile | null = null,
   ): Promise<DurableTransitionResult> {
-    return serializeDurableTransition(() => this.disableAllInternal(signal, cachedProfile));
+    const fence = this.fence(signal);
+    return serializeDurableTransition(async () => {
+      this.assertFence(fence);
+      return this.disableAllInternal(fence, signal, cachedProfile);
+    });
   }
 
   private async disableAllInternal(
+    fence: TransitionFence,
     signal?: AbortSignal,
     cachedProfile: DurableAutomationProfile | null = null,
   ): Promise<DurableTransitionResult> {
+    this.assertFence(fence);
     const pairing = await (this.bridge.relayPairingInfo?.().catch(() => null) ?? Promise.resolve(null));
+    this.assertFence(fence);
     const localRevocationConfirmed = await this.confirmLocalRevoke(pairing, cachedProfile);
+    this.assertFence(fence);
     let current = cachedProfile;
     try {
       const discovered = await this.client.profile(signal);
+      this.assertFence(fence);
       if (cachedProfile && !sameRevocationContext(cachedProfile, discovered)) {
         // A new account/session must never authorize OFF for the cached old context.
         // Keep the old profile stopped and pending until its own server transition is confirmed.
@@ -252,9 +309,12 @@ export class DurableAutomationController {
       publicUploadConsent: false,
     };
     try {
+      this.assertFence(fence);
       const profile = await this.updateIfNeeded(current, desired, signal);
+      this.assertFence(fence);
       return { profile, relayPaired: false, localRevocationConfirmed, serverRevocationConfirmed: true };
     } catch {
+      this.assertFence(fence);
       // Local source transfer is already stopped and the cached profile is kept
       // as REVOCATION_PENDING until an authenticated reconciliation succeeds.
       return { profile: current, relayPaired: false, localRevocationConfirmed, serverRevocationConfirmed: false };
@@ -305,15 +365,18 @@ export class DurableAutomationController {
     return this.client.update({ ...desired, expectedVersion: current.version }, signal);
   }
 
-  private async ensureRelayGrant(profile: DurableAutomationProfile, signal?: AbortSignal): Promise<void> {
+  private async ensureRelayGrant(profile: DurableAutomationProfile, signal: AbortSignal | undefined, fence: TransitionFence): Promise<void> {
+    this.assertFence(fence);
     if (!profile.sourceTransferEnabled || profile.ownershipMode !== "DURABLE_SERVER" || !profile.deviceId) {
       throw new DurableAutomationTransitionError("PROFILE_NOT_RELAY_ELIGIBLE");
     }
     const info = await this.requirePairingInfo();
+    this.assertFence(fence);
     if (info.deviceId !== profile.deviceId) throw new DurableAutomationTransitionError("DEVICE_CHANGED");
     if (pairedForProfile(info, profile, this.now())) return;
 
     const challenge = await this.client.relayChallenge(info.deviceId, info.publicKey, signal);
+    this.assertFence(fence);
     if (Date.parse(challenge.expiresAt) <= this.now()) throw new DurableAutomationTransitionError("CHALLENGE_EXPIRED");
     const signed = await this.bridge.relaySignChallenge?.({
       type: "CODEARCHIVE_RELAY_SIGN_CHALLENGE",
@@ -324,6 +387,7 @@ export class DurableAutomationController {
       challenge: challenge.challenge,
       expiresAt: challenge.expiresAt,
     }) ?? null;
+    this.assertFence(fence);
     if (!signed || signed.deviceId !== info.deviceId || signed.challengeId !== challenge.challengeId) {
       throw new DurableAutomationTransitionError("CHALLENGE_SIGNATURE_REJECTED");
     }
@@ -334,6 +398,7 @@ export class DurableAutomationController {
       publicKey: info.publicKey,
       signature: signed.signature,
     }, signal);
+    this.assertFence(fence);
     if (grant.deviceId !== profile.deviceId || grant.generation !== profile.generation || Date.parse(grant.expiresAt) <= this.now()) {
       throw new DurableAutomationTransitionError("GRANT_GENERATION_MISMATCH");
     }
@@ -341,10 +406,12 @@ export class DurableAutomationController {
     // in flight (for example, another tab or a second control path changed
     // consent). Do not provision a grant that is no longer current.
     const latest = await this.client.profile(signal);
-    if (latest.ownershipMode !== "DURABLE_SERVER" || !latest.sourceTransferEnabled
+    this.assertFence(fence);
+    if (latest.userId !== profile.userId || latest.ownershipMode !== "DURABLE_SERVER" || !latest.sourceTransferEnabled
       || latest.deviceId !== profile.deviceId || latest.generation !== profile.generation) {
       throw new DurableAutomationTransitionError("GRANT_GENERATION_MISMATCH");
     }
+    this.assertFence(fence);
     const stored = await this.bridge.relayProvisionGrant?.({
       type: "CODEARCHIVE_RELAY_GRANT_PROVISION",
       phase: "REQUEST",
@@ -356,6 +423,7 @@ export class DurableAutomationController {
       generation: grant.generation,
       expiresAt: grant.expiresAt,
     }) ?? null;
+    this.assertFence(fence);
     if (!stored || stored.deviceId !== grant.deviceId || stored.grantId !== grant.grantId
       || stored.generation !== grant.generation || stored.expiresAt !== grant.expiresAt) {
       throw new DurableAutomationTransitionError("GRANT_STORAGE_UNCONFIRMED");

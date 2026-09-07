@@ -232,6 +232,7 @@ export class RelayRuntime {
       autoSyncEnabled: false,
       signedChallengeId: undefined,
       signedChallengeExpiresAt: undefined,
+      provisionedChallengeId: undefined,
       nextRetryAt: undefined,
     }));
   }
@@ -342,7 +343,7 @@ export class RelayRuntime {
 
   private async invalidate(state: RelayStateSnapshot["state"]): Promise<void> {
     await this.cancelAlarm();
-    await this.state.update((current) => ({ ...current, state, credential: undefined, autoSyncEnabled: false, signedChallengeId: undefined, signedChallengeExpiresAt: undefined, nextRetryAt: undefined }));
+    await this.state.update((current) => ({ ...current, state, credential: undefined, autoSyncEnabled: false, signedChallengeId: undefined, signedChallengeExpiresAt: undefined, provisionedChallengeId: undefined, nextRetryAt: undefined }));
   }
 }
 

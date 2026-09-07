@@ -146,4 +146,41 @@ describe("RelayPairingController", () => {
       credential: "current-secret", autoSyncEnabled: true,
     });
   });
+
+  it("rejects a same-generation replay but accepts a fresh same-generation rotation", async () => {
+    const repository = new MemoryState(state({
+      state: "ACTIVE",
+      grantId: grantA,
+      generation: 4,
+      expiresAt: FUTURE,
+      credential: "current-secret",
+      provisionedChallengeId: challengeA,
+    }));
+    const controller = new RelayPairingController(repository);
+
+    const replay = await controller.handle({
+      type: "CODEARCHIVE_RELAY_GRANT_PROVISION", phase: "REQUEST", protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+      deviceId: "device-1234567890", grantId: grantA, generation: 4, expiresAt: FUTURE,
+      challengeId: challengeA, credential: "replayed-secret",
+    }, true);
+    expect(replay).toBeUndefined();
+    expect(repository.value.credential).toBe("current-secret");
+
+    repository.value = { ...repository.value, signedChallengeId: challengeB, signedChallengeExpiresAt: FUTURE };
+    const rotated = await controller.handle({
+      type: "CODEARCHIVE_RELAY_GRANT_PROVISION", phase: "REQUEST", protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+      deviceId: "device-1234567890", grantId: "a0000000-0000-4000-8000-000000000021", generation: 4, expiresAt: FUTURE,
+      challengeId: challengeB, credential: "rotated-secret",
+    }, true);
+    expect(rotated).toMatchObject({ phase: "STORED", generation: 4 });
+    expect(repository.value).toMatchObject({ credential: "rotated-secret", provisionedChallengeId: challengeB });
+
+    const lateOldResponse = await controller.handle({
+      type: "CODEARCHIVE_RELAY_GRANT_PROVISION", phase: "REQUEST", protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+      deviceId: "device-1234567890", grantId: grantA, generation: 4, expiresAt: FUTURE,
+      challengeId: challengeA, credential: "late-old-secret",
+    }, true);
+    expect(lateOldResponse).toBeUndefined();
+    expect(repository.value.credential).toBe("rotated-secret");
+  });
 });

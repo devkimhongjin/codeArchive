@@ -23,6 +23,8 @@ export interface RelayStateSnapshot {
   generation?: number;
   expiresAt?: string;
   autoSyncEnabled?: boolean;
+  /** Identity of the last successfully stored grant attempt. */
+  provisionedChallengeId?: string;
 }
 
 export interface SolutionRepository {
