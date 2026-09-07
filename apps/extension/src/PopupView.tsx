@@ -91,7 +91,8 @@ function AutomationControls({
     setPending(automation);
     try {
       const response = await setAutomation(automation, enabled);
-      setState(response.state);
+      if (response.accepted || response.state.errorCode !== null) setState(response.state);
+      else setState(unavailableAutomationState("CONTROL_UNAVAILABLE"));
     } catch {
       setState(unavailableAutomationState());
     } finally {

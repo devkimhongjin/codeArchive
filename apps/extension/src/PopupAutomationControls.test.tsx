@@ -34,6 +34,19 @@ describe("Popup automation controls", () => {
     expect(screen.getByLabelText("자동 동기화")).not.toBeChecked();
   });
 
+  it("fails closed when a command times out with a cached checked state", async () => {
+    const checked = { ...state, autoSyncEnabled: true };
+    const requestAutomationState = vi.fn(async () => ({ state: checked, forwarded: true }));
+    const setAutomation = vi.fn(async () => ({ accepted: false, state: checked, forwarded: true }));
+    render(<Popup repository={repository()} requestAutomationState={requestAutomationState} setAutomation={setAutomation} />);
+
+    expect(await screen.findByLabelText("자동 동기화")).toBeChecked();
+    fireEvent.click(screen.getByLabelText("자동 동기화"));
+    await waitFor(() => expect(setAutomation).toHaveBeenCalledWith("AUTO_SYNC", false));
+    await waitFor(() => expect(screen.getByLabelText("자동 동기화")).not.toBeChecked());
+    expect(screen.getByText("Dashboard를 열어 연결한 뒤 자동화를 설정해주세요.")).toBeInTheDocument();
+  });
+
   it("disables both controls while Dashboard is unavailable", async () => {
     const unavailable = { ...state, autoSyncEnabled: true, githubAutoCommitEnabled: true, connectionAvailable: false, errorCode: "DASHBOARD_DISCONNECTED" as const };
     render(<Popup repository={repository()} requestAutomationState={async () => ({ state: unavailable, forwarded: false })} setAutomation={vi.fn()} />);

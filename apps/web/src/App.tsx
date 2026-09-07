@@ -48,6 +48,7 @@ import {
   sanitizeAutomationState,
   type AutomationStateInput,
 } from "./automationControl";
+import { handleExplicitDurableAutomationOff } from "./durableAutomationRuntime";
 import type {
   CodeArchiveAutomationControlErrorCode,
   ExtensionToDashboardAutomationMessage,
@@ -506,6 +507,7 @@ export function App({
     }
     if (message.automation === "AUTO_SYNC") {
       if (!message.enabled) {
+        void handleExplicitDurableAutomationOff("AUTO_SYNC", false);
         automationOffLatchedRef.current = true;
         setAutomationError(null);
         setAutomationAutoSyncEnabled(false);
@@ -527,6 +529,7 @@ export function App({
       return;
     }
     if (!message.enabled) {
+      void handleExplicitDurableAutomationOff("GITHUB_AUTO_COMMIT", false);
       setGithubAutoCommitEnabled(false);
       setAutomationError(null);
       nextAutomationIntent(false, true);

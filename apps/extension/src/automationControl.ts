@@ -88,12 +88,15 @@ function parseStateUpdate(value: unknown): CodeArchiveAutomationStateUpdateEvent
 interface StateWaiter {
   readonly resolve: (response: PopupAutomationStateResponse) => void;
   readonly timer: ReturnType<typeof setTimeout>;
+  readonly minRevision: number;
+  readonly matches?: (state: CodeArchiveAutomationState) => boolean;
 }
 
 export class AutomationControlController {
   private readonly ports = new Set<AutomationPort>();
   private readonly waiters = new Set<StateWaiter>();
   private state = unavailableAutomationState();
+  private stateRevision = 0;
   private multipleDashboardTabsLatched = false;
 
   constructor(private readonly onMultipleDashboardTabs: () => void = () => undefined) {}
@@ -126,8 +129,18 @@ export class AutomationControlController {
   setAutomation(automation: CodeArchiveAutomationKind, enabled: boolean): Promise<PopupAutomationSetResponse> {
     const port = this.eligiblePort();
     if (!port) return Promise.resolve({ accepted: false, state: this.getState(), forwarded: false });
+    const minRevision = this.stateRevision;
     port.postMessage({ type: "CODEARCHIVE_AUTOMATION_SET_REQUEST", protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION, automation, enabled });
-    return this.waitForState(true).then((response) => ({ accepted: true, ...response }));
+    return this.waitForState(
+      true,
+      minRevision,
+      (state) => state.errorCode !== null || !state.connectionAvailable || state[automation === "AUTO_SYNC" ? "autoSyncEnabled" : "githubAutoCommitEnabled"] === enabled,
+    ).then((response) => ({
+      accepted: response.state.connectionAvailable
+        && response.state.errorCode === null
+        && response.state[automation === "AUTO_SYNC" ? "autoSyncEnabled" : "githubAutoCommitEnabled"] === enabled,
+      ...response,
+    }));
   }
 
   receive(port: AutomationPort, value: unknown): boolean {
@@ -153,23 +166,29 @@ export class AutomationControlController {
 
   private replaceState(state: CodeArchiveAutomationState): void {
     this.state = { ...state };
+    this.stateRevision += 1;
     if (this.waiters.size === 0) return;
     const response = { state: this.getState(), forwarded: true };
-    for (const waiter of this.waiters) {
+    for (const waiter of [...this.waiters]) {
+      if (this.stateRevision <= waiter.minRevision || (waiter.matches && !waiter.matches(this.state))) continue;
       clearTimeout(waiter.timer);
       waiter.resolve(response);
+      this.waiters.delete(waiter);
     }
-    this.waiters.clear();
   }
 
-  private waitForState(forwarded: boolean): Promise<PopupAutomationStateResponse> {
+  private waitForState(
+    forwarded: boolean,
+    minRevision = this.stateRevision,
+    matches?: (state: CodeArchiveAutomationState) => boolean,
+  ): Promise<PopupAutomationStateResponse> {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         const waiter = [...this.waiters].find((candidate) => candidate.timer === timer);
         if (waiter) this.waiters.delete(waiter);
         resolve({ state: this.getState(), forwarded });
       }, STATE_WAIT_MS);
-      this.waiters.add({ resolve, timer });
+      this.waiters.add({ resolve, timer, minRevision, matches });
     });
   }
 }
