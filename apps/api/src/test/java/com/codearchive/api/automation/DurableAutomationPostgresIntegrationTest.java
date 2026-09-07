@@ -74,6 +74,9 @@ class DurableAutomationPostgresIntegrationTest {
     private DurableAutomationWorker worker;
 
     @Autowired
+    private DurableWorkerStore store;
+
+    @Autowired
     private DurableAutomationProfileStore profiles;
 
     @Autowired
@@ -127,6 +130,89 @@ class DurableAutomationPostgresIntegrationTest {
                 "SELECT target->>'expectedCommitSha' FROM automation_profiles WHERE user_id=?",
                 String.class, user)).isEqualTo(COMMIT);
         verify(prepared).create("class Main {}", "Add SWEA 1206 solution");
+    }
+
+    @Test
+    void pendingAccountIsNotStarvedByOlderOnAccountWithNoEligibleWork() {
+        UUID idleAccount = user();
+        profile(idleAccount, 3, 4, TARGET, true, "DURABLE_SERVER");
+
+        UUID pendingAccount = user();
+        UUID solution = acceptedSolution(pendingAccount, 3, Instant.now().minusSeconds(1));
+        profile(pendingAccount, 3, 4, TARGET, true, "DURABLE_SERVER");
+
+        DurableAutomationWorker.Result result = worker.runOnce();
+
+        assertThat(result.status()).isEqualTo("SUCCEEDED");
+        assertThat(result.solutionId()).isEqualTo(solution);
+        assertThat(db.queryForObject("SELECT user_id FROM durable_github_attempts WHERE solution_id=?",
+                UUID.class, solution)).isEqualTo(pendingAccount);
+    }
+
+    @Test
+    void concurrentInvocationsSerializeProviderDispatchPerAccount() throws Exception {
+        UUID user = user();
+        acceptedSolution(user, 3, Instant.now().minusSeconds(2));
+        acceptedSolution(user, 3, Instant.now().minusSeconds(1));
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+
+        CountDownLatch inspectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseInspection = new CountDownLatch(1);
+        when(github.inspectUploadTarget(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString()))
+                .thenAnswer(invocation -> {
+                    inspectionEntered.countDown();
+                    assertThat(releaseInspection.await(10, TimeUnit.SECONDS)).isTrue();
+                    return uploadTarget();
+                });
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            var first = pool.submit(worker::runOnce);
+            assertThat(inspectionEntered.await(10, TimeUnit.SECONDS)).isTrue();
+
+            var second = pool.submit(worker::runOnce);
+            assertThat(second.get(10, TimeUnit.SECONDS).status()).isEqualTo("IDLE");
+
+            releaseInspection.countDown();
+            assertThat(first.get(10, TimeUnit.SECONDS).status()).isEqualTo("SUCCEEDED");
+        } finally {
+            releaseInspection.countDown();
+            pool.shutdownNow();
+        }
+
+        assertThat(db.queryForObject("SELECT count(*) FROM durable_github_attempts WHERE user_id=?",
+                Integer.class, user)).isEqualTo(1);
+        verify(prepared).create(anyString(), anyString());
+    }
+
+    @Test
+    void expiredClaimIsReclaimed() {
+        UUID user = user();
+        UUID solution = acceptedSolution(user, 3, Instant.now().minusSeconds(1));
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+
+        DurableWorkerStore.Claim expired = store.claimNext().orElseThrow();
+        db.update("UPDATE durable_github_attempts SET lease_until=clock_timestamp()-interval '1 second' WHERE id=?",
+                expired.id());
+
+        DurableWorkerStore.Claim reclaimed = store.claimNext().orElseThrow();
+        assertThat(reclaimed.id()).isNotEqualTo(expired.id());
+        assertThat(reclaimed.solutionId()).isEqualTo(solution);
+        assertThat(db.queryForObject("SELECT count(*) FROM durable_github_attempts WHERE user_id=?",
+                Integer.class, user)).isEqualTo(1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"ATTEMPTED", "UNKNOWN"})
+    void attemptedAndUnknownAreNotRetried(String state) {
+        UUID user = user();
+        UUID solution = acceptedSolution(user, 3, Instant.now().minusSeconds(1));
+        acceptedSolution(user, 3, Instant.now());
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+        attempt(user, solution, 3, 4, state);
+
+        assertThat(worker.runOnce().status()).isEqualTo("IDLE");
+        verify(github, never()).inspectUploadTarget(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString());
     }
 
     @Test

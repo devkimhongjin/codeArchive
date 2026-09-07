@@ -53,8 +53,33 @@ public class DurableWorkerStore {
                           AND p.visibility_risk_consent=true
                           AND p.target IS NOT NULL AND p.github_enabled_at IS NOT NULL
                           AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
+                          AND NOT EXISTS (
+                              SELECT 1 FROM durable_github_attempts blocking
+                              WHERE blocking.user_id=p.user_id
+                                AND (blocking.state IN ('ATTEMPTED','UNKNOWN')
+                                     OR (blocking.state='CLAIMED' AND blocking.lease_until>clock_timestamp()))
+                          )
+                          AND EXISTS (
+                              SELECT 1 FROM solutions eligible
+                              WHERE eligible.user_id=p.user_id
+                                AND eligible.accepted_capture=true AND eligible.result='ACCEPTED'
+                                AND eligible.capture_generation=p.generation
+                                AND eligible.captured_at >= p.github_enabled_at
+                                AND eligible.captured_at <= clock_timestamp()
+                                AND NOT EXISTS (
+                                    SELECT 1 FROM durable_github_attempts prior
+                                    WHERE prior.user_id=eligible.user_id AND prior.solution_id=eligible.id
+                                      AND (prior.state IN ('ATTEMPTED','SUCCEEDED','UNKNOWN','REJECTED')
+                                           OR (prior.state='CLAIMED' AND prior.lease_until>clock_timestamp()))
+                                )
+                                AND NOT EXISTS (
+                                    SELECT 1 FROM github_auto_attempts prior_page
+                                    WHERE prior_page.user_id=eligible.user_id AND prior_page.solution_id=eligible.id
+                                )
+                          )
                         ORDER BY p.updated_at,p.user_id
-                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1
+                        FOR UPDATE OF p SKIP LOCKED
                         """, (rs, index) -> new Candidate(rs.getObject("user_id", UUID.class),
                                 rs.getLong("generation"), rs.getLong("target_generation"), decode(rs.getString("target")),
                                 rs.getTimestamp("github_enabled_at").toInstant(), rs.getLong("version"),
@@ -88,7 +113,7 @@ public class DurableWorkerStore {
                             target_generation=:targetGeneration,state='CLAIMED',claim_token=:claimToken,
                             lease_until=clock_timestamp()+interval '60 seconds',created_at=clock_timestamp(),
                             completed_at=NULL,commit_sha=NULL,commit_url=NULL,error_code=NULL
-                            WHERE user_id=:user AND solution_id=:solution AND state='CLAIMED'
+                            WHERE user_id=:user AND state='CLAIMED'
                               AND lease_until<=clock_timestamp()
                             """, new MapSqlParameterSource("id", id).addValue("user", candidate.userId())
                             .addValue("solution", solution).addValue("generation", candidate.generation())
