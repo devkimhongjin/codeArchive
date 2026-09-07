@@ -146,7 +146,7 @@ export class RelayRuntime {
   }
 
   async onCaptureCommitted(): Promise<void> {
-    await this.scheduleIfEligible();
+    await this.scheduleIfEligible().catch(() => undefined);
     // Keep the persisted alarm as the service-worker/restart safety net, but also
     // attempt one bounded drain while this capture notification is still alive.
     // The capture path is fire-and-forget, so a transient request failure remains
