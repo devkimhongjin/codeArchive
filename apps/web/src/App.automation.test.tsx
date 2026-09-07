@@ -139,6 +139,54 @@ describe("Dashboard automation authority", () => {
     expect(extensionConnection.relayConfirmRevoke).not.toHaveBeenCalled();
   });
 
+  it("keeps durable relay automation authoritative across Dashboard pagehide", async () => {
+    const fixture = bridge();
+    const extensionConnection: DashboardExtensionConnection = {
+      ...fixture.extensionConnection,
+      relayPairingInfo: vi.fn(async () => null),
+      relaySignChallenge: vi.fn(async () => null),
+      relayProvisionGrant: vi.fn(async () => null),
+      relayConfirmRevoke: vi.fn(async () => null),
+    };
+    const profile: DurableAutomationProfile = {
+      userId: ID,
+      deviceId: "device_identity_1234",
+      generation: 4,
+      sourceTransferEnabled: true,
+      githubAutoCommitEnabled: false,
+      ownershipMode: "DURABLE_SERVER",
+      targetGeneration: 0,
+      target: null,
+      automaticTransferConsent: true,
+      visibilityRiskConsent: false,
+      publicUploadConsent: false,
+      githubEnabledAt: null,
+      version: 7,
+      updatedAt: "2026-09-06T00:00:00.000Z",
+    };
+    setDurableAutomationProfile(profile);
+
+    render(<App
+      dataSource={{ listSolutions: async () => [] }}
+      authClient={auth()}
+      extensionConnection={extensionConnection}
+      consentStore={{ read: () => true, write: vi.fn() }}
+      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+    />);
+
+    await waitFor(() => expect(fixture.published.at(-1)).toMatchObject({ autoSyncEnabled: true, connectionAvailable: true }));
+    const publishedBeforePagehide = fixture.published.length;
+    await act(async () => window.dispatchEvent(new Event("pagehide")));
+    await act(async () => { await Promise.resolve(); });
+    const publishedAfterPagehide = fixture.published.slice(publishedBeforePagehide);
+
+    expect(fixture.startSyncSession).not.toHaveBeenCalled();
+    expect(fixture.endSyncSession).not.toHaveBeenCalled();
+    expect(publishedAfterPagehide).not.toContainEqual(expect.objectContaining({ autoSyncEnabled: false }));
+    expect(fixture.published.at(-1)).toMatchObject({ autoSyncEnabled: true, connectionAvailable: true });
+    expect(fixture.published.at(-1)).not.toMatchObject({ autoSyncEnabled: false });
+  });
+
   it("publishes fresh sanitized automation state after a manual reconnect", async () => {
     let attempts = 0;
     const published: unknown[] = [];
