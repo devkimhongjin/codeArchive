@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RELAY_DRAIN_ALARM, RelayRuntime, type RelayAlarmApi, type RelayFetchResponse } from "./relayRuntime";
 import type { RelayStateRecord, RelayStateRepository } from "./relayState";
 import type { SolutionRecord } from "../solution";
 import type { CodeArchiveAutomationState } from "../../../../packages/shared-types/src";
+import { ExtensionDashboardCaptureBridge, type ExternalDashboardPort, type ExternalDashboardSender } from "../dashboardCaptureBridge";
+import type { CaptureBridgePage, CaptureBridgeRepository, CaptureBridgeSummary } from "../solutionRepository";
 
 function state(overrides: Partial<RelayStateRecord> = {}): RelayStateRecord {
   return {
@@ -57,6 +59,25 @@ class MemoryAlarms implements RelayAlarmApi {
   clear(name: string): boolean { this.cleared.push(name); return true; }
   onAlarm = { addListener: (listener: (alarm: { name: string }) => void) => { this.listener = listener; } };
   fire(): void { this.listener?.({ name: RELAY_DRAIN_ALARM }); }
+}
+
+class DisconnectPort implements ExternalDashboardPort {
+  sender?: ExternalDashboardSender = { origin: "https://dashboard.example.com", url: "https://dashboard.example.com/", tab: { id: 1 } };
+  readonly onMessage = { addListener: (_listener: (message: unknown) => void) => undefined };
+  readonly onDisconnect = { addListener: (listener: () => void) => { this.listener = listener; } };
+  private listener?: () => void;
+  postMessage(_message: unknown): void { /* no-op for lifecycle-only regression */ }
+  disconnect(): void { this.listener?.(); }
+}
+
+class EmptyCaptureBridgeRepository implements CaptureBridgeRepository {
+  async summary(): Promise<CaptureBridgeSummary> { return { pendingCount: 0, allCount: 0, revision: 0 }; }
+  async page(): Promise<CaptureBridgePage> { return { records: [], revision: 0 }; }
+  async acknowledge(): Promise<readonly string[]> { return []; }
+}
+
+async function waitForRequest(requests: readonly RequestInit[]): Promise<void> {
+  await vi.waitFor(() => expect(requests).toHaveLength(1));
 }
 
 function response(results: unknown[], status = 200, retryAfter?: string): RelayFetchResponse {
@@ -155,6 +176,56 @@ describe("RelayRuntime", () => {
     await runtime.onCaptureCommitted();
 
     expect(alarms.created.at(-1)).toBe(1_000_000);
+  });
+
+  it("drains the real save orchestration after an external Port disconnect without a Dashboard", async () => {
+    (globalThis as any).chrome = {
+      runtime: {
+        onMessage: { addListener: () => undefined },
+        onConnectExternal: { addListener: () => undefined },
+      },
+    };
+    const { saveThenSyncAcceptedCapture } = await import("../background");
+    const stateRepo = new MemoryState(state());
+    const alarms = new MemoryAlarms();
+    const requests: RequestInit[] = [];
+    const runtime = new RelayRuntime({
+      state: stateRepo,
+      alarms,
+      now: () => 1_000_000,
+      listPending: async () => [record("after-disconnect")],
+      fetch: async (_input, init) => {
+        requests.push(init);
+        return response([{ clientRecordId: "after-disconnect", outcome: "IMPORTED", ackEligible: true, errorCode: null }]);
+      },
+    });
+    const bridge = new ExtensionDashboardCaptureBridge(new EmptyCaptureBridgeRepository(), () => 1_000_000, () => "cap", undefined, runtime);
+    const port = new DisconnectPort();
+    expect(bridge.connect(port, "https://dashboard.example.com")).toBe(true);
+    port.disconnect();
+
+    const capture = {
+      captureId: "after-disconnect",
+      platform: "SWEA" as const,
+      result: "ACCEPTED" as const,
+      problemNumber: "1234",
+      title: "title",
+      language: "Java",
+      code: "class Main {}",
+      observedAt: "1970-01-01T00:00:01.000Z",
+      solvedAt: "1970-01-01",
+    };
+    const result = await saveThenSyncAcceptedCapture(capture, {
+      saveCapture: async () => ({ status: "saved" as const, solutionId: "swea-auto:after-disconnect", savedAt: "1970-01-01T00:00:01.000Z" }),
+      onCaptureCommitted: () => runtime.onCaptureCommitted(),
+    });
+
+    expect(result.status).toBe("saved");
+    expect(stateRepo.value.state).toBe("ACTIVE");
+    expect(stateRepo.value.credential).toBe("credential");
+    expect(alarms.created.at(-1)).toBe(1_000_000);
+    await waitForRequest(requests);
+    expect(JSON.parse(String(requests[0]?.body)).records[0].clientRecordId).toBe("after-disconnect");
   });
 
   it("does not erase a valid grant solely for a multiple-tab safety stop", async () => {

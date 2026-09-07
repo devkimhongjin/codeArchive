@@ -147,6 +147,11 @@ export class RelayRuntime {
 
   async onCaptureCommitted(): Promise<void> {
     await this.scheduleIfEligible();
+    // Keep the persisted alarm as the service-worker/restart safety net, but also
+    // attempt one bounded drain while this capture notification is still alive.
+    // The capture path is fire-and-forget, so a transient request failure remains
+    // covered by retry/backoff without delaying local persistence.
+    await this.drain().catch(() => undefined);
   }
 
   async getPopupState(): Promise<RelayPopupState> {
