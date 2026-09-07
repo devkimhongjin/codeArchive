@@ -1,10 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
 import type { DashboardServerSolution } from "./archiveTypes";
 import type { DashboardAuthClient } from "./authClient";
 import type { DashboardExtensionConnection } from "./extensionConnection";
+import { mainApiGitHubClient } from "./githubClient";
 import { AI_TASK_LABELS, AiArtifactRequestError, type AiArtifact, type AiTaskType, type DashboardAiArtifactClient } from "./aiArtifactClient";
 
 const solution: DashboardServerSolution = {
@@ -13,13 +14,22 @@ const solution: DashboardServerSolution = {
 };
 const second = { ...solution, id: "22222222-2222-4222-8222-222222222222", problemNumber: "1207", code: "second source", language: "PYTHON" };
 const artifact: AiArtifact = { id: "33333333-3333-4333-8333-333333333333", solutionId: solution.id, type: "CODE_REVIEW", content: "<script>synthetic()</script>", provider: "fake", model: "fake-model", createdAt: "2026-08-31T00:00:00Z" };
-function auth(id = "account-a"): DashboardAuthClient {
-  return { discoverSession: async () => ({ status: "authenticated", user: { id, githubLogin: id, displayName: id, avatarUrl: "" } }), login: vi.fn(), logout: vi.fn(async (before) => { await before?.(); return true; }) };
+function auth(login = "account-a"): DashboardAuthClient {
+  const id = login === "account-a" ? "550e8400-e29b-41d4-a716-446655440000" : login === "account-b" ? "650e8400-e29b-41d4-a716-446655440000" : login;
+  return { discoverSession: async () => ({ status: "authenticated", user: { id, githubLogin: login, displayName: login, avatarUrl: "" } }), login: vi.fn(), logout: vi.fn(async (before) => { await before?.(); return true; }) };
 }
 function bridge(): DashboardExtensionConnection {
   return { start(onState) { onState({ status: "unavailable" }); return () => {}; }, startSyncSession: vi.fn(), endSyncSession: vi.fn(), beginImport: vi.fn(), readPendingPage: vi.fn(), ackImported: vi.fn() };
 }
 function client(): DashboardAiArtifactClient { return { list: vi.fn(async () => []), create: vi.fn(async (_id, type) => ({ ...artifact, type })) }; }
+
+beforeEach(() => {
+  vi.spyOn(mainApiGitHubClient, "autoStatus").mockResolvedValue({
+    runId: null, state: "OFF", target: null, enabledAt: null, leaseUntil: null, errorCode: null, lastResult: null,
+  });
+});
+afterEach(() => vi.restoreAllMocks());
+
 async function open(type: AiTaskType = "CODE_REVIEW") {
   fireEvent.click(await screen.findByRole("button", { name: "AI 도우미 열기" }));
   await waitFor(() => expect(screen.getByRole("button", { name: AI_TASK_LABELS[type] })).toBeEnabled());
@@ -70,7 +80,7 @@ describe("Dashboard AI artifacts", () => {
     expect(ai.create).toHaveBeenCalledTimes(1);
     for (const name of ["수정", "서버에서 삭제", "AI 요청 취소"]) expect(screen.getByRole("button", { name })).toBeDisabled();
     await act(async () => finish(artifact));
-    expect(screen.getByRole("button", { name: "수정" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "수정" })).toBeEnabled());
   });
   it.each([new Error("private source/token detail"), new AiArtifactRequestError("rate_limit")])("requires a refresh after failed generation without automatic retry %#", async (error) => {
     const ai = client(); ai.create = vi.fn().mockRejectedValue(error);

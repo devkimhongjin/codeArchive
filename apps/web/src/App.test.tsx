@@ -10,6 +10,8 @@ const records = [
   { id: "one", platform: "SWEA", problemNumber: "1234", title: "중위순회", language: "Java", code: "class Solution {}", solvedAt: "2026-08-27", updatedAt: "2026-08-27T12:00:00.000Z", source: "captured" as const },
   { id: "two", platform: "SWEA", problemNumber: "1954", title: "달팽이 숫자", language: "Python", code: "print('ok')", solvedAt: null, updatedAt: "2026-08-26T12:00:00.000Z", source: "manual" as const },
 ];
+const ACCOUNT_ID = "550e8400-e29b-41d4-a716-446655440000";
+let accountSequence = 0;
 
 function extensionConnection(
   status: "connected" | "unavailable" = "unavailable",
@@ -41,10 +43,13 @@ function authClient(discover: () => Promise<SessionDiscovery>): DashboardAuthCli
 }
 
 const signedOutAuth = () => authClient(async () => ({ status: "signed_out" }));
-const authenticatedAuth = () => authClient(async () => ({
-  status: "authenticated",
-  user: { githubLogin: "octocat", displayName: "Octo Cat", avatarUrl: "https://avatars.example/octo.png" },
-}));
+const authenticatedAuth = () => {
+  const id = accountSequence++ === 0 ? ACCOUNT_ID : `550e8400-e29b-41d4-a716-44665544${String(accountSequence).padStart(4, "0")}`;
+  return authClient(async () => ({
+    status: "authenticated",
+    user: { id, githubLogin: "octocat", displayName: "Octo Cat", avatarUrl: "https://avatars.example/octo.png" },
+  }));
+};
 
 describe("Dashboard archive shell", () => {
   it("never fetches server records while signed out", async () => {
@@ -72,7 +77,7 @@ describe("Dashboard archive shell", () => {
       .mockResolvedValue([]) };
     const start = vi.fn(async () => true);
     const connection = extensionConnection("connected", start);
-    const store = consentStore(true);
+    const store = consentStore(false);
     const props = { dataSource: source, extensionConnection: connection, consentStore: store, dashboardOrigin: "https://codearchive-dashboard-beta.onrender.com" };
     const { rerender } = render(<App {...props} authClient={authenticatedAuth()} />);
     const checkbox = await screen.findByRole("checkbox", { name: /자동 동기화/ });
@@ -80,7 +85,8 @@ describe("Dashboard archive shell", () => {
     expect(start).not.toHaveBeenCalled();
     fireEvent.click(checkbox);
     await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
-    const other = authClient(async () => ({ status: "authenticated", user: { githubLogin: "other", displayName: "Other", avatarUrl: "" } }));
+    store.value = false;
+    const other = authClient(async () => ({ status: "authenticated", user: { id: "650e8400-e29b-41d4-a716-446655440000", githubLogin: "other", displayName: "Other", avatarUrl: "" } }));
     rerender(<App {...props} authClient={other} />);
     await screen.findByText("Other");
     await act(async () => resolveOld(records));
@@ -120,7 +126,7 @@ describe("Dashboard archive shell", () => {
       dataSource={{ listSolutions: async () => [] }}
       extensionConnection={extensionConnection("connected", startSyncSession)}
       authClient={signedOutAuth()}
-      consentStore={consentStore(true)}
+      consentStore={consentStore(false)}
       dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
       syncSessionIdGenerator={() => "session-a"}
     />);
@@ -184,7 +190,7 @@ describe("Dashboard archive shell", () => {
 
   it("consent off clears persistence immediately and ends the active session", async () => {
     const events: string[] = [];
-    const store = consentStore(true);
+    const store = consentStore(false);
     store.write = (enabled) => { events.push(`store:${enabled}`); store.value = enabled; };
     const endSyncSession = vi.fn(async (id: string) => { events.push(`end:${id}`); });
     render(<App
@@ -207,7 +213,7 @@ describe("Dashboard archive shell", () => {
   it("logout tears down the bridge session before API logout", async () => {
     const events: string[] = [];
     const client: DashboardAuthClient = {
-      discoverSession: async () => ({ status: "authenticated", user: { githubLogin: "octocat", displayName: "Octo Cat", avatarUrl: "" } }),
+      discoverSession: async () => ({ status: "authenticated", user: { id: ACCOUNT_ID, githubLogin: "octocat", displayName: "Octo Cat", avatarUrl: "" } }),
       login: vi.fn(),
       logout: vi.fn(async (beforeApiLogout) => {
         await beforeApiLogout?.();
@@ -220,7 +226,7 @@ describe("Dashboard archive shell", () => {
       dataSource={{ listSolutions: async () => [] }}
       extensionConnection={extensionConnection("connected", vi.fn(async () => true), endSyncSession)}
       authClient={client}
-      consentStore={consentStore(true)}
+      consentStore={consentStore(false)}
       dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
       syncSessionIdGenerator={() => "session-a"}
     />);
@@ -280,5 +286,15 @@ describe("Dashboard archive shell", () => {
     rerender(<App dataSource={{ listSolutions: async () => { throw new Error("secret backend detail"); } }} extensionConnection={connection} authClient={client} />);
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("풀이 목록을 불러오지 못했습니다."));
     expect(screen.getByRole("alert")).not.toHaveTextContent("secret backend detail");
+  });
+  it("keeps the GitHub panel visible and safe when the authenticated response has no immutable account id", async () => {
+    const installations = vi.fn();
+    const githubClient = { installations } as never;
+    const client = authClient(async () => ({ status: "authenticated", user: { githubLogin: "octocat", displayName: "Octo Cat", avatarUrl: "" } }));
+    render(<App dataSource={{ listSolutions: vi.fn(async () => []) }} authClient={client} extensionConnection={extensionConnection()} githubClient={githubClient} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("계정 식별자를 확인할 수 없어 GitHub 연결을 시작할 수 없습니다");
+    expect(screen.getByRole("region", { name: "GitHub 풀이 업로드" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "GitHub 저장소 연결 확인" })).toBeDisabled();
+    expect(installations).not.toHaveBeenCalled();
   });
 });

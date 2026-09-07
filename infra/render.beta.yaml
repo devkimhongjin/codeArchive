@@ -24,7 +24,7 @@ projects:
             runtime: docker
             plan: free
             region: singapore
-            branch: master
+            branch: develop
             repo: https://github.com/devkimhongjin/codeArchive
             dockerfilePath: ./apps/api/Dockerfile
             dockerContext: ./apps/api
@@ -77,6 +77,8 @@ projects:
                 value: 10m
               - key: CODEARCHIVE_EXCHANGE_TTL
                 value: 2m
+              - key: CODEARCHIVE_DURABLE_INVOCATION_TOKEN
+                sync: false
 
               # Redis is intentionally absent from the MVP beta topology.
               - key: MANAGEMENT_HEALTH_REDIS_ENABLED

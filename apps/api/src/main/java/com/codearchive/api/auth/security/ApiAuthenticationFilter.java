@@ -22,6 +22,8 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
 
     public static final String SESSION_COOKIE_NAME =
             "__Host-codearchive_session";
+    private static final String DURABLE_INVOCATION_PATH =
+            "/api/v1/internal/automation/invoke";
 
     private static final String BEARER_PREFIX = "Bearer ";
     private static final Set<String> UNSAFE_METHODS =
@@ -46,6 +48,11 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             HttpServletResponse response,
             FilterChain filterChain
     ) throws ServletException, IOException {
+        if (isDurableInvocation(request)) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String bearerToken = bearerToken(request);
         String cookieToken = cookieValue(
                 request,
@@ -100,6 +107,15 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
         } finally {
             SecurityContextHolder.clearContext();
         }
+    }
+
+    private boolean isDurableInvocation(HttpServletRequest request) {
+        String context = request.getContextPath() == null
+                ? "" : request.getContextPath();
+        return "POST".equals(request.getMethod())
+                && (context + DURABLE_INVOCATION_PATH).equals(
+                        request.getRequestURI()
+                );
     }
 
     private String bearerToken(HttpServletRequest request) {

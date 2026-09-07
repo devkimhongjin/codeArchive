@@ -104,3 +104,53 @@ This product-scope decision does not change:
 - Issue #86 replacement-before-removal sequencing;
 - `develop` as development/beta source and `master` as Production source;
 - separate merge, deployment, permission/origin, release, and Production approval gates.
+
+## Issue #177 beta scope amendment — Dashboard-closed automation
+
+Issue #177 adds a bounded post-bootstrap requirement that supersedes only the ownership statements necessary for **fully closed Dashboard** automation. “Dashboard closed” means no Dashboard document/tab/external Port exists. A hidden/background Dashboard page remains the #159 page-owned case and is not equivalent.
+
+The Dashboard remains a static SPA. #177 does **not** authorize adding an always-running Dashboard web/server process. Continuous closed-Dashboard execution uses a future Main API/background-worker responsibility plus a narrowly scoped Extension capture relay; it does not keep a hidden Dashboard alive.
+
+### Future ownership split
+
+When the #177 replacement generation is implemented and explicitly enabled:
+
+- Extension remains local-first capture authority and may use only a revocable device/account/generation-bound append-only relay grant for captured-solution ingest;
+- Main API derives account ownership from that grant and owns idempotent ingest, durable automation state, GitHub target/consent generation, and worker coordination;
+- the server worker owns background GitHub execution and provider validation;
+- Dashboard owns authenticated setup/control/status UX, pairing/provision/revoke operations, target selection, consent confirmation, and page-local bridge lifecycle;
+- GitHub App credentials and installation tokens remain server-only.
+
+The relay grant is not a Dashboard session credential and cannot authorize archive read/update/delete, GitHub endpoints, AI, community, admin, account management, or arbitrary Main API access. It must be independently revocable and restricted by body/rate/replay limits. Extension payload account/user fields are never authority.
+
+### Durable state and lifecycle
+
+The replacement server state may persist only what is needed for continuation: source-transfer enabled state, GitHub-auto enabled state, validated target + generation/version, transfer/GitHub/public consent, `enabledAt` or equivalent automation generation, and durable worker attempt/lease/uncertainty state. Provider HEAD must be refreshed/revalidated before every conditional write and is never a durable unconditional authority.
+
+Explicit OFF, logout/account switch, revocation, stale generation, target/privacy/permission change, and `UNKNOWN` must fail closed. Offline Extension capture remains local and may relay only after connectivity returns with the same still-valid grant/generation. Worker restart restores only durable eligible state and never retries terminal uncertainty.
+
+Page close/navigation must always tear down page-local Port/capability/timers/requests. In the current page-owned generation it also stops automation. In the future durable generation it must not silently clear already confirmed durable automation intent solely because the SPA closed.
+
+### Migration and rollout constraint
+
+Rollout requires an authoritative server execution-mode/generation gate. `PAGE_OWNED` and `DURABLE_SERVER` are mutually exclusive for an account/automation generation. No browser/client may locally decide to hand off execution. Before the durable worker can claim new work, page-owned execution must be ineligible/stopped; rollback requires durable claims stopped/expired, a fresh generation, and fresh provider target/HEAD validation.
+
+This prevents two GitHub writers during mixed Web/API/Extension versions, tab refresh, worker restart, or rollback.
+
+### Beta acceptance and gates
+
+The #177 feature is not beta-accepted until reviewed exact-`develop` artifacts prove in Real Chrome:
+
+```text
+Dashboard fully closed
+→ real ACCEPTED capture
+→ Extension IndexedDB
+→ narrow relay ingest
+→ Main API idempotent record
+→ durable worker
+→ conditional GitHub commit
+```
+
+Acceptance also covers no pre-ON historical backfill, explicit OFF/revoke, logout/account switch, offline/reconnect, Extension/API/worker restart, target/privacy/permission failure, `UNKNOWN` no-retry, and writer exclusivity across migration modes.
+
+This amendment does not authorize a Render worker/service, environment or secret mutation, GitHub App permission change, Extension manifest/origin/host permission expansion, beta deployment, `master`/Production, or Issue #86 cleanup. Those remain separate explicit owner gates. Until the replacement runtime is implemented and accepted, current #159/#84 pagehide/disconnect fail-closed behavior remains unchanged.

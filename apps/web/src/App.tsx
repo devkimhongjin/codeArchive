@@ -4,7 +4,7 @@ import { GitHubUpload } from "./GitHubUpload";
 import { mainApiGitHubClient, type GitHubClient } from "./githubClient";
 import { invalidateCommunity } from "./communityLifecycle";
 import { mainApiCommunityClient, type CommunityClient } from "./communityClient";
-import { createAccountConsentController } from "./accountConsent";
+import { createAccountConsentController, validatedAccountId } from "./accountConsent";
 import { ArchiveSessionExpiredError, mainApiArchiveDataSource } from "./archiveDataSource";
 import { archiveFilterOptions, EMPTY_ARCHIVE_FILTERS, filterDashboardSolutions } from "./archiveFilters";
 import {
@@ -44,6 +44,15 @@ import {
   mainApiSolutionUpdateClient,
   type DashboardSolutionUpdateClient,
 } from "./solutionUpdateClient";
+import {
+  sanitizeAutomationState,
+  type AutomationStateInput,
+} from "./automationControl";
+import { handleExplicitDurableAutomationOff } from "./durableAutomationRuntime";
+import type {
+  CodeArchiveAutomationControlErrorCode,
+  ExtensionToDashboardAutomationMessage,
+} from "../../../packages/shared-types/src";
 
 interface AppProps {
   dataSource?: DashboardArchiveDataSource;
@@ -102,6 +111,7 @@ export function App({
   const [archiveRefreshAttempt, setArchiveRefreshAttempt] = useState(0);
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const [extensionState, setExtensionState] = useState<ExtensionConnectionState>({ status: "connecting" });
+  const extensionStateRef = useRef<ExtensionConnectionState>({ status: "connecting" });
   const [authAttempt, setAuthAttempt] = useState(0);
   const [authState, setAuthState] = useState<AuthState>({ status: "loading" });
   const [verifiedAuthClient, setVerifiedAuthClient] = useState<DashboardAuthClient | null>(null);
@@ -110,9 +120,38 @@ export function App({
   // Restored only after /me verification and matching immutable account binding.
   const [autoSyncConsent, setAutoSyncConsent] = useState(false);
   const [activeSyncSessionId, setActiveSyncSessionId] = useState<string | null>(null);
+  const [automationAutoSyncEnabled, setAutomationAutoSyncEnabled] = useState(false);
+  const [githubAutoCommitEnabled, setGithubAutoCommitEnabled] = useState(false);
+  const [githubTargetConfigured, setGithubTargetConfigured] = useState(false);
+  const [automationError, setAutomationError] = useState<CodeArchiveAutomationControlErrorCode | null>(null);
+  const [automationIntent, setAutomationIntent] = useState<{ enabled: boolean; nonce: number; durableDisable?: boolean } | null>(null);
+  const [automationSafetyStopped, setAutomationSafetyStopped] = useState(false);
+  const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine !== false);
+  const [manualSyncStatus, setManualSyncStatus] = useState<"idle" | "running" | "success" | "partial" | "blocked" | "failed">("idle");
+  const [manualSyncMessage, setManualSyncMessage] = useState("");
 
   const drainEligibilityRef = useRef({ eligible: false, activeSyncSessionId: null as string | null });
+  const manualSyncSessionRef = useRef<{
+    id: string;
+    ownsSession: boolean;
+    eligible: boolean;
+    started: Promise<boolean>;
+    cleanup?: Promise<void>;
+  } | null>(null);
+  const manualSyncPendingBeforeRef = useRef(0);
   const sessionExpiredRef = useRef(() => {});
+  const automationSafetyStoppedRef = useRef(false);
+  // A remembered Dashboard consent may reactivate AUTO_SYNC after a transient
+  // Extension disconnect, but an explicit OFF/pagehide/safety stop must stay
+  // latched until the user enables it again.
+  const automationOffLatchedRef = useRef(false);
+  const automationStateRef = useRef(sanitizeAutomationState({
+    autoSyncEnabled: false, githubAutoCommitEnabled: false, githubTargetConfigured: false,
+    authenticated: false, connectionAvailable: false,
+  }));
+  const automationMessageRef = useRef<(message: ExtensionToDashboardAutomationMessage) => void>(() => {});
+  const automationNonceRef = useRef(0);
+  const previousAutomationAccountRef = useRef("");
 
   const syncController = useMemo(
     () => createAutoSyncSessionController(
@@ -122,14 +161,20 @@ export function App({
     ),
     [extensionConnection, syncSessionIdGenerator],
   );
+  const syncControllerRef = useRef(syncController);
+  syncControllerRef.current = syncController;
 
   const pendingDrainController = useMemo(
     () => createPendingDrainController(
       extensionConnection,
       pendingDrainApiClient,
       importBatchIdGenerator,
-      (syncSessionId) => drainEligibilityRef.current.eligible
-        && drainEligibilityRef.current.activeSyncSessionId === syncSessionId,
+      (syncSessionId) => (
+        (drainEligibilityRef.current.eligible
+          && drainEligibilityRef.current.activeSyncSessionId === syncSessionId)
+        || (manualSyncSessionRef.current?.id === syncSessionId
+          && manualSyncSessionRef.current.eligible)
+      ),
       () => setArchiveRefreshAttempt((value) => value + 1),
       () => sessionExpiredRef.current(),
     ),
@@ -140,16 +185,29 @@ export function App({
     if (!enabled) {
       drainEligibilityRef.current.eligible = false;
       pendingDrainController.invalidate();
+      manualSyncSessionRef.current && (manualSyncSessionRef.current.eligible = false);
       void syncController.teardown();
+      setGithubAutoCommitEnabled(false);
+      automationNonceRef.current += 1;
+      setAutomationIntent({ enabled: false, nonce: automationNonceRef.current });
     }
     setAutoSyncConsent(enabled);
+    setAutomationAutoSyncEnabled(false);
+    if (enabled) setAutomationError(null);
   }, undefined, () => {
+    automationOffLatchedRef.current = true;
     setAuthState({ status: "loading" });
     setAuthAttempt((value) => value + 1);
+  }, () => {
+    nextAutomationIntent(false, true);
   }), [consentStore, pendingDrainController, syncController]);
 
   function expireSession() {
+    automationOffLatchedRef.current = true;
     consentController.reset(true);
+    setGithubTargetConfigured(false);
+    setGithubAutoCommitEnabled(false);
+    nextAutomationIntent(false, true);
     setDeleteNotice({ account: "", message: "" });
     setSelectedId(null);
     setAuthState({ status: "signed_out" });
@@ -160,7 +218,19 @@ export function App({
 
   useEffect(
     () => extensionConnection.start(
-      setExtensionState,
+      (state) => {
+        const wasConnected = extensionStateRef.current.status === "connected";
+        extensionStateRef.current = state;
+        setExtensionState(state);
+        if (wasConnected && state.status !== "connected") {
+          automationOffLatchedRef.current = true;
+          setAutomationAutoSyncEnabled(false);
+          setGithubAutoCommitEnabled(false);
+          drainEligibilityRef.current.eligible = false;
+          pendingDrainController.invalidate();
+          void syncControllerRef.current.teardown();
+        }
+      },
       (event) => {
         setExtensionState((current) => current.status === "connected"
           ? {
@@ -173,8 +243,9 @@ export function App({
             }
           : current);
       },
+      (message) => automationMessageRef.current(message),
     ),
-    [extensionConnection, connectionAttempt],
+    [connectionAttempt, extensionConnection],
   );
 
   useEffect(() => {
@@ -196,7 +267,8 @@ export function App({
   }, [authClient, authAttempt, consentController]);
 
   const authenticated = authState.status === "authenticated" && verifiedAuthClient === authClient && !logoutPending;
-  const account = authenticated ? authState.user.id ?? authState.user.githubLogin : "";
+  const immutableAccountId = authenticated ? validatedAccountId(authState.user.id) : undefined;
+  const account = immutableAccountId ?? "";
   const accountRef = useRef(account);
   accountRef.current = account;
   const records = account && archive.account === account ? archive.records : [];
@@ -207,14 +279,316 @@ export function App({
   }, [account]);
   const connected = extensionState.status === "connected";
   const exactOrigin = isExactDashboardOrigin(dashboardOrigin);
+  const baseAutomationError = !authenticated ? "AUTH_REQUIRED" : !exactOrigin ? "CONTROL_UNAVAILABLE" : !connected ? "DASHBOARD_DISCONNECTED" : !online ? "OFFLINE" : null as CodeArchiveAutomationControlErrorCode | null;
+  const currentAutomationError = automationSafetyStopped
+    ? "MULTIPLE_DASHBOARD_TABS"
+    : baseAutomationError ?? automationError;
+  const effectiveAutoSyncEnabled = automationAutoSyncEnabled && autoSyncConsent && authenticated && exactOrigin && connected && online && !logoutPending && !consentPending && !automationSafetyStoppedRef.current;
+  const autoSyncActivationReady = autoSyncConsent
+    && authenticated
+    && exactOrigin
+    && connected
+    && online
+    && !logoutPending
+    && !consentPending
+    && !automationSafetyStoppedRef.current
+    && !automationOffLatchedRef.current;
+  const effectiveGitHubAutoCommitEnabled = githubAutoCommitEnabled && effectiveAutoSyncEnabled && githubTargetConfigured;
   const eligible = authenticated
-    && autoSyncConsent
+    && effectiveAutoSyncEnabled
     && exactOrigin
     && connected
     && !logoutPending
     && !consentPending;
+  const githubAutomationBlockedReason = !authenticated
+    ? "GitHub 자동 커밋은 먼저 Dashboard에 로그인해야 사용할 수 있습니다."
+    : !immutableAccountId
+      ? "CodeArchive 계정 식별자를 확인할 수 없어 GitHub 자동 커밋을 시작할 수 없습니다. Dashboard를 새로고침하거나 다시 로그인해 주세요."
+      : !exactOrigin
+        ? "승인된 Dashboard 주소에서만 GitHub 자동 커밋을 사용할 수 있습니다."
+        : !connected
+          ? "Extension 연결을 확인해야 GitHub 자동 커밋을 켤 수 있습니다."
+          : !online
+            ? "온라인 상태가 되어야 GitHub 자동 커밋을 켤 수 있습니다."
+            : !autoSyncConsent
+              ? "자동 동기화 동의를 먼저 켜야 GitHub 자동 커밋을 사용할 수 있습니다."
+              : consentPending
+                ? "계정 동의를 확인하는 중입니다. 확인이 끝나면 다시 시도하세요."
+                : automationSafetyStopped
+                  ? "Dashboard가 여러 탭에서 열려 자동 커밋을 안전하게 시작할 수 없습니다. 다른 탭을 닫고 다시 시도하세요."
+                  : !automationAutoSyncEnabled
+                    ? "자동 동기화가 OFF 상태입니다. 자동 동기화를 먼저 켠 뒤 GitHub 자동 커밋을 활성화하세요."
+                    : null;
+
+  const autoSyncConsentStatus = !autoSyncConsent
+    ? "꺼짐 · 직접 켜야 시작됨"
+    : !connected
+      ? "사용자 동의됨 · Extension 연결 후 자동 전송"
+      : !online
+        ? "사용자 동의됨 · 온라인 복귀 후 자동 전송"
+        : automationSafetyStopped
+          ? "안전 중지됨 · 다른 Dashboard 탭을 닫고 Extension에서 다시 켜야 합니다"
+          : automationOffLatchedRef.current || !automationAutoSyncEnabled
+            ? "동의 저장됨 · Extension에서 자동 동기화 ON을 눌러 자동 전송을 재개하세요"
+            : effectiveAutoSyncEnabled
+              ? "자동 동기화 활성 · pending 풀이 자동 전송됩니다"
+              : "사용자 동의됨 · 연결 조건 충족 시 자동 전송";
 
   drainEligibilityRef.current = { eligible, activeSyncSessionId };
+  if (manualSyncSessionRef.current) {
+    manualSyncSessionRef.current.eligible = authenticated
+      && autoSyncConsent
+      && exactOrigin
+      && connected
+      && online
+      && !logoutPending
+      && !consentPending
+      && !automationSafetyStopped;
+  }
+
+  automationStateRef.current = sanitizeAutomationState({
+    autoSyncEnabled: effectiveAutoSyncEnabled,
+    githubAutoCommitEnabled: effectiveGitHubAutoCommitEnabled,
+    githubTargetConfigured,
+    authenticated,
+    connectionAvailable: connected,
+    errorCode: currentAutomationError,
+  } satisfies AutomationStateInput);
+
+  function nextAutomationIntent(enabled: boolean, durableDisable = false) {
+    automationNonceRef.current += 1;
+    setAutomationIntent({ enabled, nonce: automationNonceRef.current, durableDisable });
+  }
+
+  function invalidateAutomation(clearConsent: boolean) {
+    automationOffLatchedRef.current = true;
+    setAutomationAutoSyncEnabled(false);
+    setGithubAutoCommitEnabled(false);
+    drainEligibilityRef.current.eligible = false;
+    if (manualSyncSessionRef.current) manualSyncSessionRef.current.eligible = false;
+    pendingDrainController.invalidate();
+    void syncController.teardown();
+    if (clearConsent) consentController.reset(true);
+  }
+
+  function automationGuard(kind: "AUTO_SYNC" | "GITHUB_AUTO_COMMIT"): CodeArchiveAutomationControlErrorCode | null {
+    if (!authenticated) return "AUTH_REQUIRED";
+    if (!exactOrigin) return "CONTROL_UNAVAILABLE";
+    if (!connected) return "DASHBOARD_DISCONNECTED";
+    if (!online) return "OFFLINE";
+    if (kind === "GITHUB_AUTO_COMMIT") {
+      if (!effectiveAutoSyncEnabled) return "AUTO_SYNC_CONSENT_REQUIRED";
+      if (!githubTargetConfigured) return "GITHUB_TARGET_REQUIRED";
+    }
+    if (!autoSyncConsent) return "AUTO_SYNC_CONSENT_REQUIRED";
+    return null;
+  }
+
+  async function cleanupManualSyncSession(context: NonNullable<typeof manualSyncSessionRef.current>) {
+    if (context.cleanup) return context.cleanup;
+    context.cleanup = (async () => {
+      const started = await context.started;
+      if (context.ownsSession && started) {
+        try { await extensionConnection.endSyncSession(context.id); } catch { /* Cleanup is best effort after invalidation. */ }
+      }
+      if (manualSyncSessionRef.current === context) manualSyncSessionRef.current = null;
+    })();
+    return context.cleanup;
+  }
+
+  function invalidateManualSync(): Promise<void> | undefined {
+    const context = manualSyncSessionRef.current;
+    if (!context) return undefined;
+    context.eligible = false;
+    pendingDrainController.invalidate();
+    return cleanupManualSyncSession(context);
+  }
+
+  function manualSyncBlockReason(): string | null {
+    if (!authenticated) return "로그인 후 로컬 풀이를 동기화할 수 있습니다.";
+    if (!exactOrigin) return "승인된 Dashboard에서만 로컬 풀이를 동기화할 수 있습니다.";
+    if (!online) return "오프라인 상태에서는 동기화할 수 없습니다.";
+    if (automationSafetyStopped) return "여러 Dashboard 탭이 감지되어 동기화를 중지했습니다.";
+    if (!connected) return "Extension 연결 후 동기화할 수 있습니다.";
+    if (!autoSyncConsent) return "자동 동기화 동의 후 로컬 풀이 동기화됩니다.";
+    if (logoutPending || consentPending) return "현재 계정 상태가 정리되는 중입니다.";
+    if (pendingDrainController.isBusy()) return "이미 동기화 중입니다.";
+    return null;
+  }
+
+  async function runManualSync() {
+    if (manualSyncStatus === "running") return;
+    const blocked = manualSyncBlockReason();
+    if (blocked) {
+      setManualSyncStatus("blocked");
+      setManualSyncMessage(blocked);
+      return;
+    }
+    if (pendingDrainController.isBusy()) {
+      setManualSyncStatus("blocked");
+      setManualSyncMessage("이미 동기화 중입니다.");
+      return;
+    }
+    // An automatic session is reusable only while automatic mode is still effective.
+    // During AUTO_SYNC teardown, activeSyncSessionId can briefly remain populated;
+    // treating it as eligible there would race a manual session against that teardown.
+    const existingSessionId = effectiveAutoSyncEnabled ? activeSyncSessionId : null;
+    const context = {
+      id: existingSessionId ?? syncSessionIdGenerator(),
+      ownsSession: existingSessionId === null,
+      eligible: true,
+      started: Promise.resolve(existingSessionId !== null),
+    };
+    manualSyncSessionRef.current = context;
+    manualSyncPendingBeforeRef.current = extensionState.status === "connected" ? extensionState.summary.pendingCount : 0;
+    setManualSyncStatus("running");
+    setManualSyncMessage("동기화 중");
+    context.started = context.ownsSession
+      ? extensionConnection.startSyncSession(context.id).catch(() => false)
+      : Promise.resolve(true);
+    try {
+      const started = await context.started;
+      if (!started || !context.eligible) {
+        setManualSyncStatus("blocked");
+        setManualSyncMessage("현재 연결 또는 계정 상태가 바뀌어 동기화를 취소했습니다.");
+        return;
+      }
+      const result = await pendingDrainController.run(context.id);
+      if (result.status === "busy") {
+        setManualSyncStatus("blocked");
+        setManualSyncMessage("이미 동기화 중입니다.");
+        return;
+      }
+      if (result.acknowledged > 0) {
+        setExtensionState((current) => current.status === "connected"
+          ? { ...current, summary: { ...current.summary, pendingCount: Math.max(0, current.summary.pendingCount - result.acknowledged) } }
+          : current);
+      }
+      if (result.status === "completed" && result.recordsRead === 0) {
+        setManualSyncStatus("success");
+        setManualSyncMessage("동기화할 로컬 풀이 없음");
+        return;
+      }
+      if (result.status === "completed" && result.acknowledged === result.recordsRead) {
+        setManualSyncStatus("success");
+        setManualSyncMessage(`${result.acknowledged}건 동기화 완료`);
+        return;
+      }
+      if (result.acknowledged > 0) {
+        const remaining = Math.max(0, manualSyncPendingBeforeRef.current - result.acknowledged);
+        setManualSyncStatus("partial");
+        setManualSyncMessage(`${result.acknowledged}건 동기화 완료 · ${remaining}건 pending 남음`);
+        return;
+      }
+      setManualSyncStatus(result.status === "cancelled" || result.status === "unavailable" ? "blocked" : "failed");
+      setManualSyncMessage(result.status === "cancelled"
+        ? "현재 연결 또는 계정 상태가 바뀌어 동기화를 취소했습니다."
+        : result.status === "unavailable"
+          ? "현재 Extension 연결에서 동기화를 시작할 수 없습니다."
+          : "동기화에 실패했습니다. pending 풀이는 로컬에 유지됩니다.");
+    } finally {
+      await cleanupManualSyncSession(context);
+    }
+  }
+
+  automationMessageRef.current = (message) => {
+    if (message.type === "CODEARCHIVE_AUTOMATION_STATE_REQUEST") {
+      extensionConnection.publishAutomationState?.(automationStateRef.current);
+      return;
+    }
+    if (message.type === "CODEARCHIVE_AUTOMATION_SAFETY_STOP") {
+      automationOffLatchedRef.current = true;
+      automationSafetyStoppedRef.current = true;
+      setAutomationSafetyStopped(true);
+      setAutomationError("MULTIPLE_DASHBOARD_TABS");
+      invalidateManualSync();
+      invalidateAutomation(false);
+      return;
+    }
+    if (message.automation === "AUTO_SYNC") {
+      if (!message.enabled) {
+        void handleExplicitDurableAutomationOff("AUTO_SYNC", false);
+        automationOffLatchedRef.current = true;
+        setAutomationError(null);
+        setAutomationAutoSyncEnabled(false);
+        setGithubAutoCommitEnabled(false);
+        nextAutomationIntent(false, true);
+        drainEligibilityRef.current.eligible = false;
+        pendingDrainController.invalidate();
+        void syncController.teardown();
+        return;
+      }
+      const errorCode = automationGuard("AUTO_SYNC");
+      if (errorCode) { setAutomationAutoSyncEnabled(false); setAutomationError(errorCode); return; }
+      automationOffLatchedRef.current = false;
+      automationSafetyStoppedRef.current = false;
+      setAutomationSafetyStopped(false);
+      setAutomationError(null);
+      syncControllerRef.current.rearmDurableReconnect();
+      setAutomationAutoSyncEnabled(true);
+      return;
+    }
+    if (!message.enabled) {
+      void handleExplicitDurableAutomationOff("GITHUB_AUTO_COMMIT", false);
+      setGithubAutoCommitEnabled(false);
+      setAutomationError(null);
+      nextAutomationIntent(false, true);
+      return;
+    }
+    const errorCode = automationGuard("GITHUB_AUTO_COMMIT");
+    if (errorCode) { setGithubAutoCommitEnabled(false); setAutomationError(errorCode); return; }
+    setAutomationError(null);
+    nextAutomationIntent(true);
+  };
+
+  useEffect(() => {
+    extensionConnection.publishAutomationState?.(automationStateRef.current);
+  }, [extensionConnection, effectiveAutoSyncEnabled, effectiveGitHubAutoCommitEnabled, githubTargetConfigured, authenticated, connected, online, currentAutomationError]);
+
+  useEffect(() => {
+    if (!autoSyncActivationReady || automationAutoSyncEnabled) return;
+    // Remembered Dashboard consent may establish the first eligible session,
+    // but it must not clear a disconnect/revocation fence. Only an explicit
+    // eligible Extension AUTO_SYNC ON below may re-arm that durable state.
+    setAutomationAutoSyncEnabled(true);
+  }, [autoSyncActivationReady, automationAutoSyncEnabled]);
+
+  useEffect(() => {
+    const becameOffline = () => setOnline(false);
+    const becameOnline = () => setOnline(true);
+    window.addEventListener("offline", becameOffline);
+    window.addEventListener("online", becameOnline);
+    const pagehide = () => { invalidateManualSync(); invalidateAutomation(false); };
+    window.addEventListener("pagehide", pagehide);
+    return () => {
+      window.removeEventListener("offline", becameOffline);
+      window.removeEventListener("online", becameOnline);
+      window.removeEventListener("pagehide", pagehide);
+    };
+  }, [consentController, pendingDrainController, syncController]);
+
+  useEffect(() => {
+    const previous = previousAutomationAccountRef.current;
+    previousAutomationAccountRef.current = account;
+    if (!previous || previous === account) return;
+    invalidateManualSync();
+    pendingDrainController.invalidate();
+    setAutomationSafetyStopped(false);
+    automationSafetyStoppedRef.current = false;
+    setGithubAutoCommitEnabled(false);
+    setGithubTargetConfigured(false);
+    setManualSyncStatus("idle");
+    setManualSyncMessage("");
+    nextAutomationIntent(false, true);
+    setAutomationAutoSyncEnabled(false);
+    automationOffLatchedRef.current = true;
+  }, [account, pendingDrainController]);
+
+  useEffect(() => {
+    if (!effectiveAutoSyncEnabled || !githubTargetConfigured) {
+      if (githubAutoCommitEnabled) setGithubAutoCommitEnabled(false);
+    }
+  }, [effectiveAutoSyncEnabled, githubTargetConfigured, githubAutoCommitEnabled]);
 
   useEffect(() => {
     const authContextKey = account;
@@ -274,6 +648,8 @@ export function App({
     }
 
     setConsentPending(true);
+    automationOffLatchedRef.current = true;
+    invalidateManualSync();
     await consentController.choose(false);
     await syncController.teardown();
     setConsentPending(false);
@@ -281,14 +657,20 @@ export function App({
 
   async function logout() {
     accountRef.current = "";
+    automationOffLatchedRef.current = true;
+    const manualCleanup = invalidateManualSync();
     drainEligibilityRef.current.eligible = false;
     setLogoutPending(true);
     setDeleteNotice({ account: "", message: "" });
     consentController.reset(true);
+    setGithubTargetConfigured(false);
+    setGithubAutoCommitEnabled(false);
+    nextAutomationIntent(false, true);
     setArchive({ account: "", records: [] });
     setSelectedId(null);
     pendingDrainController.invalidate();
     const ok = await authClient.logout(async () => {
+      await manualCleanup;
       await syncController.teardown();
       await beforeLogout?.();
     });
@@ -340,7 +722,7 @@ export function App({
                   />
                   <span>
                     <strong>자동 동기화</strong>
-                    <small>{autoSyncConsent ? "사용자 동의됨 · 연결 조건 충족 시 자동 전송" : "꺼짐 · 직접 켜야 시작됨"}</small>
+                    <small>{autoSyncConsentStatus}</small>
                     <small>이 브라우저에서 같은 계정으로 다시 접속하면 동의를 기억합니다. 로그아웃·계정 변경·끄기 시 해제됩니다.</small>
                   </span>
                 </label>
@@ -371,10 +753,19 @@ export function App({
               <button type="button" onClick={() => setConnectionAttempt((value) => value + 1)}>다시 확인</button>
             )}
           </div>
+          <div className="manual-sync-status" aria-live="polite">
+            <strong>{extensionState.status === "connected" ? `로컬 pending ${extensionState.summary.pendingCount}건` : "로컬 pending 확인 불가"}</strong>
+            <button type="button" disabled={manualSyncStatus === "running" || Boolean(manualSyncBlockReason())} onClick={() => void runManualSync()}>
+              {manualSyncStatus === "running" ? "동기화 중" : "지금 동기화"}
+            </button>
+            <small>{manualSyncBlockReason() || manualSyncMessage || "현재 pending 풀이를 즉시 서버에 동기화합니다."}</small>
+          </div>
         </div>
       </header>
 
-      {authenticated && authState.status === "authenticated" && authState.user.id && <GitHubUpload key={account} solution={selected ?? null} client={githubClient} syncEligible={eligible}
+      {authenticated && authState.status === "authenticated" && <GitHubUpload key={`${authState.user.id ?? "missing"}:${authState.user.githubLogin}`} accountIdValid={Boolean(immutableAccountId)} automationBlockedReason={githubAutomationBlockedReason} solution={selected ?? null} client={githubClient} syncEligible={eligible} automationIntent={automationIntent}
+        onAutomationStateChange={(enabled, errorCode) => { setGithubAutoCommitEnabled(enabled); setAutomationError(errorCode); }}
+        onTargetConfiguredChange={setGithubTargetConfigured}
         onSessionExpired={() => { if (accountRef.current === account) expireSession(); }} />}
 
       <section className="toolbar" aria-label="풀이 검색">

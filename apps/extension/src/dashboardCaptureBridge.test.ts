@@ -148,6 +148,20 @@ describe("ExtensionDashboardCaptureBridge", () => {
     expect(insecure.disconnected).toBe(true);
   });
 
+  it("fails closed and invalidates every source capability when a second Dashboard tab connects", async () => {
+    const bridge = new ExtensionDashboardCaptureBridge(new MemoryRepository([record("a")]), () => 0, () => "cap-a");
+    const first = new FakePort();
+    bridge.connect(first, ORIGIN);
+    const capability = await begin(first);
+
+    const second = new FakePort({ origin: ORIGIN, url: `${ORIGIN}/other`, tab: { id: 12 } });
+    bridge.connect(second, ORIGIN);
+    expect(first.posted).toContainEqual({ type: "CODEARCHIVE_AUTOMATION_SAFETY_STOP", protocolVersion: 1, errorCode: "MULTIPLE_DASHBOARD_TABS" });
+    expect(second.posted).toContainEqual({ type: "CODEARCHIVE_AUTOMATION_SAFETY_STOP", protocolVersion: 1, errorCode: "MULTIPLE_DASHBOARD_TABS" });
+    expect(bridge.getAutomationState()).toMatchObject({ connectionAvailable: false, errorCode: "MULTIPLE_DASHBOARD_TABS" });
+    await expect(page(first, capability)).resolves.toEqual({ ok: false, error: { code: "CAPABILITY_INVALID", retryable: false } });
+  });
+
   it("returns fixed safe envelopes for malformed, unsupported and capability-less requests", async () => {
     const bridge = new ExtensionDashboardCaptureBridge(new MemoryRepository([]));
     const port = new FakePort();

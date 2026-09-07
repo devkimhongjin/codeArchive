@@ -16,11 +16,14 @@ import {
   type CodeArchiveSyncSessionData,
   type DashboardBridgeRequest,
 } from "../../../packages/shared-types/src";
+import { AutomationControlController, type PopupAutomationSetResponse, type PopupAutomationStateResponse } from "./automationControl";
 import {
   InvalidCaptureCursorError,
   indexedDbCaptureBridgeRepository,
   type CaptureBridgeRepository,
 } from "./solutionRepository";
+import { backgroundRelayPairingController, type RelayPort } from "./relay/relayPairing";
+import { backgroundRelayRuntime } from "./relay/relayRuntime";
 
 const CAPABILITY_IDLE_MS = 2 * 60 * 1000;
 const CAPABILITY_ABSOLUTE_MS = 15 * 60 * 1000;
@@ -147,11 +150,14 @@ function senderMatchesExactOrigin(sender: ExternalDashboardSender | undefined, a
 
 export class ExtensionDashboardCaptureBridge {
   private readonly sessions = new Map<ExternalDashboardPort, PortSession>();
+  private readonly automation = new AutomationControlController(() => this.invalidateAllSessions());
 
   constructor(
     private readonly repository: CaptureBridgeRepository,
     private readonly now: () => number = () => Date.now(),
     private readonly uuid: () => string = () => crypto.randomUUID(),
+    private readonly relayPairing = backgroundRelayPairingController,
+    private readonly relayRuntime = backgroundRelayRuntime,
   ) {}
 
   connect(port: ExternalDashboardPort, allowedOriginValue: string): boolean {
@@ -169,7 +175,22 @@ export class ExtensionDashboardCaptureBridge {
       tabId: sender.tab.id,
     };
     this.sessions.set(port, session);
-    port.onMessage.addListener((message) => { void this.handleMessage(session, message); });
+    this.automation.connect(port);
+    port.onMessage.addListener((message) => {
+      const relayResponse = this.relayPairing.handle(message, this.sessions.size === 1 && this.sessions.get(port) === session);
+      if (relayResponse) {
+        void relayResponse.then((response) => {
+          if (response) (port as RelayPort).postMessage(response);
+          void this.relayRuntime.onCaptureCommitted();
+        });
+        return;
+      }
+      if (this.automation.receive(port, message)) {
+        void this.relayRuntime.onAutomationState(this.automation.getState());
+        return;
+      }
+      void this.handleMessage(session, message);
+    });
     port.onDisconnect.addListener(() => this.disconnect(port));
     return true;
   }
@@ -178,10 +199,31 @@ export class ExtensionDashboardCaptureBridge {
     const session = this.sessions.get(port);
     if (session) delete session.capability;
     this.sessions.delete(port);
+    this.automation.disconnect(port);
   }
 
   activePortCount(): number {
     return this.sessions.size;
+  }
+
+  getAutomationState() {
+    return this.automation.getState();
+  }
+
+  requestAutomationState(): Promise<PopupAutomationStateResponse> {
+    return this.automation.requestState();
+  }
+
+  setAutomation(automation: "AUTO_SYNC" | "GITHUB_AUTO_COMMIT", enabled: boolean): Promise<PopupAutomationSetResponse> {
+    return this.automation.setAutomation(automation, enabled);
+  }
+
+  private invalidateAllSessions(): void {
+    this.relayRuntime.onMultipleDashboardTabs();
+    for (const session of this.sessions.values()) {
+      delete session.syncSessionId;
+      delete session.capability;
+    }
   }
 
   async notifyCaptureChanged(): Promise<void> {
@@ -349,7 +391,15 @@ export function registerExternalDashboardBridge(
 }
 
 export const backgroundDashboardCaptureBridge = new ExtensionDashboardCaptureBridge(indexedDbCaptureBridgeRepository);
+backgroundRelayRuntime.start();
 
 export async function notifyDashboardCaptureChanged(): Promise<void> {
   await backgroundDashboardCaptureBridge.notifyCaptureChanged();
+}
+
+export async function notifyCaptureCommitted(): Promise<void> {
+  await Promise.all([
+    notifyDashboardCaptureChanged(),
+    backgroundRelayRuntime.onCaptureCommitted(),
+  ]);
 }

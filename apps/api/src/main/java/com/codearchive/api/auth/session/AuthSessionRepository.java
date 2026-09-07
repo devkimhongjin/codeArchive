@@ -32,4 +32,16 @@ public interface AuthSessionRepository
             @Param("sessionId") UUID sessionId,
             @Param("now") Instant now
     );
+
+    @Modifying
+    @Transactional
+    @Query("update AuthSession authSession "
+            + "set authSession.revokedAt = :now "
+            + "where authSession.userId = :userId "
+            + "and authSession.revokedAt is null "
+            + "and authSession.expiresAt > :now")
+    int revokeActiveForUser(
+            @Param("userId") UUID userId,
+            @Param("now") Instant now
+    );
 }

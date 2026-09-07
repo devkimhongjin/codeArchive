@@ -20,6 +20,20 @@ export interface DashboardImportReceipt {
   importBatchId: string;
 }
 
+export interface RelayCaptureProvenance {
+  generation: number;
+  capturedAt: string;
+}
+
+export interface RelayImportReceipt {
+  importedAt: string;
+}
+
+export interface RelayConflict {
+  occurredAt: string;
+  errorCode?: string;
+}
+
 export interface SolutionRecord {
   id: string;
   platform: string;
@@ -42,6 +56,12 @@ export interface SolutionRecord {
   clientRecordId?: string;
   /** Dashboard ACK receipt metadata only; local source remains authoritative and retained. */
   dashboardImportReceipt?: DashboardImportReceipt;
+  /** Immutable provenance for captures created while the relay grant was active. */
+  relayCapture?: RelayCaptureProvenance;
+  /** Relay ACK metadata only; local source remains authoritative and retained. */
+  relayImportReceipt?: RelayImportReceipt;
+  /** Terminal relay conflict; automatic retries must not hammer this record. */
+  relayConflict?: RelayConflict;
   /** Legacy direct-sync metadata retained until replacement E2E and cleanup #86. */
   sync?: SolutionSyncMetadata;
 }

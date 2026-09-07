@@ -223,6 +223,46 @@ describe("Main API pending upsert client", () => {
 });
 
 describe("automatic pending drain", () => {
+  it("supports an explicit pending-only run and reports ACK counts", async () => {
+    const ackImported = vi.fn(async () => true);
+    const connection = bridge({ ackImported });
+    const api: PendingDrainApiClient = { upsert: vi.fn(async () => ["one"]) };
+    const controller = createPendingDrainController(connection, api, () => "batch-manual", () => true);
+
+    await expect(controller.run("session-manual")).resolves.toEqual({ status: "completed", recordsRead: 1, acknowledged: 1 });
+    expect(connection.readPendingPage).toHaveBeenCalledWith("capability-a", undefined);
+    expect(ackImported).toHaveBeenCalledWith("capability-a", "batch-manual", ["one"]);
+  });
+
+  it("reports partial ACK progress while leaving failed page records pending", async () => {
+    const ackImported = vi.fn(async () => true);
+    const connection = bridge({ readPendingPage: vi.fn(async () => page([record("one"), record("two")])), ackImported });
+    const controller = createPendingDrainController(connection, { upsert: vi.fn(async () => ["one"]) }, () => "batch-partial", () => true);
+
+    await expect(controller.run("session-partial")).resolves.toEqual({ status: "completed", recordsRead: 2, acknowledged: 1 });
+    expect(ackImported).toHaveBeenCalledWith("capability-a", "batch-partial", ["one"]);
+  });
+
+  it("rejects a concurrent explicit run while automatic or manual drain is active", async () => {
+    let release!: () => void;
+    const beginImport = vi.fn(async () => new Promise<string>((resolve) => { release = () => resolve("capability-a"); }));
+    const connection = bridge({ beginImport });
+    const controller = createPendingDrainController(connection, { upsert: vi.fn(async () => []) }, () => "batch", () => true);
+    const first = controller.run("session-a");
+    await Promise.resolve();
+
+    await expect(controller.run("session-b")).resolves.toEqual({ status: "busy", recordsRead: 0, acknowledged: 0 });
+    release();
+    await expect(first).resolves.toMatchObject({ status: "completed" });
+  });
+
+  it("fails closed when the Extension does not confirm the ACK", async () => {
+    const connection = bridge({ ackImported: vi.fn(async () => false) });
+    const controller = createPendingDrainController(connection, { upsert: vi.fn(async () => ["one"]) }, () => "batch", () => true);
+
+    await expect(controller.run("session-a")).resolves.toEqual({ status: "failed", recordsRead: 1, acknowledged: 0 });
+  });
+
   it.each([false, true])("only current drain expiry revokes consent; stale=%s", async (stale) => {
     let reject!: (error: Error) => void;
     const api = { upsert: vi.fn(() => new Promise<null>((_resolve, rejectPromise) => { reject = rejectPromise; })) };
@@ -286,8 +326,8 @@ describe("automatic pending drain", () => {
     };
     const ids = ["batch-1", "batch-2"];
     const connection = bridge({ readPendingPage, ackImported });
-    createPendingDrainController(connection, api, () => ids.shift()!, () => true).schedule("session-a");
-    await flush();
+    const controller = createPendingDrainController(connection, api, () => ids.shift()!, () => true);
+    await expect(controller.run("session-a")).resolves.toEqual({ status: "completed", recordsRead: 2, acknowledged: 2 });
     expect(readPendingPage.mock.calls).toEqual([["capability-a", undefined], ["capability-a", "cursor-2"]]);
     expect(ackImported.mock.calls).toEqual([
       ["capability-a", "batch-1", ["one"]],

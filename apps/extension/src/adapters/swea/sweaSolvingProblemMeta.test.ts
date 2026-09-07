@@ -17,7 +17,7 @@ describe("detectSweaSolvingProblemMeta", () => {
 
     expect(detectSweaSolvingProblemMeta(document, SOLVING_URL)).toEqual({
       status: "detected",
-      problem: { problemNumber: "1234", title: "Synthetic title", contestProbId: "current" },
+      problem: { problemNumber: "1234", title: "Synthetic title", problemContestId: "current" },
       warnings: [],
     });
   });
@@ -27,7 +27,7 @@ describe("detectSweaSolvingProblemMeta", () => {
 
     expect(detectSweaSolvingProblemMeta(document, SOLVING_URL)).toEqual({
       status: "detected",
-      problem: { problemNumber: "1234", title: "Synthetic title D2", contestProbId: "current" },
+      problem: { problemNumber: "1234", title: "Synthetic title D2", problemContestId: "current" },
       warnings: [],
     });
   });
@@ -48,7 +48,16 @@ describe("detectSweaSolvingProblemMeta", () => {
 
     expect(detectSweaSolvingProblemMeta(document, SOLVING_URL)).toMatchObject({
       status: "detected",
-      problem: { contestProbId: "current" },
+      problem: { problemContestId: "current" },
+    });
+  });
+
+  it("uses the approved Problem-family handoff when direct page identity is absent", () => {
+    const document = documentFrom('<div class="problem_box"><h3>1234. Synthetic title</h3></div>');
+
+    expect(detectSweaSolvingProblemMeta(document, new URL("https://swexpertacademy.com/main/solvingProblem/solvingProblem.do"), "handoff-id")).toMatchObject({
+      status: "detected",
+      problem: { problemContestId: "handoff-id" },
     });
   });
 

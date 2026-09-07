@@ -26,7 +26,7 @@ h2 { font-size: 20px; }
 .subtitle, .future-note { color: #64748b; font-size: 13px; }
 .subtitle { margin: 7px 0 0; }
 .header-statuses { display: grid; gap: 8px; width: min(470px, 100%); }
-.auth-status, .connection-status { padding: 10px 12px; border: 1px solid #dce2ef; border-radius: 9px; background: white; }
+.auth-status, .connection-status, .manual-sync-status { padding: 10px 12px; border: 1px solid #dce2ef; border-radius: 9px; background: white; }
 .auth-status { display: grid; gap: 9px; min-height: 46px; color: #64748b; font-size: 12px; }
 .primary-button { justify-self: end; border: 0; border-radius: 7px; background: #4658c9; color: white; padding: 8px 11px; font-weight: 750; }
 .account-summary, .retry-status { display: flex; align-items: center; gap: 9px; width: 100%; }
@@ -51,6 +51,11 @@ h2 { font-size: 20px; }
 .connection-dot.connected { background: #16855b; }
 .connection-dot.error { background: #b42318; }
 .connection-dot.connecting { background: #d69719; }
+.manual-sync-status { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; }
+.manual-sync-status strong { color: #334155; font-size: 12px; }
+.manual-sync-status small { grid-column: 1 / -1; color: #64748b; font-size: 11px; line-height: 1.4; }
+.manual-sync-status button { padding: 6px 8px; border: 1px solid #4658c9; border-radius: 6px; background: #4658c9; color: white; font-size: 11px; font-weight: 700; }
+.manual-sync-status button:disabled { opacity: .55; cursor: not-allowed; }
 .badge { padding: 6px 9px; border-radius: 999px; background: #eef1ff; color: #4658c9; font-size: 12px; font-weight: 750; }
 .toolbar { display: grid; gap: 12px; margin: 24px 0 14px; }
 .archive-filters { display: grid; grid-template-columns: minmax(180px, 2fr) repeat(3, minmax(0, 1fr)); gap: 12px; }

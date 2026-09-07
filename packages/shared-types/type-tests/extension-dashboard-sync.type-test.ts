@@ -6,9 +6,18 @@ import {
 import type {
   AckableMainApiBulkUpsertResult,
   CaptureImportRecord,
+  CodeArchiveAutomationControlErrorCode,
+  CodeArchiveAutomationKind,
+  CodeArchiveAutomationSafetyStopRequest,
+  CodeArchiveAutomationSetRequest,
+  CodeArchiveAutomationState,
+  CodeArchiveAutomationStateRequest,
+  CodeArchiveAutomationStateUpdateEvent,
   CodeArchiveBridgeProtocolVersion,
   CodeArchiveCaptureChangedEvent,
   CodeArchiveCaptureSummaryData,
+  DashboardToExtensionAutomationMessage,
+  ExtensionToDashboardAutomationMessage,
   MainApiBulkUpsertRecordResult,
   MainApiSolutionBulkUpsertRecord,
   MainApiSolutionBulkUpsertRequest,
@@ -39,12 +48,139 @@ type ExpectedCaptureSummaryData = {
   readonly revision: number;
 };
 
+type ExpectedAutomationKind = "AUTO_SYNC" | "GITHUB_AUTO_COMMIT";
+
+type ExpectedAutomationControlErrorCode =
+  | "AUTH_REQUIRED"
+  | "DASHBOARD_DISCONNECTED"
+  | "MULTIPLE_DASHBOARD_TABS"
+  | "AUTO_SYNC_CONSENT_REQUIRED"
+  | "GITHUB_TARGET_REQUIRED"
+  | "GITHUB_CONSENT_REQUIRED"
+  | "PUBLIC_REPOSITORY_CONSENT_REQUIRED"
+  | "OFFLINE"
+  | "LEASE_FAILED"
+  | "GITHUB_TARGET_CHANGED"
+  | "GITHUB_OUTCOME_UNKNOWN"
+  | "CONTROL_UNAVAILABLE";
+
+type ExpectedAutomationState = {
+  readonly protocolVersion: CodeArchiveBridgeProtocolVersion;
+  readonly autoSyncEnabled: boolean;
+  readonly githubAutoCommitEnabled: boolean;
+  readonly githubTargetConfigured: boolean;
+  readonly authenticated: boolean;
+  readonly connectionAvailable: boolean;
+  readonly errorCode: ExpectedAutomationControlErrorCode | null;
+};
+
+type ExpectedAutomationStateRequest = {
+  readonly type: "CODEARCHIVE_AUTOMATION_STATE_REQUEST";
+  readonly protocolVersion: CodeArchiveBridgeProtocolVersion;
+};
+
+type ExpectedAutomationSetRequest = {
+  readonly type: "CODEARCHIVE_AUTOMATION_SET_REQUEST";
+  readonly protocolVersion: CodeArchiveBridgeProtocolVersion;
+  readonly automation: ExpectedAutomationKind;
+  readonly enabled: boolean;
+};
+
+type ExpectedAutomationSafetyStopRequest = {
+  readonly type: "CODEARCHIVE_AUTOMATION_SAFETY_STOP";
+  readonly protocolVersion: CodeArchiveBridgeProtocolVersion;
+  readonly errorCode: "MULTIPLE_DASHBOARD_TABS";
+};
+
+type ExpectedAutomationStateUpdateEvent = {
+  readonly type: "CODEARCHIVE_AUTOMATION_STATE_UPDATE";
+  readonly protocolVersion: CodeArchiveBridgeProtocolVersion;
+  readonly state: ExpectedAutomationState;
+};
+
+type ForbiddenAutomationWireKey =
+  | "accountId"
+  | "userId"
+  | "githubId"
+  | "githubLogin"
+  | "accountName"
+  | "repository"
+  | "repositoryId"
+  | "installationId"
+  | "fullName"
+  | "branch"
+  | "folder"
+  | "token"
+  | "cookie"
+  | "oauth"
+  | "source"
+  | "code"
+  | "title"
+  | "problemUrl";
+
 type _CaptureChangedExactShape = Assert<
   Equal<CodeArchiveCaptureChangedEvent, ExpectedCaptureChangedEvent>
 >;
 
 type _CaptureSummaryExactShape = Assert<
   Equal<CodeArchiveCaptureSummaryData, ExpectedCaptureSummaryData>
+>;
+
+type _AutomationKindExact = Assert<
+  Equal<CodeArchiveAutomationKind, ExpectedAutomationKind>
+>;
+
+type _AutomationErrorCodesExact = Assert<
+  Equal<CodeArchiveAutomationControlErrorCode, ExpectedAutomationControlErrorCode>
+>;
+
+type _AutomationStateExactShape = Assert<
+  Equal<CodeArchiveAutomationState, ExpectedAutomationState>
+>;
+
+type _AutomationStateRequestExactShape = Assert<
+  Equal<CodeArchiveAutomationStateRequest, ExpectedAutomationStateRequest>
+>;
+
+type _AutomationSetRequestExactShape = Assert<
+  Equal<CodeArchiveAutomationSetRequest, ExpectedAutomationSetRequest>
+>;
+
+type _AutomationSafetyStopExactShape = Assert<
+  Equal<CodeArchiveAutomationSafetyStopRequest, ExpectedAutomationSafetyStopRequest>
+>;
+
+type _AutomationStateUpdateExactShape = Assert<
+  Equal<CodeArchiveAutomationStateUpdateEvent, ExpectedAutomationStateUpdateEvent>
+>;
+
+type _ExtensionToDashboardAutomationUnionExact = Assert<
+  Equal<
+    ExtensionToDashboardAutomationMessage,
+    | ExpectedAutomationStateRequest
+    | ExpectedAutomationSetRequest
+    | ExpectedAutomationSafetyStopRequest
+  >
+>;
+
+type _DashboardToExtensionAutomationUnionExact = Assert<
+  Equal<DashboardToExtensionAutomationMessage, ExpectedAutomationStateUpdateEvent>
+>;
+
+type _AutomationStateHasNoForbiddenWireKeys = Assert<
+  Equal<Extract<keyof CodeArchiveAutomationState, ForbiddenAutomationWireKey>, never>
+>;
+
+type _AutomationSetHasNoForbiddenWireKeys = Assert<
+  Equal<Extract<keyof CodeArchiveAutomationSetRequest, ForbiddenAutomationWireKey>, never>
+>;
+
+type _AutomationStateRequestHasNoForbiddenWireKeys = Assert<
+  Equal<Extract<keyof CodeArchiveAutomationStateRequest, ForbiddenAutomationWireKey>, never>
+>;
+
+type _AutomationSafetyStopHasNoForbiddenWireKeys = Assert<
+  Equal<Extract<keyof CodeArchiveAutomationSafetyStopRequest, ForbiddenAutomationWireKey>, never>
 >;
 
 type _AckableOutcomesAreExact = Assert<

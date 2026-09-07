@@ -1,0 +1,13 @@
+name = "codearchive-durable-automation-invoker-beta"
+main = "src/index.mjs"
+compatibility_date = "2026-09-06"
+workers_dev = false
+
+# The required secret name is declared without its value. Set the value out of
+# band with `wrangler secret put CODEARCHIVE_DURABLE_INVOCATION_TOKEN`.
+# Never commit, print, or copy the secret value into this repository.
+[secrets]
+required = ["CODEARCHIVE_DURABLE_INVOCATION_TOKEN"]
+
+[triggers]
+crons = ["*/30 * * * *"]

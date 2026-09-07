@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -34,6 +35,7 @@ import com.codearchive.api.auth.session.AuthSession;
 import com.codearchive.api.auth.session.AuthSessionRepository;
 import com.codearchive.api.auth.user.CodeArchiveUser;
 import com.codearchive.api.auth.user.UserService;
+import com.codearchive.api.relay.RelayGrantService;
 import com.codearchive.api.common.exception.CodeArchiveException;
 import com.codearchive.api.common.exception.ErrorCode;
 
@@ -60,6 +62,9 @@ class AuthServiceTest {
 
     @Mock
     private SecureTokenCodec tokenCodec;
+
+    @Mock
+    private RelayGrantService relayGrantService;
 
     private AuthProperties authProperties;
     private AuthService authService;
@@ -353,5 +358,18 @@ class AuthServiceTest {
                 principal.sessionId(),
                 NOW
         );
+    }
+
+    @Test
+    void logoutDoesNotRevokeSessionWhenRelayGrantRevocationFails() {
+        CodeArchivePrincipal principal = new CodeArchivePrincipal(
+                UUID.randomUUID(), UUID.randomUUID(), "tester");
+        authService.setRelayGrantService(relayGrantService);
+        doThrow(new IllegalStateException("relay unavailable"))
+                .when(relayGrantService).revokeForUser(principal.userId());
+
+        assertThatThrownBy(() -> authService.logout(principal))
+                .isInstanceOf(IllegalStateException.class);
+        verify(authSessionRepository, never()).revoke(any(), any());
     }
 }

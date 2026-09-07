@@ -15,7 +15,7 @@ declare const chrome: {
 let submissionResult: ProgrammersSubmissionResultState = { status: "none" };
 let autoSave: ProgrammersAutoSaveState = { status: "idle" };
 
-observeProgrammersSubmissionResult(document, async (observation) => {
+observeProgrammersSubmissionResult(document, async (observation, cycle) => {
   submissionResult = observation;
   autoSave = { status: "saving", observedAt: observation.submission.observedAt };
   autoSave = await captureProgrammersAccepted(
@@ -23,6 +23,8 @@ observeProgrammersSubmissionResult(document, async (observation) => {
     new URL(window.location.href),
     observation,
     (message) => chrome.runtime.sendMessage(message) as Promise<any>,
+    undefined,
+    cycle,
   );
 });
 

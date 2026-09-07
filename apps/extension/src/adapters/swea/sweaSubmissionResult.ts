@@ -18,6 +18,8 @@ export type SweaSubmissionResultState =
   | { status: "none" }
   | { status: "observed"; submission: SweaObservedSubmissionResult; warnings: string[] };
 
+type ObservationHandler = (state: Extract<SweaSubmissionResultState, { status: "observed" }>) => void | boolean | Promise<void | boolean>;
+
 const RESULT_SELECTOR = "div.popup_layer.show > div > p.txt";
 const UNKNOWN_RESULT_WARNING = "SWEA 제출 결과를 표준 코드로 식별하지 못했습니다.";
 
@@ -42,22 +44,45 @@ export function mapSweaVisibleSubmissionResult(
 
 export function observeSweaSubmissionResult(
   document: Document,
-  onObservation: (state: Extract<SweaSubmissionResultState, { status: "observed" }>) => void,
+  onObservation: ObservationHandler,
   now: () => Date = () => new Date(),
 ): () => void {
   let observedInVisibleCycle = false;
+  let observationInFlight = false;
+  let visibleCycle = 0;
 
   const inspectVisibleResult = () => {
     const resultText = document.querySelector(RESULT_SELECTOR)?.textContent ?? "";
     const observation = mapSweaVisibleSubmissionResult(resultText, now());
     if (!observation) {
       observedInVisibleCycle = false;
+      visibleCycle += 1;
       return;
     }
-    if (observedInVisibleCycle) return;
+    if (observation.submission.result !== "ACCEPTED") {
+      observedInVisibleCycle = false;
+      onObservation(observation);
+      return;
+    }
+    if (observedInVisibleCycle || observationInFlight) return;
 
-    observedInVisibleCycle = true;
-    onObservation(observation);
+    const cycle = visibleCycle;
+    let handled: void | boolean | Promise<void | boolean>;
+    try { handled = onObservation(observation); }
+    catch { handled = false; }
+    if (handled && typeof (handled as Promise<void | boolean>).then === "function") {
+      observationInFlight = true;
+      Promise.resolve(handled).then((result) => {
+        observationInFlight = false;
+        if (cycle !== visibleCycle) return;
+        observedInVisibleCycle = result !== false;
+      }, () => {
+        observationInFlight = false;
+        if (cycle === visibleCycle) observedInVisibleCycle = false;
+      });
+    } else {
+      observedInVisibleCycle = handled !== false;
+    }
   };
 
   inspectVisibleResult();

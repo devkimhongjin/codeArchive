@@ -6,14 +6,14 @@ import { GitHubRequestError, type GitHubAutoStatus, type GitHubConfirmation, typ
 import { deferred, githubTestClient, githubTestConfirmation, githubTestOff, githubTestResult, githubTestSource, githubTestTarget } from "./githubTestFixtures";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
 
-async function selectTarget() {
+async function selectTarget(selectBranch = true) {
   fireEvent.click(screen.getByRole("button", { name: "GitHub 저장소 연결 확인" }));
   await screen.findByRole("option", { name: "synthetic" });
   fireEvent.change(screen.getByLabelText("GitHub 연결"), { target: { value: "701" } });
   await screen.findByRole("option", { name: "synthetic/solutions · 비공개" });
   fireEvent.change(screen.getByLabelText("저장소", { exact: true }), { target: { value: "801" } });
   await screen.findByRole("option", { name: "main" });
-  fireEvent.change(screen.getByLabelText("브랜치", { exact: true }), { target: { value: "main" } });
+  if (selectBranch) fireEvent.change(screen.getByLabelText("브랜치", { exact: true }), { target: { value: "main" } });
 }
 describe("GitHub upload Dashboard", () => {
   it("makes no integration requests before opening, and requires reviewed consent before exactly one commit", async () => {
@@ -67,11 +67,74 @@ describe("GitHub upload Dashboard", () => {
     fireEvent.click(screen.getByLabelText("공개 저장소에 코드를 공개합니다.")); expect(screen.getByRole("button", { name: "확인한 풀이 커밋" })).toBeEnabled();
     fireEvent.change(screen.getByLabelText("파일 경로 (선택)"), { target: { value: "Other.java" } }); expect(screen.queryByRole("button", { name: "확인한 풀이 커밋" })).not.toBeInTheDocument();
   });
+  it("keeps the authoritative target and active auto runtime across panel collapse", async () => {
+    const client = githubTestClient(); const targetConfigured = vi.fn(); const automation = vi.fn();
+    const view = render(<GitHubUpload client={client} solution={githubTestSource} syncEligible onSessionExpired={vi.fn()} onAutomationStateChange={automation} onTargetConfiguredChange={targetConfigured} />);
+    await selectTarget(); await consentAuto();
+    fireEvent.click(screen.getByRole("button", { name: "자동 커밋 ON" })); await screen.findByText("ON", { selector: "strong" });
+    expect(targetConfigured).toHaveBeenLastCalledWith(true); expect(automation).toHaveBeenLastCalledWith(true, null);
+    const callbackCount = automation.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "업로드 화면 닫기" }));
+    expect(targetConfigured).toHaveBeenLastCalledWith(true); expect(automation).toHaveBeenCalledTimes(callbackCount); expect(client.autoStop).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "GitHub 저장소 연결 확인" }));
+    expect(screen.getByLabelText("GitHub 연결")).toHaveValue("701"); expect(screen.getByLabelText("저장소", { exact: true })).toHaveValue("801"); expect(screen.getByLabelText("브랜치", { exact: true })).toHaveValue("main");
+    expect(client.autoStop).not.toHaveBeenCalled(); view.unmount();
+  });
+  it("evaluates popup auto-commit intent while the panel is collapsed and pagehide still stops it", async () => {
+    const client = githubTestClient(); const automation = vi.fn();
+    const props = { client, solution: githubTestSource, syncEligible: true, onSessionExpired: vi.fn(), onAutomationStateChange: automation, onTargetConfiguredChange: vi.fn() };
+    const view = render(<GitHubUpload {...props} automationIntent={null} />);
+    await selectTarget(); await consentAuto(); fireEvent.click(screen.getByRole("button", { name: "업로드 화면 닫기" }));
+    const callbackCount = automation.mock.calls.length;
+    view.rerender(<GitHubUpload {...props} automationIntent={{ enabled: true, nonce: 1 }} />);
+    await waitFor(() => expect(client.autoEnable).toHaveBeenCalledTimes(1)); await waitFor(() => expect(automation).toHaveBeenLastCalledWith(true, null));
+    expect(automation.mock.calls.slice(callbackCount)).not.toContainEqual([false, null]);
+    act(() => window.dispatchEvent(new Event("pagehide")));
+    await waitFor(() => expect(client.autoStop).toHaveBeenCalledTimes(1));
+    view.unmount();
+  });
+  it("stops an active run when the selected target actually changes", async () => {
+    const client = githubTestClient(); const target = { ...githubTestTarget }; const view = render(<GitHubAutoCommit client={client} target={target} eligible blocked={false} onLock={vi.fn()} onSessionExpired={vi.fn()} />);
+    await consentAuto(); fireEvent.click(screen.getByRole("button", { name: "자동 커밋 ON" })); await screen.findByText("ON", { selector: "strong" });
+    view.rerender(<GitHubAutoCommit client={client} target={{ ...target, folder: "archive" }} eligible blocked={false} onLock={vi.fn()} onSessionExpired={vi.fn()} />);
+    await waitFor(() => expect(client.autoStop).toHaveBeenCalledTimes(1));
+  });
   it("shows safe disabled-provider guidance and propagates session expiry", async () => {
     const client = githubTestClient(); const expired = vi.fn(); vi.mocked(client.installations).mockRejectedValueOnce(new GitHubRequestError("GITHUB_INTEGRATION_UNAVAILABLE")).mockRejectedValueOnce(new ArchiveSessionExpiredError());
     render(<GitHubUpload client={client} solution={githubTestSource} syncEligible onSessionExpired={expired} />);
     fireEvent.click(screen.getByRole("button", { name: "GitHub 저장소 연결 확인" })); await screen.findByText(/아직 활성화되지 않았습니다/);
     fireEvent.click(screen.getByRole("button", { name: "GitHub 연결 다시 확인" })); await waitFor(() => expect(expired).toHaveBeenCalledTimes(1));
+  });
+  it("selects the provider repository default branch without guessing another branch", async () => {
+    const client = githubTestClient();
+    vi.mocked(client.repositories).mockResolvedValue({ page: 1, hasMore: false, items: [{ id: "801", name: "solutions", fullName: "synthetic/solutions", private: true, defaultBranch: "develop" }] });
+    vi.mocked(client.branches).mockResolvedValue({ page: 1, hasMore: false, items: [
+      { name: "main", commitSha: "a".repeat(40), protected: false, selectable: true },
+      { name: "develop", commitSha: "b".repeat(40), protected: false, selectable: true },
+    ] });
+    render(<GitHubUpload client={client} solution={githubTestSource} syncEligible onSessionExpired={vi.fn()} />);
+    await selectTarget(false);
+    expect(screen.getByLabelText("브랜치", { exact: true })).toHaveValue("develop");
+    expect(screen.getByRole("button", { name: "코드·경로 미리보기" })).toBeEnabled();
+  });
+  it("refreshes the provider HEAD and permits a second manual commit", async () => {
+    const client = githubTestClient();
+    const firstSha = "a".repeat(40); const secondSha = "d".repeat(40);
+    vi.mocked(client.branches).mockResolvedValueOnce({ page: 1, hasMore: false, items: [{ name: "main", commitSha: firstSha, protected: false, selectable: true }] })
+      .mockResolvedValue({ page: 1, hasMore: false, items: [{ name: "main", commitSha: secondSha, protected: false, selectable: true }] });
+    vi.mocked(client.prepare).mockImplementation(async (request) => ({ ...githubTestConfirmation, preview: { ...githubTestConfirmation.preview, source: { id: request.solutionId, updatedAt: request.expectedUpdatedAt }, target: { ...githubTestConfirmation.preview.target, branch: request.branch, commitSha: request.expectedCommitSha } } }));
+    render(<GitHubUpload client={client} solution={githubTestSource} syncEligible onSessionExpired={vi.fn()} />);
+    await selectTarget();
+    fireEvent.click(screen.getByRole("button", { name: "코드·경로 미리보기" })); await screen.findByText("class Synthetic {}");
+    fireEvent.click(screen.getByLabelText("위 코드·경로·메시지를 GitHub에 전송합니다.")); fireEvent.click(screen.getByLabelText("저장소 공개 여부가 바뀔 수 있고 전송한 코드는 자동 회수되지 않음을 확인했습니다."));
+    fireEvent.click(screen.getByRole("button", { name: "확인한 풀이 커밋" }));
+    await screen.findByText(/최신 브랜치를 확인했습니다/);
+    expect(screen.getByLabelText("브랜치", { exact: true })).toHaveValue("main");
+    fireEvent.click(screen.getByRole("button", { name: "코드·경로 미리보기" })); await screen.findByText("class Synthetic {}");
+    expect(vi.mocked(client.prepare).mock.calls[1][0]).toEqual(expect.objectContaining({ expectedCommitSha: secondSha }));
+    fireEvent.click(screen.getByLabelText("위 코드·경로·메시지를 GitHub에 전송합니다.")); fireEvent.click(screen.getByLabelText("저장소 공개 여부가 바뀔 수 있고 전송한 코드는 자동 회수되지 않음을 확인했습니다."));
+    fireEvent.click(screen.getByRole("button", { name: "확인한 풀이 커밋" }));
+    await waitFor(() => expect(client.commit).toHaveBeenCalledTimes(2));
   });
 });
 
@@ -105,13 +168,32 @@ describe("automatic commit lifecycle", () => {
     await waitFor(() => expect(client.autoTick).toHaveBeenCalledTimes(1), { timeout: 2500 });
     await screen.findByText(/전송 결과를 확정할 수 없습니다/); expect(client.autoStop).toHaveBeenCalledTimes(1); expect(client.commit).not.toHaveBeenCalled();
   });
-  it("stops on page hiding and on unmount, while an existing run is never adopted", async () => {
+  it("continues while hidden, stops on pagehide and on unmount, while an existing run is never adopted", async () => {
     const client = githubTestClient(); const view = render(<GitHubAutoCommit client={client} target={githubTestTarget} eligible blocked={false} onLock={vi.fn()} onSessionExpired={vi.fn()} />);
     await consentAuto(); fireEvent.click(screen.getByRole("button", { name: "자동 커밋 ON" })); await screen.findByText("ON", { selector: "strong" });
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    act(() => document.dispatchEvent(new Event("visibilitychange"))); await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText("ON", { selector: "strong" })).toBeInTheDocument(); expect(client.autoStop).not.toHaveBeenCalled();
     act(() => window.dispatchEvent(new Event("pagehide"))); await screen.findByText("OFF", { selector: "strong" });
     await consentAuto(); fireEvent.click(screen.getByRole("button", { name: "자동 커밋 ON" })); await screen.findByText("ON", { selector: "strong" }); view.unmount(); expect(client.autoStop).toHaveBeenCalledTimes(2);
     vi.mocked(client.autoStatus).mockResolvedValue({ ...githubTestOff, runId: "44444444-4444-4444-8444-444444444444", state: "ACTIVE", target: githubTestTarget });
     render(<GitHubAutoCommit client={client} target={githubTestTarget} eligible blocked={false} onLock={vi.fn()} onSessionExpired={vi.fn()} />);
     await screen.findByText("다른 화면에서 ON"); expect(screen.getByRole("button", { name: "자동 커밋 ON" })).toBeDisabled(); expect(client.autoTick).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the selected branch HEAD immediately before enabling", async () => {
+    const client = githubTestClient();
+    vi.mocked(client.branches).mockResolvedValueOnce({ page: 1, hasMore: false, items: [{ name: "main", commitSha: "a".repeat(40), protected: false, selectable: true }] })
+      .mockResolvedValueOnce({ page: 1, hasMore: false, items: [{ name: "main", commitSha: "d".repeat(40), protected: false, selectable: true }] });
+    render(<GitHubUpload client={client} solution={githubTestSource} syncEligible onSessionExpired={vi.fn()} />);
+    await selectTarget(); await consentAuto(); fireEvent.click(screen.getByRole("button", { name: "자동 커밋 ON" }));
+    await screen.findByText("ON", { selector: "strong" });
+    expect(client.autoEnable).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ target: expect.objectContaining({ expectedCommitSha: "d".repeat(40) }) }), expect.any(AbortSignal));
+  });
+  it("renders an actionable prerequisite diagnostic", () => {
+    const client = githubTestClient();
+    render(<GitHubAutoCommit client={client} target={githubTestTarget} eligible={false} blocked={false} blockedReason="온라인 상태가 되어야 GitHub 자동 커밋을 켤 수 있습니다." onLock={vi.fn()} onSessionExpired={vi.fn()} />);
+    expect(screen.getByRole("status")).toHaveTextContent("온라인 상태가 되어야");
+    expect(screen.getByRole("button", { name: "자동 커밋 ON" })).toBeDisabled();
   });
 });

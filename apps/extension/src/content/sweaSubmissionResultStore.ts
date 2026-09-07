@@ -6,6 +6,7 @@ import {
 } from "../adapters/swea/sweaSubmissionResult";
 
 type ObserveSubmissionResult = typeof observeSweaSubmissionResult;
+type ObservationHandler = Parameters<ObserveSubmissionResult>[1];
 
 export interface SweaSubmissionResultStore {
   getState(): SweaSubmissionResultState;
@@ -16,8 +17,8 @@ const CACHE_PREFIX = "codearchive:swea:submission-result:";
 
 function cacheKey(document: Document, url: URL): string | null {
   const metadata = detectSweaSolvingProblemMeta(document, url);
-  if (metadata.status !== "detected" || !metadata.problem.contestProbId) return null;
-  return `${CACHE_PREFIX}${metadata.problem.contestProbId}`;
+  if (metadata.status !== "detected" || !metadata.problem.problemContestId) return null;
+  return `${CACHE_PREFIX}${metadata.problem.problemContestId}`;
 }
 
 function readCachedState(storage: Storage | undefined, key: string | null): SweaSubmissionResultState {
@@ -45,7 +46,7 @@ export function createSweaSubmissionResultStore(
   document: Document,
   url: URL,
   observe: ObserveSubmissionResult = observeSweaSubmissionResult,
-  onObservation?: (state: Extract<SweaSubmissionResultState, { status: "observed" }>) => void,
+  onObservation?: ObservationHandler,
   storage: Storage | undefined = typeof sessionStorage === "undefined" ? undefined : sessionStorage,
 ): SweaSubmissionResultStore {
   const key = getSweaPageKind(url) === "solving" ? cacheKey(document, url) : null;
@@ -54,7 +55,7 @@ export function createSweaSubmissionResultStore(
     ? observe(document, (observation) => {
         state = observation;
         writeCachedState(storage, key, observation);
-        onObservation?.(observation);
+        return onObservation?.(observation);
       })
     : () => undefined;
 

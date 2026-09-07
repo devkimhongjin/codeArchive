@@ -25,6 +25,7 @@ public class GitHubAutoCommitStore {
         try {
             return tx.execute(t -> {
                 db.execute("SET LOCAL lock_timeout = '2s'");
+                ensurePageOwned(p.userId());
                 db.update("UPDATE github_auto_runs SET state='OFF' WHERE user_id=? AND state IN ('STARTING','ACTIVE') AND lease_until<=clock_timestamp()", p.userId());
                 if (db.queryForObject("SELECT count(*) FROM github_auto_attempts WHERE user_id=? AND state IN ('ATTEMPTED','UNKNOWN')", Integer.class,p.userId())>0)
                     throw new CodeArchiveException(ErrorCode.GITHUB_UPLOAD_OUTCOME_UNKNOWN);
@@ -68,6 +69,7 @@ public class GitHubAutoCommitStore {
                 .stream().findFirst().orElse(null);
     }
     Run requireLive(CodeArchivePrincipal p, UUID id, boolean lock, String state) {
+        ensurePageOwned(p.userId());
         var run=find(p,id,lock);
         if (!run.sessionId().equals(p.sessionId()) || !run.state().equals(state) || !run.leaseUntil().isAfter(Instant.now()))
             throw new CodeArchiveException(ErrorCode.GITHUB_AUTO_STOPPED);
@@ -76,6 +78,7 @@ public class GitHubAutoCommitStore {
     Claim claim(CodeArchivePrincipal p, UUID id) {
         return tx.execute(t -> {
             db.execute("SET LOCAL lock_timeout = '2s'");
+            ensurePageOwned(p.userId());
             var run=requireLive(p,id,true,"ACTIVE");
             if (db.queryForObject("SELECT count(*) FROM github_auto_attempts WHERE run_id=? AND state='ATTEMPTED'",Integer.class,id)>0) return null;
             db.update("UPDATE github_auto_runs SET lease_until=clock_timestamp()+interval '60 seconds' WHERE id=?",id);
@@ -112,12 +115,24 @@ public class GitHubAutoCommitStore {
                 (r,i)->new LastResult(r.getString(1).equals("ATTEMPTED")?"UNKNOWN":r.getString(1),r.getString(2),r.getString(3),r.getString(4)),id)
                 .stream().findFirst().orElse(null);
     }
+
+    private void ensurePageOwned(UUID userId) {
+        String mode = db.query("SELECT ownership_mode FROM automation_profiles WHERE user_id=? FOR SHARE",
+                (r, i) -> r.getString(1), userId).stream().findFirst().orElse("PAGE_OWNED");
+        if (!"PAGE_OWNED".equals(mode)) {
+            throw new CodeArchiveException(ErrorCode.AUTOMATION_OWNERSHIP_CONFLICT);
+        }
+        if (db.queryForObject("SELECT count(*) FROM durable_github_attempts WHERE user_id=? AND state IN ('CLAIMED','ATTEMPTED','UNKNOWN')",
+                Integer.class, userId) > 0) {
+            throw new CodeArchiveException(ErrorCode.GITHUB_UPLOAD_OUTCOME_UNKNOWN);
+        }
+    }
     private String encode(Target target) { try { return json.writeValueAsString(target); } catch(Exception ignored) { throw new CodeArchiveException(ErrorCode.INTERNAL_ERROR); } }
     private Target decode(String value) { try { return value==null?null:json.readValue(value,Target.class); } catch(Exception ignored) { throw new CodeArchiveException(ErrorCode.INTERNAL_ERROR); } }
     public record Target(@com.fasterxml.jackson.annotation.JsonFormat(shape=com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING) long installationId,
             @com.fasterxml.jackson.annotation.JsonFormat(shape=com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING) long repositoryId,
             String branch,String expectedCommitSha,String folder,boolean privateRepository,String fullName) {
-        Target withHead(String head) { return new Target(installationId,repositoryId,branch,head,folder,privateRepository,fullName); }
+        public Target withHead(String head) { return new Target(installationId,repositoryId,branch,head,folder,privateRepository,fullName); }
     }
     record Run(UUID id,UUID sessionId,String state,Target target,Instant enabledAt,Instant leaseUntil,String errorCode) {}
     record Claim(Run run,UUID attempt,UUID source) {}

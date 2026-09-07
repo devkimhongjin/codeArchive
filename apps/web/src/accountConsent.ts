@@ -1,3 +1,6 @@
+import { notifyExplicitAutoSyncOff } from "./durableAutomationIntent";
+import { durableAutomationProfile, setDurableAutomationProfile } from "./durableAutomationState";
+
 export const ACCOUNT_CONSENT_KEY = "codearchive.autoSyncConsent.v1";
 const BINDING_PREFIX = "v1:sha256:";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -73,6 +76,7 @@ export function createAccountConsentController(
   onChange: (enabled: boolean) => void,
   derive: (id: unknown) => Promise<string | null> = deriveAccountBinding,
   onInvalidated: () => void = () => {},
+  onExplicitDisable: () => void = () => {},
 ) {
   let revision = 0;
   let verifiedId: string | undefined;
@@ -86,13 +90,25 @@ export function createAccountConsentController(
     revision += 1;
     verifiedId = undefined;
     onChange(false);
-    if (clearStored) write(false);
+    if (clearStored) {
+      write(false);
+      void notifyExplicitAutoSyncOff();
+    }
   };
   return {
     async verify(id: unknown) {
       const current = ++revision;
-      verifiedId = validatedAccountId(id);
+      const nextId = validatedAccountId(id);
       onChange(false);
+      const durable = durableAutomationProfile();
+      if (durable && durable.userId !== nextId) {
+        const revoked = await notifyExplicitAutoSyncOff();
+        if (revoked && durableAutomationProfile()?.userId === durable.userId) {
+          setDurableAutomationProfile(null, false);
+        }
+      }
+      if (current !== revision) return;
+      verifiedId = nextId;
       const binding = await bindingFor(verifiedId);
       if (current !== revision) return;
       if (!binding) { write(false); return; }
@@ -101,7 +117,12 @@ export function createAccountConsentController(
     async choose(enabled: boolean) {
       const current = ++revision;
       onChange(enabled);
-      if (!enabled) { write(false); return; }
+      if (!enabled) {
+        onExplicitDisable();
+        write(false);
+        await notifyExplicitAutoSyncOff();
+        return;
+      }
       const binding = await bindingFor(verifiedId);
       if (current === revision) write(true, binding);
     },

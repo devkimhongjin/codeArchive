@@ -30,7 +30,7 @@ function authenticatedAuth(): DashboardAuthClient {
   return {
     discoverSession: async () => ({
       status: "authenticated",
-      user: { githubLogin: "octocat", displayName: "Octo Cat", avatarUrl: "" },
+      user: { id: "550e8400-e29b-41d4-a716-446655440000", githubLogin: "octocat", displayName: "Octo Cat", avatarUrl: "" },
     }),
     login: vi.fn(),
     logout: vi.fn(async (beforeApiLogout) => { await beforeApiLogout?.(); return true; }),

@@ -1,0 +1,71 @@
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { Popup } from "./PopupView";
+import type { SolutionRepository } from "./solutionRepository";
+import type { CodeArchiveAutomationState } from "../../../packages/shared-types/src";
+
+const state: CodeArchiveAutomationState = {
+  protocolVersion: 1,
+  autoSyncEnabled: false,
+  githubAutoCommitEnabled: true,
+  githubTargetConfigured: true,
+  authenticated: true,
+  connectionAvailable: true,
+  errorCode: null,
+};
+
+function repository(): SolutionRepository {
+  return {
+    create: vi.fn(), list: vi.fn(async () => []), getById: vi.fn(), update: vi.fn(), delete: vi.fn(), setSyncMetadata: vi.fn(),
+  } as unknown as SolutionRepository;
+}
+
+describe("Popup automation controls", () => {
+  it("renders authoritative values and sends only the user's intent", async () => {
+    const requestAutomationState = vi.fn(async () => ({ state, forwarded: true }));
+    const setAutomation = vi.fn(async () => ({ accepted: true, state, forwarded: true }));
+    render(<Popup repository={repository()} requestAutomationState={requestAutomationState} setAutomation={setAutomation} />);
+
+    expect(await screen.findByLabelText("자동 동기화")).not.toBeChecked();
+    expect(screen.getByLabelText("GitHub 자동 커밋")).toBeChecked();
+    expect(requestAutomationState).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByLabelText("자동 동기화"));
+    await waitFor(() => expect(setAutomation).toHaveBeenCalledWith("AUTO_SYNC", true));
+    expect(screen.getByLabelText("자동 동기화")).not.toBeChecked();
+  });
+
+  it("fails closed when a command times out with a cached checked state", async () => {
+    const checked = { ...state, autoSyncEnabled: true };
+    const requestAutomationState = vi.fn(async () => ({ state: checked, forwarded: true }));
+    const setAutomation = vi.fn(async () => ({ accepted: false, state: checked, forwarded: true }));
+    render(<Popup repository={repository()} requestAutomationState={requestAutomationState} setAutomation={setAutomation} />);
+
+    expect(await screen.findByLabelText("자동 동기화")).toBeChecked();
+    fireEvent.click(screen.getByLabelText("자동 동기화"));
+    await waitFor(() => expect(setAutomation).toHaveBeenCalledWith("AUTO_SYNC", false));
+    await waitFor(() => expect(screen.getByLabelText("자동 동기화")).not.toBeChecked());
+    expect(screen.getByText("Dashboard를 열어 연결한 뒤 자동화를 설정해주세요.")).toBeInTheDocument();
+  });
+
+  it("disables both controls while Dashboard is unavailable", async () => {
+    const unavailable = { ...state, autoSyncEnabled: true, githubAutoCommitEnabled: true, connectionAvailable: false, errorCode: "DASHBOARD_DISCONNECTED" as const };
+    render(<Popup repository={repository()} requestAutomationState={async () => ({ state: unavailable, forwarded: false })} setAutomation={vi.fn()} />);
+    await waitFor(() => expect(screen.getByLabelText("자동 동기화")).toBeDisabled());
+    expect(screen.getByLabelText("GitHub 자동 커밋")).toBeDisabled();
+    expect(screen.getByText("Dashboard를 열어 연결한 뒤 자동화를 설정해주세요.")).toBeInTheDocument();
+  });
+
+  it("allows local AUTO_SYNC stop while Dashboard is disconnected", async () => {
+    const unavailable = { ...state, autoSyncEnabled: false, connectionAvailable: false, errorCode: "DASHBOARD_DISCONNECTED" as const };
+    const requestRelayState = vi.fn(async () => ({ state: "ACTIVE" as const, autoSyncEnabled: true, grantId: "grant", generation: 2 }));
+    const stopRelayLocally = vi.fn(async () => ({ state: "REVOCATION_PENDING" as const, autoSyncEnabled: false, grantId: "grant", generation: 2 }));
+    const setAutomation = vi.fn();
+    render(<Popup repository={repository()} requestAutomationState={async () => ({ state: unavailable, forwarded: false })} setAutomation={setAutomation} requestRelayState={requestRelayState} stopRelayLocally={stopRelayLocally} />);
+
+    const stop = await screen.findByRole("button", { name: "자동 동기화 로컬 중지" });
+    fireEvent.click(stop);
+    await waitFor(() => expect(stopRelayLocally).toHaveBeenCalledOnce());
+    expect(setAutomation).not.toHaveBeenCalled();
+    expect(await screen.findByText("로컬 relay 상태: 해지 대기")).toBeInTheDocument();
+  });
+});

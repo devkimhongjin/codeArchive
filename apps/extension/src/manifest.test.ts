@@ -21,8 +21,8 @@ describe("extension manifest", () => {
     expect(manifest.host_permissions).not.toContain("https://school.programmers.co.kr/*");
   });
 
-  it("grants Chrome identity plus only the owner-approved beta Main API host", () => {
-    expect(manifest.permissions).toEqual(["identity"]);
+  it("grants only Chrome identity, bounded relay alarms, and the owner-approved beta Main API host", () => {
+    expect(manifest.permissions).toEqual(["identity", "alarms"]);
     expect(manifest.host_permissions).toEqual([BETA_API_HOST_PERMISSION]);
     expect(manifest.host_permissions).not.toContain("https://codearchive-analysis.onrender.com/*");
     expect(manifest.host_permissions).not.toContain("<all_urls>");
