@@ -4,7 +4,17 @@ import type { RelayStateRecord, RelayStateRepository } from "./relayState";
 import type { SolutionRecord } from "../solution";
 import type { CodeArchiveAutomationState } from "../../../../packages/shared-types/src";
 import { ExtensionDashboardCaptureBridge, type ExternalDashboardPort, type ExternalDashboardSender } from "../dashboardCaptureBridge";
-import type { CaptureBridgePage, CaptureBridgeRepository, CaptureBridgeSummary } from "../solutionRepository";
+import {
+  indexedDbSolutionRepository,
+  listRelayPendingCaptures,
+  openCodeArchiveDatabase,
+  RELAY_STATE_KEY,
+  RELAY_STATE_STORE_NAME,
+  saveAcceptedCapture,
+  type CaptureBridgePage,
+  type CaptureBridgeRepository,
+  type CaptureBridgeSummary,
+} from "../solutionRepository";
 
 function state(overrides: Partial<RelayStateRecord> = {}): RelayStateRecord {
   return {
@@ -74,6 +84,131 @@ class EmptyCaptureBridgeRepository implements CaptureBridgeRepository {
   async summary(): Promise<CaptureBridgeSummary> { return { pendingCount: 0, allCount: 0, revision: 0 }; }
   async page(): Promise<CaptureBridgePage> { return { records: [], revision: 0 }; }
   async acknowledge(): Promise<readonly string[]> { return []; }
+}
+
+type MemoryStoreData = { keyPath?: string; values: Map<IDBValidKey, unknown> };
+
+class MemoryIndexedDbTransaction {
+  private pending = 0;
+  private completeListener?: () => void;
+  private completionQueued = false;
+  onerror?: () => void;
+  onabort?: () => void;
+
+  set oncomplete(listener: (() => void) | undefined) {
+    this.completeListener = listener;
+    this.maybeComplete();
+  }
+
+  get oncomplete(): (() => void) | undefined {
+    return this.completeListener;
+  }
+
+  constructor(private readonly db: MemoryIndexedDbDatabase) {}
+
+  objectStore(name: string): MemoryIndexedDbStore {
+    const store = this.db.stores.get(name);
+    if (!store) throw new Error(`Missing memory store: ${name}`);
+    return new MemoryIndexedDbStore(this, store);
+  }
+
+  request<T>(work: () => T): any {
+    this.pending += 1;
+    const request: any = { result: undefined, error: null, onsuccess: undefined, onerror: undefined };
+    queueMicrotask(() => {
+      try {
+        request.result = work();
+        request.onsuccess?.({ target: request });
+      } catch (error) {
+        request.error = error;
+        request.onerror?.({ target: request });
+      } finally {
+        this.pending -= 1;
+        this.maybeComplete();
+      }
+    });
+    return request;
+  }
+
+  private maybeComplete(): void {
+    if (this.pending !== 0 || !this.completeListener || this.completionQueued) return;
+    this.completionQueued = true;
+    queueMicrotask(() => this.completeListener?.());
+  }
+}
+
+class MemoryIndexedDbStore {
+  readonly indexNames = { contains: (_name: string) => false };
+
+  constructor(private readonly transaction: MemoryIndexedDbTransaction, private readonly data: MemoryStoreData) {}
+
+  createIndex(_name: string, _keyPath: string): void { /* schema-only for the repository contract */ }
+
+  private key(value: any, key?: IDBValidKey): IDBValidKey {
+    return key ?? (this.data.keyPath ? value[this.data.keyPath] : undefined);
+  }
+
+  get(key: IDBValidKey): any { return this.transaction.request(() => this.data.values.get(key)); }
+  getAll(): any { return this.transaction.request(() => [...this.data.values.values()]); }
+  add(value: any): any {
+    return this.transaction.request(() => {
+      const key = this.key(value);
+      if (key === undefined || this.data.values.has(key)) throw new Error("ConstraintError");
+      this.data.values.set(key, value);
+      return undefined;
+    });
+  }
+  put(value: any, key?: IDBValidKey): any {
+    return this.transaction.request(() => {
+      const resolved = this.key(value, key);
+      if (resolved === undefined) throw new Error("DataError");
+      this.data.values.set(resolved, value);
+      return undefined;
+    });
+  }
+  delete(key: IDBValidKey): any {
+    return this.transaction.request(() => { this.data.values.delete(key); return undefined; });
+  }
+  openCursor(): any { return this.transaction.request(() => null); }
+}
+
+class MemoryIndexedDbDatabase {
+  readonly stores = new Map<string, MemoryStoreData>();
+  readonly objectStoreNames = { contains: (name: string) => this.stores.has(name) };
+  close(): void { /* no-op */ }
+  createObjectStore(name: string, options?: { keyPath?: string }): MemoryIndexedDbStore {
+    const data: MemoryStoreData = { keyPath: options?.keyPath, values: new Map() };
+    this.stores.set(name, data);
+    return new MemoryIndexedDbStore(new MemoryIndexedDbTransaction(this), data);
+  }
+  transaction(names: string | readonly string[], _mode: IDBTransactionMode): MemoryIndexedDbTransaction {
+    const requested = Array.isArray(names) ? names : [names];
+    requested.forEach((name) => { if (!this.stores.has(name)) throw new Error(`Missing memory store: ${name}`); });
+    return new MemoryIndexedDbTransaction(this);
+  }
+}
+
+class MemoryIndexedDbFactory {
+  readonly database = new MemoryIndexedDbDatabase();
+  private initialized = false;
+
+  open(): any {
+    const request: any = { result: this.database, transaction: undefined, onsuccess: undefined, onerror: undefined, onupgradeneeded: undefined };
+    queueMicrotask(() => {
+      if (!this.initialized) {
+        this.initialized = true;
+        request.transaction = new MemoryIndexedDbTransaction(this.database);
+        request.onupgradeneeded?.({ oldVersion: 0, newVersion: 3, target: request });
+      }
+      queueMicrotask(() => request.onsuccess?.({ target: request }));
+    });
+    return request;
+  }
+
+  async seedRelayState(value: unknown): Promise<void> {
+    if (!this.initialized) await new Promise<void>((resolve) => queueMicrotask(resolve));
+    this.database.stores.get(RELAY_STATE_STORE_NAME)?.values.set(RELAY_STATE_KEY, value);
+  }
 }
 
 async function waitForRequest(requests: readonly RequestInit[]): Promise<void> {
@@ -179,53 +314,86 @@ describe("RelayRuntime", () => {
   });
 
   it("drains the real save orchestration after an external Port disconnect without a Dashboard", async () => {
+    const previousIndexedDb = (globalThis as any).indexedDB;
+    const previousChrome = (globalThis as any).chrome;
+    const relayNow = Date.now();
+    const indexedDb = new MemoryIndexedDbFactory();
+    (globalThis as any).indexedDB = indexedDb;
     (globalThis as any).chrome = {
       runtime: {
         onMessage: { addListener: () => undefined },
         onConnectExternal: { addListener: () => undefined },
       },
     };
-    const { saveThenSyncAcceptedCapture } = await import("../background");
-    const stateRepo = new MemoryState(state());
-    const alarms = new MemoryAlarms();
-    const requests: RequestInit[] = [];
-    const runtime = new RelayRuntime({
-      state: stateRepo,
-      alarms,
-      now: () => 1_000_000,
-      listPending: async () => [record("after-disconnect")],
-      fetch: async (_input, init) => {
-        requests.push(init);
-        return response([{ clientRecordId: "after-disconnect", outcome: "IMPORTED", ackEligible: true, errorCode: null }]);
-      },
-    });
-    const bridge = new ExtensionDashboardCaptureBridge(new EmptyCaptureBridgeRepository(), () => 1_000_000, () => "cap", undefined, runtime);
-    const port = new DisconnectPort();
-    expect(bridge.connect(port, "https://dashboard.example.com")).toBe(true);
-    port.disconnect();
+    try {
+      await openCodeArchiveDatabase();
+      const relayState = state({ expiresAt: new Date(relayNow + 60 * 60 * 1000).toISOString() });
+      await indexedDb.seedRelayState({
+        revision: 0,
+        state: relayState.state,
+        grantId: relayState.grantId,
+        credential: relayState.credential,
+        generation: relayState.generation,
+        expiresAt: relayState.expiresAt,
+        autoSyncEnabled: true,
+      });
+      const { saveThenSyncAcceptedCapture } = await import("../background");
+      const stateRepo = new MemoryState(relayState);
+      const alarms = new MemoryAlarms();
+      const requests: RequestInit[] = [];
+      const runtime = new RelayRuntime({
+        state: stateRepo,
+        alarms,
+        now: () => relayNow,
+        listPending: (generation) => listRelayPendingCaptures(generation),
+        fetch: async (_input, init) => {
+          requests.push(init);
+          const body = JSON.parse(String(init.body)) as { records: Array<{ clientRecordId: string }> };
+          return response(body.records.map((item) => ({ clientRecordId: item.clientRecordId, outcome: "IMPORTED", ackEligible: true, errorCode: null })));
+        },
+      });
+      const bridge = new ExtensionDashboardCaptureBridge(new EmptyCaptureBridgeRepository(), () => relayNow, () => "cap", undefined, runtime);
+      const port = new DisconnectPort();
+      expect(bridge.connect(port, "https://dashboard.example.com")).toBe(true);
+      port.disconnect();
+      const disconnectedProjection = bridge.getAutomationState();
+      expect(disconnectedProjection).toMatchObject({ connectionAvailable: false, errorCode: "DASHBOARD_DISCONNECTED" });
+      await runtime.onAutomationState(disconnectedProjection);
 
-    const capture = {
-      captureId: "after-disconnect",
-      platform: "SWEA" as const,
-      result: "ACCEPTED" as const,
-      problemNumber: "1234",
-      title: "title",
-      language: "Java",
-      code: "class Main {}",
-      observedAt: "1970-01-01T00:00:01.000Z",
-      solvedAt: "1970-01-01",
-    };
-    const result = await saveThenSyncAcceptedCapture(capture, {
-      saveCapture: async () => ({ status: "saved" as const, solutionId: "swea-auto:after-disconnect", savedAt: "1970-01-01T00:00:01.000Z" }),
-      onCaptureCommitted: () => runtime.onCaptureCommitted(),
-    });
+      const capture = {
+        captureId: "after-disconnect",
+        platform: "SWEA" as const,
+        result: "ACCEPTED" as const,
+        problemNumber: "1234",
+        title: "title",
+        language: "Java",
+        code: "class Main {}",
+        observedAt: "1970-01-01T00:00:01.000Z",
+        solvedAt: "1970-01-01",
+      };
+      const result = await saveThenSyncAcceptedCapture(capture, {
+        saveCapture: saveAcceptedCapture,
+        onCaptureCommitted: () => runtime.onCaptureCommitted(),
+      });
 
-    expect(result.status).toBe("saved");
-    expect(stateRepo.value.state).toBe("ACTIVE");
-    expect(stateRepo.value.credential).toBe("credential");
-    expect(alarms.created.at(-1)).toBe(1_000_000);
-    await waitForRequest(requests);
-    expect(JSON.parse(String(requests[0]?.body)).records[0].clientRecordId).toBe("after-disconnect");
+      expect(result).toMatchObject({ status: "saved", solutionId: "swea-auto:after-disconnect" });
+      expect(stateRepo.value.state).toBe("ACTIVE");
+      expect(stateRepo.value.credential).toBe("credential");
+      expect(alarms.created.at(-1)).toBe(relayNow);
+      await waitForRequest(requests);
+      const sent = JSON.parse(String(requests[0]?.body)) as { records: Array<{ clientRecordId: string; capturedAt: string }> };
+      expect(sent.records).toHaveLength(1);
+      expect(sent.records[0]?.clientRecordId).toBeTruthy();
+      expect(sent.records[0]?.capturedAt).toBeTruthy();
+
+      const persisted = await indexedDbSolutionRepository.getById("swea-auto:after-disconnect");
+      expect(persisted?.relayCapture).toMatchObject({ generation: 7 });
+      expect(persisted?.relayImportReceipt).toEqual(expect.objectContaining({ importedAt: expect.any(String) }));
+      await expect(listRelayPendingCaptures(7)).resolves.toEqual([]);
+    } finally {
+      (globalThis as any).indexedDB = previousIndexedDb;
+      (globalThis as any).chrome = previousChrome;
+    }
   });
 
   it("does not erase a valid grant solely for a multiple-tab safety stop", async () => {
