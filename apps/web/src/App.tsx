@@ -371,6 +371,16 @@ export function App({
     if (clearConsent) consentController.reset(true);
   }
 
+  function teardownPageLocalAutomation() {
+    drainEligibilityRef.current.eligible = false;
+    if (manualSyncSessionRef.current) manualSyncSessionRef.current.eligible = false;
+    pendingDrainController.invalidate();
+    // Closing the Dashboard tears down only page-owned sessions. A confirmed
+    // DURABLE_SERVER relay must keep its persisted state and credential so the
+    // Extension can relay later captures while no Dashboard document exists.
+    void syncController.teardown();
+  }
+
   function automationGuard(kind: "AUTO_SYNC" | "GITHUB_AUTO_COMMIT"): CodeArchiveAutomationControlErrorCode | null {
     if (!authenticated) return "AUTH_REQUIRED";
     if (!exactOrigin) return "CONTROL_UNAVAILABLE";
@@ -558,7 +568,7 @@ export function App({
     const becameOnline = () => setOnline(true);
     window.addEventListener("offline", becameOffline);
     window.addEventListener("online", becameOnline);
-    const pagehide = () => { invalidateManualSync(); invalidateAutomation(false); };
+    const pagehide = () => { invalidateManualSync(); teardownPageLocalAutomation(); };
     window.addEventListener("pagehide", pagehide);
     return () => {
       window.removeEventListener("offline", becameOffline);
