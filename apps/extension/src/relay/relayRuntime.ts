@@ -111,6 +111,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function isDashboardControllerUnavailable(state: CodeArchiveAutomationState): boolean {
+  return state.connectionAvailable === false && state.errorCode === "DASHBOARD_DISCONNECTED";
+}
+
 export class RelayRuntime {
   private readonly state: RelayStateRepository;
   private readonly alarms?: RelayAlarmApi;
@@ -167,6 +171,9 @@ export class RelayRuntime {
       await this.cancelAlarm();
       return;
     }
+    // Dashboard controller/Port availability is not durable relay authority.
+    // A confirmed relay must remain armed after the Dashboard document is gone.
+    if (isDashboardControllerUnavailable(state)) return;
     if (!state.authenticated || !state.autoSyncEnabled) {
       this.blocked = true;
       await this.disableLocalRelay();
