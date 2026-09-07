@@ -10,6 +10,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -17,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.codearchive.api.common.exception.CodeArchiveException;
 import com.codearchive.api.common.exception.ErrorCode;
+import com.codearchive.api.automation.RelayCapturePersistedEvent;
 
 @Service
 public class RelayCaptureIngestService {
@@ -26,15 +28,17 @@ public class RelayCaptureIngestService {
     public static final int MAX_REQUESTS_PER_MINUTE = 60;
     private final NamedParameterJdbcTemplate db;
     private final RelayGrantService grants;
+    private final ApplicationEventPublisher events;
     private final Clock clock;
     private final ConcurrentHashMap<UUID, RateWindow> rateWindows = new ConcurrentHashMap<>();
 
     @Autowired
     public RelayCaptureIngestService(
             NamedParameterJdbcTemplate db,
-            RelayGrantService grants
+            RelayGrantService grants,
+            ApplicationEventPublisher events
     ) {
-        this(db, grants, Clock.systemUTC());
+        this(db, grants, events, Clock.systemUTC());
     }
 
     RelayCaptureIngestService(
@@ -42,8 +46,18 @@ public class RelayCaptureIngestService {
             RelayGrantService grants,
             Clock clock
     ) {
+        this(db, grants, event -> {}, clock);
+    }
+
+    RelayCaptureIngestService(
+            NamedParameterJdbcTemplate db,
+            RelayGrantService grants,
+            ApplicationEventPublisher events,
+            Clock clock
+    ) {
         this.db = db;
         this.grants = grants;
+        this.events = events;
         this.clock = clock;
     }
 
@@ -58,6 +72,7 @@ public class RelayCaptureIngestService {
         if (totalCodeChars > MAX_TOTAL_CODE_CHARS) throw invalid();
 
         List<Result> results = new ArrayList<>(records.size());
+        boolean persistedCapture = false;
         for (Item item : records) {
             String clientRecordId = item.clientRecordId().trim();
             var args = parameters(principal, item, clientRecordId, now);
@@ -74,14 +89,17 @@ public class RelayCaptureIngestService {
                     """, args);
             if (inserted == 1) {
                 results.add(Result.imported(clientRecordId));
+                persistedCapture = true;
                 continue;
             }
             if (sameRelayCapture(principal, item, clientRecordId)) {
                 results.add(Result.existing(clientRecordId));
+                persistedCapture = true;
             } else {
                 results.add(Result.conflict(clientRecordId));
             }
         }
+        if (persistedCapture) events.publishEvent(new RelayCapturePersistedEvent(principal.userId()));
         return new Response(List.copyOf(results));
     }
 

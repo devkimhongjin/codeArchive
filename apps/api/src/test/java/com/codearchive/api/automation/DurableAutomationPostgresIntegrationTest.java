@@ -133,6 +133,106 @@ class DurableAutomationPostgresIntegrationTest {
     }
 
     @Test
+    void relayIngestStartsDurableWorkerAfterCaptureCommit() {
+        UUID user = user();
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+        Instant capturedAt = Instant.now().minusSeconds(1).truncatedTo(ChronoUnit.MICROS);
+        RelayGrantPrincipal principal = new RelayGrantPrincipal(user, UUID.randomUUID(),
+                "device-1234567890", 3);
+        RelayCaptureIngestService.Item item = new RelayCaptureIngestService.Item(
+                "client-event", "SWEA", "1206", "title", "Java", "class Main {}", "ACCEPTED",
+                capturedAt, capturedAt, capturedAt, "78 ms", "25,472 kb", "unknown");
+
+        RelayCaptureIngestService.Response response = relay.ingest(principal,
+                new RelayCaptureIngestService.Request(List.of(item)));
+
+        assertThat(response.results()).singleElement().satisfies(result -> {
+            assertThat(result.outcome()).isEqualTo("IMPORTED");
+            assertThat(result.ackEligible()).isTrue();
+        });
+        assertThat(db.queryForObject(
+                "SELECT state FROM durable_github_attempts WHERE user_id=?",
+                String.class, user)).isEqualTo("SUCCEEDED");
+        verify(prepared).create("class Main {}", "Add SWEA 1206 solution");
+    }
+
+    @Test
+    void providerFailureAfterRelayCommitLeavesCapturePersistedAndAckEligible() {
+        UUID user = user();
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+        when(prepared.create(anyString(), anyString()))
+                .thenThrow(new IllegalStateException("provider-failure"));
+        Instant capturedAt = Instant.now().minusSeconds(1);
+        RelayGrantPrincipal principal = new RelayGrantPrincipal(user, UUID.randomUUID(),
+                "device-1234567890", 3);
+        RelayCaptureIngestService.Item item = new RelayCaptureIngestService.Item(
+                "client-provider-failure", "SWEA", "1206", "title", "Java", "class Main {}", "ACCEPTED",
+                capturedAt, capturedAt, capturedAt, "78 ms", "25,472 kb", "unknown");
+
+        RelayCaptureIngestService.Response response = relay.ingest(principal,
+                new RelayCaptureIngestService.Request(List.of(item)));
+
+        assertThat(response.results()).singleElement().satisfies(result -> {
+            assertThat(result.outcome()).isEqualTo("IMPORTED");
+            assertThat(result.ackEligible()).isTrue();
+        });
+        assertThat(db.queryForObject("SELECT count(*) FROM solutions WHERE user_id=? AND client_record_id=?",
+                Integer.class, user, "client-provider-failure")).isEqualTo(1);
+        assertThat(db.queryForObject(
+                "SELECT state FROM durable_github_attempts WHERE user_id=?",
+                String.class, user)).isEqualTo("UNKNOWN");
+    }
+
+    @Test
+    void concurrentDuplicateRelaySignalsProduceOnlyOneProviderCreate() throws Exception {
+        UUID user = user();
+        profile(user, 3, 4, TARGET, true, "DURABLE_SERVER");
+        Instant capturedAt = Instant.now().minusSeconds(1).truncatedTo(ChronoUnit.MICROS);
+        RelayGrantPrincipal principal = new RelayGrantPrincipal(user, UUID.randomUUID(),
+                "device-1234567890", 3);
+        RelayCaptureIngestService.Item item = new RelayCaptureIngestService.Item(
+                "client-concurrent", "SWEA", "1206", "title", "Java", "class Main {}", "ACCEPTED",
+                capturedAt, capturedAt, capturedAt, "78 ms", "25,472 kb", "unknown");
+        CountDownLatch providerEntered = new CountDownLatch(1);
+        CountDownLatch releaseProvider = new CountDownLatch(1);
+        when(prepared.create(anyString(), anyString())).thenAnswer(invocation -> {
+            providerEntered.countDown();
+            assertThat(releaseProvider.await(10, TimeUnit.SECONDS)).isTrue();
+            return new GitHubAppClient.CommitResult(COMMIT,
+                    "https://github.com/tester/solutions/commit/" + COMMIT);
+        });
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            var first = pool.submit(() -> relay.ingest(principal,
+                    new RelayCaptureIngestService.Request(List.of(item))));
+            assertThat(providerEntered.await(10, TimeUnit.SECONDS)).isTrue();
+
+            var second = pool.submit(() -> relay.ingest(principal,
+                    new RelayCaptureIngestService.Request(List.of(item))));
+            RelayCaptureIngestService.Response secondResponse = second.get(10, TimeUnit.SECONDS);
+            assertThat(secondResponse.results()).singleElement().satisfies(result -> {
+                assertThat(result.outcome()).isEqualTo("EXISTING");
+                assertThat(result.ackEligible()).isTrue();
+            });
+            assertThat(first.isDone()).isFalse();
+            releaseProvider.countDown();
+
+            assertThat(first.get(10, TimeUnit.SECONDS).results()).singleElement()
+                    .extracting(RelayCaptureIngestService.Result::outcome).isEqualTo("IMPORTED");
+        } finally {
+            releaseProvider.countDown();
+            pool.shutdownNow();
+        }
+
+        assertThat(db.queryForObject("SELECT count(*) FROM solutions WHERE user_id=? AND client_record_id=?",
+                Integer.class, user, "client-concurrent")).isEqualTo(1);
+        assertThat(db.queryForObject("SELECT count(*) FROM durable_github_attempts WHERE user_id=?",
+                Integer.class, user)).isEqualTo(1);
+        verify(prepared).create("class Main {}", "Add SWEA 1206 solution");
+    }
+
+    @Test
     void expiredClaimForOldSolutionIsReboundToNewlySelectedSolution() {
         UUID user = user();
         UUID oldSolution = acceptedSolution(user, 2, Instant.now().minusSeconds(120), "1205", "class Old {}");

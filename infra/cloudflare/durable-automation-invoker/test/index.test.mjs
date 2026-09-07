@@ -144,6 +144,12 @@ test("scheduled entry point has no public fetch handler", () => {
   assert.equal("fetch" in worker, false);
 });
 
+test("the API owns immediate relay-triggered execution; invoker has no cron configuration", async () => {
+  const config = await import("node:fs/promises").then((fs) =>
+    fs.readFile(new URL("../wrangler.toml", import.meta.url), "utf8"));
+  assert.equal(config.includes("crons"), false);
+});
+
 test("scheduled entry point runs with dummy local values", async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
