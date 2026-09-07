@@ -132,6 +132,31 @@ describe("RelayRuntime", () => {
     expect(stateRepo.value.generation).toBe(7);
   });
 
+  it("keeps an ACTIVE durable relay armed when the Dashboard controller disappears", async () => {
+    const stateRepo = new MemoryState(state());
+    const alarms = new MemoryAlarms();
+    const runtime = new RelayRuntime({ state: stateRepo, alarms, now: () => 1_000_000 });
+
+    await runtime.onAutomationState({
+      ...enabledState,
+      autoSyncEnabled: false,
+      githubAutoCommitEnabled: false,
+      authenticated: false,
+      connectionAvailable: false,
+      errorCode: "DASHBOARD_DISCONNECTED",
+    });
+
+    expect(stateRepo.value.state).toBe("ACTIVE");
+    expect(stateRepo.value.credential).toBe("credential");
+    expect(stateRepo.value.generation).toBe(7);
+    expect(stateRepo.value.autoSyncEnabled).toBe(true);
+    expect(alarms.cleared).toHaveLength(0);
+
+    await runtime.onCaptureCommitted();
+
+    expect(alarms.created.at(-1)).toBe(1_000_000);
+  });
+
   it("does not erase a valid grant solely for a multiple-tab safety stop", async () => {
     const stateRepo = new MemoryState(state());
     const runtime = new RelayRuntime({ state: stateRepo, alarms: new MemoryAlarms(), now: () => 1_000_000 });
