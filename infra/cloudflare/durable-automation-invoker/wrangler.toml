@@ -8,6 +8,3 @@ workers_dev = false
 # Never commit, print, or copy the secret value into this repository.
 [secrets]
 required = ["CODEARCHIVE_DURABLE_INVOCATION_TOKEN"]
-
-[triggers]
-crons = ["*/30 * * * *"]

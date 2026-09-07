@@ -21,10 +21,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.context.ApplicationEventPublisher;
 import java.sql.ResultSet;
 
 import com.codearchive.api.common.exception.CodeArchiveException;
 import com.codearchive.api.common.exception.ErrorCode;
+import com.codearchive.api.automation.RelayCapturePersistedEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @ExtendWith(MockitoExtension.class)
@@ -33,6 +35,7 @@ class RelayCaptureIngestServiceTest {
     private static final Instant NOW = Instant.parse("2026-09-04T00:00:00Z");
     @Mock NamedParameterJdbcTemplate db;
     @Mock RelayGrantService grants;
+    @Mock ApplicationEventPublisher events;
     private RelayCaptureIngestService service;
     private RelayGrantPrincipal principal;
 
@@ -60,6 +63,15 @@ class RelayCaptureIngestServiceTest {
                 .containsEntry("result", "ACCEPTED");
         verify(db, never()).update(contains("UPDATE solutions"), any(MapSqlParameterSource.class));
         verify(grants).requireCurrentGeneration(principal);
+    }
+
+    @Test
+    void acceptedCapturePublishesACommitSignalWithoutChangingPersistenceContract() {
+        service = new RelayCaptureIngestService(db, grants, events, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        service.ingest(principal, new RelayCaptureIngestService.Request(List.of(item("client-signal"))));
+
+        verify(events).publishEvent(new RelayCapturePersistedEvent(principal.userId()));
     }
 
     @Test
