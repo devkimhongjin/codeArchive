@@ -40,8 +40,6 @@ codearchive:
       contents-write-enabled: ${GITHUB_APP_CONTENTS_WRITE_ENABLED:false}
       app-id: ${GITHUB_APP_ID:}
       private-key-pkcs8: ${GITHUB_APP_PRIVATE_KEY_PKCS8:}
-  beta-access:
-    password: ${CODEARCHIVE_BETA_ACCESS_PASSWORD:}
   auth:
     github:
       client-id: ${GITHUB_CLIENT_ID:}

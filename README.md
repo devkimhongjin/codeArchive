@@ -19,7 +19,7 @@ CodeArchive는 Chrome Extension으로 코딩테스트 정답 풀이를 자동 �
 
 1. 받은 ZIP을 압축 해제하고 Chrome에서 그 안의 `extension` 폴더를 로드합니다. [자세한 설치 순서](docs/beta-install.md)
 2. 본인 소유의 테스트 풀이를 SWEA에서 정답 제출하고 팝업의 **로컬 풀이 보기**에서 저장을 확인합니다.
-3. **전체 풀이 보기**로 Dashboard를 열고 초대 비밀번호를 한 번 입력한 뒤 **GitHub로 로그인**합니다. 계정과 **Extension 연결됨** 상태를 확인합니다.
+3. **전체 풀이 보기**로 Dashboard를 엽니다. API 준비 확인이 끝나면 기존 세션을 확인하고, 로그인되어 있지 않으면 **GitHub로 로그인**합니다. 계정과 **Extension 연결됨** 상태를 확인합니다.
 4. 전송할 대기 기록을 먼저 확인한 뒤 **자동 동기화**를 켭니다. 선택한 한 건이 아니라 **대기 중인 기록 전체가 대상**입니다.
 5. Dashboard에서 풀이를 찾아 복사·다운로드·수정합니다. AI는 작업별 별도 동의가 필요하며 현재 `fake` 결과는 테스트용입니다.
 
@@ -37,8 +37,6 @@ CodeArchive는 Chrome Extension으로 코딩테스트 정답 풀이를 자동 �
 GitHub 저장소 업로드, 공개 공유·리더보드, Chrome 웹 스토어 출시는 이번 베타 범위가 아닙니다. 무료 API의 초기 응답이 늦을 수 있습니다.
 
 운영자는 [배포·전달 점검표](docs/beta-distribution-checklist.md)와 [초대 메시지 양식](docs/beta-invite-template.md)을 사용하세요. 문서 준비 완료는 실제 사용자 배포 승인이나 E2E 통과를 대신하지 않습니다.
-
-Dashboard 입장 비밀번호는 같은 탭에서 한 번만 확인하는 간단한 화면 제한입니다. **API 직접 호출이나 사용량을 강제로 차단하는 기능은 아닙니다.** 실제 값은 Main API의 `CODEARCHIVE_BETA_ACCESS_PASSWORD` 비밀 설정(8~128자)에 두며 공개 저장소·프론트엔드 환경 변수·ZIP에는 넣지 않습니다. [동작과 한계](docs/beta-access-design.md)
 
 ## 동작 구조
 

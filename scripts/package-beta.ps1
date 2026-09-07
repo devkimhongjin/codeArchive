@@ -84,7 +84,7 @@ try {
         Copy-Item -LiteralPath $file.FullName -Destination $target
     }
     foreach ($doc in @('beta-install.md', 'dashboard-beta-tester-guide.md', 'beta-troubleshooting.md',
-            'beta-distribution-checklist.md', 'beta-invite-template.md', 'beta-access-design.md', 'dashboard-ai-beta-acceptance.md')) {
+            'beta-distribution-checklist.md', 'beta-invite-template.md', 'dashboard-ai-beta-acceptance.md')) {
         Assert-NoReparse "$repo/docs/$doc"
         Copy-Item -LiteralPath "$repo/docs/$doc" -Destination "$stage/docs/$doc"
     }
@@ -95,7 +95,7 @@ try {
 
 1. [설치·업데이트](docs/beta-install.md)를 읽고 `extension` 폴더를 Chrome에 로드합니다.
 2. [사용 가이드](docs/dashboard-beta-tester-guide.md)를 따라 로컬 저장부터 확인합니다.
-3. Dashboard 초대 비밀번호는 운영자가 별도로 전달합니다. 파일 안에는 없습니다.
+3. Dashboard를 열고 API 준비 확인 후 기존 세션을 확인하거나 GitHub로 로그인합니다.
 4. [문제 해결·제보](docs/beta-troubleshooting.md)를 확인합니다.
 
 소스 커밋·버전은 `release-info.json`, ZIP 무결성은 별도 `.zip.sha256`에서 확인하세요.
