@@ -8,6 +8,7 @@ import {
   markDurableLocalSourceStopped,
   setDurableAutomationProfile,
 } from "./durableAutomationState";
+import type { RelayPairingProbe } from "./extensionConnection";
 export { createAutoSyncConsentStore, type AutoSyncConsentStore } from "./accountConsent";
 export const DASHBOARD_BETA_ORIGIN = "https://codearchive-dashboard-beta.onrender.com";
 
@@ -15,6 +16,7 @@ export interface AutoSyncSessionTransport {
   startSyncSession(syncSessionId: string): Promise<boolean>;
   endSyncSession(syncSessionId: string): Promise<void>;
   relayPairingInfo?: DashboardRelayPairingConnection["relayPairingInfo"];
+  relayPairingStatus?: () => Promise<RelayPairingProbe>;
   relaySignChallenge?: DashboardRelayPairingConnection["relaySignChallenge"];
   relayProvisionGrant?: DashboardRelayPairingConnection["relayProvisionGrant"];
   relayConfirmRevoke?: DashboardRelayPairingConnection["relayConfirmRevoke"];
@@ -116,8 +118,22 @@ export function createAutoSyncSessionController(
     if (durable && relayTransport) {
       const remembered = durableAutomationProfile();
       if (remembered?.ownershipMode === "DURABLE_SERVER") durableDetected = true;
-      let pairing = null;
-      try { pairing = await relayTransport.relayPairingInfo(); } catch { pairing = null; }
+      let pairingProbe: RelayPairingProbe = { kind: "unknown" };
+      try {
+        pairingProbe = relayTransport.relayPairingStatus
+          ? await relayTransport.relayPairingStatus()
+          : { kind: "unknown" };
+      } catch {
+        pairingProbe = { kind: "unknown" };
+      }
+      // A timeout, bridge error, or malformed response is not proof that the
+      // relay is unpaired. Keep the single-writer decision fail-closed until
+      // an authoritative pairing response is available.
+      if (pairingProbe.kind === "unknown") {
+        await endPageOwnedSession();
+        return;
+      }
+      const pairing = pairingProbe.pairing;
       if (pairing) {
         durableDetected = true;
         if (pairing.state === "REVOCATION_PENDING") {
