@@ -3,7 +3,7 @@ import type { DashboardSolution } from "./archiveTypes";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
 import { GitHubAutoCommit, type DurableGitHubConsent } from "./GitHubAutoCommit";
 import { githubErrorMessage, GitHubRequestError, type GitHubAutoTarget, type GitHubBranch, type GitHubClient, type GitHubCommitResult, type GitHubConfirmation, type GitHubDirectory, type GitHubInstallation, type GitHubPage, type GitHubRepository } from "./githubClient";
-import { DurableAutomationController } from "./durableAutomation";
+import { cancelAllDurableAutomationControllers, DurableAutomationController } from "./durableAutomation";
 import { mainApiDurableAutomationClient } from "./durableAutomationClient";
 import { durableAutomationProfile, setDurableAutomationProfile, subscribeDurableAutomationProfile } from "./durableAutomationState";
 import { dashboardExtensionConnection } from "./extensionConnection";
@@ -107,6 +107,7 @@ function GitHubUploadBody({ open, solution, client, syncEligible, automationBloc
     return result.relayPaired;
   });
   const disableDurable = onDurableDisable ?? (async () => {
+    cancelAllDurableAutomationControllers();
     const result = await durableController.disableGitHubAutoCommit();
     setDurableAutomationProfile(result.profile);
     return result.profile.githubAutoCommitEnabled === false;

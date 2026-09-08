@@ -21,6 +21,8 @@ export interface DashboardImportReceipt {
 }
 
 export interface RelayCaptureProvenance {
+  /** Opaque server-issued grant identity; never a user id. */
+  grantId: string;
   generation: number;
   capturedAt: string;
 }

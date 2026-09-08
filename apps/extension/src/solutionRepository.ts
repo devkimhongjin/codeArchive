@@ -250,14 +250,17 @@ export async function saveAcceptedCapture(capture: AcceptedCapture): Promise<Sav
     const relayState = await requestToPromise(
       transaction.objectStore(RELAY_STATE_STORE_NAME).get(RELAY_STATE_KEY) as IDBRequest<RelayStateSnapshot | undefined>,
     );
+    const relayGrantId = relayState?.grantId;
     const relayGeneration = relayState?.generation;
     const relayCapture: RelayCaptureProvenance | undefined = relayState?.state === "ACTIVE"
+      && typeof relayGrantId === "string"
+      && relayGrantId.length > 0
       && typeof relayState.credential === "string"
       && typeof relayGeneration === "number"
       && Number.isSafeInteger(relayGeneration)
       && typeof relayState.expiresAt === "string"
       && Date.parse(relayState.expiresAt) > Date.now()
-      ? { generation: relayGeneration, capturedAt: now }
+      ? { grantId: relayGrantId, generation: relayGeneration, capturedAt: now }
       : undefined;
     const record: SolutionRecord = {
       id,
@@ -438,7 +441,7 @@ export const indexedDbCaptureBridgeRepository: CaptureBridgeRepository = {
   },
 };
 
-export async function listRelayPendingCaptures(generation: number, limit = 25): Promise<SolutionRecord[]> {
+export async function listRelayPendingCaptures(grantId: string, generation: number, limit = 25): Promise<SolutionRecord[]> {
   const db = await openDatabase();
   try {
     const transaction = db.transaction(STORE_NAME, "readonly");
@@ -446,6 +449,7 @@ export async function listRelayPendingCaptures(generation: number, limit = 25): 
     await transactionDone(transaction);
     return records
       .filter((record) => isAcceptedCaptureRecord(record)
+        && record.relayCapture?.grantId === grantId
         && record.relayCapture?.generation === generation
         && !record.relayImportReceipt
         && !record.relayConflict)

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DurableAutomationController, type DashboardRelayPairingConnection } from "./durableAutomation";
+import { cancelAllDurableAutomationControllers, DurableAutomationController, type DashboardRelayPairingConnection } from "./durableAutomation";
 import type { DurableAutomationClient, DurableAutomationProfile } from "./durableAutomationClient";
 import type { GitHubAutoTarget } from "./githubClient";
 import type {
@@ -305,8 +305,7 @@ describe("DurableAutomationController", () => {
     await challengeStarted;
     const queuedTransition = secondController.enableSourceTransfer();
     context = "account-b";
-    firstController.cancelPendingTransitions();
-    secondController.cancelPendingTransitions();
+    cancelAllDurableAutomationControllers();
     releaseChallenge({ challengeId: CHALLENGE, challenge: "proof", expiresAt: "2026-09-04T08:01:00Z" });
 
     await expect(firstTransition).rejects.toMatchObject({ code: "TRANSITION_CANCELLED" });

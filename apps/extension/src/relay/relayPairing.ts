@@ -204,6 +204,7 @@ export class RelayPairingController {
           autoSyncEnabled: false,
           signedChallengeId: undefined,
           signedChallengeExpiresAt: undefined,
+          provisionedChallengeId: undefined,
           nextRetryAt: undefined,
         };
       });

@@ -1,5 +1,5 @@
 import { createAutoSyncConsentStore } from "./accountConsent";
-import { DurableAutomationController, type DashboardRelayPairingConnection } from "./durableAutomation";
+import { cancelAllDurableAutomationControllers, DurableAutomationController, type DashboardRelayPairingConnection } from "./durableAutomation";
 import { mainApiDurableAutomationClient } from "./durableAutomationClient";
 import { registerExplicitAutoSyncOffHandler } from "./durableAutomationIntent";
 import { registerDurableAutomationController } from "./durableAutomationRuntime";
@@ -67,6 +67,7 @@ export function createAutoSyncSessionController(
     const current = durableAutomationProfile();
     if (!durable || !current || current.ownershipMode !== "DURABLE_SERVER") return false;
     durableReconnectBlocked = true;
+    cancelAllDurableAutomationControllers();
     durable.cancelPendingTransitions();
     markDurableLocalSourceStopped();
     try {
@@ -189,6 +190,7 @@ export function createAutoSyncSessionController(
   return {
     setEligibility(eligible, authContextKey) {
       if (!eligible || desiredAuthContextKey !== (eligible ? authContextKey : "")) {
+        cancelAllDurableAutomationControllers();
         durable?.cancelPendingTransitions();
       }
       desiredEligible = eligible;
@@ -200,6 +202,7 @@ export function createAutoSyncSessionController(
       // intent is not cleared by pagehide, disconnect, offline, or component unmount.
       desiredEligible = false;
       desiredAuthContextKey = "";
+      cancelAllDurableAutomationControllers();
       durable?.cancelPendingTransitions();
       return schedule();
     },

@@ -49,6 +49,7 @@ import {
   type AutomationStateInput,
 } from "./automationControl";
 import { handleExplicitDurableAutomationOff } from "./durableAutomationRuntime";
+import { cancelAllDurableAutomationControllers } from "./durableAutomation";
 import type {
   CodeArchiveAutomationControlErrorCode,
   ExtensionToDashboardAutomationMessage,
@@ -203,6 +204,7 @@ export function App({
   }), [consentStore, pendingDrainController, syncController]);
 
   function expireSession() {
+    cancelAllDurableAutomationControllers();
     automationOffLatchedRef.current = true;
     consentController.reset(true);
     setGithubTargetConfigured(false);
@@ -361,6 +363,7 @@ export function App({
   }
 
   function invalidateAutomation(clearConsent: boolean) {
+    cancelAllDurableAutomationControllers();
     automationOffLatchedRef.current = true;
     setAutomationAutoSyncEnabled(false);
     setGithubAutoCommitEnabled(false);
@@ -517,6 +520,7 @@ export function App({
     }
     if (message.automation === "AUTO_SYNC") {
       if (!message.enabled) {
+        cancelAllDurableAutomationControllers();
         void handleExplicitDurableAutomationOff("AUTO_SYNC", false);
         automationOffLatchedRef.current = true;
         setAutomationError(null);
@@ -581,6 +585,7 @@ export function App({
     const previous = previousAutomationAccountRef.current;
     previousAutomationAccountRef.current = account;
     if (!previous || previous === account) return;
+    cancelAllDurableAutomationControllers();
     invalidateManualSync();
     pendingDrainController.invalidate();
     setAutomationSafetyStopped(false);
@@ -658,6 +663,7 @@ export function App({
     }
 
     setConsentPending(true);
+    cancelAllDurableAutomationControllers();
     automationOffLatchedRef.current = true;
     invalidateManualSync();
     await consentController.choose(false);
@@ -666,6 +672,7 @@ export function App({
   }
 
   async function logout() {
+    cancelAllDurableAutomationControllers();
     accountRef.current = "";
     automationOffLatchedRef.current = true;
     const manualCleanup = invalidateManualSync();

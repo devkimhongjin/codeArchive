@@ -76,7 +76,7 @@ describe("RelayPairingController", () => {
   });
 
   it("applies server-confirmed revoke and erases the credential", async () => {
-    const repository = new MemoryState(state({ state: "ACTIVE", grantId: "a0000000-0000-4000-8000-000000000004", generation: 2, expiresAt: FUTURE, credential: "secret", autoSyncEnabled: true }));
+    const repository = new MemoryState(state({ state: "ACTIVE", grantId: "a0000000-0000-4000-8000-000000000004", generation: 2, expiresAt: FUTURE, credential: "secret", autoSyncEnabled: true, provisionedChallengeId: challengeA }));
     const controller = new RelayPairingController(repository);
 
     const response = await controller.handle({
@@ -92,6 +92,7 @@ describe("RelayPairingController", () => {
     expect(response).toMatchObject({ phase: "APPLIED", grantId: "a0000000-0000-4000-8000-000000000004", generation: 2 });
     expect(repository.value).toMatchObject({ state: "INVALIDATED", autoSyncEnabled: false });
     expect(repository.value.credential).toBeUndefined();
+    expect(repository.value.provisionedChallengeId).toBeUndefined();
   });
 
   it("rejects a stale provision when a newer challenge is current", async () => {

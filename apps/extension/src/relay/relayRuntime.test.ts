@@ -33,7 +33,7 @@ function state(overrides: Partial<RelayStateRecord> = {}): RelayStateRecord {
   };
 }
 
-function record(id: string, generation = 7): SolutionRecord {
+function record(id: string, generation = 7, grantId = "grant-1234"): SolutionRecord {
   return {
     id,
     clientRecordId: id,
@@ -48,7 +48,7 @@ function record(id: string, generation = 7): SolutionRecord {
     updatedAt: "1970-01-01T00:00:01.000Z",
     performance: { executionTime: "78 ms", memoryUsage: "25,472 kb" },
     autoCapture: { source: "SWEA_AUTO", result: "ACCEPTED", observedAt: "1970-01-01T00:00:01.000Z" },
-    relayCapture: { generation, capturedAt: "1970-01-01T00:00:01.000Z" },
+    relayCapture: { grantId, generation, capturedAt: "1970-01-01T00:00:01.000Z" },
   };
 }
 
@@ -239,7 +239,7 @@ describe("RelayRuntime", () => {
       state: stateRepo,
       alarms,
       now: () => 1_000_000,
-      listPending: async () => [record("fresh"), record("stale", 6)],
+      listPending: async () => [record("fresh"), record("stale-generation", 6), record("stale-grant", 7, "old-grant")],
       markImported: async (ids) => { imported.push([...ids]); },
       fetch: async (_input, init) => { requests.push(init); return response([{ clientRecordId: "fresh", outcome: "IMPORTED", ackEligible: true, errorCode: null }]); },
     });
@@ -251,6 +251,22 @@ describe("RelayRuntime", () => {
     expect(requests[0].headers).toMatchObject({ Authorization: "Bearer credential" });
     expect(JSON.parse(String(requests[0].body)).records[0].solvedAt).toBe("1969-12-31T15:00:00.000Z");
     expect(imported).toEqual([["fresh"]]);
+  });
+
+  it("never selects a capture from another opaque grant when generations collide", async () => {
+    const stateRepo = new MemoryState(state({ generation: 1, grantId: "grant-account-b" }));
+    const requests: RequestInit[] = [];
+    const runtime = new RelayRuntime({
+      state: stateRepo,
+      now: () => 1_000_000,
+      listPending: async () => [record("account-a", 1, "grant-account-a"), record("account-b", 1, "grant-account-b")],
+      markImported: async () => undefined,
+      fetch: async (_input, init) => { requests.push(init); return response([{ clientRecordId: "account-b", outcome: "IMPORTED", ackEligible: true, errorCode: null }]); },
+    });
+
+    await runtime.drain();
+
+    expect(JSON.parse(String(requests[0]?.body)).records.map((item: { clientRecordId: string }) => item.clientRecordId)).toEqual(["account-b"]);
   });
 
   it("fails closed locally when AUTO_SYNC is OFF without making a request", async () => {
@@ -331,6 +347,26 @@ describe("RelayRuntime", () => {
       await indexedDb.seedRelayState({
         revision: 0,
         state: relayState.state,
+        grantId: "grant-account-a",
+        credential: relayState.credential,
+        generation: relayState.generation,
+        expiresAt: relayState.expiresAt,
+        autoSyncEnabled: true,
+      });
+      await saveAcceptedCapture({
+        captureId: "before-account-switch",
+        platform: "SWEA",
+        result: "ACCEPTED",
+        problemNumber: "1234",
+        title: "title",
+        language: "Java",
+        code: "class AccountA {}",
+        observedAt: "1970-01-01T00:00:01.000Z",
+        solvedAt: "1970-01-01",
+      });
+      await indexedDb.seedRelayState({
+        revision: 1,
+        state: relayState.state,
         grantId: relayState.grantId,
         credential: relayState.credential,
         generation: relayState.generation,
@@ -345,7 +381,7 @@ describe("RelayRuntime", () => {
         state: stateRepo,
         alarms,
         now: () => relayNow,
-        listPending: (generation) => listRelayPendingCaptures(generation),
+        listPending: (grantId, generation) => listRelayPendingCaptures(grantId, generation),
         fetch: async (_input, init) => {
           requests.push(init);
           const body = JSON.parse(String(init.body)) as { records: Array<{ clientRecordId: string }> };
@@ -387,9 +423,12 @@ describe("RelayRuntime", () => {
       expect(sent.records[0]?.capturedAt).toBeTruthy();
 
       const persisted = await indexedDbSolutionRepository.getById("swea-auto:after-disconnect");
-      expect(persisted?.relayCapture).toMatchObject({ generation: 7 });
+      expect(persisted?.relayCapture).toMatchObject({ grantId: "grant-1234", generation: 7 });
       expect(persisted?.relayImportReceipt).toEqual(expect.objectContaining({ importedAt: expect.any(String) }));
-      await expect(listRelayPendingCaptures(7)).resolves.toEqual([]);
+      const retainedFromPreviousAccount = await indexedDbSolutionRepository.getById("swea-auto:before-account-switch");
+      expect(retainedFromPreviousAccount?.relayCapture).toMatchObject({ grantId: "grant-account-a", generation: 7 });
+      expect(retainedFromPreviousAccount?.relayImportReceipt).toBeUndefined();
+      await expect(listRelayPendingCaptures("grant-1234", 7)).resolves.toEqual([]);
     } finally {
       (globalThis as any).indexedDB = previousIndexedDb;
       (globalThis as any).chrome = previousChrome;
@@ -448,7 +487,7 @@ describe("RelayRuntime", () => {
     ["blank problem number", { problemNumber: "   " }],
     ["invalid solved timestamp", { solvedAt: "not-a-date" }],
     ["invalid observed timestamp", { autoCapture: { source: "SWEA_AUTO", result: "ACCEPTED", observedAt: "not-a-date" } }],
-    ["future captured timestamp", { relayCapture: { generation: 7, capturedAt: new Date(1_400_001).toISOString() } }],
+    ["future captured timestamp", { relayCapture: { grantId: "grant-1234", generation: 7, capturedAt: new Date(1_400_001).toISOString() } }],
     ["invalid AI usage", { aiUsage: "maybe" as never }],
   ])("isolates %s without invalidating the grant", async (_label, changes) => {
     const stateRepo = new MemoryState(state());

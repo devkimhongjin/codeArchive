@@ -63,6 +63,15 @@ export interface DurableTransitionResult {
 // profile/challenge/grant transitions so an older grant response cannot race a
 // newer profile generation and become the last local provision request.
 let durableTransitionQueue: Promise<void> = Promise.resolve();
+const durableControllers = new Set<DurableAutomationController>();
+
+/**
+ * Explicit account/session stops must invalidate every controller in this
+ * document, including the GitHub panel's controller and the auto-sync one.
+ */
+export function cancelAllDurableAutomationControllers(): void {
+  for (const controller of durableControllers) controller.cancelPendingTransitions();
+}
 
 function serializeDurableTransition<T>(operation: () => Promise<T>): Promise<T> {
   const next = durableTransitionQueue.then(operation, operation);
@@ -108,13 +117,23 @@ function sameRevocationContext(a: DurableAutomationProfile, b: DurableAutomation
 
 export class DurableAutomationController {
   private transitionEpoch = 0;
+  private readonly client: DurableAutomationClient;
+  private readonly bridge: Partial<DashboardRelayPairingConnection>;
+  private readonly now: () => number;
+  private readonly contextKey: () => string;
 
   constructor(
-    private readonly client: DurableAutomationClient,
-    private readonly bridge: Partial<DashboardRelayPairingConnection>,
-    private readonly now: () => number = () => Date.now(),
-    private readonly contextKey: () => string = () => "",
-  ) {}
+    client: DurableAutomationClient,
+    bridge: Partial<DashboardRelayPairingConnection>,
+    now: () => number = () => Date.now(),
+    contextKey: () => string = () => "",
+  ) {
+    this.client = client;
+    this.bridge = bridge;
+    this.now = now;
+    this.contextKey = contextKey;
+    durableControllers.add(this);
+  }
 
   /** Cancel queued and in-flight transitions for a closed/auth-changed context. */
   cancelPendingTransitions(): void {
