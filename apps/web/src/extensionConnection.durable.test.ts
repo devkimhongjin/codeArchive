@@ -63,6 +63,25 @@ describe("Dashboard durable Extension bootstrap", () => {
     setDurableAutomationProfile(null, false);
   });
 
+  it("treats an unavailable local relay status as page-owned connection state without mutating durable profile", async () => {
+    const port = new FakePort();
+    const states: ExtensionConnectionState[] = [];
+    const profileRequest = vi.spyOn(mainApiDurableAutomationClient, "profile");
+    const connection = createDashboardExtensionConnection({ connect: () => port }, "extension-id", true);
+    connection.start((state) => states.push(state));
+    await reachPairingRequest(port);
+    port.receive({ ok: false, error: { code: "INTERNAL_ERROR", retryable: true } });
+    await flush();
+
+    expect(profileRequest).not.toHaveBeenCalled();
+    expect(states.at(-1)?.status).toBe("connected");
+    expect(connection.publishAutomationState?.({
+      protocolVersion: 1, autoSyncEnabled: true, githubAutoCommitEnabled: false,
+      githubTargetConfigured: false, authenticated: true, connectionAvailable: true, errorCode: null,
+    })).toBe(true);
+    expect(port.sent.at(-1)).toMatchObject({ type: "CODEARCHIVE_AUTOMATION_STATE_UPDATE", state: { autoSyncEnabled: true } });
+  });
+
   it("does not publish a stale false automation state before ACTIVE durable authority is restored", async () => {
     const port = new FakePort();
     const states: ExtensionConnectionState[] = [];
