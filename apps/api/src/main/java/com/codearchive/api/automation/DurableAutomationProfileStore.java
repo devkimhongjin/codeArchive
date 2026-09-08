@@ -268,15 +268,32 @@ public class DurableAutomationProfileStore {
             long targetGeneration, GitHubAutoCommitStore.Target target,
             boolean automaticTransferConsent, boolean visibilityRiskConsent, boolean publicUploadConsent,
             Instant githubEnabledAt, long version, Instant updatedAt,
-            @com.fasterxml.jackson.annotation.JsonIgnore UUID authSessionId) {
+            @com.fasterxml.jackson.annotation.JsonIgnore UUID authSessionId,
+            String sessionBindingFingerprint) {
         public Profile(UUID userId, String deviceId, long generation,
                 boolean sourceTransferEnabled, boolean githubAutoCommitEnabled, String ownershipMode,
                 long targetGeneration, GitHubAutoCommitStore.Target target,
                 boolean automaticTransferConsent, boolean visibilityRiskConsent, boolean publicUploadConsent,
                 Instant githubEnabledAt, long version, Instant updatedAt) {
+                this(userId, deviceId, generation, sourceTransferEnabled, githubAutoCommitEnabled, ownershipMode,
+                    targetGeneration, target, automaticTransferConsent, visibilityRiskConsent,
+                    publicUploadConsent, githubEnabledAt, version, updatedAt, null, null);
+        }
+
+        public Profile(UUID userId, String deviceId, long generation,
+                boolean sourceTransferEnabled, boolean githubAutoCommitEnabled, String ownershipMode,
+                long targetGeneration, GitHubAutoCommitStore.Target target,
+                boolean automaticTransferConsent, boolean visibilityRiskConsent, boolean publicUploadConsent,
+                Instant githubEnabledAt, long version, Instant updatedAt, UUID authSessionId) {
             this(userId, deviceId, generation, sourceTransferEnabled, githubAutoCommitEnabled, ownershipMode,
                     targetGeneration, target, automaticTransferConsent, visibilityRiskConsent,
-                    publicUploadConsent, githubEnabledAt, version, updatedAt, null);
+                    publicUploadConsent, githubEnabledAt, version, updatedAt, authSessionId, null);
+        }
+
+        public Profile withSessionBindingFingerprint(String fingerprint) {
+            return new Profile(userId, deviceId, generation, sourceTransferEnabled, githubAutoCommitEnabled,
+                    ownershipMode, targetGeneration, target, automaticTransferConsent, visibilityRiskConsent,
+                    publicUploadConsent, githubEnabledAt, version, updatedAt, null, fingerprint);
         }
 
         static Profile off(UUID userId) {

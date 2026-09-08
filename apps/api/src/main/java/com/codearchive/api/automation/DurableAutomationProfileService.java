@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import com.codearchive.api.auth.config.AuthProperties;
 import com.codearchive.api.auth.config.DashboardOriginValidator;
 import com.codearchive.api.auth.security.CodeArchivePrincipal;
+import com.codearchive.api.auth.session.SessionBindingFingerprint;
 import com.codearchive.api.common.exception.CodeArchiveException;
 import com.codearchive.api.common.exception.ErrorCode;
 import com.codearchive.api.integration.github.GitHubAutoCommitStore;
@@ -36,7 +37,7 @@ public class DurableAutomationProfileService {
         requireDashboard(principal, origin);
         DurableAutomationProfileStore.Profile guarded =
                 store.ensureSessionBinding(principal.userId(), principal.sessionId(), clock.instant());
-        return guarded == null ? store.find(principal.userId()) : guarded;
+        return withSessionBinding(guarded == null ? store.find(principal.userId()) : guarded, principal);
     }
 
     public DurableAutomationProfileStore.Profile update(CodeArchivePrincipal principal, String origin, UpdateRequest request) {
@@ -69,10 +70,16 @@ public class DurableAutomationProfileService {
                 ? current.targetGeneration() : current.targetGeneration() + 1;
         Instant enabledAt = request.githubAutoCommitEnabled()
                 ? (current.githubAutoCommitEnabled() && !changed ? current.githubEnabledAt() : clock.instant()) : null;
-        return store.update(principal.userId(), principal.sessionId(), device, request.sourceTransferEnabled(), request.githubAutoCommitEnabled(),
+        DurableAutomationProfileStore.Profile updated = store.update(principal.userId(), principal.sessionId(), device, request.sourceTransferEnabled(), request.githubAutoCommitEnabled(),
                 mode, targetGeneration, request.target(), request.automaticTransferConsent(),
                 request.visibilityRiskConsent(), request.publicUploadConsent(), request.expectedVersion(),
                 enabledAt, generation, clock.instant());
+        return withSessionBinding(updated, principal);
+    }
+
+    private DurableAutomationProfileStore.Profile withSessionBinding(
+            DurableAutomationProfileStore.Profile profile, CodeArchivePrincipal principal) {
+        return profile.withSessionBindingFingerprint(SessionBindingFingerprint.of(principal.sessionId()));
     }
 
     private void validateTarget(GitHubAutoCommitStore.Target target, boolean required) {
