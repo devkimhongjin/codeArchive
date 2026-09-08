@@ -29,7 +29,7 @@ export interface RelayRuntimeDependencies {
   alarms?: RelayAlarmApi;
   fetch?: RelayFetch;
   now?: () => number;
-  listPending?: (generation: number, limit?: number) => Promise<SolutionRecord[]>;
+  listPending?: (grantId: string, generation: number, limit?: number) => Promise<SolutionRecord[]>;
   markImported?: (ids: readonly string[], at: string) => Promise<void>;
   markConflicts?: (ids: readonly string[], at: string, errorCode?: string) => Promise<void>;
   markInvalid?: (records: readonly SolutionRecord[], at: string, errorCode: string) => Promise<void>;
@@ -43,7 +43,8 @@ export interface RelayPopupState {
 }
 
 function isStateActive(state: RelayStateRecord, now: number): boolean {
-  return state.state === "ACTIVE" && typeof state.credential === "string" && state.credential.length > 0
+  return state.state === "ACTIVE" && typeof state.grantId === "string" && state.grantId.length > 0
+    && typeof state.credential === "string" && state.credential.length > 0
     && Number.isSafeInteger(state.generation) && (state.generation as number) > 0
     && typeof state.expiresAt === "string" && Date.parse(state.expiresAt) > now;
 }
@@ -65,7 +66,7 @@ function validBoundedText(value: unknown, max: number): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.trim().length <= max;
 }
 
-function relayRecordError(record: SolutionRecord, generation: number, now: number): string | undefined {
+function relayRecordError(record: SolutionRecord, grantId: string, generation: number, now: number): string | undefined {
   if (!validBoundedText(record.clientRecordId, 128)) return "RELAY_RECORD_INVALID";
   if (record.platform !== "SWEA" && record.platform !== "PROGRAMMERS") return "RELAY_RECORD_INVALID";
   if (!validBoundedText(record.problemNumber, 64) || !validBoundedText(record.title, 255) || !validBoundedText(record.language, 64)) return "RELAY_RECORD_INVALID";
@@ -74,6 +75,7 @@ function relayRecordError(record: SolutionRecord, generation: number, now: numbe
   if (record.autoCapture?.result !== "ACCEPTED") return "RELAY_RECORD_INVALID";
   if (!solvedAtWireValue(record.solvedAt) || !validAbsoluteTimestamp(record.autoCapture.observedAt)) return "RELAY_RECORD_INVALID";
   if (!validAbsoluteTimestamp(record.relayCapture?.capturedAt) || Date.parse(record.relayCapture.capturedAt) > now + 300_000) return "RELAY_RECORD_INVALID";
+  if (record.relayCapture?.grantId !== grantId) return "RELAY_RECORD_INVALID";
   if (!Number.isSafeInteger(record.relayCapture?.generation) || record.relayCapture.generation !== generation) return "RELAY_RECORD_INVALID";
   if (record.performance && (!validBoundedText(record.performance.executionTime, 128) || !validBoundedText(record.performance.memoryUsage, 128))) return "RELAY_RECORD_INVALID";
   if (record.aiUsage !== "used" && record.aiUsage !== "not_used" && record.aiUsage !== "unknown") return "RELAY_RECORD_INVALID";
@@ -111,12 +113,16 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function isDashboardControllerUnavailable(state: CodeArchiveAutomationState): boolean {
+  return state.connectionAvailable === false && state.errorCode === "DASHBOARD_DISCONNECTED";
+}
+
 export class RelayRuntime {
   private readonly state: RelayStateRepository;
   private readonly alarms?: RelayAlarmApi;
   private readonly request: RelayFetch;
   private readonly now: () => number;
-  private readonly listPending: (generation: number, limit?: number) => Promise<SolutionRecord[]>;
+  private readonly listPending: (grantId: string, generation: number, limit?: number) => Promise<SolutionRecord[]>;
   private readonly markImported: (ids: readonly string[], at: string) => Promise<void>;
   private readonly markConflicts: (ids: readonly string[], at: string, errorCode?: string) => Promise<void>;
   private readonly markInvalid: (records: readonly SolutionRecord[], at: string, errorCode: string) => Promise<void>;
@@ -142,7 +148,12 @@ export class RelayRuntime {
   }
 
   async onCaptureCommitted(): Promise<void> {
-    await this.scheduleIfEligible();
+    await this.scheduleIfEligible().catch(() => undefined);
+    // Keep the persisted alarm as the service-worker/restart safety net, but also
+    // attempt one bounded drain while this capture notification is still alive.
+    // The capture path is fire-and-forget, so a transient request failure remains
+    // covered by retry/backoff without delaying local persistence.
+    await this.drain().catch(() => undefined);
   }
 
   async getPopupState(): Promise<RelayPopupState> {
@@ -167,6 +178,9 @@ export class RelayRuntime {
       await this.cancelAlarm();
       return;
     }
+    // Dashboard controller/Port availability is not durable relay authority.
+    // A confirmed relay must remain armed after the Dashboard document is gone.
+    if (isDashboardControllerUnavailable(state)) return;
     if (!state.authenticated || !state.autoSyncEnabled) {
       this.blocked = true;
       await this.disableLocalRelay();
@@ -220,6 +234,7 @@ export class RelayRuntime {
       autoSyncEnabled: false,
       signedChallengeId: undefined,
       signedChallengeExpiresAt: undefined,
+      provisionedChallengeId: undefined,
       nextRetryAt: undefined,
     }));
   }
@@ -238,12 +253,13 @@ export class RelayRuntime {
         await this.scheduleIfEligible(Date.parse(state.nextRetryAt) - this.now());
         return;
       }
+      const grantId = state.grantId as string;
       const generation = state.generation as number;
-      const candidates = (await this.listPending(generation, 25)).filter((record) => record.relayCapture?.generation === generation);
+      const candidates = (await this.listPending(grantId, generation, 25)).filter((record) => record.relayCapture?.grantId === grantId && record.relayCapture?.generation === generation);
       const invalidByReason = new Map<string, SolutionRecord[]>();
       const validRecords: SolutionRecord[] = [];
       for (const record of candidates) {
-        const errorCode = relayRecordError(record, generation, this.now());
+        const errorCode = relayRecordError(record, grantId, generation, this.now());
         if (errorCode) invalidByReason.set(errorCode, [...(invalidByReason.get(errorCode) ?? []), record]);
         else validRecords.push(record);
       }
@@ -330,7 +346,7 @@ export class RelayRuntime {
 
   private async invalidate(state: RelayStateSnapshot["state"]): Promise<void> {
     await this.cancelAlarm();
-    await this.state.update((current) => ({ ...current, state, credential: undefined, autoSyncEnabled: false, signedChallengeId: undefined, signedChallengeExpiresAt: undefined, nextRetryAt: undefined }));
+    await this.state.update((current) => ({ ...current, state, credential: undefined, autoSyncEnabled: false, signedChallengeId: undefined, signedChallengeExpiresAt: undefined, provisionedChallengeId: undefined, nextRetryAt: undefined }));
   }
 }
 

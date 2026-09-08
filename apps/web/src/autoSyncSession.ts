@@ -1,5 +1,5 @@
 import { createAutoSyncConsentStore } from "./accountConsent";
-import { DurableAutomationController, type DashboardRelayPairingConnection } from "./durableAutomation";
+import { cancelAllDurableAutomationControllers, DurableAutomationController, type DashboardRelayPairingConnection } from "./durableAutomation";
 import { mainApiDurableAutomationClient } from "./durableAutomationClient";
 import { registerExplicitAutoSyncOffHandler } from "./durableAutomationIntent";
 import { registerDurableAutomationController } from "./durableAutomationRuntime";
@@ -56,12 +56,19 @@ export function createAutoSyncSessionController(
   let durableDetected = durableAutomationProfile()?.ownershipMode === "DURABLE_SERVER";
   let durableReconnectBlocked = false;
   const relayTransport = relayCapable(transport) ? transport : null;
-  const durable = relayTransport ? new DurableAutomationController(mainApiDurableAutomationClient, relayTransport) : null;
+  const durable = relayTransport ? new DurableAutomationController(
+    mainApiDurableAutomationClient,
+    relayTransport,
+    undefined,
+    () => desiredAuthContextKey,
+  ) : null;
 
   const revokeDurableAutomation = async (): Promise<boolean> => {
     const current = durableAutomationProfile();
     if (!durable || !current || current.ownershipMode !== "DURABLE_SERVER") return false;
     durableReconnectBlocked = true;
+    cancelAllDurableAutomationControllers();
+    durable.cancelPendingTransitions();
     markDurableLocalSourceStopped();
     try {
       const result = await durable.disableAll(undefined, current);
@@ -182,6 +189,10 @@ export function createAutoSyncSessionController(
 
   return {
     setEligibility(eligible, authContextKey) {
+      if (!eligible || desiredAuthContextKey !== (eligible ? authContextKey : "")) {
+        cancelAllDurableAutomationControllers();
+        durable?.cancelPendingTransitions();
+      }
       desiredEligible = eligible;
       desiredAuthContextKey = eligible ? authContextKey : "";
       return schedule();
@@ -191,6 +202,8 @@ export function createAutoSyncSessionController(
       // intent is not cleared by pagehide, disconnect, offline, or component unmount.
       desiredEligible = false;
       desiredAuthContextKey = "";
+      cancelAllDurableAutomationControllers();
+      durable?.cancelPendingTransitions();
       return schedule();
     },
     revokeDurableAutomation,

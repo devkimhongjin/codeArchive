@@ -37,6 +37,7 @@ function profile(overrides: Partial<DurableAutomationProfile> = {}): DurableAuto
     githubEnabledAt: "2026-09-04T07:00:00Z",
     version: 7,
     updatedAt: "2026-09-04T08:00:00Z",
+    sessionBindingFingerprint: `sb1_${"a".repeat(43)}`,
     ...overrides,
   };
 }

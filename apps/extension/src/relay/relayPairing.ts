@@ -146,7 +146,19 @@ export class RelayPairingController {
     try {
       next = await this.repository.update((current) => {
         if (current.deviceId !== raw.deviceId || current.signedChallengeId !== raw.challengeId
-          || !validDate(current.signedChallengeExpiresAt, Date.now())) rejectState();
+          || !validDate(current.signedChallengeExpiresAt, Date.now())
+          // A challenge is a one-time pairing attempt. This explicit identity
+          // fence rejects replay of the same same-generation grant while a
+          // fresh challenge still permits legitimate same-generation rotation.
+          || (current.state === "ACTIVE" && current.generation === raw.generation
+            && current.provisionedChallengeId === raw.challengeId)
+          // A late response from an older Dashboard grant request must never
+          // replace a newer ACTIVE authority. The server generation is
+          // monotonic within the active account/device context; only compare
+          // it while an ACTIVE credential is still authoritative so a fresh
+          // account can pair after an explicit local stop/account change.
+          || (current.state === "ACTIVE" && validGeneration(current.generation)
+            && (raw.generation as number) < current.generation)) rejectState();
         return {
           ...current,
           state: "ACTIVE",
@@ -156,6 +168,7 @@ export class RelayPairingController {
           credential: raw.credential as string,
           signedChallengeId: undefined,
           signedChallengeExpiresAt: undefined,
+          provisionedChallengeId: raw.challengeId as string,
           failureCount: 0,
           nextRetryAt: undefined,
         };
@@ -191,6 +204,7 @@ export class RelayPairingController {
           autoSyncEnabled: false,
           signedChallengeId: undefined,
           signedChallengeExpiresAt: undefined,
+          provisionedChallengeId: undefined,
           nextRetryAt: undefined,
         };
       });

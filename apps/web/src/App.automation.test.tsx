@@ -90,6 +90,7 @@ describe("Dashboard automation authority", () => {
       githubEnabledAt: null,
       version: 7,
       updatedAt: "2026-09-06T00:00:00.000Z",
+      sessionBindingFingerprint: `sb1_${"a".repeat(43)}`,
     };
     const pairing: CodeArchiveRelayPairingInfoResponse = {
       type: "CODEARCHIVE_RELAY_PAIRING_INFO",
@@ -163,6 +164,7 @@ describe("Dashboard automation authority", () => {
       githubEnabledAt: null,
       version: 7,
       updatedAt: "2026-09-06T00:00:00.000Z",
+      sessionBindingFingerprint: `sb1_${"a".repeat(43)}`,
     };
     setDurableAutomationProfile(profile);
 

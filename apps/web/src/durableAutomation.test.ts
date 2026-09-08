@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DurableAutomationController, type DashboardRelayPairingConnection } from "./durableAutomation";
+import { cancelAllDurableAutomationControllers, DurableAutomationController, type DashboardRelayPairingConnection } from "./durableAutomation";
 import type { DurableAutomationClient, DurableAutomationProfile } from "./durableAutomationClient";
 import type { GitHubAutoTarget } from "./githubClient";
 import type {
@@ -13,6 +13,7 @@ const USER = "550e8400-e29b-41d4-a716-446655440000";
 const DEVICE = "device_identity_1234";
 const CHALLENGE = "11111111-1111-4111-8111-111111111111";
 const GRANT = "22222222-2222-4222-8222-222222222222";
+const SESSION_BINDING = `sb1_${"a".repeat(43)}`;
 const NOW = Date.parse("2026-09-04T08:00:00Z");
 const TARGET: GitHubAutoTarget = {
   installationId: "11",
@@ -40,6 +41,7 @@ function profile(overrides: Partial<DurableAutomationProfile> = {}): DurableAuto
     githubEnabledAt: null,
     version: 7,
     updatedAt: "2026-09-04T07:59:00Z",
+    sessionBindingFingerprint: SESSION_BINDING,
     ...overrides,
   };
 }
@@ -74,7 +76,14 @@ function fixture(initial = profile()) {
     }),
     relayGrant: vi.fn(async () => {
       calls.push("grant");
-      return { grantId: GRANT, credential: `${GRANT}.secret`, deviceId: DEVICE, generation: current.generation, expiresAt: "2026-10-04T08:00:00Z" };
+      return {
+        grantId: GRANT,
+        credential: `${GRANT}.secret`,
+        deviceId: DEVICE,
+        generation: current.generation,
+        expiresAt: "2026-10-04T08:00:00Z",
+        sessionBindingFingerprint: current.sessionBindingFingerprint,
+      };
     }),
     revokeRelayGrant: vi.fn(async () => undefined),
   };
@@ -100,6 +109,14 @@ function fixture(initial = profile()) {
 }
 
 describe("DurableAutomationController", () => {
+  it("provisions only when initial, issued, and final session bindings match", async () => {
+    const f = fixture();
+    const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);
+
+    await expect(controller.enableSourceTransfer()).resolves.toMatchObject({ relayPaired: true });
+    expect(f.bridge.relayProvisionGrant).toHaveBeenCalledTimes(1);
+  });
+
   it("preserves an existing durable GitHub ON while restoring source transfer", async () => {
     const f = fixture(profile({ githubAutoCommitEnabled: true, githubEnabledAt: "2026-09-04T07:00:00Z" }));
     const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);
@@ -238,11 +255,121 @@ describe("DurableAutomationController", () => {
     const f = fixture(profile({ ownershipMode: "PAGE_OWNED", sourceTransferEnabled: false }));
     vi.mocked(f.client.relayGrant).mockImplementation(async () => ({
       grantId: GRANT, credential: `${GRANT}.secret`, deviceId: DEVICE,
-      generation: 999, expiresAt: "2026-10-04T08:00:00Z",
+      generation: 999, expiresAt: "2026-10-04T08:00:00Z", sessionBindingFingerprint: SESSION_BINDING,
     }));
     const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);
     await expect(controller.enableSourceTransfer()).rejects.toMatchObject({ code: "GRANT_GENERATION_MISMATCH" });
     expect(f.bridge.relayProvisionGrant).not.toHaveBeenCalled();
+  });
+
+  it("does not provision a grant after the server profile advances during issuance", async () => {
+    const f = fixture();
+    let profileReads = 0;
+    vi.mocked(f.client.profile).mockImplementation(async () => {
+      profileReads += 1;
+      return profile({ generation: profileReads >= 2 ? 5 : 4 });
+    });
+    const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);
+
+    await expect(controller.enableSourceTransfer()).rejects.toMatchObject({ code: "GRANT_GENERATION_MISMATCH" });
+    expect(f.bridge.relayProvisionGrant).not.toHaveBeenCalled();
+  });
+
+  it("does not provision a grant after an account/session context switch", async () => {
+    const f = fixture();
+    const otherUser = "650e8400-e29b-41d4-a716-446655440000";
+    let profileReads = 0;
+    vi.mocked(f.client.profile).mockImplementation(async () => {
+      profileReads += 1;
+      return profile({ userId: profileReads >= 2 ? otherUser : USER, generation: 4, deviceId: DEVICE });
+    });
+    const controller = new DurableAutomationController(f.client, f.bridge, () => NOW, () => "session-a");
+
+    await expect(controller.enableSourceTransfer()).rejects.toMatchObject({ code: "GRANT_GENERATION_MISMATCH" });
+    expect(f.bridge.relayProvisionGrant).not.toHaveBeenCalled();
+  });
+
+  it("does not provision after a same-user AuthSession replacement changes the server binding", async () => {
+    const f = fixture();
+    const replacementBinding = `sb1_${"b".repeat(43)}`;
+    let profileReads = 0;
+    vi.mocked(f.client.profile).mockImplementation(async () => {
+      profileReads += 1;
+      return profile({ sessionBindingFingerprint: profileReads >= 2 ? replacementBinding : SESSION_BINDING });
+    });
+    const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);
+
+    await expect(controller.enableSourceTransfer()).rejects.toMatchObject({ code: "SESSION_BINDING_MISMATCH" });
+    expect(f.bridge.relayProvisionGrant).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on a missing or malformed initial binding before any local provision", async () => {
+    const f = fixture(profile({ sessionBindingFingerprint: "sb1_invalid" }));
+    const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);
+
+    await expect(controller.enableSourceTransfer()).rejects.toMatchObject({ code: "SESSION_BINDING_INVALID" });
+    expect(f.client.relayChallenge).not.toHaveBeenCalled();
+    expect(f.bridge.relayProvisionGrant).not.toHaveBeenCalled();
+  });
+
+  it("does not provision when the issued grant binding differs from the profile", async () => {
+    const f = fixture();
+    vi.mocked(f.client.relayGrant).mockResolvedValue({
+      grantId: GRANT,
+      credential: `${GRANT}.secret`,
+      deviceId: DEVICE,
+      generation: 4,
+      expiresAt: "2026-10-04T08:00:00Z",
+      sessionBindingFingerprint: `sb1_${"b".repeat(43)}`,
+    });
+    const controller = new DurableAutomationController(f.client, f.bridge, () => NOW);
+
+    await expect(controller.enableSourceTransfer()).rejects.toMatchObject({ code: "SESSION_BINDING_MISMATCH" });
+    expect(f.bridge.relayProvisionGrant).not.toHaveBeenCalled();
+  });
+
+  it("cancels issuance when the authenticated session key changes with a colliding profile", async () => {
+    const f = fixture();
+    let context = "session-a";
+    let profileReads = 0;
+    vi.mocked(f.client.profile).mockImplementation(async () => {
+      profileReads += 1;
+      if (profileReads >= 2) context = "session-b";
+      return profile({ userId: USER, generation: 4, deviceId: DEVICE });
+    });
+    const controller = new DurableAutomationController(f.client, f.bridge, () => NOW, () => context);
+
+    await expect(controller.enableSourceTransfer()).rejects.toMatchObject({ code: "TRANSITION_CANCELLED" });
+    expect(f.bridge.relayProvisionGrant).not.toHaveBeenCalled();
+  });
+
+  it("cancels queued transitions across controllers when the authenticated context changes", async () => {
+    const first = fixture();
+    const second = fixture();
+    let releaseChallenge!: (value: { challengeId: string; challenge: string; expiresAt: string }) => void;
+    const challengeStarted = new Promise<void>((resolve) => {
+      vi.mocked(first.client.relayChallenge).mockImplementation(async () => {
+        resolve();
+        return new Promise((release) => { releaseChallenge = release; });
+      });
+    });
+    let context = "account-a";
+    const firstController = new DurableAutomationController(first.client, first.bridge, () => NOW, () => context);
+    const secondController = new DurableAutomationController(second.client, second.bridge, () => NOW, () => context);
+
+    const firstTransition = firstController.enableSourceTransfer();
+    await challengeStarted;
+    const queuedTransition = secondController.enableSourceTransfer();
+    context = "account-b";
+    cancelAllDurableAutomationControllers();
+    releaseChallenge({ challengeId: CHALLENGE, challenge: "proof", expiresAt: "2026-09-04T08:01:00Z" });
+
+    await expect(firstTransition).rejects.toMatchObject({ code: "TRANSITION_CANCELLED" });
+    await expect(queuedTransition).rejects.toMatchObject({ code: "TRANSITION_CANCELLED" });
+
+    const stopped = await firstController.disableAll();
+    expect(stopped.profile.sourceTransferEnabled).toBe(false);
+    expect(second.client.relayGrant).not.toHaveBeenCalled();
   });
 
   it("requires explicit visibility/public consent before a durable GitHub ON", async () => {

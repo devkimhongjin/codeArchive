@@ -76,7 +76,7 @@ describe("RelayPairingController", () => {
   });
 
   it("applies server-confirmed revoke and erases the credential", async () => {
-    const repository = new MemoryState(state({ state: "ACTIVE", grantId: "a0000000-0000-4000-8000-000000000004", generation: 2, expiresAt: FUTURE, credential: "secret", autoSyncEnabled: true }));
+    const repository = new MemoryState(state({ state: "ACTIVE", grantId: "a0000000-0000-4000-8000-000000000004", generation: 2, expiresAt: FUTURE, credential: "secret", autoSyncEnabled: true, provisionedChallengeId: challengeA }));
     const controller = new RelayPairingController(repository);
 
     const response = await controller.handle({
@@ -92,6 +92,7 @@ describe("RelayPairingController", () => {
     expect(response).toMatchObject({ phase: "APPLIED", grantId: "a0000000-0000-4000-8000-000000000004", generation: 2 });
     expect(repository.value).toMatchObject({ state: "INVALIDATED", autoSyncEnabled: false });
     expect(repository.value.credential).toBeUndefined();
+    expect(repository.value.provisionedChallengeId).toBeUndefined();
   });
 
   it("rejects a stale provision when a newer challenge is current", async () => {
@@ -119,5 +120,68 @@ describe("RelayPairingController", () => {
 
     expect(response).toBeUndefined();
     expect(repository.value.state).toBe("INVALIDATED");
+  });
+
+  it("rejects a late lower-generation provision without replacing the active authority", async () => {
+    const repository = new MemoryState(state({
+      state: "ACTIVE",
+      grantId: "a0000000-0000-4000-8000-000000000020",
+      generation: 19,
+      expiresAt: FUTURE,
+      credential: "current-secret",
+      signedChallengeId: challengeA,
+      signedChallengeExpiresAt: FUTURE,
+      autoSyncEnabled: true,
+    }));
+    const controller = new RelayPairingController(repository);
+
+    const response = await controller.handle({
+      type: "CODEARCHIVE_RELAY_GRANT_PROVISION", phase: "REQUEST", protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+      deviceId: "device-1234567890", grantId: grantA, generation: 17, expiresAt: FUTURE,
+      challengeId: challengeA, credential: "stale-secret",
+    }, true);
+
+    expect(response).toBeUndefined();
+    expect(repository.value).toMatchObject({
+      state: "ACTIVE", grantId: "a0000000-0000-4000-8000-000000000020", generation: 19,
+      credential: "current-secret", autoSyncEnabled: true,
+    });
+  });
+
+  it("rejects a same-generation replay but accepts a fresh same-generation rotation", async () => {
+    const repository = new MemoryState(state({
+      state: "ACTIVE",
+      grantId: grantA,
+      generation: 4,
+      expiresAt: FUTURE,
+      credential: "current-secret",
+      provisionedChallengeId: challengeA,
+    }));
+    const controller = new RelayPairingController(repository);
+
+    const replay = await controller.handle({
+      type: "CODEARCHIVE_RELAY_GRANT_PROVISION", phase: "REQUEST", protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+      deviceId: "device-1234567890", grantId: grantA, generation: 4, expiresAt: FUTURE,
+      challengeId: challengeA, credential: "replayed-secret",
+    }, true);
+    expect(replay).toBeUndefined();
+    expect(repository.value.credential).toBe("current-secret");
+
+    repository.value = { ...repository.value, signedChallengeId: challengeB, signedChallengeExpiresAt: FUTURE };
+    const rotated = await controller.handle({
+      type: "CODEARCHIVE_RELAY_GRANT_PROVISION", phase: "REQUEST", protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+      deviceId: "device-1234567890", grantId: "a0000000-0000-4000-8000-000000000021", generation: 4, expiresAt: FUTURE,
+      challengeId: challengeB, credential: "rotated-secret",
+    }, true);
+    expect(rotated).toMatchObject({ phase: "STORED", generation: 4 });
+    expect(repository.value).toMatchObject({ credential: "rotated-secret", provisionedChallengeId: challengeB });
+
+    const lateOldResponse = await controller.handle({
+      type: "CODEARCHIVE_RELAY_GRANT_PROVISION", phase: "REQUEST", protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+      deviceId: "device-1234567890", grantId: grantA, generation: 4, expiresAt: FUTURE,
+      challengeId: challengeA, credential: "late-old-secret",
+    }, true);
+    expect(lateOldResponse).toBeUndefined();
+    expect(repository.value.credential).toBe("rotated-secret");
   });
 });

@@ -25,6 +25,7 @@ const PROFILE = {
   githubEnabledAt: null,
   version: 7,
   updatedAt: "2026-09-04T08:00:00Z",
+  sessionBindingFingerprint: `sb1_${"a".repeat(43)}`,
 };
 
 function response(data: unknown, status = 200): Response {
@@ -49,6 +50,12 @@ describe("durable automation API client", () => {
 
   it("rejects malformed profile authority instead of accepting partial state", async () => {
     const fetcher = vi.fn(async () => response({ ...PROFILE, generation: -1 }));
+    const client = createDurableAutomationClient(fetcher);
+    await expect(client.profile()).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+  });
+
+  it.each([undefined, "sb1_short", `sb1_${"!".repeat(43)}`])("rejects missing or malformed session binding metadata: %s", async (fingerprint) => {
+    const fetcher = vi.fn(async () => response({ ...PROFILE, sessionBindingFingerprint: fingerprint }));
     const client = createDurableAutomationClient(fetcher);
     await expect(client.profile()).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
   });
@@ -88,6 +95,7 @@ describe("durable automation API client", () => {
         deviceId: "device_identity_1234",
         generation: 4,
         expiresAt: "2026-10-04T08:00:00Z",
+        sessionBindingFingerprint: PROFILE.sessionBindingFingerprint,
       }));
     const client = createDurableAutomationClient(fetcher);
     const challenge = await client.relayChallenge("device_identity_1234", "public-key");
@@ -102,6 +110,32 @@ describe("durable automation API client", () => {
     expect(grant.generation).toBe(4);
     expect(fetcher.mock.calls[0]?.[0]).toContain("/api/v1/relay/grants/challenge");
     expect(fetcher.mock.calls[1]?.[0]).toBe("https://codearchive-api.onrender.com/api/v1/relay/grants");
+  });
+
+  it("rejects a grant response without a bounded session binding", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(response({
+        challengeId: "11111111-1111-4111-8111-111111111111",
+        challenge: "proof",
+        expiresAt: "2026-09-04T08:01:00Z",
+      }))
+      .mockResolvedValueOnce(response({
+        grantId: "22222222-2222-4222-8222-222222222222",
+        credential: "22222222-2222-4222-8222-222222222222.secret",
+        deviceId: "device_identity_1234",
+        generation: 4,
+        expiresAt: "2026-10-04T08:00:00Z",
+        sessionBindingFingerprint: "sb1_short",
+      }));
+    const client = createDurableAutomationClient(fetcher);
+    const challenge = await client.relayChallenge("device_identity_1234", "public-key");
+    await expect(client.relayGrant({
+      deviceId: "device_identity_1234",
+      challengeId: challenge.challengeId,
+      challenge: challenge.challenge,
+      publicKey: "public-key",
+      signature: "signature",
+    })).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
   });
 
   it("rejects invalid client-side device/version inputs before network", async () => {
