@@ -20,6 +20,8 @@ export interface DurableAutomationProfile {
   readonly githubEnabledAt: string | null;
   readonly version: number;
   readonly updatedAt: string;
+  /** Non-secret, server-derived comparison value for the current AuthSession. */
+  readonly sessionBindingFingerprint: string;
 }
 
 export interface DurableAutomationUpdate {
@@ -46,6 +48,8 @@ export interface RelayGrantResponse {
   readonly deviceId: string;
   readonly generation: number;
   readonly expiresAt: string;
+  /** Non-secret, server-derived comparison value for the issuing AuthSession. */
+  readonly sessionBindingFingerprint: string;
 }
 
 export interface DurableAutomationClient {
@@ -74,6 +78,7 @@ const uuid = (value: unknown): value is string => str(value) && /^[0-9a-f]{8}(?:
 const numericId = (value: unknown): value is string => str(value) && /^[1-9][0-9]{0,18}$/.test(value);
 const sha = (value: unknown): value is string => str(value) && /^[0-9a-f]{40}$/.test(value);
 const device = (value: unknown): value is string => str(value) && /^[A-Za-z0-9_-]{16,128}$/.test(value);
+const sessionBindingFingerprint = (value: unknown): value is string => str(value) && /^sb1_[A-Za-z0-9_-]{43}$/.test(value);
 
 function target(value: unknown): value is GitHubAutoTarget {
   if (!object(value)) return false;
@@ -101,7 +106,8 @@ function profile(value: unknown): value is DurableAutomationProfile {
     && bool(value.publicUploadConsent)
     && (value.githubEnabledAt === null || absoluteDate(value.githubEnabledAt))
     && safeNonNegative(value.version)
-    && absoluteDate(value.updatedAt);
+    && absoluteDate(value.updatedAt)
+    && sessionBindingFingerprint(value.sessionBindingFingerprint);
 }
 
 function challenge(value: unknown): value is RelayChallengeResponse {
@@ -110,7 +116,8 @@ function challenge(value: unknown): value is RelayChallengeResponse {
 
 function grant(value: unknown): value is RelayGrantResponse {
   return object(value) && uuid(value.grantId) && str(value.credential) && value.credential.length > 0 && value.credential.length <= 512
-    && device(value.deviceId) && safePositive(value.generation) && absoluteDate(value.expiresAt);
+    && device(value.deviceId) && safePositive(value.generation) && absoluteDate(value.expiresAt)
+    && sessionBindingFingerprint(value.sessionBindingFingerprint);
 }
 
 function errorCode(value: unknown): string {

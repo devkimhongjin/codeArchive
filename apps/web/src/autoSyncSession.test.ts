@@ -31,6 +31,7 @@ function durableProfile(): DurableAutomationProfile {
     githubEnabledAt: null,
     version: 7,
     updatedAt: "2026-09-04T07:59:00Z",
+    sessionBindingFingerprint: `sb1_${"a".repeat(43)}`,
   };
 }
 

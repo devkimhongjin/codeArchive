@@ -115,6 +115,19 @@ function sameRevocationContext(a: DurableAutomationProfile, b: DurableAutomation
     && a.generation === b.generation;
 }
 
+function requireSessionBinding(profile: DurableAutomationProfile): string {
+  if (!/^sb1_[A-Za-z0-9_-]{43}$/.test(profile.sessionBindingFingerprint)) {
+    throw new DurableAutomationTransitionError("SESSION_BINDING_INVALID");
+  }
+  return profile.sessionBindingFingerprint;
+}
+
+function requireSameSessionBinding(initial: string, current: DurableAutomationProfile): void {
+  if (requireSessionBinding(current) !== initial) {
+    throw new DurableAutomationTransitionError("SESSION_BINDING_MISMATCH");
+  }
+}
+
 export class DurableAutomationController {
   private transitionEpoch = 0;
   private readonly client: DurableAutomationClient;
@@ -171,6 +184,7 @@ export class DurableAutomationController {
     const pairing = await this.requirePairingInfo();
     const current = await this.client.profile(signal);
     this.assertFence(fence);
+    const initialBinding = requireSessionBinding(current);
     const migratingFromPageOwned = current.ownershipMode === "PAGE_OWNED";
     const desired = {
       deviceId: pairing.deviceId,
@@ -184,6 +198,7 @@ export class DurableAutomationController {
     };
     const profile = await this.updateIfNeeded(current, desired, signal);
     this.assertFence(fence);
+    requireSameSessionBinding(initialBinding, profile);
     await this.ensureRelayGrant(profile, signal, fence);
     this.assertFence(fence);
     return { profile, relayPaired: true };
@@ -213,6 +228,7 @@ export class DurableAutomationController {
     const pairing = await this.requirePairingInfo();
     const current = await this.client.profile(signal);
     this.assertFence(fence);
+    const initialBinding = requireSessionBinding(current);
     const desired = {
       deviceId: pairing.deviceId,
       sourceTransferEnabled: true,
@@ -225,6 +241,7 @@ export class DurableAutomationController {
     };
     const profile = await this.updateIfNeeded(current, desired, signal);
     this.assertFence(fence);
+    requireSameSessionBinding(initialBinding, profile);
     await this.ensureRelayGrant(profile, signal, fence);
     this.assertFence(fence);
     return { profile, relayPaired: true };
@@ -242,6 +259,7 @@ export class DurableAutomationController {
     this.assertFence(fence);
     const current = await this.client.profile(signal);
     this.assertFence(fence);
+    const initialBinding = requireSessionBinding(current);
     if (current.ownershipMode !== "DURABLE_SERVER") return { profile: current, relayPaired: false };
     const pairing = await (this.bridge.relayPairingInfo?.().catch(() => null) ?? Promise.resolve(null));
     const deviceId = pairing?.deviceId ?? current.deviceId;
@@ -258,6 +276,7 @@ export class DurableAutomationController {
     };
     const profile = await this.updateIfNeeded(current, desired, signal);
     this.assertFence(fence);
+    requireSameSessionBinding(initialBinding, profile);
     if (profile.sourceTransferEnabled) {
       await this.ensureRelayGrant(profile, signal, fence);
       this.assertFence(fence);
@@ -386,6 +405,7 @@ export class DurableAutomationController {
 
   private async ensureRelayGrant(profile: DurableAutomationProfile, signal: AbortSignal | undefined, fence: TransitionFence): Promise<void> {
     this.assertFence(fence);
+    const profileBinding = requireSessionBinding(profile);
     if (!profile.sourceTransferEnabled || profile.ownershipMode !== "DURABLE_SERVER" || !profile.deviceId) {
       throw new DurableAutomationTransitionError("PROFILE_NOT_RELAY_ELIGIBLE");
     }
@@ -421,6 +441,9 @@ export class DurableAutomationController {
     if (grant.deviceId !== profile.deviceId || grant.generation !== profile.generation || Date.parse(grant.expiresAt) <= this.now()) {
       throw new DurableAutomationTransitionError("GRANT_GENERATION_MISMATCH");
     }
+    if (grant.sessionBindingFingerprint !== profileBinding) {
+      throw new DurableAutomationTransitionError("SESSION_BINDING_MISMATCH");
+    }
     // The profile may have advanced while the challenge/grant round trip was
     // in flight (for example, another tab or a second control path changed
     // consent). Do not provision a grant that is no longer current.
@@ -429,6 +452,9 @@ export class DurableAutomationController {
     if (latest.userId !== profile.userId || latest.ownershipMode !== "DURABLE_SERVER" || !latest.sourceTransferEnabled
       || latest.deviceId !== profile.deviceId || latest.generation !== profile.generation) {
       throw new DurableAutomationTransitionError("GRANT_GENERATION_MISMATCH");
+    }
+    if (requireSessionBinding(latest) !== profileBinding) {
+      throw new DurableAutomationTransitionError("SESSION_BINDING_MISMATCH");
     }
     this.assertFence(fence);
     const stored = await this.bridge.relayProvisionGrant?.({
