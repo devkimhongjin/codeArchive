@@ -24,6 +24,7 @@ import {
   type PopupAutomationStateResponse,
 } from "./automationControl";
 import { requestPopupRelayState, stopPopupRelayLocally } from "./relay/relayPopupControl";
+import type { RelayFailureCategory } from "./relay/relayState";
 import type { RelayPopupState } from "./relay/relayRuntime";
 
 const RECENT_GROUP_LIMIT = 5;
@@ -60,6 +61,26 @@ function CopySettingsControls({ settings, onChange }: { settings: CopySettings; 
   return <fieldset className="copy-settings"><legend>코드 복사 설정</legend><label><input type="checkbox" checked={settings.includeProblemInfo} onChange={() => toggle("includeProblemInfo")} /> 문제 정보 주석</label><label><input type="checkbox" checked={settings.includeLanguage} onChange={() => toggle("includeLanguage")} /> 언어 주석</label><label><input type="checkbox" checked={settings.includePerformance} onChange={() => toggle("includePerformance")} /> 실행시간·메모리 주석</label></fieldset>;
 }
 
+function relayStateLabel(state: RelayPopupState["state"]): string {
+  switch (state) {
+    case "ACTIVE": return "활성";
+    case "REVOCATION_PENDING": return "해지 대기";
+    case "EXPIRED": return "만료됨";
+    case "INVALIDATED": return "무효화됨";
+    case "UNPAIRED": return "비활성 · 페어링 안 됨";
+  }
+}
+
+function relayFailureLabel(category: RelayFailureCategory): string {
+  switch (category) {
+    case "LOCAL_EXPIRED": return "로컬 grant 만료 감지";
+    case "HTTP_401": return "서버 인증 만료 (HTTP 401)";
+    case "HTTP_403": return "서버 권한 거부 (HTTP 403)";
+    case "HTTP_OTHER": return "서버 응답 오류";
+    case "MALFORMED_RESPONSE": return "서버 응답 형식 오류";
+  }
+}
+
 function AutomationControls({
   requestState,
   setAutomation,
@@ -72,7 +93,8 @@ function AutomationControls({
   stopRelayLocally: () => Promise<RelayPopupState>;
 }) {
   const [state, setState] = useState(() => unavailableAutomationState());
-  const [relayState, setRelayState] = useState<RelayPopupState>({ state: "UNPAIRED", autoSyncEnabled: false });
+  const [relayState, setRelayState] = useState<RelayPopupState>({ state: "UNPAIRED", autoSyncEnabled: false, readStatus: "error" });
+  const [relayLoading, setRelayLoading] = useState(true);
   const [pending, setPending] = useState<"AUTO_SYNC" | "GITHUB_AUTO_COMMIT" | null>(null);
 
   useEffect(() => {
@@ -83,7 +105,16 @@ function AutomationControls({
 
   useEffect(() => {
     let active = true;
-    requestRelayState().then((next) => { if (active) setRelayState(next); }).catch(() => undefined);
+    setRelayLoading(true);
+    requestRelayState().then((next) => {
+      if (!active) return;
+      setRelayState({ ...next, readStatus: next.readStatus ?? "ready" });
+      setRelayLoading(false);
+    }).catch(() => {
+      if (!active) return;
+      setRelayState({ state: "UNPAIRED", autoSyncEnabled: false, readStatus: "error" });
+      setRelayLoading(false);
+    });
     return () => { active = false; };
   }, [requestRelayState]);
 
@@ -102,7 +133,12 @@ function AutomationControls({
 
   async function stopLocalRelay(): Promise<void> {
     setPending("AUTO_SYNC");
-    try { setRelayState(await stopRelayLocally()); } finally { setPending(null); }
+    try {
+      const next = await stopRelayLocally();
+      setRelayState({ ...next, readStatus: next.readStatus ?? "ready" });
+    } catch {
+      setRelayState((current) => ({ ...current, readStatus: "error" }));
+    } finally { setPending(null); }
   }
 
   const disabled = pending !== null || !state.connectionAvailable || state.errorCode !== null;
@@ -113,10 +149,11 @@ function AutomationControls({
       <label><input type="checkbox" aria-label="자동 동기화" checked={state.autoSyncEnabled} onChange={(event) => void changeAutomation("AUTO_SYNC", event.target.checked)} /> 자동 동기화</label>
       <label><input type="checkbox" aria-label="GitHub 자동 커밋" checked={state.githubAutoCommitEnabled} onChange={(event) => void changeAutomation("GITHUB_AUTO_COMMIT", event.target.checked)} /> GitHub 자동 커밋</label>
     </fieldset>
-    {(relayState.state === "ACTIVE" || relayState.state === "REVOCATION_PENDING") && <div className="local-relay-controls">
-      <p>로컬 relay 상태: {relayState.state === "ACTIVE" ? "활성" : "해지 대기"}</p>
-      {relayState.state === "ACTIVE" && <button type="button" className="secondary-button" onClick={() => void stopLocalRelay()} disabled={pending !== null}>자동 동기화 로컬 중지</button>}
-    </div>}
+    <div className="local-relay-controls">
+      <p>로컬 relay 상태: {relayLoading ? "불러오는 중..." : relayState.readStatus === "error" ? "읽기 실패" : relayStateLabel(relayState.state)}</p>
+      {!relayLoading && relayState.readStatus !== "error" && relayState.lastFailure && <small role="status">최근 실패: {relayFailureLabel(relayState.lastFailure.category)}{relayState.lastFailure.status && relayState.lastFailure.category === "HTTP_OTHER" ? ` (HTTP ${relayState.lastFailure.status})` : ""}</small>}
+      {!relayLoading && relayState.readStatus !== "error" && relayState.state === "ACTIVE" && <button type="button" className="secondary-button" onClick={() => void stopLocalRelay()} disabled={pending !== null}>자동 동기화 로컬 중지</button>}
+    </div>
     <p className="automation-guidance" aria-live="polite">{pending ? "Dashboard에 변경을 요청하는 중입니다." : automationGuidance(state)}</p>
   </section>;
 }

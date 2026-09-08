@@ -1,7 +1,14 @@
 import { CODEARCHIVE_API_BASE_URL } from "../apiConfig";
 import { listRelayPendingCaptures, markRelayConflicts, markRelayConflictsForRecords, markRelayImportReceipts, type RelayStateSnapshot } from "../solutionRepository";
 import type { SolutionRecord } from "../solution";
-import { indexedDbRelayStateRepository, type RelayStateRecord, type RelayStateRepository } from "./relayState";
+import {
+  indexedDbRelayStateRepository,
+  normalizeRelayFailure,
+  type RelayFailureCategory,
+  type RelayFailureDiagnostic,
+  type RelayStateRecord,
+  type RelayStateRepository,
+} from "./relayState";
 import type { CodeArchiveAutomationState } from "../../../../packages/shared-types/src";
 
 export const RELAY_DRAIN_ALARM = "codearchive-relay-drain";
@@ -40,6 +47,15 @@ export interface RelayPopupState {
   autoSyncEnabled: boolean;
   grantId?: string;
   generation?: number;
+  lastFailure?: RelayFailureDiagnostic;
+  readStatus?: "ready" | "error";
+}
+
+interface RelayFailureInput {
+  category: RelayFailureCategory;
+  status?: number;
+  requestId?: string;
+  errorCode?: string;
 }
 
 function isStateActive(state: RelayStateRecord, now: number): boolean {
@@ -117,6 +133,29 @@ function isDashboardControllerUnavailable(state: CodeArchiveAutomationState): bo
   return state.connectionAvailable === false && state.errorCode === "DASHBOARD_DISCONNECTED";
 }
 
+function safeResponseText(value: unknown, max: number, pattern: RegExp): string | undefined {
+  return typeof value === "string" && value.length > 0 && value.length <= max && pattern.test(value) ? value : undefined;
+}
+
+function responseMetadata(response: RelayFetchResponse, body: unknown): Pick<RelayFailureDiagnostic, "requestId" | "errorCode"> {
+  const requestId = safeResponseText(
+    response.headers.get("X-Request-Id") ?? response.headers.get("X-Request-ID"),
+    128,
+    /^[A-Za-z0-9._:-]+$/,
+  );
+  if (!body || typeof body !== "object" || Array.isArray(body)) return requestId ? { requestId } : {};
+  const envelope = body as Record<string, unknown>;
+  const bodyRequestId = safeResponseText(envelope.requestId, 128, /^[A-Za-z0-9._:-]+$/);
+  const error = envelope.error && typeof envelope.error === "object" && !Array.isArray(envelope.error)
+    ? envelope.error as Record<string, unknown>
+    : undefined;
+  const errorCode = safeResponseText(error?.code ?? envelope.errorCode, 64, /^[A-Z0-9_:-]+$/);
+  return {
+    ...(requestId ?? bodyRequestId ? { requestId: requestId ?? bodyRequestId } : {}),
+    ...(errorCode ? { errorCode } : {}),
+  };
+}
+
 export class RelayRuntime {
   private readonly state: RelayStateRepository;
   private readonly alarms?: RelayAlarmApi;
@@ -163,6 +202,8 @@ export class RelayRuntime {
       autoSyncEnabled: state.autoSyncEnabled === true,
       ...(state.grantId ? { grantId: state.grantId } : {}),
       ...(state.generation ? { generation: state.generation } : {}),
+      ...(state.lastFailure ? { lastFailure: state.lastFailure } : {}),
+      readStatus: "ready",
     };
   }
 
@@ -205,7 +246,7 @@ export class RelayRuntime {
     try {
       const state = await this.state.get();
       if (state.state === "ACTIVE" && !isStateActive(state, this.now())) {
-        await this.invalidate("EXPIRED");
+        await this.invalidate("EXPIRED", { category: "LOCAL_EXPIRED" });
       } else if (isStateActive(state, this.now()) && state.autoSyncEnabled) await this.scheduleIfEligible();
     } catch { /* fail closed; pairing or next capture can reconstruct the state */ }
   }
@@ -214,7 +255,7 @@ export class RelayRuntime {
     if (!this.alarms || this.blocked) return;
     const state = await this.state.get();
     if (state.state === "ACTIVE" && !isStateActive(state, this.now())) {
-      await this.invalidate("EXPIRED");
+      await this.invalidate("EXPIRED", { category: "LOCAL_EXPIRED" });
       return;
     }
     if (!isStateActive(state, this.now()) || !state.autoSyncEnabled) return;
@@ -245,7 +286,7 @@ export class RelayRuntime {
     try {
       const state = await this.state.get();
       if (state.state === "ACTIVE" && !isStateActive(state, this.now())) {
-        await this.invalidate("EXPIRED");
+        await this.invalidate("EXPIRED", { category: "LOCAL_EXPIRED" });
         return;
       }
       if (!isStateActive(state, this.now()) || !state.autoSyncEnabled) return;
@@ -293,7 +334,11 @@ export class RelayRuntime {
       }
       if (this.blocked) return;
       if (response.status === 401 || response.status === 403) {
-        await this.invalidate(response.status === 401 ? "EXPIRED" : "INVALIDATED");
+        const body = await response.json().catch(() => null);
+        await this.invalidate(
+          response.status === 401 ? "EXPIRED" : "INVALIDATED",
+          { category: response.status === 401 ? "HTTP_401" : "HTTP_403", status: response.status, ...responseMetadata(response, body) },
+        );
         return;
       }
       if (response.status === 429 || response.status >= 500) {
@@ -301,12 +346,13 @@ export class RelayRuntime {
         return;
       }
       if (!response.status.toString().startsWith("2")) {
-        await this.invalidate("INVALIDATED");
+        const body = await response.json().catch(() => null);
+        await this.invalidate("INVALIDATED", { category: "HTTP_OTHER", status: response.status, ...responseMetadata(response, body) });
         return;
       }
       const body = await response.json().catch(() => null);
       if (!isObject(body) || body.success !== true || !isObject(body.data) || !Array.isArray(body.data.results)) {
-        await this.invalidate("INVALIDATED");
+        await this.invalidate("INVALIDATED", { category: "MALFORMED_RESPONSE", status: response.status, ...responseMetadata(response, body) });
         return;
       }
       const imported: string[] = [];
@@ -315,15 +361,21 @@ export class RelayRuntime {
       for (const result of body.data.results) {
         if (!isObject(result) || typeof result.clientRecordId !== "string" || seen.has(result.clientRecordId)
           || !ids.includes(result.clientRecordId)) {
-          await this.invalidate("INVALIDATED");
+          await this.invalidate("INVALIDATED", { category: "MALFORMED_RESPONSE", status: response.status, ...responseMetadata(response, body) });
           return;
         }
         seen.add(result.clientRecordId);
         if ((result.outcome === "IMPORTED" || result.outcome === "EXISTING") && result.ackEligible === true && result.errorCode === null) imported.push(result.clientRecordId);
         else if (result.outcome === "CONFLICT" && result.ackEligible === false) conflicts.push(result.clientRecordId);
-        else { await this.invalidate("INVALIDATED"); return; }
+        else {
+          await this.invalidate("INVALIDATED", { category: "MALFORMED_RESPONSE", status: response.status, ...responseMetadata(response, body) });
+          return;
+        }
       }
-      if (seen.size !== ids.length) { await this.invalidate("INVALIDATED"); return; }
+      if (seen.size !== ids.length) {
+        await this.invalidate("INVALIDATED", { category: "MALFORMED_RESPONSE", status: response.status, ...responseMetadata(response, body) });
+        return;
+      }
       const at = new Date(this.now()).toISOString();
       if (this.blocked) return;
       if (imported.length) await this.markImported(imported, at);
@@ -344,9 +396,22 @@ export class RelayRuntime {
     await this.scheduleIfEligible(Math.max(0, Date.parse(next.nextRetryAt!) - this.now()));
   }
 
-  private async invalidate(state: RelayStateSnapshot["state"]): Promise<void> {
+  private async invalidate(state: RelayStateSnapshot["state"], failure?: RelayFailureInput): Promise<void> {
     await this.cancelAlarm();
-    await this.state.update((current) => ({ ...current, state, credential: undefined, autoSyncEnabled: false, signedChallengeId: undefined, signedChallengeExpiresAt: undefined, provisionedChallengeId: undefined, nextRetryAt: undefined }));
+    const lastFailure = failure
+      ? normalizeRelayFailure({ ...failure, occurredAt: new Date(this.now()).toISOString() })
+      : undefined;
+    await this.state.update((current) => ({
+      ...current,
+      state,
+      credential: undefined,
+      autoSyncEnabled: false,
+      signedChallengeId: undefined,
+      signedChallengeExpiresAt: undefined,
+      provisionedChallengeId: undefined,
+      nextRetryAt: undefined,
+      ...(lastFailure ? { lastFailure } : {}),
+    }));
   }
 }
 

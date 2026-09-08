@@ -68,4 +68,55 @@ describe("Popup automation controls", () => {
     expect(setAutomation).not.toHaveBeenCalled();
     expect(await screen.findByText("로컬 relay 상태: 해지 대기")).toBeInTheDocument();
   });
+
+  it.each([
+    ["UNPAIRED", "비활성 · 페어링 안 됨"],
+    ["EXPIRED", "만료됨"],
+    ["INVALIDATED", "무효화됨"],
+  ] as const)("renders the %s relay state", async (relayState, label) => {
+    render(<Popup
+      repository={repository()}
+      requestAutomationState={async () => ({ state, forwarded: false })}
+      requestRelayState={async () => ({ state: relayState, autoSyncEnabled: false, readStatus: "ready" })}
+    />);
+
+    expect(await screen.findByText(`로컬 relay 상태: ${label}`)).toBeInTheDocument();
+  });
+
+  it("renders loading and read-error relay diagnostics instead of swallowing them", async () => {
+    let resolve!: (value: { state: "UNPAIRED"; autoSyncEnabled: boolean; readStatus: "ready" }) => void;
+    const pending = new Promise<{ state: "UNPAIRED"; autoSyncEnabled: boolean; readStatus: "ready" }>((next) => { resolve = next; });
+    const view = render(<Popup
+      repository={repository()}
+      requestAutomationState={async () => ({ state, forwarded: false })}
+      requestRelayState={() => pending}
+    />);
+    expect(screen.getByText("로컬 relay 상태: 불러오는 중...")).toBeInTheDocument();
+    resolve({ state: "UNPAIRED", autoSyncEnabled: false, readStatus: "ready" });
+    await waitFor(() => expect(screen.getByText("로컬 relay 상태: 비활성 · 페어링 안 됨")).toBeInTheDocument());
+
+    view.unmount();
+    render(<Popup
+      repository={repository()}
+      requestAutomationState={async () => ({ state, forwarded: false })}
+      requestRelayState={async () => { throw new Error("state read failed"); }}
+    />);
+    expect(await screen.findByText("로컬 relay 상태: 읽기 실패")).toBeInTheDocument();
+  });
+
+  it("renders a sanitized last-failure category without exposing response content", async () => {
+    render(<Popup
+      repository={repository()}
+      requestAutomationState={async () => ({ state, forwarded: false })}
+      requestRelayState={async () => ({
+        state: "INVALIDATED",
+        autoSyncEnabled: false,
+        readStatus: "ready",
+        lastFailure: { category: "HTTP_OTHER", status: 404, occurredAt: "2026-09-08T06:00:00.000Z", requestId: "req-safe", errorCode: "RELAY_NOT_FOUND" },
+      })}
+    />);
+
+    expect(await screen.findByText("최근 실패: 서버 응답 오류 (HTTP 404)")).toBeInTheDocument();
+    expect(screen.queryByText(/req-safe|RELAY_NOT_FOUND/)).not.toBeInTheDocument();
+  });
 });

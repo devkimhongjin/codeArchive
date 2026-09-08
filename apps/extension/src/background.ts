@@ -131,12 +131,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (request.type === POPUP_RELAY_STATE_GET) {
-    backgroundRelayRuntime.getPopupState().then(sendResponse).catch(() => sendResponse({ state: "UNPAIRED", autoSyncEnabled: false }));
+    backgroundRelayRuntime.getPopupState().then(sendResponse).catch(() => sendResponse({ state: "UNPAIRED", autoSyncEnabled: false, readStatus: "error" }));
     return true;
   }
 
   if (request.type === POPUP_RELAY_LOCAL_STOP) {
-    backgroundRelayRuntime.stopLocally().then(sendResponse).catch(() => sendResponse({ state: "UNPAIRED", autoSyncEnabled: false }));
+    backgroundRelayRuntime.stopLocally().then(sendResponse).catch(() => sendResponse({ state: "UNPAIRED", autoSyncEnabled: false, readStatus: "error" }));
     return true;
   }
 

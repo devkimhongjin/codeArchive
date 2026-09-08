@@ -7,6 +7,24 @@ import {
 
 export type RelayLocalState = RelayStateSnapshot["state"];
 
+export const RELAY_FAILURE_CATEGORIES = [
+  "LOCAL_EXPIRED",
+  "HTTP_401",
+  "HTTP_403",
+  "HTTP_OTHER",
+  "MALFORMED_RESPONSE",
+] as const;
+
+export type RelayFailureCategory = typeof RELAY_FAILURE_CATEGORIES[number];
+
+export interface RelayFailureDiagnostic {
+  category: RelayFailureCategory;
+  status?: number;
+  occurredAt: string;
+  requestId?: string;
+  errorCode?: string;
+}
+
 export interface RelayStateRecord extends RelayStateSnapshot {
   deviceId: string;
   publicKey: string;
@@ -15,6 +33,7 @@ export interface RelayStateRecord extends RelayStateSnapshot {
   signedChallengeExpiresAt?: string;
   failureCount: number;
   nextRetryAt?: string;
+  lastFailure?: RelayFailureDiagnostic;
 }
 
 export interface RelayStateRepository {
@@ -49,6 +68,39 @@ function normalizeState(value: RelayStateRecord): RelayStateRecord {
     revision: Number.isSafeInteger(value.revision) && value.revision >= 0 ? value.revision : 0,
     autoSyncEnabled: value.autoSyncEnabled === true,
     failureCount: Number.isSafeInteger(value.failureCount) && value.failureCount >= 0 ? value.failureCount : 0,
+    lastFailure: normalizeRelayFailure(value.lastFailure),
+  };
+}
+
+function boundedSafeString(value: unknown, max: number, pattern: RegExp): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= max && pattern.test(value);
+}
+
+export function normalizeRelayFailure(value: unknown): RelayFailureDiagnostic | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (!RELAY_FAILURE_CATEGORIES.includes(candidate.category as RelayFailureCategory)
+    || typeof candidate.occurredAt !== "string" || !Number.isFinite(Date.parse(candidate.occurredAt))) return undefined;
+  const status = candidate.status === undefined
+    ? undefined
+    : Number.isSafeInteger(candidate.status) && (candidate.status as number) >= 100 && (candidate.status as number) <= 599
+      ? candidate.status as number
+      : undefined;
+  if (candidate.status !== undefined && status === undefined) return undefined;
+  const requestId = candidate.requestId === undefined
+    ? undefined
+    : boundedSafeString(candidate.requestId, 128, /^[A-Za-z0-9._:-]+$/) ? candidate.requestId : undefined;
+  if (candidate.requestId !== undefined && requestId === undefined) return undefined;
+  const errorCode = candidate.errorCode === undefined
+    ? undefined
+    : boundedSafeString(candidate.errorCode, 64, /^[A-Z0-9_:-]+$/) ? candidate.errorCode : undefined;
+  if (candidate.errorCode !== undefined && errorCode === undefined) return undefined;
+  return {
+    category: candidate.category as RelayFailureCategory,
+    occurredAt: candidate.occurredAt,
+    ...(status === undefined ? {} : { status }),
+    ...(requestId === undefined ? {} : { requestId }),
+    ...(errorCode === undefined ? {} : { errorCode }),
   };
 }
 

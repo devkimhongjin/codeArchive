@@ -4,6 +4,7 @@ export const POPUP_RELAY_STATE_GET = "CODEARCHIVE_POPUP_RELAY_STATE_GET" as cons
 export const POPUP_RELAY_LOCAL_STOP = "CODEARCHIVE_POPUP_RELAY_LOCAL_STOP" as const;
 
 interface PopupRuntime {
+  lastError?: { message?: string };
   sendMessage(message: unknown, callback: (response: RelayPopupState) => void): void;
 }
 
@@ -12,16 +13,16 @@ function runtime(): PopupRuntime | null {
   return candidate?.sendMessage ? candidate : null;
 }
 
-const unavailable: RelayPopupState = { state: "UNPAIRED", autoSyncEnabled: false };
+const unavailable: RelayPopupState = { state: "UNPAIRED", autoSyncEnabled: false, readStatus: "error" };
 
 export function requestPopupRelayState(): Promise<RelayPopupState> {
   const value = runtime();
   if (!value) return Promise.resolve(unavailable);
-  return new Promise((resolve) => value.sendMessage({ type: POPUP_RELAY_STATE_GET }, (response) => resolve(response ?? unavailable)));
+  return new Promise((resolve) => value.sendMessage({ type: POPUP_RELAY_STATE_GET }, (response) => resolve(value.lastError ? unavailable : (response ?? unavailable))));
 }
 
 export function stopPopupRelayLocally(): Promise<RelayPopupState> {
   const value = runtime();
   if (!value) return Promise.resolve(unavailable);
-  return new Promise((resolve) => value.sendMessage({ type: POPUP_RELAY_LOCAL_STOP }, (response) => resolve(response ?? unavailable)));
+  return new Promise((resolve) => value.sendMessage({ type: POPUP_RELAY_LOCAL_STOP }, (response) => resolve(value.lastError ? unavailable : (response ?? unavailable))));
 }

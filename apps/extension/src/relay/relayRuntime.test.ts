@@ -215,8 +215,16 @@ async function waitForRequest(requests: readonly RequestInit[]): Promise<void> {
   await vi.waitFor(() => expect(requests).toHaveLength(1));
 }
 
+function responseWithBody(body: unknown, status = 200, headers: Record<string, string> = {}): RelayFetchResponse {
+  return {
+    status,
+    headers: { get: (name) => headers[name.toLowerCase()] ?? null },
+    json: async () => body,
+  };
+}
+
 function response(results: unknown[], status = 200, retryAfter?: string): RelayFetchResponse {
-  return { status, headers: { get: (name) => name.toLowerCase() === "retry-after" ? retryAfter ?? null : null }, json: async () => ({ success: true, data: { results } }) };
+  return responseWithBody({ success: true, data: { results } }, status, retryAfter === undefined ? {} : { "retry-after": retryAfter });
 }
 
 describe("RelayRuntime", () => {
@@ -289,7 +297,62 @@ describe("RelayRuntime", () => {
 
     expect(stateRepo.value.credential).toBeUndefined();
     expect(stateRepo.value.state).toBe("EXPIRED");
+    expect(stateRepo.value.lastFailure).toMatchObject({ category: "HTTP_401", status: 401 });
     expect(alarms.cleared).toContain(RELAY_DRAIN_ALARM);
+  });
+
+  it("records local expiry separately from server rejection", async () => {
+    const stateRepo = new MemoryState(state({ expiresAt: new Date(999_999).toISOString() }));
+    const runtime = new RelayRuntime({ state: stateRepo, now: () => 1_000_000, listPending: async () => [] });
+
+    await runtime.drain();
+
+    expect(stateRepo.value.state).toBe("EXPIRED");
+    expect(stateRepo.value.lastFailure).toMatchObject({ category: "LOCAL_EXPIRED" });
+    expect(stateRepo.value.lastFailure?.status).toBeUndefined();
+  });
+
+  it.each([
+    ["HTTP_403", 403, "INVALIDATED", { requestId: "req-403", error: { code: "RELAY_GRANT_REVOKED", detail: "do-not-persist" } }],
+    ["HTTP_OTHER", 404, "INVALIDATED", { requestId: "req-404", errorCode: "RELAY_NOT_FOUND", source: "do-not-persist" }],
+  ] as const)("records %s without retaining the response body", async (category, status, expectedState, body) => {
+    const stateRepo = new MemoryState(state());
+    const runtime = new RelayRuntime({
+      state: stateRepo,
+      now: () => 1_000_000,
+      listPending: async () => [record("one")],
+      fetch: async () => responseWithBody(body, status, { "x-request-id": `header-${status}` }),
+    });
+
+    await runtime.drain();
+
+    expect(stateRepo.value.state).toBe(expectedState);
+    expect(stateRepo.value.credential).toBeUndefined();
+    expect(stateRepo.value.lastFailure).toMatchObject({ category, status, requestId: `header-${status}` });
+    expect(stateRepo.value.lastFailure?.errorCode).toBe(category === "HTTP_403" ? "RELAY_GRANT_REVOKED" : "RELAY_NOT_FOUND");
+    expect(JSON.stringify(stateRepo.value)).not.toContain("do-not-persist");
+  });
+
+  it("records malformed success envelopes separately and redacts arbitrary fields", async () => {
+    const stateRepo = new MemoryState(state());
+    const runtime = new RelayRuntime({
+      state: stateRepo,
+      now: () => 1_000_000,
+      listPending: async () => [record("one")],
+      fetch: async () => responseWithBody({
+        success: true,
+        requestId: "req-malformed",
+        error: { code: "INVALID_RESULT", body: "source-code-secret" },
+        data: { results: [{ clientRecordId: "one", outcome: "IMPORTED", ackEligible: "not-a-boolean" }] },
+      }),
+    });
+
+    await runtime.drain();
+
+    expect(stateRepo.value.state).toBe("INVALIDATED");
+    expect(stateRepo.value.lastFailure).toMatchObject({ category: "MALFORMED_RESPONSE", status: 200, requestId: "req-malformed", errorCode: "INVALID_RESULT" });
+    expect(JSON.stringify(stateRepo.value)).not.toContain("source-code-secret");
+    expect(JSON.stringify(stateRepo.value)).not.toContain("credential");
   });
 
   it("moves AUTO_SYNC OFF to revocation-pending without retaining the credential", async () => {
