@@ -1,5 +1,12 @@
 import { CODEARCHIVE_API_BASE_URL } from "../apiConfig";
-import { listRelayPendingCaptures, markRelayConflicts, markRelayConflictsForRecords, markRelayImportReceipts, type RelayStateSnapshot } from "../solutionRepository";
+import {
+  listRelayPendingCaptures,
+  markRelayConflictsForRecords,
+  markRelayConflictsIfCurrent,
+  markRelayImportReceiptsIfCurrent,
+  type RelayAuthoritySnapshot,
+  type RelayStateSnapshot,
+} from "../solutionRepository";
 import type { SolutionRecord } from "../solution";
 import {
   indexedDbRelayStateRepository,
@@ -50,6 +57,13 @@ export interface RelayPopupState {
   lastFailure?: RelayFailureDiagnostic;
   readStatus?: "ready" | "error";
 }
+
+type AuthorityBoundRecordMutation = (
+  ids: readonly string[],
+  at: string,
+  authority: RelayAuthoritySnapshot,
+  errorCode?: string,
+) => Promise<boolean>;
 
 interface RelayFailureInput {
   category: RelayFailureCategory;
@@ -133,6 +147,28 @@ function isDashboardControllerUnavailable(state: CodeArchiveAutomationState): bo
   return state.connectionAvailable === false && state.errorCode === "DASHBOARD_DISCONNECTED";
 }
 
+function authoritySnapshot(state: RelayStateRecord): RelayAuthoritySnapshot {
+  return {
+    revision: state.revision,
+    deviceId: state.deviceId,
+    grantId: state.grantId as string,
+    generation: state.generation as number,
+    credential: state.credential as string,
+  };
+}
+
+function authorityStillCurrent(state: RelayStateRecord, authority: RelayAuthoritySnapshot): boolean {
+  // Revision is intentionally not required to remain equal: retry counters and
+  // other bookkeeping can advance it without changing the relay authority.
+  // Grant/device/credential identity plus the active intent gate ownership.
+  return state.state === "ACTIVE"
+    && state.autoSyncEnabled === true
+    && state.deviceId === authority.deviceId
+    && state.grantId === authority.grantId
+    && state.generation === authority.generation
+    && state.credential === authority.credential;
+}
+
 function safeResponseText(value: unknown, max: number, pattern: RegExp): string | undefined {
   return typeof value === "string" && value.length > 0 && value.length <= max && pattern.test(value) ? value : undefined;
 }
@@ -162,8 +198,8 @@ export class RelayRuntime {
   private readonly request: RelayFetch;
   private readonly now: () => number;
   private readonly listPending: (grantId: string, generation: number, limit?: number) => Promise<SolutionRecord[]>;
-  private readonly markImported: (ids: readonly string[], at: string) => Promise<void>;
-  private readonly markConflicts: (ids: readonly string[], at: string, errorCode?: string) => Promise<void>;
+  private readonly markImported: AuthorityBoundRecordMutation;
+  private readonly markConflicts: AuthorityBoundRecordMutation;
   private readonly markInvalid: (records: readonly SolutionRecord[], at: string, errorCode: string) => Promise<void>;
   private running = false;
   private blocked = false;
@@ -174,8 +210,20 @@ export class RelayRuntime {
     this.request = dependencies.fetch ?? ((input, init) => fetch(input, init));
     this.now = dependencies.now ?? (() => Date.now());
     this.listPending = dependencies.listPending ?? listRelayPendingCaptures;
-    this.markImported = dependencies.markImported ?? markRelayImportReceipts;
-    this.markConflicts = dependencies.markConflicts ?? markRelayConflicts;
+    this.markImported = dependencies.markImported
+      ? async (ids, at, authority) => {
+        if (!authorityStillCurrent(await this.state.get(), authority)) return false;
+        await dependencies.markImported!(ids, at);
+        return true;
+      }
+      : async (ids, at, authority) => markRelayImportReceiptsIfCurrent(ids, at, authority);
+    this.markConflicts = dependencies.markConflicts
+      ? async (ids, at, authority, errorCode) => {
+        if (!authorityStillCurrent(await this.state.get(), authority)) return false;
+        await dependencies.markConflicts!(ids, at, errorCode);
+        return true;
+      }
+      : async (ids, at, authority, errorCode) => markRelayConflictsIfCurrent(ids, at, authority, errorCode);
     this.markInvalid = dependencies.markInvalid ?? markRelayConflictsForRecords;
   }
 
@@ -251,9 +299,10 @@ export class RelayRuntime {
     } catch { /* fail closed; pairing or next capture can reconstruct the state */ }
   }
 
-  private async scheduleIfEligible(delayMs = 0): Promise<void> {
+  private async scheduleIfEligible(delayMs = 0, authority?: RelayAuthoritySnapshot): Promise<void> {
     if (!this.alarms || this.blocked) return;
     const state = await this.state.get();
+    if (authority && !authorityStillCurrent(state, authority)) return;
     if (state.state === "ACTIVE" && !isStateActive(state, this.now())) {
       await this.invalidate("EXPIRED", { category: "LOCAL_EXPIRED" });
       return;
@@ -296,6 +345,7 @@ export class RelayRuntime {
       }
       const grantId = state.grantId as string;
       const generation = state.generation as number;
+      const requestAuthority = authoritySnapshot(state);
       const candidates = (await this.listPending(grantId, generation, 25)).filter((record) => record.relayCapture?.grantId === grantId && record.relayCapture?.generation === generation);
       const invalidByReason = new Map<string, SolutionRecord[]>();
       const validRecords: SolutionRecord[] = [];
@@ -329,7 +379,7 @@ export class RelayRuntime {
           });
         } finally { clearTimeout(timer); }
       } catch {
-        await this.retry();
+        await this.retry(requestAuthority);
         return;
       }
       if (this.blocked) return;
@@ -338,21 +388,22 @@ export class RelayRuntime {
         await this.invalidate(
           response.status === 401 ? "EXPIRED" : "INVALIDATED",
           { category: response.status === 401 ? "HTTP_401" : "HTTP_403", status: response.status, ...responseMetadata(response, body) },
+          requestAuthority,
         );
         return;
       }
       if (response.status === 429 || response.status >= 500) {
-        await this.retry(retryAfterMs(response, this.now()));
+        await this.retry(requestAuthority, retryAfterMs(response, this.now()));
         return;
       }
       if (!response.status.toString().startsWith("2")) {
         const body = await response.json().catch(() => null);
-        await this.invalidate("INVALIDATED", { category: "HTTP_OTHER", status: response.status, ...responseMetadata(response, body) });
+        await this.invalidate("INVALIDATED", { category: "HTTP_OTHER", status: response.status, ...responseMetadata(response, body) }, requestAuthority);
         return;
       }
       const body = await response.json().catch(() => null);
       if (!isObject(body) || body.success !== true || !isObject(body.data) || !Array.isArray(body.data.results)) {
-        await this.invalidate("INVALIDATED", { category: "MALFORMED_RESPONSE", status: response.status, ...responseMetadata(response, body) });
+        await this.invalidate("INVALIDATED", { category: "MALFORMED_RESPONSE", status: response.status, ...responseMetadata(response, body) }, requestAuthority);
         return;
       }
       const imported: string[] = [];
@@ -361,57 +412,75 @@ export class RelayRuntime {
       for (const result of body.data.results) {
         if (!isObject(result) || typeof result.clientRecordId !== "string" || seen.has(result.clientRecordId)
           || !ids.includes(result.clientRecordId)) {
-          await this.invalidate("INVALIDATED", { category: "MALFORMED_RESPONSE", status: response.status, ...responseMetadata(response, body) });
+          await this.invalidate("INVALIDATED", { category: "MALFORMED_RESPONSE", status: response.status, ...responseMetadata(response, body) }, requestAuthority);
           return;
         }
         seen.add(result.clientRecordId);
         if ((result.outcome === "IMPORTED" || result.outcome === "EXISTING") && result.ackEligible === true && result.errorCode === null) imported.push(result.clientRecordId);
         else if (result.outcome === "CONFLICT" && result.ackEligible === false) conflicts.push(result.clientRecordId);
         else {
-          await this.invalidate("INVALIDATED", { category: "MALFORMED_RESPONSE", status: response.status, ...responseMetadata(response, body) });
+          await this.invalidate("INVALIDATED", { category: "MALFORMED_RESPONSE", status: response.status, ...responseMetadata(response, body) }, requestAuthority);
           return;
         }
       }
       if (seen.size !== ids.length) {
-        await this.invalidate("INVALIDATED", { category: "MALFORMED_RESPONSE", status: response.status, ...responseMetadata(response, body) });
+        await this.invalidate("INVALIDATED", { category: "MALFORMED_RESPONSE", status: response.status, ...responseMetadata(response, body) }, requestAuthority);
         return;
       }
       const at = new Date(this.now()).toISOString();
       if (this.blocked) return;
-      if (imported.length) await this.markImported(imported, at);
-      if (conflicts.length) await this.markConflicts(conflicts, at, "CLIENT_RECORD_CONFLICT");
-      await this.state.update((current) => ({ ...current, failureCount: 0, nextRetryAt: undefined }));
-      if (imported.length || records.length < candidates.length) await this.scheduleIfEligible();
+      if (imported.length && !(await this.markImported(imported, at, requestAuthority))) return;
+      if (conflicts.length && !(await this.markConflicts(conflicts, at, requestAuthority, "CLIENT_RECORD_CONFLICT"))) return;
+      let resetApplied = false;
+      await this.state.update((current) => {
+        if (!authorityStillCurrent(current, requestAuthority)) return current;
+        resetApplied = true;
+        return { ...current, failureCount: 0, nextRetryAt: undefined };
+      });
+      if (!resetApplied) return;
+      if (imported.length || records.length < candidates.length) await this.scheduleIfEligible(0, requestAuthority);
     } finally {
       this.running = false;
     }
   }
 
-  private async retry(retryAfter?: number): Promise<void> {
+  private async retry(authority: RelayAuthoritySnapshot, retryAfter?: number): Promise<void> {
+    let applied = false;
     const next = await this.state.update((current) => {
+      if (!authorityStillCurrent(current, authority)) return current;
+      applied = true;
       const index = Math.min(Math.max(current.failureCount, 0), RETRY_DELAYS_MS.length - 1);
       const delay = Math.max(RETRY_DELAYS_MS[0], RETRY_DELAYS_MS[index], retryAfter ?? 0);
       return { ...current, failureCount: current.failureCount + 1, nextRetryAt: new Date(this.now() + delay).toISOString() };
     });
-    await this.scheduleIfEligible(Math.max(0, Date.parse(next.nextRetryAt!) - this.now()));
+    if (applied) await this.scheduleIfEligible(Math.max(0, Date.parse(next.nextRetryAt!) - this.now()), authority);
   }
 
-  private async invalidate(state: RelayStateSnapshot["state"], failure?: RelayFailureInput): Promise<void> {
-    await this.cancelAlarm();
+  private async invalidate(
+    state: RelayStateSnapshot["state"],
+    failure?: RelayFailureInput,
+    authority?: RelayAuthoritySnapshot,
+  ): Promise<void> {
     const lastFailure = failure
       ? normalizeRelayFailure({ ...failure, occurredAt: new Date(this.now()).toISOString() })
       : undefined;
-    await this.state.update((current) => ({
-      ...current,
-      state,
-      credential: undefined,
-      autoSyncEnabled: false,
-      signedChallengeId: undefined,
-      signedChallengeExpiresAt: undefined,
-      provisionedChallengeId: undefined,
-      nextRetryAt: undefined,
-      ...(lastFailure ? { lastFailure } : {}),
-    }));
+    let applied = false;
+    await this.state.update((current) => {
+      if (authority && !authorityStillCurrent(current, authority)) return current;
+      applied = true;
+      return {
+        ...current,
+        state,
+        credential: undefined,
+        autoSyncEnabled: false,
+        signedChallengeId: undefined,
+        signedChallengeExpiresAt: undefined,
+        provisionedChallengeId: undefined,
+        nextRetryAt: undefined,
+        ...(lastFailure ? { lastFailure } : {}),
+      };
+    });
+    if (applied || !authority) await this.cancelAlarm();
   }
 }
 
