@@ -61,6 +61,14 @@ export type ExtensionConnectionState =
   | { readonly status: "connected"; readonly summary: CodeArchiveCaptureSummaryData }
   | { readonly status: "error" };
 
+/**
+ * Relay metadata is an authority boundary. A missing, timed-out, or malformed
+ * response is not equivalent to an authoritative UNPAIRED result.
+ */
+export type RelayPairingProbe =
+  | { readonly kind: "verified"; readonly pairing: CodeArchiveRelayPairingInfoResponse }
+  | { readonly kind: "unknown" };
+
 export interface DashboardExtensionConnection {
   start(
     onState: (state: ExtensionConnectionState) => void,
@@ -74,6 +82,7 @@ export interface DashboardExtensionConnection {
   readPendingPage?(capability: string, cursor?: string): Promise<unknown>;
   ackImported?(capability: string, importBatchId: string, clientRecordIds: readonly ClientRecordId[]): Promise<boolean>;
   relayPairingInfo?: () => Promise<CodeArchiveRelayPairingInfoResponse | null>;
+  relayPairingStatus?: () => Promise<RelayPairingProbe>;
   relaySignChallenge?: (request: CodeArchiveRelaySignChallengeRequest) => Promise<CodeArchiveRelaySignChallengeResponse | null>;
   relayProvisionGrant?: (request: CodeArchiveRelayGrantProvisionRequest) => Promise<CodeArchiveRelayGrantProvisionResponse | null>;
   relayConfirmRevoke?: (request: CodeArchiveRelayRevokeConfirmedRequest) => Promise<CodeArchiveRelayRevokeConfirmedResponse | null>;
@@ -372,6 +381,17 @@ export function createDashboardExtensionConnection(
           }
         };
 
+        const readRelayPairing = async (): Promise<RelayPairingProbe> => {
+          const pairingRaw = await requestInternal<unknown>({
+            type: "CODEARCHIVE_RELAY_PAIRING_INFO",
+            phase: "REQUEST",
+            protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
+          }, false);
+          return pairingRaw && !safeFailure(pairingRaw) && isPairingInfo(pairingRaw)
+            ? { kind: "verified", pairing: pairingRaw }
+            : { kind: "unknown" };
+        };
+
         void (async () => {
           const ping = await requestInternal<CodeArchivePingResponse>({
             type: "CODEARCHIVE_PING",
@@ -388,12 +408,8 @@ export function createDashboardExtensionConnection(
           if (!summary || safeFailure(summary) || !isSummaryResponse(summary)) { terminalError(); return; }
 
           if (bootstrapDurable) {
-            const pairingRaw = await requestInternal<unknown>({
-              type: "CODEARCHIVE_RELAY_PAIRING_INFO",
-              phase: "REQUEST",
-              protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
-            }, false);
-            const pairing = pairingRaw && !safeFailure(pairingRaw) && isPairingInfo(pairingRaw) ? pairingRaw : null;
+            const pairingProbe = await readRelayPairing();
+            const pairing = pairingProbe.kind === "verified" ? pairingProbe.pairing : null;
             if (pairing?.state === "REVOCATION_PENDING") markDurableLocalSourceStopped();
 
             if (pairing?.state === "ACTIVE" || pairing?.state === "REVOCATION_PENDING") {
@@ -419,7 +435,9 @@ export function createDashboardExtensionConnection(
                 }
               }
             } else {
-              automationReady = true;
+              // An authoritative UNPAIRED response is safe to continue with;
+              // timeout/error/invalid metadata is not an ownership decision.
+              automationReady = pairingProbe.kind === "verified";
             }
             queuedAutomationState = null;
           }
@@ -524,14 +542,23 @@ export function createDashboardExtensionConnection(
     },
 
     async relayPairingInfo() {
+      const probe: RelayPairingProbe = connection.relayPairingStatus
+        ? await connection.relayPairingStatus()
+        : { kind: "unknown" };
+      return probe.kind === "verified" ? probe.pairing : null;
+    },
+
+    async relayPairingStatus() {
       const bridge = activeBridge;
-      if (!bridge) return null;
+      if (!bridge) return { kind: "unknown" };
       const response = await bridge.request<unknown>({
         type: "CODEARCHIVE_RELAY_PAIRING_INFO",
         phase: "REQUEST",
         protocolVersion: CODEARCHIVE_BRIDGE_PROTOCOL_VERSION,
       });
-      return response && !safeFailure(response) && isPairingInfo(response) ? response : null;
+      return response && !safeFailure(response) && isPairingInfo(response)
+        ? { kind: "verified", pairing: response }
+        : { kind: "unknown" };
     },
 
     async relaySignChallenge(request) {

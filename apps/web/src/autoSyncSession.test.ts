@@ -110,6 +110,70 @@ describe("Dashboard auto-sync session controller", () => {
     expect(bridge.startSyncSession.mock.calls).toEqual([["session-a"], ["session-b"]]);
   });
 
+  it("does not create a page-owned writer while relay metadata is unknown", async () => {
+    const startSyncSession = vi.fn(async () => true);
+    const endSyncSession = vi.fn(async () => undefined);
+    const relayPairingStatus = vi.fn(async () => ({ kind: "unknown" as const }));
+    const controller = createAutoSyncSessionController({
+      startSyncSession,
+      endSyncSession,
+      relayPairingInfo: vi.fn(async () => null),
+      relayPairingStatus,
+      relaySignChallenge: vi.fn(async () => null),
+      relayProvisionGrant: vi.fn(async () => null),
+      relayConfirmRevoke: vi.fn(async () => null),
+    }, () => "session-a");
+
+    await controller.setEligibility(true, "account-a");
+
+    expect(relayPairingStatus).toHaveBeenCalledTimes(1);
+    expect(startSyncSession).not.toHaveBeenCalled();
+  });
+
+  it("recovers through the durable path only after verified pairing and server profile", async () => {
+    const remembered = durableProfile();
+    setDurableAutomationProfile(remembered);
+    const profile = vi.spyOn(mainApiDurableAutomationClient, "profile").mockResolvedValue(remembered);
+    const pairing = {
+      type: "CODEARCHIVE_RELAY_PAIRING_INFO" as const,
+      phase: "INFO" as const,
+      protocolVersion: 1 as const,
+      deviceId: remembered.deviceId!,
+      publicKey: "public_key",
+      state: "ACTIVE" as const,
+      grantId: "22222222-2222-4222-8222-222222222222",
+      generation: remembered.generation,
+      expiresAt: "2099-10-04T08:00:00Z",
+    };
+    let probe: { kind: "unknown" } | { kind: "verified"; pairing: typeof pairing } = { kind: "unknown" };
+    const startSyncSession = vi.fn(async () => true);
+    const controller = createAutoSyncSessionController({
+      startSyncSession,
+      endSyncSession: vi.fn(async () => undefined),
+      relayPairingInfo: vi.fn(async () => pairing),
+      relayPairingStatus: vi.fn(async () => probe),
+      relaySignChallenge: vi.fn(async () => null),
+      relayProvisionGrant: vi.fn(async () => null),
+      relayConfirmRevoke: vi.fn(async () => null),
+    }, () => "session-a");
+
+    try {
+      await controller.setEligibility(true, "account-a");
+      expect(startSyncSession).not.toHaveBeenCalled();
+      expect(profile).not.toHaveBeenCalled();
+
+      probe = { kind: "verified", pairing };
+      await controller.setEligibility(false, "");
+      await controller.setEligibility(true, "account-a");
+
+      expect(profile).toHaveBeenCalledTimes(1);
+      expect(startSyncSession).not.toHaveBeenCalled();
+    } finally {
+      profile.mockRestore();
+      setDurableAutomationProfile(null, false);
+    }
+  });
+
   it("teardown preserves an active durable relay route without revoke or profile mutation", async () => {
     setDurableAutomationProfile(durableProfile());
     const profile = vi.spyOn(mainApiDurableAutomationClient, "profile");
@@ -154,6 +218,20 @@ describe("Dashboard auto-sync session controller", () => {
         grantId: "22222222-2222-4222-8222-222222222222",
         generation: 4,
         expiresAt: "2026-10-04T08:00:00Z",
+      })),
+      relayPairingStatus: vi.fn(async () => ({
+        kind: "verified" as const,
+        pairing: {
+          type: "CODEARCHIVE_RELAY_PAIRING_INFO" as const,
+          phase: "INFO" as const,
+          protocolVersion: 1 as const,
+          deviceId: "device_identity_1234",
+          publicKey: "public_key",
+          state: "ACTIVE" as const,
+          grantId: "22222222-2222-4222-8222-222222222222",
+          generation: 4,
+          expiresAt: "2026-10-04T08:00:00Z",
+        },
       })),
       relaySignChallenge: vi.fn(async () => null),
       relayProvisionGrant: vi.fn(async () => null),

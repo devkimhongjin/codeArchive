@@ -239,7 +239,7 @@ describe("Dashboard automatic pending catch-up", () => {
     expect(bridge.beginImport).toHaveBeenCalledTimes(1);
   });
 
-  it("explains the reconnect re-enable fence and drains after an explicit Extension ON", async () => {
+  it("reactivates remembered page-owned consent after a transient reconnect", async () => {
     const bridge = pendingConnection(1, [pendingRecord]);
     render(<App
       dataSource={{ listSolutions: async () => [] }}
@@ -261,15 +261,6 @@ describe("Dashboard automatic pending catch-up", () => {
     await act(async () => bridge.setState({
       status: "connected",
       summary: { protocolVersion: 1, pendingCount: 1, allCount: 1, revision: 2 },
-    }));
-    await waitFor(() => expect(screen.getByText("동의 저장됨 · Extension에서 자동 동기화 ON을 눌러 자동 전송을 재개하세요")).toBeInTheDocument());
-    expect(bridge.beginImport).toHaveBeenCalledTimes(1);
-
-    await act(async () => bridge.sendAutomation({
-      type: "CODEARCHIVE_AUTOMATION_SET_REQUEST",
-      protocolVersion: 1,
-      automation: "AUTO_SYNC",
-      enabled: true,
     }));
     await waitFor(() => expect(bridge.beginImport).toHaveBeenCalledTimes(2));
     expect(screen.getByText("자동 동기화 활성 · pending 풀이 자동 전송됩니다")).toBeInTheDocument();

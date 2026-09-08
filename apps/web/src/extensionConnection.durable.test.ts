@@ -63,6 +63,54 @@ describe("Dashboard durable Extension bootstrap", () => {
     setDurableAutomationProfile(null, false);
   });
 
+  it("keeps automation fail-closed when local relay metadata is unavailable", async () => {
+    const port = new FakePort();
+    const states: ExtensionConnectionState[] = [];
+    const profileRequest = vi.spyOn(mainApiDurableAutomationClient, "profile");
+    const connection = createDashboardExtensionConnection({ connect: () => port }, "extension-id", true);
+    connection.start((state) => states.push(state));
+    await reachPairingRequest(port);
+    port.receive({ ok: false, error: { code: "INTERNAL_ERROR", retryable: true } });
+    await flush();
+
+    expect(profileRequest).not.toHaveBeenCalled();
+    expect(states.at(-1)?.status).toBe("connected");
+    const status = connection.relayPairingStatus!();
+    await flush();
+    port.receive({ ok: false, error: { code: "INTERNAL_ERROR", retryable: true } });
+    await expect(status).resolves.toEqual({ kind: "unknown" });
+    expect(connection.publishAutomationState?.({
+      protocolVersion: 1, autoSyncEnabled: true, githubAutoCommitEnabled: false,
+      githubTargetConfigured: false, authenticated: true, connectionAvailable: true, errorCode: null,
+    })).toBe(true);
+    expect(port.sent).not.toContainEqual(expect.objectContaining({ type: "CODEARCHIVE_AUTOMATION_STATE_UPDATE" }));
+  });
+
+  it("publishes automation only after an authoritative UNPAIRED relay response", async () => {
+    const port = new FakePort();
+    const connection = createDashboardExtensionConnection({ connect: () => port }, "extension-id", true);
+    connection.start(() => undefined);
+    await reachPairingRequest(port);
+    port.receive({
+      type: "CODEARCHIVE_RELAY_PAIRING_INFO", phase: "INFO", protocolVersion: 1,
+      deviceId: DEVICE, publicKey: "public_key", state: "UNPAIRED",
+    });
+    await flush();
+
+    const status = connection.relayPairingStatus!();
+    await flush();
+    port.receive({
+      type: "CODEARCHIVE_RELAY_PAIRING_INFO", phase: "INFO", protocolVersion: 1,
+      deviceId: DEVICE, publicKey: "public_key", state: "UNPAIRED",
+    });
+    await expect(status).resolves.toMatchObject({ kind: "verified", pairing: { state: "UNPAIRED" } });
+    connection.publishAutomationState?.({
+      protocolVersion: 1, autoSyncEnabled: true, githubAutoCommitEnabled: false,
+      githubTargetConfigured: false, authenticated: true, connectionAvailable: true, errorCode: null,
+    });
+    expect(port.sent.at(-1)).toMatchObject({ type: "CODEARCHIVE_AUTOMATION_STATE_UPDATE", state: { autoSyncEnabled: true } });
+  });
+
   it("does not publish a stale false automation state before ACTIVE durable authority is restored", async () => {
     const port = new FakePort();
     const states: ExtensionConnectionState[] = [];

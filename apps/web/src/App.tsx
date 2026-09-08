@@ -50,6 +50,7 @@ import {
 } from "./automationControl";
 import { handleExplicitDurableAutomationOff } from "./durableAutomationRuntime";
 import { cancelAllDurableAutomationControllers } from "./durableAutomation";
+import { durableAutomationProfile } from "./durableAutomationState";
 import type {
   CodeArchiveAutomationControlErrorCode,
   ExtensionToDashboardAutomationMessage,
@@ -225,7 +226,13 @@ export function App({
         extensionStateRef.current = state;
         setExtensionState(state);
         if (wasConnected && state.status !== "connected") {
-          automationOffLatchedRef.current = true;
+          // A transient Port/service-worker loss must not turn a page-owned
+          // AUTO_SYNC consent into an explicit OFF. Durable relay state keeps
+          // its fail-closed latch; page-owned sync can re-establish a fresh
+          // session after the bridge reconnects.
+          if (durableAutomationProfile()?.ownershipMode === "DURABLE_SERVER") {
+            automationOffLatchedRef.current = true;
+          }
           setAutomationAutoSyncEnabled(false);
           setGithubAutoCommitEnabled(false);
           drainEligibilityRef.current.eligible = false;
