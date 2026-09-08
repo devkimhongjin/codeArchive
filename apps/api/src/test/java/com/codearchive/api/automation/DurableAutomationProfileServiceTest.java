@@ -105,4 +105,26 @@ class DurableAutomationProfileServiceTest {
         verify(store, never()).update(any(), any(), any(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), anyBoolean(),
                 anyBoolean(), anyBoolean(), anyLong(), any(), anyLong(), any());
     }
+    @Test
+    void profileResponseCarriesOnlyTheBoundedFingerprintForTheAuthenticatedSession() {
+        when(store.ensureSessionBinding(principal.userId(), principal.sessionId(), NOW)).thenReturn(current);
+
+        DurableAutomationProfileStore.Profile result = service.get(principal, ORIGIN);
+
+        assertThat(result.sessionBindingFingerprint()).matches("sb1_[A-Za-z0-9_-]{43}");
+        assertThat(result.sessionBindingFingerprint()).doesNotContain(principal.sessionId().toString());
+        assertThat(result.authSessionId()).isNull();
+    }
+
+    @Test
+    void replacementSessionGetsADifferentFingerprintForTheSameUser() {
+        CodeArchivePrincipal replacement = new CodeArchivePrincipal(
+                principal.userId(), UUID.randomUUID(), principal.githubLogin());
+        when(store.ensureSessionBinding(any(), any(), eq(NOW))).thenReturn(current);
+
+        DurableAutomationProfileStore.Profile prior = service.get(principal, ORIGIN);
+        DurableAutomationProfileStore.Profile next = service.get(replacement, ORIGIN);
+
+        assertThat(next.sessionBindingFingerprint()).isNotEqualTo(prior.sessionBindingFingerprint());
+    }
 }

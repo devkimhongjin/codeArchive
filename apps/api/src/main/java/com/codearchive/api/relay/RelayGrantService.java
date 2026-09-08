@@ -25,6 +25,7 @@ import com.codearchive.api.auth.config.AuthProperties;
 import com.codearchive.api.auth.config.DashboardOriginValidator;
 import com.codearchive.api.auth.security.CodeArchivePrincipal;
 import com.codearchive.api.auth.security.SecureTokenCodec;
+import com.codearchive.api.auth.session.SessionBindingFingerprint;
 import com.codearchive.api.common.exception.CodeArchiveException;
 import com.codearchive.api.common.exception.ErrorCode;
 
@@ -156,7 +157,8 @@ public class RelayGrantService {
                     .addValue("tokenHash", tokens.hash(rawToken))
                     .addValue("issued", Timestamp.from(now))
                     .addValue("expires", Timestamp.from(expires)));
-            return new GrantResponse(grantId, rawToken, device, binding.generation(), expires);
+            return new GrantResponse(grantId, rawToken, device, binding.generation(), expires,
+                    SessionBindingFingerprint.of(principal.sessionId()));
         });
     }
 
@@ -349,5 +351,10 @@ public class RelayGrantService {
     public record GrantRequest(String deviceId, String challengeId, String challenge,
             String publicKey, String signature) {}
     public record GrantResponse(UUID grantId, String credential, String deviceId,
-            long generation, Instant expiresAt) {}
+            long generation, Instant expiresAt, String sessionBindingFingerprint) {
+        public GrantResponse(UUID grantId, String credential, String deviceId,
+                long generation, Instant expiresAt) {
+            this(grantId, credential, deviceId, generation, expiresAt, null);
+        }
+    }
 }

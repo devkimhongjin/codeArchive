@@ -25,6 +25,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import com.codearchive.api.auth.config.AuthProperties;
 import com.codearchive.api.auth.security.CodeArchivePrincipal;
 import com.codearchive.api.auth.security.SecureTokenCodec;
+import com.codearchive.api.auth.session.SessionBindingFingerprint;
 
 @ExtendWith(MockitoExtension.class)
 class RelayGrantServiceTest {
@@ -97,6 +98,18 @@ class RelayGrantServiceTest {
 
         verify(db, times(2)).update(contains("UPDATE relay_grants SET revoked_at"), any(MapSqlParameterSource.class));
         verify(db).update(contains("UPDATE automation_profiles SET generation"), any(MapSqlParameterSource.class));
+    }
+
+    @Test
+    void grantResponseUsesTheSameSessionBindingFingerprintAsTheProfileContract() {
+        RelayGrantService.GrantResponse response = new RelayGrantService.GrantResponse(
+                UUID.randomUUID(), "credential", "device-1234567890", 3, NOW,
+                SessionBindingFingerprint.of(principal.sessionId()));
+
+        assertThat(response.sessionBindingFingerprint())
+                .isEqualTo(SessionBindingFingerprint.of(principal.sessionId()))
+                .matches("sb1_[A-Za-z0-9_-]{43}");
+        assertThat(response.sessionBindingFingerprint()).doesNotContain(principal.sessionId().toString());
     }
 
     private String publicKey() {
