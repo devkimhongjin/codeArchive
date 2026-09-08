@@ -43,7 +43,7 @@ class DurableAutomationProfileServiceTest {
         principal = new CodeArchivePrincipal(UUID.randomUUID(), UUID.randomUUID(), "tester");
         current = new DurableAutomationProfileStore.Profile(principal.userId(), "device-1234567890",
                 4, true, false, "PAGE_OWNED", 2, null, true, true, true, null, 7, NOW);
-        when(store.withLock(principal.userId())).thenReturn(current);
+        lenient().when(store.withLock(principal.userId())).thenReturn(current);
     }
 
     @Test
