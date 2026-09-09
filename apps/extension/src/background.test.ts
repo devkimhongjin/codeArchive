@@ -82,23 +82,15 @@ describe("background capture validation", () => {
     expect(order).toContain("capture-changed");
   });
 
-  it("gives SWEA enrichment a bounded grace and relays even when no performance arrives", async () => {
+  it("keeps relay scheduling alive when Dashboard metadata notification fails", async () => {
     setupChrome();
-    const { scheduleSweaRelayAfterPerformanceGrace, SWEA_PERFORMANCE_RELAY_GRACE_MS } = await import("./background");
+    const { notifyAndScheduleSweaRelay } = await import("./background");
+    const notify = vi.fn(async () => { throw new Error("dashboard unavailable"); });
     const relay = vi.fn(async () => undefined);
-    let scheduled: (() => void) | undefined;
-    let delay = -1;
 
-    scheduleSweaRelayAfterPerformanceGrace(relay, SWEA_PERFORMANCE_RELAY_GRACE_MS, (callback, value) => {
-      scheduled = callback;
-      delay = value;
-      return 1;
-    });
+    await notifyAndScheduleSweaRelay(notify, relay);
 
-    expect(relay).not.toHaveBeenCalled();
-    expect(delay).toBe(SWEA_PERFORMANCE_RELAY_GRACE_MS);
-    scheduled?.();
-    await Promise.resolve();
+    expect(notify).toHaveBeenCalledTimes(1);
     expect(relay).toHaveBeenCalledTimes(1);
   });
 

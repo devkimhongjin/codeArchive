@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canEnrichAcceptedCapturePerformance } from "./solutionRepository";
+import { canEnrichAcceptedCapturePerformance, isRelayCaptureEligible } from "./solutionRepository";
 import type { SolutionRecord } from "./solution";
 
 const savedAt = "2026-08-24T12:00:01.000Z";
@@ -38,5 +38,20 @@ describe("late SWEA performance enrichment guard", () => {
     // listRelayPendingCaptures separately excludes relayImportReceipt records;
     // therefore this does not create an automatic follow-up server transfer.
     expect(canEnrichAcceptedCapturePerformance(acknowledged, savedAt)).toBe(true);
+  });
+});
+
+describe("durable relay eligibility", () => {
+  const now = Date.parse("2026-08-24T12:00:00.000Z");
+
+  it("keeps a no-performance SWEA capture out of every relay trigger until its bound", () => {
+    const deferred: SolutionRecord = { ...record, relayEligibility: { eligibleAt: new Date(now + 5_000).toISOString() } };
+    expect(isRelayCaptureEligible(deferred, now)).toBe(false);
+    expect(isRelayCaptureEligible(deferred, now + 4_999)).toBe(false);
+    expect(isRelayCaptureEligible(deferred, now + 5_000)).toBe(true);
+  });
+
+  it("fails closed for malformed scheduling metadata", () => {
+    expect(isRelayCaptureEligible({ ...record, relayEligibility: { eligibleAt: "not-a-date" } }, now)).toBe(false);
   });
 });
