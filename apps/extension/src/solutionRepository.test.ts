@@ -25,4 +25,18 @@ describe("late SWEA performance enrichment guard", () => {
     expect(canEnrichAcceptedCapturePerformance({ ...record, performance: { executionTime: "1 ms", memoryUsage: "2 kb" } }, savedAt)).toBe(false);
     expect(canEnrichAcceptedCapturePerformance({ ...record, platform: "PROGRAMMERS" }, savedAt)).toBe(false);
   });
+
+  it("still permits local optional enrichment after relay ACK without resetting relay eligibility", () => {
+    const acknowledged: SolutionRecord = {
+      ...record,
+      relayCapture: { grantId: "grant-a", generation: 7, capturedAt: savedAt },
+      relayImportReceipt: { importedAt: "2026-08-24T12:00:03.000Z" },
+    };
+
+    // Relay ACK metadata does not mutate the immutable local capture fields, so
+    // a very-late performance result may still enrich the local archive record.
+    // listRelayPendingCaptures separately excludes relayImportReceipt records;
+    // therefore this does not create an automatic follow-up server transfer.
+    expect(canEnrichAcceptedCapturePerformance(acknowledged, savedAt)).toBe(true);
+  });
 });
