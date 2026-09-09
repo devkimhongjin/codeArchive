@@ -61,6 +61,33 @@ class MemoryState implements RelayStateRepository {
   }
 }
 
+class DeferredReadState extends MemoryState {
+  private firstRead = true;
+  private releaseFirstRead?: () => void;
+  private readonly readStartedPromise: Promise<void>;
+  private signalReadStarted!: () => void;
+  readonly readStarted: Promise<void>;
+
+  constructor(value: RelayStateRecord) {
+    super(value);
+    this.readStartedPromise = new Promise((resolve) => { this.signalReadStarted = resolve; });
+    this.readStarted = this.readStartedPromise;
+  }
+
+  override get(): Promise<RelayStateRecord> {
+    if (!this.firstRead) return super.get();
+    this.firstRead = false;
+    this.signalReadStarted();
+    const snapshot = this.value;
+    return new Promise((resolve) => { this.releaseFirstRead = () => resolve(snapshot); });
+  }
+
+  releaseFirstReadWith(next: RelayStateRecord): void {
+    this.value = next;
+    this.releaseFirstRead?.();
+  }
+}
+
 class MemoryAlarms implements RelayAlarmApi {
   readonly created: number[] = [];
   readonly cleared: string[] = [];
@@ -461,6 +488,56 @@ describe("RelayRuntime", () => {
     expect(stateRepo.value.lastFailure?.status).toBeUndefined();
   });
 
+  it("does not expire a rotated grant when an old schedule snapshot is already expired", async () => {
+    const oldState = state({ expiresAt: new Date(999_999).toISOString() });
+    const stateRepo = new DeferredReadState(oldState);
+    const alarms = new MemoryAlarms();
+    const runtime = new RelayRuntime({ state: stateRepo, alarms, now: () => 1_000_000 });
+
+    const schedule = (runtime as unknown as { scheduleIfEligible: () => Promise<void> }).scheduleIfEligible();
+    await stateRepo.readStarted;
+    stateRepo.releaseFirstReadWith(state({ grantId: "grant-new", generation: 8, credential: "credential-new" }));
+    await schedule;
+
+    expect(stateRepo.value).toMatchObject({ state: "ACTIVE", grantId: "grant-new", generation: 8, credential: "credential-new", autoSyncEnabled: true });
+    expect(stateRepo.value.lastFailure).toBeUndefined();
+    expect(alarms.cleared).toHaveLength(0);
+    expect(alarms.created).toHaveLength(0);
+  });
+
+  it("reestablishes a new grant alarm when old invalidation cleanup follows its installation", async () => {
+    const oldState = state();
+    const oldAuthority = {
+      revision: oldState.revision,
+      deviceId: oldState.deviceId,
+      grantId: oldState.grantId!,
+      generation: oldState.generation!,
+      credential: oldState.credential!,
+    };
+    const stateRepo = new MemoryState(state({ state: "EXPIRED", credential: undefined, autoSyncEnabled: false }));
+    const alarms = new MemoryAlarms();
+    const runtime = new RelayRuntime({ state: stateRepo, alarms, now: () => 1_000_000 });
+
+    await stateRepo.update((current) => ({
+      ...current,
+      state: "ACTIVE",
+      grantId: "grant-new",
+      generation: 8,
+      credential: "credential-new",
+      autoSyncEnabled: true,
+      expiresAt: new Date(2_000_000).toISOString(),
+    }));
+    await (runtime as unknown as { scheduleIfEligible: () => Promise<void> }).scheduleIfEligible();
+    const createdBeforeOldCleanup = alarms.created.length;
+
+    await (runtime as unknown as { cancelAlarm: (authority: typeof oldAuthority) => Promise<void> }).cancelAlarm(oldAuthority);
+
+    expect(createdBeforeOldCleanup).toBe(1);
+    expect(alarms.cleared).toEqual([RELAY_DRAIN_ALARM]);
+    expect(alarms.created.length).toBeGreaterThan(createdBeforeOldCleanup);
+    expect(stateRepo.value).toMatchObject({ state: "ACTIVE", grantId: "grant-new", generation: 8, credential: "credential-new", autoSyncEnabled: true });
+  });
+
   it.each([
     ["HTTP_403", 403, "INVALIDATED", { requestId: "req-403", error: { code: "RELAY_GRANT_REVOKED", detail: "do-not-persist" } }],
     ["HTTP_OTHER", 404, "INVALIDATED", { requestId: "req-404", errorCode: "RELAY_NOT_FOUND", source: "do-not-persist" }],
@@ -629,7 +706,7 @@ describe("RelayRuntime", () => {
       expect(result).toMatchObject({ status: "saved", solutionId: "swea-auto:after-disconnect" });
       expect(stateRepo.value.state).toBe("ACTIVE");
       expect(stateRepo.value.credential).toBe("credential");
-      expect(alarms.created.at(-1)).toBe(relayNow);
+      await vi.waitFor(() => expect(alarms.created.at(-1)).toBe(relayNow));
       await waitForRequest(requests);
       const sent = JSON.parse(String(requests[0]?.body)) as { records: Array<{ clientRecordId: string; capturedAt: string }> };
       expect(sent.records).toHaveLength(1);

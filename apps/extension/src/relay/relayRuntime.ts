@@ -157,6 +157,14 @@ function authoritySnapshot(state: RelayStateRecord): RelayAuthoritySnapshot {
   };
 }
 
+function authoritySnapshotIfPresent(state: RelayStateRecord): RelayAuthoritySnapshot | undefined {
+  if (typeof state.deviceId !== "string" || !state.deviceId
+    || typeof state.grantId !== "string" || !state.grantId
+    || !Number.isSafeInteger(state.generation) || (state.generation as number) <= 0
+    || typeof state.credential !== "string" || !state.credential) return undefined;
+  return authoritySnapshot(state);
+}
+
 function authorityStillCurrent(state: RelayStateRecord, authority: RelayAuthoritySnapshot): boolean {
   // Revision is intentionally not required to remain equal: retry counters and
   // other bookkeeping can advance it without changing the relay authority.
@@ -203,6 +211,7 @@ export class RelayRuntime {
   private readonly markInvalid: (records: readonly SolutionRecord[], at: string, errorCode: string) => Promise<void>;
   private running = false;
   private blocked = false;
+  private alarmQueue: Promise<void> = Promise.resolve();
 
   constructor(dependencies: RelayRuntimeDependencies = {}) {
     this.state = dependencies.state ?? indexedDbRelayStateRepository;
@@ -294,7 +303,7 @@ export class RelayRuntime {
     try {
       const state = await this.state.get();
       if (state.state === "ACTIVE" && !isStateActive(state, this.now())) {
-        await this.invalidate("EXPIRED", { category: "LOCAL_EXPIRED" });
+        await this.invalidate("EXPIRED", { category: "LOCAL_EXPIRED" }, authoritySnapshotIfPresent(state));
       } else if (isStateActive(state, this.now()) && state.autoSyncEnabled) await this.scheduleIfEligible();
     } catch { /* fail closed; pairing or next capture can reconstruct the state */ }
   }
@@ -304,15 +313,39 @@ export class RelayRuntime {
     const state = await this.state.get();
     if (authority && !authorityStillCurrent(state, authority)) return;
     if (state.state === "ACTIVE" && !isStateActive(state, this.now())) {
-      await this.invalidate("EXPIRED", { category: "LOCAL_EXPIRED" });
+      await this.invalidate("EXPIRED", { category: "LOCAL_EXPIRED" }, authority ?? authoritySnapshotIfPresent(state));
       return;
     }
     if (!isStateActive(state, this.now()) || !state.autoSyncEnabled) return;
-    await this.alarms.create(RELAY_DRAIN_ALARM, { when: this.now() + Math.max(0, delayMs) });
+    await this.enqueueAlarmOperation(async () => {
+      if (this.blocked) return;
+      const current = await this.state.get();
+      if (authority && !authorityStillCurrent(current, authority)) return;
+      if (!isStateActive(current, this.now()) || !current.autoSyncEnabled) return;
+      await this.alarms?.create(RELAY_DRAIN_ALARM, { when: this.now() + Math.max(0, delayMs) });
+    });
   }
 
-  private async cancelAlarm(): Promise<void> {
-    await this.alarms?.clear(RELAY_DRAIN_ALARM);
+  private enqueueAlarmOperation(operation: () => Promise<void> | void): Promise<void> {
+    const next = this.alarmQueue.then(operation, operation);
+    this.alarmQueue = next.then(() => undefined, () => undefined);
+    return next;
+  }
+
+  private async cancelAlarm(authority?: RelayAuthoritySnapshot): Promise<void> {
+    if (!this.alarms) return;
+    await this.enqueueAlarmOperation(async () => {
+      await this.alarms!.clear(RELAY_DRAIN_ALARM);
+      if (!authority) return;
+      const current = await this.state.get();
+      if (!isStateActive(current, this.now()) || !current.autoSyncEnabled) return;
+      // The clear may have raced with a rotation (or a reactivation). Once the
+      // clear completes, any currently eligible relay must receive a fresh
+      // alarm; otherwise the old cleanup can erase a newer grant's schedule.
+      await this.alarms!.create(RELAY_DRAIN_ALARM, {
+        when: this.now() + (current.nextRetryAt ? Math.max(0, Date.parse(current.nextRetryAt) - this.now()) : 0),
+      });
+    });
   }
 
   private async disableLocalRelay(): Promise<void> {
@@ -335,7 +368,7 @@ export class RelayRuntime {
     try {
       const state = await this.state.get();
       if (state.state === "ACTIVE" && !isStateActive(state, this.now())) {
-        await this.invalidate("EXPIRED", { category: "LOCAL_EXPIRED" });
+        await this.invalidate("EXPIRED", { category: "LOCAL_EXPIRED" }, authoritySnapshotIfPresent(state));
         return;
       }
       if (!isStateActive(state, this.now()) || !state.autoSyncEnabled) return;
@@ -480,7 +513,7 @@ export class RelayRuntime {
         ...(lastFailure ? { lastFailure } : {}),
       };
     });
-    if (applied || !authority) await this.cancelAlarm();
+    if (applied || !authority) await this.cancelAlarm(authority);
   }
 }
 
