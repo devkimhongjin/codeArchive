@@ -406,6 +406,8 @@ export class RelayRuntime {
         try {
           response = await this.request(`${CODEARCHIVE_API_BASE_URL}/api/v1/relay/captures`, {
             method: "POST",
+            // Relay uses only its narrow grant, never the Dashboard session cookie.
+            credentials: "omit",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${state.credential}` },
             body: JSON.stringify({ records: records.map(payload) }),
             signal: controller.signal,

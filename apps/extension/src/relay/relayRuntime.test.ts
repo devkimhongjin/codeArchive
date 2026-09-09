@@ -297,6 +297,7 @@ describe("RelayRuntime", () => {
     expect(requests).toHaveLength(1);
     expect(JSON.parse(String(requests[0].body)).records).toHaveLength(1);
     expect(requests[0].headers).toMatchObject({ Authorization: "Bearer credential" });
+    expect(requests[0].credentials).toBe("omit");
     expect(JSON.parse(String(requests[0].body)).records[0].solvedAt).toBe("1969-12-31T15:00:00.000Z");
     expect(imported).toEqual([["fresh"]]);
   });

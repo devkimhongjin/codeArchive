@@ -74,7 +74,7 @@ function relayStateLabel(state: RelayPopupState["state"]): string {
 function relayFailureLabel(category: RelayFailureCategory): string {
   switch (category) {
     case "LOCAL_EXPIRED": return "로컬 grant 만료 감지";
-    case "HTTP_401": return "서버 인증 만료 (HTTP 401)";
+    case "HTTP_401": return "서버 인증 거부 (HTTP 401)";
     case "HTTP_403": return "서버 권한 거부 (HTTP 403)";
     case "HTTP_OTHER": return "서버 응답 오류";
     case "MALFORMED_RESPONSE": return "서버 응답 형식 오류";
@@ -151,7 +151,12 @@ function AutomationControls({
     </fieldset>
     <div className="local-relay-controls">
       <p>로컬 relay 상태: {relayLoading ? "불러오는 중..." : relayState.readStatus === "error" ? "읽기 실패" : relayStateLabel(relayState.state)}</p>
-      {!relayLoading && relayState.readStatus !== "error" && relayState.lastFailure && <small role="status">최근 실패: {relayFailureLabel(relayState.lastFailure.category)}{relayState.lastFailure.status && relayState.lastFailure.category === "HTTP_OTHER" ? ` (HTTP ${relayState.lastFailure.status})` : ""}</small>}
+      {!relayLoading && relayState.readStatus !== "error" && relayState.lastFailure && <div className="relay-failure-details" role="status">
+        <small>최근 실패: {relayFailureLabel(relayState.lastFailure.category)}{relayState.lastFailure.status && relayState.lastFailure.category === "HTTP_OTHER" ? ` (HTTP ${relayState.lastFailure.status})` : ""}</small>
+        <small>실패 시각: {Number.isFinite(Date.parse(relayState.lastFailure.occurredAt)) ? formatKstDateTime(relayState.lastFailure.occurredAt) : "제공되지 않음"}</small>
+        <small>서버 오류 코드: {relayState.lastFailure.errorCode ?? "제공되지 않음"}</small>
+        <small>요청 ID: {relayState.lastFailure.requestId ?? "제공되지 않음"}</small>
+      </div>}
       {!relayLoading && relayState.readStatus !== "error" && relayState.state === "ACTIVE" && <button type="button" className="secondary-button" onClick={() => void stopLocalRelay()} disabled={pending !== null}>자동 동기화 로컬 중지</button>}
     </div>
     <p className="automation-guidance" aria-live="polite">{pending ? "Dashboard에 변경을 요청하는 중입니다." : automationGuidance(state)}</p>

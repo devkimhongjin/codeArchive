@@ -117,6 +117,24 @@ describe("Popup automation controls", () => {
     />);
 
     expect(await screen.findByText("최근 실패: 서버 응답 오류 (HTTP 404)")).toBeInTheDocument();
-    expect(screen.queryByText(/req-safe|RELAY_NOT_FOUND/)).not.toBeInTheDocument();
+    expect(screen.getByText("실패 시각: 2026-09-08 15:00:00 KST")).toBeInTheDocument();
+    expect(screen.getByText("서버 오류 코드: RELAY_NOT_FOUND")).toBeInTheDocument();
+    expect(screen.getByText("요청 ID: req-safe")).toBeInTheDocument();
+  });
+
+  it("shows missing server metadata explicitly and does not equate 401 with expiry", async () => {
+    render(<Popup
+      repository={repository()}
+      requestAutomationState={async () => ({ state, forwarded: false })}
+      requestRelayState={async () => ({
+        state: "EXPIRED", autoSyncEnabled: false, readStatus: "ready",
+        lastFailure: { category: "HTTP_401", status: 401, occurredAt: "2026-09-09T00:17:31.000Z" },
+      })}
+    />);
+    expect(await screen.findByText("최근 실패: 서버 인증 거부 (HTTP 401)")).toBeInTheDocument();
+    expect(screen.getByText("실패 시각: 2026-09-09 09:17:31 KST")).toBeInTheDocument();
+    expect(screen.getByText("서버 오류 코드: 제공되지 않음")).toBeInTheDocument();
+    expect(screen.getByText("요청 ID: 제공되지 않음")).toBeInTheDocument();
+    expect(screen.queryByText(/서버 인증 만료/)).not.toBeInTheDocument();
   });
 });
