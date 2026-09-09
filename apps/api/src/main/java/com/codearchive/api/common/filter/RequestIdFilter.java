@@ -5,6 +5,8 @@ import java.util.UUID;
 
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import jakarta.servlet.FilterChain;
@@ -13,6 +15,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 @Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
 public class RequestIdFilter extends OncePerRequestFilter {
 
     public static final String REQUEST_ID_ATTRIBUTE = "requestId";
@@ -27,7 +30,7 @@ public class RequestIdFilter extends OncePerRequestFilter {
 
         String requestId = request.getHeader(REQUEST_ID_HEADER);
 
-        if (requestId == null || requestId.isBlank()) {
+        if (requestId == null || !requestId.matches("[A-Za-z0-9._:-]{1,128}")) {
             requestId = UUID.randomUUID().toString();
         }
 

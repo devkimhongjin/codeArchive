@@ -2,6 +2,9 @@ package com.codearchive.api.relay;
 
 import java.io.IOException;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import com.codearchive.api.common.filter.RequestIdFilter;
 
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -21,6 +24,7 @@ import jakarta.servlet.http.HttpServletResponse;
  * into an ordinary Dashboard credential.
  */
 public class RelayGrantAuthenticationFilter extends OncePerRequestFilter {
+    private static final Logger log = LoggerFactory.getLogger(RelayGrantAuthenticationFilter.class);
 
     public static final String RELAY_INGEST_PATH = "/api/v1/relay/captures";
     public static final String RELAY_AUTHORITY = "RELAY_INGEST";
@@ -48,6 +52,7 @@ public class RelayGrantAuthenticationFilter extends OncePerRequestFilter {
 
         String bearer = bearer(request);
         if (bearer == null) {
+            if (isIngest(request)) logRejection(request, "MISSING_BEARER");
             filterChain.doFilter(request, response);
             return;
         }
@@ -55,6 +60,10 @@ public class RelayGrantAuthenticationFilter extends OncePerRequestFilter {
         var principal = grants.authenticate(bearer);
         if (isIngest(request)) {
             if (principal.isEmpty()) {
+                String reason;
+                try { reason = grants.authenticationRejectionReason(bearer); }
+                catch (RuntimeException ignored) { reason = "DIAGNOSTIC_UNAVAILABLE"; }
+                logRejection(request, reason);
                 entryPoint.commence(request, response,
                         new org.springframework.security.authentication.BadCredentialsException(
                                 "Invalid relay credential"));
@@ -85,6 +94,11 @@ public class RelayGrantAuthenticationFilter extends OncePerRequestFilter {
                 && (context + DURABLE_INVOCATION_PATH).equals(
                         request.getRequestURI()
                 );
+    }
+
+    private void logRejection(HttpServletRequest request, String reason) {
+        log.info("relay_auth_rejected requestId={} reason={}",
+                request.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE), reason);
     }
 
     private boolean isIngest(HttpServletRequest request) {
