@@ -17,8 +17,6 @@ import { backgroundRelayRuntime } from "./relay/relayRuntime";
 
 type BackgroundResponse = SaveResponse | AuthLoginResponse;
 
-export const SWEA_PERFORMANCE_RELAY_GRACE_MS = 5_000;
-
 declare const chrome: {
   runtime: {
     onMessage: { addListener(listener: (message: unknown, sender: unknown, sendResponse: (response: unknown) => void) => boolean | void): void };
@@ -66,12 +64,13 @@ export async function saveThenSyncAcceptedCapture(capture: AcceptedCapture, depe
   return localResult;
 }
 
-export function scheduleSweaRelayAfterPerformanceGrace(
+export async function notifyAndScheduleSweaRelay(
+  notify: () => Promise<void> = notifyDashboardCaptureChanged,
   relay: () => Promise<void> = () => backgroundRelayRuntime.onCaptureCommitted(),
-  delayMs = SWEA_PERFORMANCE_RELAY_GRACE_MS,
-  schedule: (callback: () => void, delay: number) => unknown = (callback, delay) => globalThis.setTimeout(callback, delay),
-): void {
-  schedule(() => { void relay().catch(() => undefined); }, delayMs);
+): Promise<void> {
+  const relayPromise = relay().catch(() => undefined);
+  await notify().catch(() => undefined);
+  await relayPromise;
 }
 
 export async function runBackgroundLogin(authService: Pick<CodeArchiveAuthService, "login">): Promise<AuthLoginResponse> {
@@ -89,13 +88,7 @@ const defaultDependencies: CaptureSyncDependencies = {
 
 const sweaDependencies: CaptureSyncDependencies = {
   saveCapture: saveAcceptedCapture,
-  onCaptureCommitted: async () => {
-    await notifyDashboardCaptureChanged();
-    // SWEA performance is optional metadata. Give the post-save enrichment one
-    // bounded chance to land before the first durable relay transfer, then send
-    // regardless. RelayRuntime reconstruction remains the MV3 restart fallback.
-    scheduleSweaRelayAfterPerformanceGrace();
-  },
+  onCaptureCommitted: notifyAndScheduleSweaRelay,
 };
 
 registerExternalDashboardBridge(chrome.runtime, CODEARCHIVE_DASHBOARD_ORIGIN);
