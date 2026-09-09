@@ -11,6 +11,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import com.codearchive.api.auth.AuthService;
+import com.codearchive.api.common.filter.RequestIdFilter;
+import com.codearchive.api.relay.RelayGrantAuthenticationFilter;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -60,6 +62,12 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
         );
 
         if (bearerToken != null && cookieToken != null) {
+            if ("POST".equals(request.getMethod()) &&
+                    (request.getContextPath() + RelayGrantAuthenticationFilter.RELAY_INGEST_PATH).equals(request.getRequestURI())) {
+                org.slf4j.LoggerFactory.getLogger(ApiAuthenticationFilter.class).info(
+                        "relay_auth_rejected requestId={} reason=AMBIGUOUS_BEARER_AND_COOKIE",
+                        request.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE));
+            }
             rejectAuthentication(request, response);
             return;
         }

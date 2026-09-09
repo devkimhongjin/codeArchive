@@ -2,6 +2,9 @@ package com.codearchive.api.relay;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -11,8 +14,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -25,6 +31,7 @@ import com.codearchive.api.common.exception.CodeArchiveException;
         "codearchive.auth.dashboard-origin=https://codearchive-dashboard-beta.onrender.com"
 })
 @Testcontainers
+@AutoConfigureMockMvc
 class RelaySessionBindingPostgresIntegrationTest {
 
     @Container
@@ -34,6 +41,45 @@ class RelaySessionBindingPostgresIntegrationTest {
     @Autowired JdbcTemplate db;
     @Autowired RelayGrantService grants;
     @Autowired SecureTokenCodec tokens;
+    @Autowired MockMvc mvc;
+
+    @Test
+    void realGrantTraversesFullChainAndPersistsIdempotently() throws Exception {
+        UUID user = user();
+        UUID session = session(user, Instant.now().plusSeconds(3600));
+        UUID grant = grant(user, session, 7);
+        String raw = "synthetic-relay-" + UUID.randomUUID();
+        db.update("UPDATE relay_grants SET token_hash=? WHERE id=?", tokens.hash(raw), grant);
+        profile(user, session, 7);
+
+        String capture = """
+                {"records":[{"clientRecordId":"synthetic-relay-record","platform":"PROGRAMMERS",
+                "problemNumber":"1234","title":"Synthetic capture","language":"Java",
+                "code":"class Synthetic {}","result":"ACCEPTED",
+                "solvedAt":"2026-09-01T00:00:00Z","observedAt":"2026-09-01T00:00:00Z",
+                "capturedAt":"2026-09-01T00:00:00Z","aiUsage":"unknown"}]}
+                """;
+        for (String outcome : new String[] {"IMPORTED", "EXISTING"}) {
+            mvc.perform(post("/api/v1/relay/captures")
+                            .header("Origin", "chrome-extension://oohlcmihldmfninmdcmanddfmhoonmdl")
+                            .header("Authorization", "Bearer " + raw)
+                            .contentType(MediaType.APPLICATION_JSON).content(capture))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true))
+                    .andExpect(jsonPath("$.data.results[0].outcome").value(outcome))
+                    .andExpect(jsonPath("$.data.results[0].ackEligible").value(true));
+        }
+        assertThat(db.queryForObject("SELECT count(*) FROM solutions WHERE user_id=?", Long.class, user))
+                .isEqualTo(1);
+
+        db.update("UPDATE relay_grants SET revoked_at=clock_timestamp() WHERE id=?", grant);
+        assertThat(grants.authenticationRejectionReason(raw)).isEqualTo("GRANT_REVOKED");
+        mvc.perform(post("/api/v1/relay/captures")
+                        .header("Authorization", "Bearer " + raw)
+                        .contentType(MediaType.APPLICATION_JSON).content(capture))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("AUTH_REQUIRED"));
+    }
 
     @AfterEach
     void clean() { db.update("DELETE FROM users"); }
@@ -48,15 +94,19 @@ class RelaySessionBindingPostgresIntegrationTest {
         profile(user, session, 7);
 
         assertThat(grants.authenticate(raw)).isPresent();
+        assertThat(grants.authenticationRejectionReason(raw)).isEqualTo("VALID_AT_DIAGNOSTIC_CHECK");
+        assertThat(grants.authenticationRejectionReason("synthetic-unrecognized" )).isEqualTo("TOKEN_NOT_FOUND");
         grants.requireCurrentGeneration(new RelayGrantPrincipal(user, grant, "device-1234567890", 7));
         db.update("UPDATE auth_sessions SET expires_at=? WHERE id=?", Timestamp.from(Instant.now().minusSeconds(1)), session);
         assertThat(grants.authenticate(raw)).isEmpty();
+        assertThat(grants.authenticationRejectionReason(raw)).isEqualTo("SESSION_EXPIRED");
 
         db.update("UPDATE auth_sessions SET expires_at=?,revoked_at=NULL WHERE id=?",
                 Timestamp.from(Instant.now().plusSeconds(3600)), session);
         assertThat(grants.authenticate(raw)).isPresent();
         db.update("UPDATE auth_sessions SET revoked_at=clock_timestamp() WHERE id=?", session);
         assertThat(grants.authenticate(raw)).isEmpty();
+        assertThat(grants.authenticationRejectionReason(raw)).isEqualTo("SESSION_REVOKED");
 
         UUID replacement = session(user, Instant.now().plusSeconds(3600));
         db.update("UPDATE automation_profiles SET auth_session_id=?,generation=8 WHERE user_id=?", replacement, user);

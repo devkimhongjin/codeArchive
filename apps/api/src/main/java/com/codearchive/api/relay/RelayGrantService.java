@@ -215,6 +215,25 @@ public class RelayGrantService {
                 .stream().findFirst();
     }
 
+    /** Diagnostic snapshot only: never used to grant access or returned to callers. */
+    public String authenticationRejectionReason(String rawToken) {
+        if (rawToken == null || rawToken.isBlank()) return "MISSING_BEARER";
+        return db.query("""
+                SELECT CASE
+                  WHEN g.revoked_at IS NOT NULL THEN 'GRANT_REVOKED'
+                  WHEN g.expires_at <= :now THEN 'GRANT_EXPIRED'
+                  WHEN s.id IS NULL THEN 'SESSION_MISSING'
+                  WHEN s.revoked_at IS NOT NULL THEN 'SESSION_REVOKED'
+                  WHEN s.expires_at <= :now THEN 'SESSION_EXPIRED'
+                  ELSE 'VALID_AT_DIAGNOSTIC_CHECK'
+                END
+                FROM relay_grants g LEFT JOIN auth_sessions s ON s.id=g.auth_session_id
+                WHERE g.token_hash=:hash
+                """, new MapSqlParameterSource("hash", tokens.hash(rawToken))
+                        .addValue("now", Timestamp.from(clock.instant())),
+                (rs, index) -> rs.getString(1)).stream().findFirst().orElse("TOKEN_NOT_FOUND");
+    }
+
     public void requireCurrentGeneration(RelayGrantPrincipal principal) {
         if (principal == null) throw new CodeArchiveException(ErrorCode.RELAY_GRANT_INVALID);
         boolean valid = db.query("""
