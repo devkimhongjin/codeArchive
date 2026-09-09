@@ -82,6 +82,26 @@ describe("background capture validation", () => {
     expect(order).toContain("capture-changed");
   });
 
+  it("gives SWEA enrichment a bounded grace and relays even when no performance arrives", async () => {
+    setupChrome();
+    const { scheduleSweaRelayAfterPerformanceGrace, SWEA_PERFORMANCE_RELAY_GRACE_MS } = await import("./background");
+    const relay = vi.fn(async () => undefined);
+    let scheduled: (() => void) | undefined;
+    let delay = -1;
+
+    scheduleSweaRelayAfterPerformanceGrace(relay, SWEA_PERFORMANCE_RELAY_GRACE_MS, (callback, value) => {
+      scheduled = callback;
+      delay = value;
+      return 1;
+    });
+
+    expect(relay).not.toHaveBeenCalled();
+    expect(delay).toBe(SWEA_PERFORMANCE_RELAY_GRACE_MS);
+    scheduled?.();
+    await Promise.resolve();
+    expect(relay).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps local save successful when bridge notification or later legacy sync fails", async () => {
     setupChrome();
     const { saveThenSyncAcceptedCapture } = await import("./background");
