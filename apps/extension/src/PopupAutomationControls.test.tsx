@@ -66,7 +66,7 @@ describe("Popup automation controls", () => {
     fireEvent.click(stop);
     await waitFor(() => expect(stopRelayLocally).toHaveBeenCalledOnce());
     expect(setAutomation).not.toHaveBeenCalled();
-    expect(await screen.findByText("로컬 relay 상태: 해지 대기")).toBeInTheDocument();
+    expect(await screen.findByText("relay 권한: 해지 대기")).toBeInTheDocument();
   });
 
   it.each([
@@ -80,7 +80,7 @@ describe("Popup automation controls", () => {
       requestRelayState={async () => ({ state: relayState, autoSyncEnabled: false, readStatus: "ready" })}
     />);
 
-    expect(await screen.findByText(`로컬 relay 상태: ${label}`)).toBeInTheDocument();
+    expect(await screen.findByText(`relay 권한: ${label}`)).toBeInTheDocument();
   });
 
   it("renders loading and read-error relay diagnostics instead of swallowing them", async () => {
@@ -91,9 +91,9 @@ describe("Popup automation controls", () => {
       requestAutomationState={async () => ({ state, forwarded: false })}
       requestRelayState={() => pending}
     />);
-    expect(screen.getByText("로컬 relay 상태: 불러오는 중...")).toBeInTheDocument();
+    expect(screen.getByText("relay 권한: 확인 중...")).toBeInTheDocument();
     resolve({ state: "UNPAIRED", autoSyncEnabled: false, readStatus: "ready" });
-    await waitFor(() => expect(screen.getByText("로컬 relay 상태: 비활성 · 페어링 안 됨")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("relay 권한: 비활성 · 페어링 안 됨")).toBeInTheDocument());
 
     view.unmount();
     render(<Popup
@@ -101,7 +101,7 @@ describe("Popup automation controls", () => {
       requestAutomationState={async () => ({ state, forwarded: false })}
       requestRelayState={async () => { throw new Error("state read failed"); }}
     />);
-    expect(await screen.findByText("로컬 relay 상태: 읽기 실패")).toBeInTheDocument();
+    expect(await screen.findByText("relay 권한: 읽기 실패")).toBeInTheDocument();
   });
 
   it("renders a sanitized last-failure category without exposing response content", async () => {

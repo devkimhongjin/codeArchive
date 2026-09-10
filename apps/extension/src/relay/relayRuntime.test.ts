@@ -916,4 +916,30 @@ describe("RelayRuntime", () => {
 
     expect(calls).toBe(1);
   });
+
+  it("keeps the durable retry marker when manual retry is blocked or already running", async () => {
+    const nextRetryAt = new Date(1_000_500).toISOString();
+    const blockedState = new MemoryState(state({ nextRetryAt }));
+    const blocked = new RelayRuntime({ state: blockedState, now: () => 1_000_000, listPending: async () => [record("blocked")] });
+    blocked.onMultipleDashboardTabs();
+    await blocked.retryNow();
+    expect(blockedState.value.nextRetryAt).toBe(nextRetryAt);
+
+    let releaseList!: () => void;
+    const runningState = new MemoryState(state({ nextRetryAt }));
+    const running = new RelayRuntime({ state: runningState, now: () => 1_000_000, listPending: async () => new Promise((resolve) => { releaseList = () => resolve([record("running")]); }), fetch: async () => response([]) });
+    const drain = running.drain();
+    await running.retryNow();
+    expect(runningState.value.nextRetryAt).toBe(nextRetryAt);
+    releaseList?.();
+    await drain;
+  });
+
+  it("clears only the retry gate when a manual retry starts a valid drain", async () => {
+    const nextRetryAt = new Date(1_000_500).toISOString();
+    const stateRepo = new MemoryState(state({ nextRetryAt }));
+    const runtime = new RelayRuntime({ state: stateRepo, now: () => 1_000_000, listPending: async () => [], nextEligibleAt: async () => undefined });
+    await runtime.retryNow();
+    expect(stateRepo.value.nextRetryAt).toBeUndefined();
+  });
 });

@@ -153,7 +153,7 @@ function AutomationControls({
       <label><input type="checkbox" aria-label="GitHub 자동 커밋" checked={state.githubAutoCommitEnabled} onChange={(event) => void changeAutomation("GITHUB_AUTO_COMMIT", event.target.checked)} /> GitHub 자동 커밋</label>
     </fieldset>
     <div className="local-relay-controls">
-      <p>로컬 relay 상태: {relayLoading ? "불러오는 중..." : relayState.readStatus === "error" ? "읽기 실패" : relayStateLabel(relayState.state)}</p>
+      <p>relay 권한: {relayLoading ? "확인 중..." : relayState.readStatus === "error" ? "읽기 실패" : relayStateLabel(relayState.state)}</p>
       {relayState.nextRetryAt && <small>다음 자동 재시도: {formatKstDateTime(relayState.nextRetryAt)}</small>}
       {!relayLoading && relayState.readStatus !== "error" && relayState.lastFailure && <div className="relay-failure-details" role="status">
         <small>최근 실패: {relayFailureLabel(relayState.lastFailure.category)}{relayState.lastFailure.status && relayState.lastFailure.category === "HTTP_OTHER" ? ` (HTTP ${relayState.lastFailure.status})` : ""}</small>

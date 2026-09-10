@@ -278,8 +278,7 @@ export class RelayRuntime {
   }
 
   async retryNow(): Promise<RelayPopupState> {
-    await this.state.update((current) => current.nextRetryAt ? { ...current, nextRetryAt: undefined } : current);
-    await this.drain().catch(() => undefined);
+    await this.drain({ ignoreRetry: true }).catch(() => undefined);
     return this.getPopupState();
   }
 
@@ -375,7 +374,7 @@ export class RelayRuntime {
     }));
   }
 
-  async drain(): Promise<void> {
+  async drain(options: { ignoreRetry?: boolean } = {}): Promise<void> {
     if (this.running || this.blocked) return;
     this.running = true;
     try {
@@ -386,8 +385,12 @@ export class RelayRuntime {
       }
       if (!isStateActive(state, this.now()) || !state.autoSyncEnabled) return;
       if (state.nextRetryAt && Date.parse(state.nextRetryAt) > this.now()) {
-        await this.scheduleIfEligible(Date.parse(state.nextRetryAt) - this.now());
-        return;
+        if (options.ignoreRetry) {
+          await this.state.update((current) => authorityStillCurrent(current, authoritySnapshot(state)) ? { ...current, nextRetryAt: undefined } : current);
+        } else {
+          await this.scheduleIfEligible(Date.parse(state.nextRetryAt) - this.now());
+          return;
+        }
       }
       const grantId = state.grantId as string;
       const generation = state.generation as number;
