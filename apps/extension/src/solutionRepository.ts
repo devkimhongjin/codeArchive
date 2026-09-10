@@ -17,6 +17,7 @@ const REVISION_KEY = "revision";
 
 export interface RelayStateSnapshot {
   revision: number;
+  deviceId?: string;
   state: "UNPAIRED" | "ACTIVE" | "REVOCATION_PENDING" | "EXPIRED" | "INVALIDATED";
   grantId?: string;
   credential?: string;
@@ -25,6 +26,14 @@ export interface RelayStateSnapshot {
   autoSyncEnabled?: boolean;
   /** Identity of the last successfully stored grant attempt. */
   provisionedChallengeId?: string;
+}
+
+export interface RelayAuthoritySnapshot {
+  revision: number;
+  deviceId: string;
+  grantId: string;
+  generation: number;
+  credential: string;
 }
 
 export interface SolutionRepository {
@@ -466,11 +475,88 @@ export async function markRelayImportReceipts(clientRecordIds: readonly string[]
   }));
 }
 
+function currentRelayAuthorityMatches(value: RelayStateSnapshot | undefined, authority: RelayAuthoritySnapshot): boolean {
+  // Revision is captured for diagnostics/fencing context, but failureCount and
+  // retry bookkeeping may legitimately advance it without changing authority.
+  // The grant/device/credential identity plus ACTIVE+AUTO_SYNC gate is the
+  // authority predicate; rotations and explicit stops change those fields.
+  return Boolean(value)
+    && value?.state === "ACTIVE"
+    && value.autoSyncEnabled === true
+    && value.deviceId === authority.deviceId
+    && value.grantId === authority.grantId
+    && value.generation === authority.generation
+    && value.credential === authority.credential;
+}
+
+export async function markRelayImportReceiptsIfCurrent(
+  clientRecordIds: readonly string[],
+  importedAt: string,
+  authority: RelayAuthoritySnapshot,
+): Promise<boolean> {
+  const requested = new Set(clientRecordIds);
+  if (requested.size === 0) return true;
+  const db = await openDatabase();
+  try {
+    const transaction = db.transaction([STORE_NAME, META_STORE_NAME, RELAY_STATE_STORE_NAME], "readwrite");
+    const relayState = await requestToPromise(
+      transaction.objectStore(RELAY_STATE_STORE_NAME).get(RELAY_STATE_KEY) as IDBRequest<RelayStateSnapshot | undefined>,
+    );
+    if (!currentRelayAuthorityMatches(relayState, authority)) {
+      await transactionDone(transaction);
+      return false;
+    }
+    const store = transaction.objectStore(STORE_NAME);
+    const records = await requestToPromise(store.getAll()) as SolutionRecord[];
+    let changed = false;
+    for (const record of records) {
+      if (!record.clientRecordId || !requested.has(record.clientRecordId)) continue;
+      store.put({ ...record, relayImportReceipt: { importedAt }, relayConflict: undefined });
+      changed = true;
+    }
+    if (changed) await incrementRevision(transaction);
+    await transactionDone(transaction);
+    return true;
+  } finally { db.close(); }
+}
+
 export async function markRelayConflicts(clientRecordIds: readonly string[], occurredAt: string, errorCode?: string): Promise<void> {
   await updateRelayRecords(clientRecordIds, (record) => ({
     ...record,
     relayConflict: { occurredAt, ...(errorCode ? { errorCode } : {}) },
   }));
+}
+
+export async function markRelayConflictsIfCurrent(
+  clientRecordIds: readonly string[],
+  occurredAt: string,
+  authority: RelayAuthoritySnapshot,
+  errorCode?: string,
+): Promise<boolean> {
+  const requested = new Set(clientRecordIds);
+  if (requested.size === 0) return true;
+  const db = await openDatabase();
+  try {
+    const transaction = db.transaction([STORE_NAME, META_STORE_NAME, RELAY_STATE_STORE_NAME], "readwrite");
+    const relayState = await requestToPromise(
+      transaction.objectStore(RELAY_STATE_STORE_NAME).get(RELAY_STATE_KEY) as IDBRequest<RelayStateSnapshot | undefined>,
+    );
+    if (!currentRelayAuthorityMatches(relayState, authority)) {
+      await transactionDone(transaction);
+      return false;
+    }
+    const store = transaction.objectStore(STORE_NAME);
+    const records = await requestToPromise(store.getAll()) as SolutionRecord[];
+    let changed = false;
+    for (const record of records) {
+      if (!record.clientRecordId || !requested.has(record.clientRecordId)) continue;
+      store.put({ ...record, relayConflict: { occurredAt, ...(errorCode ? { errorCode } : {}) } });
+      changed = true;
+    }
+    if (changed) await incrementRevision(transaction);
+    await transactionDone(transaction);
+    return true;
+  } finally { db.close(); }
 }
 
 export async function markRelayConflictsForRecords(records: readonly SolutionRecord[], occurredAt: string, errorCode?: string): Promise<void> {

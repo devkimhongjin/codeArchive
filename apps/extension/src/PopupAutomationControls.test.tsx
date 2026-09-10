@@ -68,4 +68,73 @@ describe("Popup automation controls", () => {
     expect(setAutomation).not.toHaveBeenCalled();
     expect(await screen.findByText("로컬 relay 상태: 해지 대기")).toBeInTheDocument();
   });
+
+  it.each([
+    ["UNPAIRED", "비활성 · 페어링 안 됨"],
+    ["EXPIRED", "만료됨"],
+    ["INVALIDATED", "무효화됨"],
+  ] as const)("renders the %s relay state", async (relayState, label) => {
+    render(<Popup
+      repository={repository()}
+      requestAutomationState={async () => ({ state, forwarded: false })}
+      requestRelayState={async () => ({ state: relayState, autoSyncEnabled: false, readStatus: "ready" })}
+    />);
+
+    expect(await screen.findByText(`로컬 relay 상태: ${label}`)).toBeInTheDocument();
+  });
+
+  it("renders loading and read-error relay diagnostics instead of swallowing them", async () => {
+    let resolve!: (value: { state: "UNPAIRED"; autoSyncEnabled: boolean; readStatus: "ready" }) => void;
+    const pending = new Promise<{ state: "UNPAIRED"; autoSyncEnabled: boolean; readStatus: "ready" }>((next) => { resolve = next; });
+    const view = render(<Popup
+      repository={repository()}
+      requestAutomationState={async () => ({ state, forwarded: false })}
+      requestRelayState={() => pending}
+    />);
+    expect(screen.getByText("로컬 relay 상태: 불러오는 중...")).toBeInTheDocument();
+    resolve({ state: "UNPAIRED", autoSyncEnabled: false, readStatus: "ready" });
+    await waitFor(() => expect(screen.getByText("로컬 relay 상태: 비활성 · 페어링 안 됨")).toBeInTheDocument());
+
+    view.unmount();
+    render(<Popup
+      repository={repository()}
+      requestAutomationState={async () => ({ state, forwarded: false })}
+      requestRelayState={async () => { throw new Error("state read failed"); }}
+    />);
+    expect(await screen.findByText("로컬 relay 상태: 읽기 실패")).toBeInTheDocument();
+  });
+
+  it("renders a sanitized last-failure category without exposing response content", async () => {
+    render(<Popup
+      repository={repository()}
+      requestAutomationState={async () => ({ state, forwarded: false })}
+      requestRelayState={async () => ({
+        state: "INVALIDATED",
+        autoSyncEnabled: false,
+        readStatus: "ready",
+        lastFailure: { category: "HTTP_OTHER", status: 404, occurredAt: "2026-09-08T06:00:00.000Z", requestId: "req-safe", errorCode: "RELAY_NOT_FOUND" },
+      })}
+    />);
+
+    expect(await screen.findByText("최근 실패: 서버 응답 오류 (HTTP 404)")).toBeInTheDocument();
+    expect(screen.getByText("실패 시각: 2026-09-08 15:00:00 KST")).toBeInTheDocument();
+    expect(screen.getByText("서버 오류 코드: RELAY_NOT_FOUND")).toBeInTheDocument();
+    expect(screen.getByText("요청 ID: req-safe")).toBeInTheDocument();
+  });
+
+  it("shows missing server metadata explicitly and does not equate 401 with expiry", async () => {
+    render(<Popup
+      repository={repository()}
+      requestAutomationState={async () => ({ state, forwarded: false })}
+      requestRelayState={async () => ({
+        state: "EXPIRED", autoSyncEnabled: false, readStatus: "ready",
+        lastFailure: { category: "HTTP_401", status: 401, occurredAt: "2026-09-09T00:17:31.000Z" },
+      })}
+    />);
+    expect(await screen.findByText("최근 실패: 서버 인증 거부 (HTTP 401)")).toBeInTheDocument();
+    expect(screen.getByText("실패 시각: 2026-09-09 09:17:31 KST")).toBeInTheDocument();
+    expect(screen.getByText("서버 오류 코드: 제공되지 않음")).toBeInTheDocument();
+    expect(screen.getByText("요청 ID: 제공되지 않음")).toBeInTheDocument();
+    expect(screen.queryByText(/서버 인증 만료/)).not.toBeInTheDocument();
+  });
 });

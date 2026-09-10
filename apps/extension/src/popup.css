@@ -33,6 +33,7 @@ h2 { margin: 0; font-size: 16px; }
 .automation-controls input { accent-color: #4658c9; }
 .automation-controls fieldset:disabled { opacity: .55; }
 .automation-guidance { margin: 0; }
+.relay-failure-details { display: grid; gap: 4px; line-height: 1.5; overflow-wrap: anywhere; user-select: text; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .local-archive-hint { margin: 0 0 10px; }
 .detection-card { margin-top: 16px; padding: 12px; border: 1px solid #dce2ef; border-radius: 10px; background: white; }
