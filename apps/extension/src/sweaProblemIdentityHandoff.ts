@@ -131,7 +131,12 @@ export function createProblemContestIdHandoffStore(
 
 export function detailProblemContestId(document: Document, url: URL): string | null {
   if (url.origin !== "https://swexpertacademy.com" || url.pathname !== "/main/code/problem/problemDetail.do") return null;
-  const values = Array.from(document.querySelectorAll<HTMLInputElement>("#contestProbId, input[name='contestProbId']"))
-    .map((input) => input.value.trim()).filter(Boolean);
-  return values.at(-1) ?? (url.searchParams.get("contestProbId")?.trim() || null);
+  const candidates = new Set<Element>(document.querySelectorAll("#contestProbId, input[name='contestProbId']"));
+  if (candidates.size !== 1) return null;
+  const candidate = candidates.values().next().value as HTMLInputElement | undefined;
+  if (!candidate || typeof candidate.value !== "string") return null;
+  const problemContestId = candidate.value.trim();
+  const queryIds = url.searchParams.getAll("contestProbId");
+  if (queryIds.length !== 1 || !queryIds[0] || queryIds[0].trim() !== problemContestId) return null;
+  return problemContestId;
 }
