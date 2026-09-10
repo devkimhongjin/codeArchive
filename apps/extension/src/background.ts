@@ -12,7 +12,7 @@ import { syncSolutionRecord, type SolutionSyncDependencies } from "./solutionSyn
 import { createProblemContestIdHandoffStore, SWEA_CONSUME_PROBLEM_CONTEST_ID, SWEA_STORE_PROBLEM_CONTEST_ID } from "./sweaProblemIdentityHandoff";
 import { SWEA_PROBLEM_DETAIL_PATH, SWEA_SOLVING_PATH } from "./adapters/swea/sweaSelectors";
 import { POPUP_AUTOMATION_SET, POPUP_AUTOMATION_STATE_GET } from "./automationControl";
-import { POPUP_RELAY_LOCAL_STOP, POPUP_RELAY_STATE_GET } from "./relay/relayPopupControl";
+import { POPUP_RELAY_LOCAL_STOP, POPUP_RELAY_RETRY_NOW, POPUP_RELAY_STATE_GET } from "./relay/relayPopupControl";
 import { backgroundRelayRuntime } from "./relay/relayRuntime";
 
 type BackgroundResponse = SaveResponse | AuthLoginResponse;
@@ -159,6 +159,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (request.type === POPUP_RELAY_LOCAL_STOP) {
     backgroundRelayRuntime.stopLocally().then(sendResponse).catch(() => sendResponse({ state: "UNPAIRED", autoSyncEnabled: false, readStatus: "error" }));
+    return true;
+  }
+
+  if (request.type === POPUP_RELAY_RETRY_NOW) {
+    backgroundRelayRuntime.retryNow().then(sendResponse).catch(() => sendResponse({ state: "UNPAIRED", autoSyncEnabled: false, readStatus: "error" }));
     return true;
   }
 

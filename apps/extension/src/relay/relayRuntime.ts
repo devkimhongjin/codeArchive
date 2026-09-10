@@ -21,6 +21,7 @@ import type { CodeArchiveAutomationState } from "../../../../packages/shared-typ
 
 export const RELAY_DRAIN_ALARM = "codearchive-relay-drain";
 const RETRY_DELAYS_MS = [60_000, 180_000, 600_000, 1_800_000, 3_600_000] as const;
+const COLD_START_RETRY_DELAYS_MS = [30_000, 60_000, 120_000, 300_000, 1_800_000] as const;
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RECORD_CODE_CHARS = 200_000;
 const MAX_BATCH_CODE_CHARS = 1_000_000;
@@ -58,6 +59,7 @@ export interface RelayPopupState {
   generation?: number;
   lastFailure?: RelayFailureDiagnostic;
   readStatus?: "ready" | "error";
+  nextRetryAt?: string;
 }
 
 type AuthorityBoundRecordMutation = (
@@ -264,6 +266,7 @@ export class RelayRuntime {
       ...(state.grantId ? { grantId: state.grantId } : {}),
       ...(state.generation ? { generation: state.generation } : {}),
       ...(state.lastFailure ? { lastFailure: state.lastFailure } : {}),
+      ...(state.nextRetryAt ? { nextRetryAt: state.nextRetryAt } : {}),
       readStatus: "ready",
     };
   }
@@ -271,6 +274,12 @@ export class RelayRuntime {
   async stopLocally(): Promise<RelayPopupState> {
     this.blocked = true;
     await this.disableLocalRelay();
+    return this.getPopupState();
+  }
+
+  async retryNow(): Promise<RelayPopupState> {
+    await this.state.update((current) => current.nextRetryAt ? { ...current, nextRetryAt: undefined } : current);
+    await this.drain().catch(() => undefined);
     return this.getPopupState();
   }
 
@@ -422,7 +431,7 @@ export class RelayRuntime {
           });
         } finally { clearTimeout(timer); }
       } catch {
-        await this.retry(requestAuthority);
+        await this.retry(requestAuthority, undefined, true);
         return;
       }
       if (this.blocked) return;
@@ -487,13 +496,14 @@ export class RelayRuntime {
     }
   }
 
-  private async retry(authority: RelayAuthoritySnapshot, retryAfter?: number): Promise<void> {
+  private async retry(authority: RelayAuthoritySnapshot, retryAfter?: number, networkFailure = false): Promise<void> {
     let applied = false;
     const next = await this.state.update((current) => {
       if (!authorityStillCurrent(current, authority)) return current;
       applied = true;
-      const index = Math.min(Math.max(current.failureCount, 0), RETRY_DELAYS_MS.length - 1);
-      const delay = Math.max(RETRY_DELAYS_MS[0], RETRY_DELAYS_MS[index], retryAfter ?? 0);
+      const delays = networkFailure ? COLD_START_RETRY_DELAYS_MS : RETRY_DELAYS_MS;
+      const index = Math.min(Math.max(current.failureCount, 0), delays.length - 1);
+      const delay = Math.max(delays[0], delays[index], retryAfter ?? 0);
       return { ...current, failureCount: current.failureCount + 1, nextRetryAt: new Date(this.now() + delay).toISOString() };
     });
     if (applied) await this.scheduleIfEligible(Math.max(0, Date.parse(next.nextRetryAt!) - this.now()), authority);

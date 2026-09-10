@@ -2,6 +2,7 @@ import type { RelayPopupState } from "./relayRuntime";
 
 export const POPUP_RELAY_STATE_GET = "CODEARCHIVE_POPUP_RELAY_STATE_GET" as const;
 export const POPUP_RELAY_LOCAL_STOP = "CODEARCHIVE_POPUP_RELAY_LOCAL_STOP" as const;
+export const POPUP_RELAY_RETRY_NOW = "CODEARCHIVE_POPUP_RELAY_RETRY_NOW" as const;
 
 interface PopupRuntime {
   lastError?: { message?: string };
@@ -25,4 +26,10 @@ export function stopPopupRelayLocally(): Promise<RelayPopupState> {
   const value = runtime();
   if (!value) return Promise.resolve(unavailable);
   return new Promise((resolve) => value.sendMessage({ type: POPUP_RELAY_LOCAL_STOP }, (response) => resolve(value.lastError ? unavailable : (response ?? unavailable))));
+}
+
+export function retryPopupRelayNow(): Promise<RelayPopupState> {
+  const value = runtime();
+  if (!value) return Promise.resolve(unavailable);
+  return new Promise((resolve) => value.sendMessage({ type: POPUP_RELAY_RETRY_NOW }, (response) => resolve(value.lastError ? unavailable : (response ?? unavailable))));
 }
