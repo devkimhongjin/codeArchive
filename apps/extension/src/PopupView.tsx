@@ -23,7 +23,8 @@ import {
   type PopupAutomationSetResponse,
   type PopupAutomationStateResponse,
 } from "./automationControl";
-import { requestPopupRelayState, stopPopupRelayLocally } from "./relay/relayPopupControl";
+import { requestPopupRelayState, retryPopupRelayNow, stopPopupRelayLocally } from "./relay/relayPopupControl";
+import type { RelayFailureCategory } from "./relay/relayState";
 import type { RelayPopupState } from "./relay/relayRuntime";
 
 const RECENT_GROUP_LIMIT = 5;
@@ -44,6 +45,7 @@ interface PopupProps {
   setAutomation?: (automation: "AUTO_SYNC" | "GITHUB_AUTO_COMMIT", enabled: boolean) => Promise<PopupAutomationSetResponse>;
   requestRelayState?: () => Promise<RelayPopupState>;
   stopRelayLocally?: () => Promise<RelayPopupState>;
+  retryRelayNow?: () => Promise<RelayPopupState>;
 }
 
 type ViewMode = "list" | "create" | "detail" | "edit";
@@ -60,19 +62,42 @@ function CopySettingsControls({ settings, onChange }: { settings: CopySettings; 
   return <fieldset className="copy-settings"><legend>코드 복사 설정</legend><label><input type="checkbox" checked={settings.includeProblemInfo} onChange={() => toggle("includeProblemInfo")} /> 문제 정보 주석</label><label><input type="checkbox" checked={settings.includeLanguage} onChange={() => toggle("includeLanguage")} /> 언어 주석</label><label><input type="checkbox" checked={settings.includePerformance} onChange={() => toggle("includePerformance")} /> 실행시간·메모리 주석</label></fieldset>;
 }
 
+function relayStateLabel(state: RelayPopupState["state"]): string {
+  switch (state) {
+    case "ACTIVE": return "활성";
+    case "REVOCATION_PENDING": return "해지 대기";
+    case "EXPIRED": return "만료됨";
+    case "INVALIDATED": return "무효화됨";
+    case "UNPAIRED": return "비활성 · 페어링 안 됨";
+  }
+}
+
+function relayFailureLabel(category: RelayFailureCategory): string {
+  switch (category) {
+    case "LOCAL_EXPIRED": return "로컬 grant 만료 감지";
+    case "HTTP_401": return "서버 인증 거부 (HTTP 401)";
+    case "HTTP_403": return "서버 권한 거부 (HTTP 403)";
+    case "HTTP_OTHER": return "서버 응답 오류";
+    case "MALFORMED_RESPONSE": return "서버 응답 형식 오류";
+  }
+}
+
 function AutomationControls({
   requestState,
   setAutomation,
   requestRelayState,
   stopRelayLocally,
+  retryRelayNow,
 }: {
   requestState: () => Promise<PopupAutomationStateResponse>;
   setAutomation: (automation: "AUTO_SYNC" | "GITHUB_AUTO_COMMIT", enabled: boolean) => Promise<PopupAutomationSetResponse>;
   requestRelayState: () => Promise<RelayPopupState>;
   stopRelayLocally: () => Promise<RelayPopupState>;
+  retryRelayNow: () => Promise<RelayPopupState>;
 }) {
   const [state, setState] = useState(() => unavailableAutomationState());
-  const [relayState, setRelayState] = useState<RelayPopupState>({ state: "UNPAIRED", autoSyncEnabled: false });
+  const [relayState, setRelayState] = useState<RelayPopupState>({ state: "UNPAIRED", autoSyncEnabled: false, readStatus: "error" });
+  const [relayLoading, setRelayLoading] = useState(true);
   const [pending, setPending] = useState<"AUTO_SYNC" | "GITHUB_AUTO_COMMIT" | null>(null);
 
   useEffect(() => {
@@ -83,7 +108,16 @@ function AutomationControls({
 
   useEffect(() => {
     let active = true;
-    requestRelayState().then((next) => { if (active) setRelayState(next); }).catch(() => undefined);
+    setRelayLoading(true);
+    requestRelayState().then((next) => {
+      if (!active) return;
+      setRelayState({ ...next, readStatus: next.readStatus ?? "ready" });
+      setRelayLoading(false);
+    }).catch(() => {
+      if (!active) return;
+      setRelayState({ state: "UNPAIRED", autoSyncEnabled: false, readStatus: "error" });
+      setRelayLoading(false);
+    });
     return () => { active = false; };
   }, [requestRelayState]);
 
@@ -102,7 +136,12 @@ function AutomationControls({
 
   async function stopLocalRelay(): Promise<void> {
     setPending("AUTO_SYNC");
-    try { setRelayState(await stopRelayLocally()); } finally { setPending(null); }
+    try {
+      const next = await stopRelayLocally();
+      setRelayState({ ...next, readStatus: next.readStatus ?? "ready" });
+    } catch {
+      setRelayState((current) => ({ ...current, readStatus: "error" }));
+    } finally { setPending(null); }
   }
 
   const disabled = pending !== null || !state.connectionAvailable || state.errorCode !== null;
@@ -113,10 +152,18 @@ function AutomationControls({
       <label><input type="checkbox" aria-label="자동 동기화" checked={state.autoSyncEnabled} onChange={(event) => void changeAutomation("AUTO_SYNC", event.target.checked)} /> 자동 동기화</label>
       <label><input type="checkbox" aria-label="GitHub 자동 커밋" checked={state.githubAutoCommitEnabled} onChange={(event) => void changeAutomation("GITHUB_AUTO_COMMIT", event.target.checked)} /> GitHub 자동 커밋</label>
     </fieldset>
-    {(relayState.state === "ACTIVE" || relayState.state === "REVOCATION_PENDING") && <div className="local-relay-controls">
-      <p>로컬 relay 상태: {relayState.state === "ACTIVE" ? "활성" : "해지 대기"}</p>
-      {relayState.state === "ACTIVE" && <button type="button" className="secondary-button" onClick={() => void stopLocalRelay()} disabled={pending !== null}>자동 동기화 로컬 중지</button>}
-    </div>}
+    <div className="local-relay-controls">
+      <p>relay 권한: {relayLoading ? "확인 중..." : relayState.readStatus === "error" ? "읽기 실패" : relayStateLabel(relayState.state)}</p>
+      {relayState.nextRetryAt && <small>다음 자동 재시도: {formatKstDateTime(relayState.nextRetryAt)}</small>}
+      {!relayLoading && relayState.readStatus !== "error" && relayState.lastFailure && <div className="relay-failure-details" role="status">
+        <small>최근 실패: {relayFailureLabel(relayState.lastFailure.category)}{relayState.lastFailure.status && relayState.lastFailure.category === "HTTP_OTHER" ? ` (HTTP ${relayState.lastFailure.status})` : ""}</small>
+        <small>실패 시각: {Number.isFinite(Date.parse(relayState.lastFailure.occurredAt)) ? formatKstDateTime(relayState.lastFailure.occurredAt) : "제공되지 않음"}</small>
+        <small>서버 오류 코드: {relayState.lastFailure.errorCode ?? "제공되지 않음"}</small>
+        <small>요청 ID: {relayState.lastFailure.requestId ?? "제공되지 않음"}</small>
+      </div>}
+      {!relayLoading && relayState.readStatus !== "error" && relayState.state === "ACTIVE" && <button type="button" className="secondary-button" onClick={() => void stopLocalRelay()} disabled={pending !== null}>자동 동기화 로컬 중지</button>}
+      {!relayLoading && relayState.state === "ACTIVE" && relayState.nextRetryAt && <button type="button" className="secondary-button" onClick={async () => { setPending("AUTO_SYNC"); try { setRelayState(await retryRelayNow()); } finally { setPending(null); } }} disabled={pending !== null}>지금 다시 시도</button>}
+    </div>
     <p className="automation-guidance" aria-live="polite">{pending ? "Dashboard에 변경을 요청하는 중입니다." : automationGuidance(state)}</p>
   </section>;
 }
@@ -134,6 +181,7 @@ export function Popup({
   setAutomation = setPopupAutomation,
   requestRelayState = requestPopupRelayState,
   stopRelayLocally = stopPopupRelayLocally,
+  retryRelayNow = retryPopupRelayNow,
 }: PopupProps) {
   const [form, setForm] = useState<NewSolutionInput>(EMPTY_FORM);
   const [records, setRecords] = useState<SolutionRecord[]>([]);
@@ -174,7 +222,7 @@ export function Popup({
       <button className="primary-button" type="button" onClick={openDashboard}>전체 풀이 보기</button>
       <p className="dashboard-entry-hint">새 탭으로 열립니다. 자동 동기화는 Dashboard에서 직접 켜야 시작됩니다.</p>
     </section>}
-    {mode === "list" && <AutomationControls requestState={requestAutomationState} setAutomation={setAutomation} requestRelayState={requestRelayState} stopRelayLocally={stopRelayLocally} />}
+    {mode === "list" && <AutomationControls requestState={requestAutomationState} setAutomation={setAutomation} requestRelayState={requestRelayState} stopRelayLocally={stopRelayLocally} retryRelayNow={retryRelayNow} />}
     {mode === "list" && <PopupAuthPanel showLegacySignIn={false} authService={authService} repository={repository} onRecordsChange={refreshRecords} />}
     {mode === "list" && <SweaDetectionPanel requestContext={requestPageContext} savedRecords={records} />}
     {showForm && <form className="solution-form" onSubmit={handleSubmit} noValidate><div className="form-heading"><strong>{mode === "edit" ? "풀이 수정" : "새 풀이 등록"}</strong><button className="text-button" type="button" onClick={mode === "edit" ? () => setMode("detail") : backToList}>취소</button></div>{mode === "create" && importedFrom && <p className="import-notice">{importedFrom}에서 가져왔습니다. 내용을 확인한 뒤 저장해주세요.</p>}<div className="field-grid"><label>플랫폼 <span>*</span><input value={form.platform} onChange={(e) => updateField("platform", e.target.value)} /></label><label>문제 번호 <span>*</span><input value={form.problemNumber} onChange={(e) => updateField("problemNumber", e.target.value)} /></label></div><label>제목 <span>*</span><input value={form.title} onChange={(e) => updateField("title", e.target.value)} /></label><label>언어 <span>*</span><input value={form.language} onChange={(e) => updateField("language", e.target.value)} /></label><label>코드 <span>*</span><textarea rows={10} value={form.code} onChange={(e) => updateField("code", e.target.value)} /></label><div className="field-grid"><label>풀이 날짜<input type="date" value={form.solvedAt ?? ""} onChange={(e) => updateField("solvedAt", e.target.value || null)} /></label><label>AI 활용<select value={form.aiUsage} onChange={(e) => updateField("aiUsage", e.target.value as AiUsage)}><option value="unknown">모름</option><option value="not_used">사용 안 함</option><option value="used">사용함</option></select></label></div><div className="field-grid"><label>실행시간<input placeholder="123 ms" value={form.performance?.executionTime ?? ""} onChange={(e) => updatePerformance("executionTime", e.target.value)} /></label><label>메모리<input placeholder="45,678 kb" value={form.performance?.memoryUsage ?? ""} onChange={(e) => updatePerformance("memoryUsage", e.target.value)} /></label></div><p className="form-hint">실행시간과 메모리는 둘 다 입력하거나 둘 다 비워주세요.</p>{error && <p className="error" role="alert">{error}</p>}<button className="primary-button save-button" type="submit" disabled={saving}>{saving ? "저장 중..." : mode === "edit" ? "수정 저장" : "저장"}</button></form>}

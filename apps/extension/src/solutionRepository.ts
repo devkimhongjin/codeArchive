@@ -14,9 +14,11 @@ const META_STORE_NAME = "captureMeta";
 export const RELAY_STATE_STORE_NAME = "relayState";
 export const RELAY_STATE_KEY = "singleton";
 const REVISION_KEY = "revision";
+export const SWEA_RELAY_ENRICHMENT_GRACE_MS = 5_000;
 
 export interface RelayStateSnapshot {
   revision: number;
+  deviceId?: string;
   state: "UNPAIRED" | "ACTIVE" | "REVOCATION_PENDING" | "EXPIRED" | "INVALIDATED";
   grantId?: string;
   credential?: string;
@@ -25,6 +27,14 @@ export interface RelayStateSnapshot {
   autoSyncEnabled?: boolean;
   /** Identity of the last successfully stored grant attempt. */
   provisionedChallengeId?: string;
+}
+
+export interface RelayAuthoritySnapshot {
+  revision: number;
+  deviceId: string;
+  grantId: string;
+  generation: number;
+  credential: string;
 }
 
 export interface SolutionRepository {
@@ -262,6 +272,9 @@ export async function saveAcceptedCapture(capture: AcceptedCapture): Promise<Sav
       && Date.parse(relayState.expiresAt) > Date.now()
       ? { grantId: relayGrantId, generation: relayGeneration, capturedAt: now }
       : undefined;
+    const relayEligibility = relayCapture && capture.platform === "SWEA" && !capture.performance
+      ? { eligibleAt: new Date(Date.parse(now) + SWEA_RELAY_ENRICHMENT_GRACE_MS).toISOString() }
+      : undefined;
     const record: SolutionRecord = {
       id,
       clientRecordId: crypto.randomUUID(),
@@ -280,6 +293,7 @@ export async function saveAcceptedCapture(capture: AcceptedCapture): Promise<Sav
       },
       ...(capture.performance ? { performance: capture.performance } : {}),
       ...(relayCapture ? { relayCapture } : {}),
+      ...(relayEligibility ? { relayEligibility } : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -313,7 +327,9 @@ export async function enrichAcceptedCapturePerformance(
       await done;
       return "skipped";
     }
-    store.put({ ...existing, performance, updatedAt: new Date().toISOString() });
+    const updated = { ...existing, performance, updatedAt: new Date().toISOString() };
+    delete updated.relayEligibility;
+    store.put(updated);
     await incrementRevision(transaction);
     await done;
     return "updated";
@@ -441,7 +457,14 @@ export const indexedDbCaptureBridgeRepository: CaptureBridgeRepository = {
   },
 };
 
-export async function listRelayPendingCaptures(grantId: string, generation: number, limit = 25): Promise<SolutionRecord[]> {
+export function isRelayCaptureEligible(record: SolutionRecord, now = Date.now()): boolean {
+  const eligibleAt = record.relayEligibility?.eligibleAt;
+  if (!eligibleAt) return true;
+  const timestamp = Date.parse(eligibleAt);
+  return Number.isFinite(timestamp) && timestamp <= now;
+}
+
+export async function listRelayPendingCaptures(grantId: string, generation: number, limit = 25, now = Date.now()): Promise<SolutionRecord[]> {
   const db = await openDatabase();
   try {
     const transaction = db.transaction(STORE_NAME, "readonly");
@@ -452,9 +475,28 @@ export async function listRelayPendingCaptures(grantId: string, generation: numb
         && record.relayCapture?.grantId === grantId
         && record.relayCapture?.generation === generation
         && !record.relayImportReceipt
-        && !record.relayConflict)
+        && !record.relayConflict
+        && isRelayCaptureEligible(record, now))
       .sort(captureOrder)
       .slice(0, limit);
+  } finally { db.close(); }
+}
+
+export async function nextRelayCaptureEligibility(grantId: string, generation: number, now = Date.now()): Promise<number | undefined> {
+  const db = await openDatabase();
+  try {
+    const transaction = db.transaction(STORE_NAME, "readonly");
+    const records = await requestToPromise(transaction.objectStore(STORE_NAME).getAll()) as SolutionRecord[];
+    await transactionDone(transaction);
+    const timestamps = records
+      .filter((record) => isAcceptedCaptureRecord(record)
+        && record.relayCapture?.grantId === grantId
+        && record.relayCapture?.generation === generation
+        && !record.relayImportReceipt
+        && !record.relayConflict)
+      .map((record) => Date.parse(record.relayEligibility?.eligibleAt ?? ""))
+      .filter((timestamp) => Number.isFinite(timestamp) && timestamp > now);
+    return timestamps.length ? Math.min(...timestamps) : undefined;
   } finally { db.close(); }
 }
 
@@ -462,15 +504,94 @@ export async function markRelayImportReceipts(clientRecordIds: readonly string[]
   await updateRelayRecords(clientRecordIds, (record) => ({
     ...record,
     relayImportReceipt: { importedAt },
+    relayEligibility: undefined,
     relayConflict: undefined,
   }));
+}
+
+function currentRelayAuthorityMatches(value: RelayStateSnapshot | undefined, authority: RelayAuthoritySnapshot): boolean {
+  // Revision is captured for diagnostics/fencing context, but failureCount and
+  // retry bookkeeping may legitimately advance it without changing authority.
+  // The grant/device/credential identity plus ACTIVE+AUTO_SYNC gate is the
+  // authority predicate; rotations and explicit stops change those fields.
+  return Boolean(value)
+    && value?.state === "ACTIVE"
+    && value.autoSyncEnabled === true
+    && value.deviceId === authority.deviceId
+    && value.grantId === authority.grantId
+    && value.generation === authority.generation
+    && value.credential === authority.credential;
+}
+
+export async function markRelayImportReceiptsIfCurrent(
+  clientRecordIds: readonly string[],
+  importedAt: string,
+  authority: RelayAuthoritySnapshot,
+): Promise<boolean> {
+  const requested = new Set(clientRecordIds);
+  if (requested.size === 0) return true;
+  const db = await openDatabase();
+  try {
+    const transaction = db.transaction([STORE_NAME, META_STORE_NAME, RELAY_STATE_STORE_NAME], "readwrite");
+    const relayState = await requestToPromise(
+      transaction.objectStore(RELAY_STATE_STORE_NAME).get(RELAY_STATE_KEY) as IDBRequest<RelayStateSnapshot | undefined>,
+    );
+    if (!currentRelayAuthorityMatches(relayState, authority)) {
+      await transactionDone(transaction);
+      return false;
+    }
+    const store = transaction.objectStore(STORE_NAME);
+    const records = await requestToPromise(store.getAll()) as SolutionRecord[];
+    let changed = false;
+    for (const record of records) {
+      if (!record.clientRecordId || !requested.has(record.clientRecordId)) continue;
+      store.put({ ...record, relayImportReceipt: { importedAt }, relayConflict: undefined });
+      changed = true;
+    }
+    if (changed) await incrementRevision(transaction);
+    await transactionDone(transaction);
+    return true;
+  } finally { db.close(); }
 }
 
 export async function markRelayConflicts(clientRecordIds: readonly string[], occurredAt: string, errorCode?: string): Promise<void> {
   await updateRelayRecords(clientRecordIds, (record) => ({
     ...record,
+    relayEligibility: undefined,
     relayConflict: { occurredAt, ...(errorCode ? { errorCode } : {}) },
   }));
+}
+
+export async function markRelayConflictsIfCurrent(
+  clientRecordIds: readonly string[],
+  occurredAt: string,
+  authority: RelayAuthoritySnapshot,
+  errorCode?: string,
+): Promise<boolean> {
+  const requested = new Set(clientRecordIds);
+  if (requested.size === 0) return true;
+  const db = await openDatabase();
+  try {
+    const transaction = db.transaction([STORE_NAME, META_STORE_NAME, RELAY_STATE_STORE_NAME], "readwrite");
+    const relayState = await requestToPromise(
+      transaction.objectStore(RELAY_STATE_STORE_NAME).get(RELAY_STATE_KEY) as IDBRequest<RelayStateSnapshot | undefined>,
+    );
+    if (!currentRelayAuthorityMatches(relayState, authority)) {
+      await transactionDone(transaction);
+      return false;
+    }
+    const store = transaction.objectStore(STORE_NAME);
+    const records = await requestToPromise(store.getAll()) as SolutionRecord[];
+    let changed = false;
+    for (const record of records) {
+      if (!record.clientRecordId || !requested.has(record.clientRecordId)) continue;
+      store.put({ ...record, relayConflict: { occurredAt, ...(errorCode ? { errorCode } : {}) } });
+      changed = true;
+    }
+    if (changed) await incrementRevision(transaction);
+    await transactionDone(transaction);
+    return true;
+  } finally { db.close(); }
 }
 
 export async function markRelayConflictsForRecords(records: readonly SolutionRecord[], occurredAt: string, errorCode?: string): Promise<void> {
@@ -484,7 +605,7 @@ export async function markRelayConflictsForRecords(records: readonly SolutionRec
     let changed = false;
     for (const record of stored) {
       if (!ids.has(record.id)) continue;
-      store.put({ ...record, relayConflict: { occurredAt, ...(errorCode ? { errorCode } : {}) } });
+      store.put({ ...record, relayEligibility: undefined, relayConflict: { occurredAt, ...(errorCode ? { errorCode } : {}) } });
       changed = true;
     }
     if (changed) await incrementRevision(transaction);

@@ -61,6 +61,33 @@ class MemoryState implements RelayStateRepository {
   }
 }
 
+class DeferredReadState extends MemoryState {
+  private firstRead = true;
+  private releaseFirstRead?: () => void;
+  private readonly readStartedPromise: Promise<void>;
+  private signalReadStarted!: () => void;
+  readonly readStarted: Promise<void>;
+
+  constructor(value: RelayStateRecord) {
+    super(value);
+    this.readStartedPromise = new Promise((resolve) => { this.signalReadStarted = resolve; });
+    this.readStarted = this.readStartedPromise;
+  }
+
+  override get(): Promise<RelayStateRecord> {
+    if (!this.firstRead) return super.get();
+    this.firstRead = false;
+    this.signalReadStarted();
+    const snapshot = this.value;
+    return new Promise((resolve) => { this.releaseFirstRead = () => resolve(snapshot); });
+  }
+
+  releaseFirstReadWith(next: RelayStateRecord): void {
+    this.value = next;
+    this.releaseFirstRead?.();
+  }
+}
+
 class MemoryAlarms implements RelayAlarmApi {
   readonly created: number[] = [];
   readonly cleared: string[] = [];
@@ -215,8 +242,29 @@ async function waitForRequest(requests: readonly RequestInit[]): Promise<void> {
   await vi.waitFor(() => expect(requests).toHaveLength(1));
 }
 
+function responseWithBody(body: unknown, status = 200, headers: Record<string, string> = {}): RelayFetchResponse {
+  return {
+    status,
+    headers: { get: (name) => headers[name.toLowerCase()] ?? null },
+    json: async () => body,
+  };
+}
+
 function response(results: unknown[], status = 200, retryAfter?: string): RelayFetchResponse {
-  return { status, headers: { get: (name) => name.toLowerCase() === "retry-after" ? retryAfter ?? null : null }, json: async () => ({ success: true, data: { results } }) };
+  return responseWithBody({ success: true, data: { results } }, status, retryAfter === undefined ? {} : { "retry-after": retryAfter });
+}
+
+async function rotateRelayAuthority(stateRepo: MemoryState): Promise<void> {
+  await stateRepo.update((current) => ({
+    ...current,
+    grantId: "grant-new",
+    generation: 8,
+    credential: "credential-new",
+    state: "ACTIVE",
+    autoSyncEnabled: true,
+    failureCount: 4,
+    nextRetryAt: new Date(1_500_000).toISOString(),
+  }));
 }
 
 describe("RelayRuntime", () => {
@@ -249,8 +297,67 @@ describe("RelayRuntime", () => {
     expect(requests).toHaveLength(1);
     expect(JSON.parse(String(requests[0].body)).records).toHaveLength(1);
     expect(requests[0].headers).toMatchObject({ Authorization: "Bearer credential" });
+    expect(requests[0].credentials).toBe("omit");
     expect(JSON.parse(String(requests[0].body)).records[0].solvedAt).toBe("1969-12-31T15:00:00.000Z");
+    expect(JSON.parse(String(requests[0].body)).records[0]).toMatchObject({ executionTime: "78 ms", memoryUsage: "25,472 kb" });
     expect(imported).toEqual([["fresh"]]);
+  });
+
+  it("does not relay a no-performance SWEA capture during grace, then relays it at the durable bound", async () => {
+    let now = 1_000_000;
+    const eligibleAt = now + 5_000;
+    const deferred = { ...record("deferred"), performance: undefined, relayEligibility: { eligibleAt: new Date(eligibleAt).toISOString() } };
+    const alarms = new MemoryAlarms();
+    const requests: RequestInit[] = [];
+    const imported: string[][] = [];
+    const runtime = new RelayRuntime({
+      state: new MemoryState(state()),
+      alarms,
+      now: () => now,
+      listPending: async () => now < eligibleAt ? [] : [deferred],
+      nextEligibleAt: async () => now < eligibleAt ? eligibleAt : undefined,
+      markImported: async (ids) => { imported.push([...ids]); },
+      fetch: async (_input, init) => {
+        requests.push(init);
+        return response([{ clientRecordId: "deferred", outcome: "IMPORTED", ackEligible: true, errorCode: null }]);
+      },
+    });
+
+    await runtime.onCaptureCommitted();
+    expect(requests).toHaveLength(0);
+    expect(alarms.created.at(-1)).toBe(eligibleAt);
+
+    now = eligibleAt;
+    await runtime.drain();
+
+    expect(requests).toHaveLength(1);
+    expect(JSON.parse(String(requests[0].body)).records[0]).toMatchObject({ executionTime: null, memoryUsage: null });
+    expect(imported).toEqual([["deferred"]]);
+  });
+
+  it("includes performance that arrives during grace in the first relay transfer", async () => {
+    let now = 1_000_000;
+    const eligibleAt = now + 5_000;
+    let candidate: SolutionRecord = { ...record("enriched"), performance: undefined, relayEligibility: { eligibleAt: new Date(eligibleAt).toISOString() } };
+    const requests: RequestInit[] = [];
+    const runtime = new RelayRuntime({
+      state: new MemoryState(state()),
+      now: () => now,
+      listPending: async () => now < eligibleAt && candidate.relayEligibility ? [] : [candidate],
+      nextEligibleAt: async () => candidate.relayEligibility?.eligibleAt ? Date.parse(candidate.relayEligibility.eligibleAt) : undefined,
+      markImported: async () => undefined,
+      fetch: async (_input, init) => {
+        requests.push(init);
+        return response([{ clientRecordId: "enriched", outcome: "IMPORTED", ackEligible: true, errorCode: null }]);
+      },
+    });
+
+    await runtime.onCaptureCommitted();
+    candidate = { ...candidate, performance: { executionTime: "12 ms", memoryUsage: "3,072 kb" }, relayEligibility: undefined };
+    now = eligibleAt - 100;
+    await runtime.drain();
+
+    expect(JSON.parse(String(requests[0]?.body)).records[0]).toMatchObject({ executionTime: "12 ms", memoryUsage: "3,072 kb" });
   });
 
   it("never selects a capture from another opaque grant when generations collide", async () => {
@@ -289,7 +396,248 @@ describe("RelayRuntime", () => {
 
     expect(stateRepo.value.credential).toBeUndefined();
     expect(stateRepo.value.state).toBe("EXPIRED");
+    expect(stateRepo.value.lastFailure).toMatchObject({ category: "HTTP_401", status: 401 });
     expect(alarms.cleared).toContain(RELAY_DRAIN_ALARM);
+  });
+
+  it.each([
+    ["401", responseWithBody({ requestId: "old-401" }, 401)],
+    ["403", responseWithBody({ requestId: "old-403" }, 403)],
+    ["malformed success", responseWithBody({ success: true, data: { results: [{ clientRecordId: "one" }] } })],
+  ] as const)("does not let an old in-flight %s response invalidate a rotated grant", async (_label, deferredResponse) => {
+    const stateRepo = new MemoryState(state());
+    const alarms = new MemoryAlarms();
+    const requests: RequestInit[] = [];
+    let resolveResponse!: (value: RelayFetchResponse) => void;
+    const pendingResponse = new Promise<RelayFetchResponse>((resolve) => { resolveResponse = resolve; });
+    const runtime = new RelayRuntime({
+      state: stateRepo,
+      alarms,
+      now: () => 1_000_000,
+      listPending: async () => [record("one")],
+      fetch: async (_input, init) => { requests.push(init); return pendingResponse; },
+    });
+
+    const drain = runtime.drain();
+    await waitForRequest(requests);
+    await rotateRelayAuthority(stateRepo);
+    resolveResponse(deferredResponse);
+    await drain;
+
+    expect(stateRepo.value).toMatchObject({ state: "ACTIVE", grantId: "grant-new", generation: 8, credential: "credential-new", failureCount: 4 });
+    expect(stateRepo.value.lastFailure).toBeUndefined();
+    expect(alarms.cleared).toHaveLength(0);
+  });
+
+  it("does not ACK records or reset bookkeeping when an old success arrives after rotation", async () => {
+    const stateRepo = new MemoryState(state());
+    const alarms = new MemoryAlarms();
+    const imported: string[][] = [];
+    const requests: RequestInit[] = [];
+    let resolveResponse!: (value: RelayFetchResponse) => void;
+    const pendingResponse = new Promise<RelayFetchResponse>((resolve) => { resolveResponse = resolve; });
+    const runtime = new RelayRuntime({
+      state: stateRepo,
+      alarms,
+      now: () => 1_000_000,
+      listPending: async () => [record("one")],
+      markImported: async (ids) => { imported.push([...ids]); },
+      fetch: async (_input, init) => { requests.push(init); return pendingResponse; },
+    });
+
+    const drain = runtime.drain();
+    await waitForRequest(requests);
+    await rotateRelayAuthority(stateRepo);
+    resolveResponse(response([{ clientRecordId: "one", outcome: "IMPORTED", ackEligible: true, errorCode: null }]));
+    await drain;
+
+    expect(imported).toEqual([]);
+    expect(stateRepo.value).toMatchObject({ state: "ACTIVE", grantId: "grant-new", generation: 8, credential: "credential-new", failureCount: 4 });
+    expect(stateRepo.value.nextRetryAt).toBe(new Date(1_500_000).toISOString());
+    expect(alarms.cleared).toHaveLength(0);
+  });
+
+  it.each([
+    ["429 retry", response([], 429, "120")],
+    ["503 retry", response([], 503)],
+  ] as const)("does not schedule or increment retry state for an old %s response", async (_label, deferredResponse) => {
+    const stateRepo = new MemoryState(state());
+    const alarms = new MemoryAlarms();
+    const requests: RequestInit[] = [];
+    let resolveResponse!: (value: RelayFetchResponse) => void;
+    const pendingResponse = new Promise<RelayFetchResponse>((resolve) => { resolveResponse = resolve; });
+    const runtime = new RelayRuntime({
+      state: stateRepo,
+      alarms,
+      now: () => 1_000_000,
+      listPending: async () => [record("one")],
+      fetch: async (_input, init) => { requests.push(init); return pendingResponse; },
+    });
+
+    const drain = runtime.drain();
+    await waitForRequest(requests);
+    await rotateRelayAuthority(stateRepo);
+    resolveResponse(deferredResponse);
+    await drain;
+
+    expect(stateRepo.value).toMatchObject({ state: "ACTIVE", grantId: "grant-new", generation: 8, credential: "credential-new", failureCount: 4 });
+    expect(stateRepo.value.nextRetryAt).toBe(new Date(1_500_000).toISOString());
+    expect(alarms.created).toHaveLength(0);
+  });
+
+  it("does not increment retry state when an old request fails after rotation", async () => {
+    const stateRepo = new MemoryState(state());
+    const alarms = new MemoryAlarms();
+    const requests: RequestInit[] = [];
+    let rejectRequest!: (error: unknown) => void;
+    const pendingRequest = new Promise<RelayFetchResponse>((_resolve, reject) => { rejectRequest = reject; });
+    const runtime = new RelayRuntime({
+      state: stateRepo,
+      alarms,
+      now: () => 1_000_000,
+      listPending: async () => [record("one")],
+      fetch: async (_input, init) => { requests.push(init); return pendingRequest; },
+    });
+
+    const drain = runtime.drain();
+    await waitForRequest(requests);
+    await rotateRelayAuthority(stateRepo);
+    rejectRequest(new Error("network failure"));
+    await drain;
+
+    expect(stateRepo.value).toMatchObject({ state: "ACTIVE", grantId: "grant-new", generation: 8, credential: "credential-new", failureCount: 4 });
+    expect(stateRepo.value.nextRetryAt).toBe(new Date(1_500_000).toISOString());
+    expect(alarms.created).toHaveLength(0);
+  });
+
+  it("does not retry or overwrite explicit OFF while an old request is pending", async () => {
+    const stateRepo = new MemoryState(state());
+    const alarms = new MemoryAlarms();
+    const requests: RequestInit[] = [];
+    let resolveResponse!: (value: RelayFetchResponse) => void;
+    const pendingResponse = new Promise<RelayFetchResponse>((resolve) => { resolveResponse = resolve; });
+    const runtime = new RelayRuntime({
+      state: stateRepo,
+      alarms,
+      now: () => 1_000_000,
+      listPending: async () => [record("one")],
+      fetch: async (_input, init) => { requests.push(init); return pendingResponse; },
+    });
+
+    const drain = runtime.drain();
+    await waitForRequest(requests);
+    await runtime.onAutomationState({ ...enabledState, autoSyncEnabled: false });
+    resolveResponse(responseWithBody({ requestId: "old-after-stop" }, 401));
+    await drain;
+
+    expect(stateRepo.value.state).toBe("REVOCATION_PENDING");
+    expect(stateRepo.value.credential).toBeUndefined();
+    expect(stateRepo.value.lastFailure).toBeUndefined();
+    expect(alarms.cleared).toContain(RELAY_DRAIN_ALARM);
+  });
+
+  it("records local expiry separately from server rejection", async () => {
+    const stateRepo = new MemoryState(state({ expiresAt: new Date(999_999).toISOString() }));
+    const runtime = new RelayRuntime({ state: stateRepo, now: () => 1_000_000, listPending: async () => [] });
+
+    await runtime.drain();
+
+    expect(stateRepo.value.state).toBe("EXPIRED");
+    expect(stateRepo.value.lastFailure).toMatchObject({ category: "LOCAL_EXPIRED" });
+    expect(stateRepo.value.lastFailure?.status).toBeUndefined();
+  });
+
+  it("does not expire a rotated grant when an old schedule snapshot is already expired", async () => {
+    const oldState = state({ expiresAt: new Date(999_999).toISOString() });
+    const stateRepo = new DeferredReadState(oldState);
+    const alarms = new MemoryAlarms();
+    const runtime = new RelayRuntime({ state: stateRepo, alarms, now: () => 1_000_000 });
+
+    const schedule = (runtime as unknown as { scheduleIfEligible: () => Promise<void> }).scheduleIfEligible();
+    await stateRepo.readStarted;
+    stateRepo.releaseFirstReadWith(state({ grantId: "grant-new", generation: 8, credential: "credential-new" }));
+    await schedule;
+
+    expect(stateRepo.value).toMatchObject({ state: "ACTIVE", grantId: "grant-new", generation: 8, credential: "credential-new", autoSyncEnabled: true });
+    expect(stateRepo.value.lastFailure).toBeUndefined();
+    expect(alarms.cleared).toHaveLength(0);
+    expect(alarms.created).toHaveLength(0);
+  });
+
+  it("reestablishes a new grant alarm when old invalidation cleanup follows its installation", async () => {
+    const oldState = state();
+    const oldAuthority = {
+      revision: oldState.revision,
+      deviceId: oldState.deviceId,
+      grantId: oldState.grantId!,
+      generation: oldState.generation!,
+      credential: oldState.credential!,
+    };
+    const stateRepo = new MemoryState(state({ state: "EXPIRED", credential: undefined, autoSyncEnabled: false }));
+    const alarms = new MemoryAlarms();
+    const runtime = new RelayRuntime({ state: stateRepo, alarms, now: () => 1_000_000 });
+
+    await stateRepo.update((current) => ({
+      ...current,
+      state: "ACTIVE",
+      grantId: "grant-new",
+      generation: 8,
+      credential: "credential-new",
+      autoSyncEnabled: true,
+      expiresAt: new Date(2_000_000).toISOString(),
+    }));
+    await (runtime as unknown as { scheduleIfEligible: () => Promise<void> }).scheduleIfEligible();
+    const createdBeforeOldCleanup = alarms.created.length;
+
+    await (runtime as unknown as { cancelAlarm: (authority: typeof oldAuthority) => Promise<void> }).cancelAlarm(oldAuthority);
+
+    expect(createdBeforeOldCleanup).toBe(1);
+    expect(alarms.cleared).toEqual([RELAY_DRAIN_ALARM]);
+    expect(alarms.created.length).toBeGreaterThan(createdBeforeOldCleanup);
+    expect(stateRepo.value).toMatchObject({ state: "ACTIVE", grantId: "grant-new", generation: 8, credential: "credential-new", autoSyncEnabled: true });
+  });
+
+  it.each([
+    ["HTTP_403", 403, "INVALIDATED", { requestId: "req-403", error: { code: "RELAY_GRANT_REVOKED", detail: "do-not-persist" } }],
+    ["HTTP_OTHER", 404, "INVALIDATED", { requestId: "req-404", errorCode: "RELAY_NOT_FOUND", source: "do-not-persist" }],
+  ] as const)("records %s without retaining the response body", async (category, status, expectedState, body) => {
+    const stateRepo = new MemoryState(state());
+    const runtime = new RelayRuntime({
+      state: stateRepo,
+      now: () => 1_000_000,
+      listPending: async () => [record("one")],
+      fetch: async () => responseWithBody(body, status, { "x-request-id": `header-${status}` }),
+    });
+
+    await runtime.drain();
+
+    expect(stateRepo.value.state).toBe(expectedState);
+    expect(stateRepo.value.credential).toBeUndefined();
+    expect(stateRepo.value.lastFailure).toMatchObject({ category, status, requestId: `header-${status}` });
+    expect(stateRepo.value.lastFailure?.errorCode).toBe(category === "HTTP_403" ? "RELAY_GRANT_REVOKED" : "RELAY_NOT_FOUND");
+    expect(JSON.stringify(stateRepo.value)).not.toContain("do-not-persist");
+  });
+
+  it("records malformed success envelopes separately and redacts arbitrary fields", async () => {
+    const stateRepo = new MemoryState(state());
+    const runtime = new RelayRuntime({
+      state: stateRepo,
+      now: () => 1_000_000,
+      listPending: async () => [record("one")],
+      fetch: async () => responseWithBody({
+        success: true,
+        requestId: "req-malformed",
+        error: { code: "INVALID_RESULT", body: "source-code-secret" },
+        data: { results: [{ clientRecordId: "one", outcome: "IMPORTED", ackEligible: "not-a-boolean" }] },
+      }),
+    });
+
+    await runtime.drain();
+
+    expect(stateRepo.value.state).toBe("INVALIDATED");
+    expect(stateRepo.value.lastFailure).toMatchObject({ category: "MALFORMED_RESPONSE", status: 200, requestId: "req-malformed", errorCode: "INVALID_RESULT" });
+    expect(JSON.stringify(stateRepo.value)).not.toContain("source-code-secret");
+    expect(JSON.stringify(stateRepo.value)).not.toContain("credential");
   });
 
   it("moves AUTO_SYNC OFF to revocation-pending without retaining the credential", async () => {
@@ -346,6 +694,7 @@ describe("RelayRuntime", () => {
       const relayState = state({ expiresAt: new Date(relayNow + 60 * 60 * 1000).toISOString() });
       await indexedDb.seedRelayState({
         revision: 0,
+        deviceId: relayState.deviceId,
         state: relayState.state,
         grantId: "grant-account-a",
         credential: relayState.credential,
@@ -364,8 +713,11 @@ describe("RelayRuntime", () => {
         observedAt: "1970-01-01T00:00:01.000Z",
         solvedAt: "1970-01-01",
       });
+      await expect(listRelayPendingCaptures("grant-account-a", 7, 25, relayNow + 4_000)).resolves.toEqual([]);
+      await expect(listRelayPendingCaptures("grant-account-a", 7, 25, relayNow + 6_000)).resolves.toHaveLength(1);
       await indexedDb.seedRelayState({
         revision: 1,
+        deviceId: relayState.deviceId,
         state: relayState.state,
         grantId: relayState.grantId,
         credential: relayState.credential,
@@ -406,6 +758,7 @@ describe("RelayRuntime", () => {
         code: "class Main {}",
         observedAt: "1970-01-01T00:00:01.000Z",
         solvedAt: "1970-01-01",
+        performance: { executionTime: "1 ms", memoryUsage: "2 kb" },
       };
       const result = await saveThenSyncAcceptedCapture(capture, {
         saveCapture: saveAcceptedCapture,
@@ -415,7 +768,8 @@ describe("RelayRuntime", () => {
       expect(result).toMatchObject({ status: "saved", solutionId: "swea-auto:after-disconnect" });
       expect(stateRepo.value.state).toBe("ACTIVE");
       expect(stateRepo.value.credential).toBe("credential");
-      expect(alarms.created.at(-1)).toBe(relayNow);
+      await vi.waitFor(() => expect(alarms.created.at(-1)).toBe(relayNow));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
       await waitForRequest(requests);
       const sent = JSON.parse(String(requests[0]?.body)) as { records: Array<{ clientRecordId: string; capturedAt: string }> };
       expect(sent.records).toHaveLength(1);
@@ -561,5 +915,53 @@ describe("RelayRuntime", () => {
     await Promise.all([first, second]);
 
     expect(calls).toBe(1);
+  });
+
+  it("keeps the durable retry marker when manual retry is blocked or already running", async () => {
+    const nextRetryAt = new Date(1_000_500).toISOString();
+    const blockedState = new MemoryState(state({ nextRetryAt }));
+    const blocked = new RelayRuntime({ state: blockedState, now: () => 1_000_000, listPending: async () => [record("blocked")] });
+    blocked.onMultipleDashboardTabs();
+    await blocked.retryNow();
+    expect(blockedState.value.nextRetryAt).toBe(nextRetryAt);
+
+    let releaseList!: () => void;
+    const runningState = new MemoryState(state({ nextRetryAt }));
+    const running = new RelayRuntime({ state: runningState, now: () => 1_000_000, listPending: async () => new Promise((resolve) => { releaseList = () => resolve([record("running")]); }), fetch: async () => response([]) });
+    const drain = running.drain();
+    await running.retryNow();
+    expect(runningState.value.nextRetryAt).toBe(nextRetryAt);
+    releaseList?.();
+    await drain;
+  });
+
+  it("clears only the retry gate when a manual retry starts a valid drain", async () => {
+    const nextRetryAt = new Date(1_000_500).toISOString();
+    const stateRepo = new MemoryState(state({ nextRetryAt }));
+    const runtime = new RelayRuntime({ state: stateRepo, now: () => 1_000_000, listPending: async () => [], nextEligibleAt: async () => undefined });
+    await runtime.retryNow();
+    expect(stateRepo.value.nextRetryAt).toBeUndefined();
+  });
+
+  it("does not transfer source when authority rotates during manual retry gate clearing", async () => {
+    const nextRetryAt = new Date(1_000_500).toISOString();
+    let fetchCalls = 0;
+    class RotatingState extends MemoryState {
+      override async update(mutate: (current: RelayStateRecord) => RelayStateRecord): Promise<RelayStateRecord> {
+        this.value = state({ grantId: "rotated-grant", generation: 8, credential: "rotated-credential" });
+        return this.value;
+      }
+    }
+    const stateRepo = new RotatingState(state({ nextRetryAt }));
+    const runtime = new RelayRuntime({
+      state: stateRepo,
+      now: () => 1_000_000,
+      listPending: async () => [record("rotated")],
+      fetch: async () => { fetchCalls += 1; return response([]); },
+    });
+
+    await runtime.retryNow();
+
+    expect(fetchCalls).toBe(0);
   });
 });

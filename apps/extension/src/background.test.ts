@@ -82,6 +82,18 @@ describe("background capture validation", () => {
     expect(order).toContain("capture-changed");
   });
 
+  it("keeps relay scheduling alive when Dashboard metadata notification fails", async () => {
+    setupChrome();
+    const { notifyAndScheduleSweaRelay } = await import("./background");
+    const notify = vi.fn(async () => { throw new Error("dashboard unavailable"); });
+    const relay = vi.fn(async () => undefined);
+
+    await notifyAndScheduleSweaRelay(notify, relay);
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(relay).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps local save successful when bridge notification or later legacy sync fails", async () => {
     setupChrome();
     const { saveThenSyncAcceptedCapture } = await import("./background");

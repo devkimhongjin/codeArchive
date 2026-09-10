@@ -2,7 +2,7 @@ import { AuthLoginStageError } from "./authDiagnostics";
 import { AUTH_LOGIN, type AuthLoginResponse } from "./authMessages";
 import type { CodeArchiveAuthService } from "./authSession";
 import { backgroundCodeArchiveAuthService } from "./backgroundAuthRuntime";
-import { backgroundDashboardCaptureBridge, notifyCaptureCommitted, registerExternalDashboardBridge, type ExternalDashboardPort } from "./dashboardCaptureBridge";
+import { backgroundDashboardCaptureBridge, notifyCaptureCommitted, notifyDashboardCaptureChanged, registerExternalDashboardBridge, type ExternalDashboardPort } from "./dashboardCaptureBridge";
 import { CODEARCHIVE_DASHBOARD_ORIGIN } from "./dashboardConfig";
 import { SAVE_SWEA_ACCEPTED, UPDATE_SWEA_CAPTURE_PERFORMANCE, type SaveResponse } from "./sweaAutoCapture";
 import { enrichAcceptedCapturePerformance, saveAcceptedCapture } from "./solutionRepository";
@@ -12,7 +12,7 @@ import { syncSolutionRecord, type SolutionSyncDependencies } from "./solutionSyn
 import { createProblemContestIdHandoffStore, SWEA_CONSUME_PROBLEM_CONTEST_ID, SWEA_STORE_PROBLEM_CONTEST_ID } from "./sweaProblemIdentityHandoff";
 import { SWEA_PROBLEM_DETAIL_PATH, SWEA_SOLVING_PATH } from "./adapters/swea/sweaSelectors";
 import { POPUP_AUTOMATION_SET, POPUP_AUTOMATION_STATE_GET } from "./automationControl";
-import { POPUP_RELAY_LOCAL_STOP, POPUP_RELAY_STATE_GET } from "./relay/relayPopupControl";
+import { POPUP_RELAY_LOCAL_STOP, POPUP_RELAY_RETRY_NOW, POPUP_RELAY_STATE_GET } from "./relay/relayPopupControl";
 import { backgroundRelayRuntime } from "./relay/relayRuntime";
 
 type BackgroundResponse = SaveResponse | AuthLoginResponse;
@@ -64,6 +64,15 @@ export async function saveThenSyncAcceptedCapture(capture: AcceptedCapture, depe
   return localResult;
 }
 
+export async function notifyAndScheduleSweaRelay(
+  notify: () => Promise<void> = notifyDashboardCaptureChanged,
+  relay: () => Promise<void> = () => backgroundRelayRuntime.onCaptureCommitted(),
+): Promise<void> {
+  const relayPromise = relay().catch(() => undefined);
+  await notify().catch(() => undefined);
+  await relayPromise;
+}
+
 export async function runBackgroundLogin(authService: Pick<CodeArchiveAuthService, "login">): Promise<AuthLoginResponse> {
   try {
     return { ok: true, state: await authService.login() };
@@ -75,6 +84,11 @@ export async function runBackgroundLogin(authService: Pick<CodeArchiveAuthServic
 const defaultDependencies: CaptureSyncDependencies = {
   saveCapture: saveAcceptedCapture,
   onCaptureCommitted: notifyCaptureCommitted,
+};
+
+const sweaDependencies: CaptureSyncDependencies = {
+  saveCapture: saveAcceptedCapture,
+  onCaptureCommitted: notifyAndScheduleSweaRelay,
 };
 
 registerExternalDashboardBridge(chrome.runtime, CODEARCHIVE_DASHBOARD_ORIGIN);
@@ -90,18 +104,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (request.type === SWEA_STORE_PROBLEM_CONTEST_ID) {
     const problemContestId = (message as { problemContestId?: unknown }).problemContestId;
-    sendResponse({ ok: Number.isInteger(tabId) && senderUrl?.origin === "https://swexpertacademy.com" && senderUrl.pathname === SWEA_PROBLEM_DETAIL_PATH && typeof problemContestId === "string" && problemContestIdHandoffs.issue(tabId!, problemContestId, senderUrl.href) });
-    return;
+    if (!Number.isInteger(tabId) || senderUrl?.origin !== "https://swexpertacademy.com" || senderUrl.pathname !== SWEA_PROBLEM_DETAIL_PATH || typeof problemContestId !== "string") {
+      sendResponse({ ok: false });
+      return;
+    }
+    problemContestIdHandoffs.issue(tabId!, problemContestId, senderUrl.href)
+      .then((ok) => sendResponse({ ok }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
   }
 
   if (request.type === SWEA_CONSUME_PROBLEM_CONTEST_ID) {
     const page = message as { origin?: unknown; path?: unknown; referrer?: unknown };
-    sendResponse({
-      problemContestId: Number.isInteger(tabId) && senderUrl?.origin === "https://swexpertacademy.com" && senderUrl.pathname === SWEA_SOLVING_PATH && typeof page.origin === "string" && typeof page.path === "string" && typeof page.referrer === "string"
-        ? problemContestIdHandoffs.consume(tabId!, page.origin, page.path, page.referrer)
-        : null,
-    });
-    return;
+    if (!Number.isInteger(tabId) || senderUrl?.origin !== "https://swexpertacademy.com" || senderUrl.pathname !== SWEA_SOLVING_PATH || typeof page.origin !== "string" || typeof page.path !== "string" || typeof page.referrer !== "string") {
+      sendResponse({ problemContestId: null });
+      return;
+    }
+    problemContestIdHandoffs.consume(tabId!, page.origin, page.path, page.referrer)
+      .then((problemContestId) => sendResponse({ problemContestId }))
+      .catch(() => sendResponse({ problemContestId: null }));
+    return true;
   }
 
   if (request.type === AUTH_LOGIN) {
@@ -131,12 +153,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (request.type === POPUP_RELAY_STATE_GET) {
-    backgroundRelayRuntime.getPopupState().then(sendResponse).catch(() => sendResponse({ state: "UNPAIRED", autoSyncEnabled: false }));
+    backgroundRelayRuntime.getPopupState().then(sendResponse).catch(() => sendResponse({ state: "UNPAIRED", autoSyncEnabled: false, readStatus: "error" }));
     return true;
   }
 
   if (request.type === POPUP_RELAY_LOCAL_STOP) {
-    backgroundRelayRuntime.stopLocally().then(sendResponse).catch(() => sendResponse({ state: "UNPAIRED", autoSyncEnabled: false }));
+    backgroundRelayRuntime.stopLocally().then(sendResponse).catch(() => sendResponse({ state: "UNPAIRED", autoSyncEnabled: false, readStatus: "error" }));
+    return true;
+  }
+
+  if (request.type === POPUP_RELAY_RETRY_NOW) {
+    backgroundRelayRuntime.retryNow().then(sendResponse).catch(() => sendResponse({ state: "UNPAIRED", autoSyncEnabled: false, readStatus: "error" }));
     return true;
   }
 
@@ -156,7 +183,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ status: "rejected", reason: "invalid_capture" });
     return;
   }
-  saveThenSyncAcceptedCapture(request.capture, defaultDependencies)
+  saveThenSyncAcceptedCapture(request.capture, request.type === SAVE_SWEA_ACCEPTED ? sweaDependencies : defaultDependencies)
     .then(sendResponse)
     .catch(() => sendResponse({ status: "failed", reason: "storage_failed" }));
   return true;
