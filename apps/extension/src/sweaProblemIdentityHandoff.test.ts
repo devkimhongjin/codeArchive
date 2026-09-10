@@ -23,9 +23,32 @@ function store(now: () => number = () => 1_000, persistence = new MemoryPersiste
 
 describe("SWEA Problem-family identity context", () => {
   it("reads the external field at the detail boundary and exposes the internal semantic name", () => {
-    const document = new DOMParser().parseFromString('<input name="contestProbId" value="from-form">', "text/html");
-    expect(detailProblemContestId(document, new URL(detailUrl))).toBe("from-form");
-    expect(detailProblemContestId(new DOMParser().parseFromString("", "text/html"), new URL(detailUrl))).toBe("A");
+    const document = new DOMParser().parseFromString('<input name="contestProbId" value="A">', "text/html");
+    expect(detailProblemContestId(document, new URL(detailUrl))).toBe("A");
+    expect(detailProblemContestId(new DOMParser().parseFromString("", "text/html"), new URL(detailUrl))).toBeNull();
+  });
+
+  it("deduplicates one node matched by both id and name selectors", () => {
+    const document = new DOMParser().parseFromString('<input id="contestProbId" name="contestProbId" value="A">', "text/html");
+    expect(detailProblemContestId(document, new URL(detailUrl))).toBe("A");
+  });
+
+  it("rejects empty, duplicate, and conflicting DOM identity candidates", () => {
+    const empty = new DOMParser().parseFromString('<input name="contestProbId" value="   ">', "text/html");
+    expect(detailProblemContestId(empty, new URL(detailUrl))).toBeNull();
+
+    const duplicateSame = new DOMParser().parseFromString('<input id="contestProbId" value="A"><input name="contestProbId" value="A">', "text/html");
+    expect(detailProblemContestId(duplicateSame, new URL(detailUrl))).toBeNull();
+
+    const duplicateConflict = new DOMParser().parseFromString('<input id="contestProbId" value="A"><input name="contestProbId" value="B">', "text/html");
+    expect(detailProblemContestId(duplicateConflict, new URL(detailUrl))).toBeNull();
+  });
+
+  it("rejects missing, mismatched, and duplicate trusted URL query identities", () => {
+    const document = new DOMParser().parseFromString('<input name="contestProbId" value="A">', "text/html");
+    expect(detailProblemContestId(document, new URL("https://swexpertacademy.com/main/code/problem/problemDetail.do"))).toBeNull();
+    expect(detailProblemContestId(document, new URL(detailUrlB))).toBeNull();
+    expect(detailProblemContestId(document, new URL(`${detailUrl}&contestProbId=A`))).toBeNull();
   });
 
   it("keeps the trusted context across 60 seconds and 60 minutes instead of expiring it", async () => {
