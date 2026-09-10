@@ -33,7 +33,6 @@ From this directory:
 
 ```sh
 npm test
-npx wrangler check
 npx wrangler deploy --dry-run
 ```
 
