@@ -386,7 +386,13 @@ export class RelayRuntime {
       if (!isStateActive(state, this.now()) || !state.autoSyncEnabled) return;
       if (state.nextRetryAt && Date.parse(state.nextRetryAt) > this.now()) {
         if (options.ignoreRetry) {
-          await this.state.update((current) => authorityStillCurrent(current, authoritySnapshot(state)) ? { ...current, nextRetryAt: undefined } : current);
+          let retryGateCleared = false;
+          await this.state.update((current) => {
+            if (!authorityStillCurrent(current, authoritySnapshot(state))) return current;
+            retryGateCleared = true;
+            return { ...current, nextRetryAt: undefined };
+          });
+          if (!retryGateCleared) return;
         } else {
           await this.scheduleIfEligible(Date.parse(state.nextRetryAt) - this.now());
           return;

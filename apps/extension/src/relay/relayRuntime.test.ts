@@ -942,4 +942,26 @@ describe("RelayRuntime", () => {
     await runtime.retryNow();
     expect(stateRepo.value.nextRetryAt).toBeUndefined();
   });
+
+  it("does not transfer source when authority rotates during manual retry gate clearing", async () => {
+    const nextRetryAt = new Date(1_000_500).toISOString();
+    let fetchCalls = 0;
+    class RotatingState extends MemoryState {
+      override async update(mutate: (current: RelayStateRecord) => RelayStateRecord): Promise<RelayStateRecord> {
+        this.value = state({ grantId: "rotated-grant", generation: 8, credential: "rotated-credential" });
+        return this.value;
+      }
+    }
+    const stateRepo = new RotatingState(state({ nextRetryAt }));
+    const runtime = new RelayRuntime({
+      state: stateRepo,
+      now: () => 1_000_000,
+      listPending: async () => [record("rotated")],
+      fetch: async () => { fetchCalls += 1; return response([]); },
+    });
+
+    await runtime.retryNow();
+
+    expect(fetchCalls).toBe(0);
+  });
 });
