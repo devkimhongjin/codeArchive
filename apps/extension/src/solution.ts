@@ -60,6 +60,10 @@ export interface SolutionRecord {
   dashboardImportReceipt?: DashboardImportReceipt;
   /** Immutable provenance for captures created while the relay grant was active. */
   relayCapture?: RelayCaptureProvenance;
+  /** Local-only scheduling metadata while optional SWEA performance may still arrive. */
+  relayEligibility?: {
+    eligibleAt: string;
+  };
   /** Relay ACK metadata only; local source remains authoritative and retained. */
   relayImportReceipt?: RelayImportReceipt;
   /** Terminal relay conflict; automatic retries must not hammer this record. */

@@ -250,7 +250,65 @@ describe("RelayRuntime", () => {
     expect(JSON.parse(String(requests[0].body)).records).toHaveLength(1);
     expect(requests[0].headers).toMatchObject({ Authorization: "Bearer credential" });
     expect(JSON.parse(String(requests[0].body)).records[0].solvedAt).toBe("1969-12-31T15:00:00.000Z");
+    expect(JSON.parse(String(requests[0].body)).records[0]).toMatchObject({ executionTime: "78 ms", memoryUsage: "25,472 kb" });
     expect(imported).toEqual([["fresh"]]);
+  });
+
+  it("does not relay a no-performance SWEA capture during grace, then relays it at the durable bound", async () => {
+    let now = 1_000_000;
+    const eligibleAt = now + 5_000;
+    const deferred = { ...record("deferred"), performance: undefined, relayEligibility: { eligibleAt: new Date(eligibleAt).toISOString() } };
+    const alarms = new MemoryAlarms();
+    const requests: RequestInit[] = [];
+    const imported: string[][] = [];
+    const runtime = new RelayRuntime({
+      state: new MemoryState(state()),
+      alarms,
+      now: () => now,
+      listPending: async () => now < eligibleAt ? [] : [deferred],
+      nextEligibleAt: async () => now < eligibleAt ? eligibleAt : undefined,
+      markImported: async (ids) => { imported.push([...ids]); },
+      fetch: async (_input, init) => {
+        requests.push(init);
+        return response([{ clientRecordId: "deferred", outcome: "IMPORTED", ackEligible: true, errorCode: null }]);
+      },
+    });
+
+    await runtime.onCaptureCommitted();
+    expect(requests).toHaveLength(0);
+    expect(alarms.created.at(-1)).toBe(eligibleAt);
+
+    now = eligibleAt;
+    await runtime.drain();
+
+    expect(requests).toHaveLength(1);
+    expect(JSON.parse(String(requests[0].body)).records[0]).toMatchObject({ executionTime: null, memoryUsage: null });
+    expect(imported).toEqual([["deferred"]]);
+  });
+
+  it("includes performance that arrives during grace in the first relay transfer", async () => {
+    let now = 1_000_000;
+    const eligibleAt = now + 5_000;
+    let candidate: SolutionRecord = { ...record("enriched"), performance: undefined, relayEligibility: { eligibleAt: new Date(eligibleAt).toISOString() } };
+    const requests: RequestInit[] = [];
+    const runtime = new RelayRuntime({
+      state: new MemoryState(state()),
+      now: () => now,
+      listPending: async () => now < eligibleAt && candidate.relayEligibility ? [] : [candidate],
+      nextEligibleAt: async () => candidate.relayEligibility?.eligibleAt ? Date.parse(candidate.relayEligibility.eligibleAt) : undefined,
+      markImported: async () => undefined,
+      fetch: async (_input, init) => {
+        requests.push(init);
+        return response([{ clientRecordId: "enriched", outcome: "IMPORTED", ackEligible: true, errorCode: null }]);
+      },
+    });
+
+    await runtime.onCaptureCommitted();
+    candidate = { ...candidate, performance: { executionTime: "12 ms", memoryUsage: "3,072 kb" }, relayEligibility: undefined };
+    now = eligibleAt - 100;
+    await runtime.drain();
+
+    expect(JSON.parse(String(requests[0]?.body)).records[0]).toMatchObject({ executionTime: "12 ms", memoryUsage: "3,072 kb" });
   });
 
   it("never selects a capture from another opaque grant when generations collide", async () => {
@@ -364,6 +422,8 @@ describe("RelayRuntime", () => {
         observedAt: "1970-01-01T00:00:01.000Z",
         solvedAt: "1970-01-01",
       });
+      await expect(listRelayPendingCaptures("grant-account-a", 7, 25, relayNow + 4_000)).resolves.toEqual([]);
+      await expect(listRelayPendingCaptures("grant-account-a", 7, 25, relayNow + 6_000)).resolves.toHaveLength(1);
       await indexedDb.seedRelayState({
         revision: 1,
         state: relayState.state,
@@ -406,6 +466,7 @@ describe("RelayRuntime", () => {
         code: "class Main {}",
         observedAt: "1970-01-01T00:00:01.000Z",
         solvedAt: "1970-01-01",
+        performance: { executionTime: "1 ms", memoryUsage: "2 kb" },
       };
       const result = await saveThenSyncAcceptedCapture(capture, {
         saveCapture: saveAcceptedCapture,
@@ -416,6 +477,7 @@ describe("RelayRuntime", () => {
       expect(stateRepo.value.state).toBe("ACTIVE");
       expect(stateRepo.value.credential).toBe("credential");
       expect(alarms.created.at(-1)).toBe(relayNow);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
       await waitForRequest(requests);
       const sent = JSON.parse(String(requests[0]?.body)) as { records: Array<{ clientRecordId: string; capturedAt: string }> };
       expect(sent.records).toHaveLength(1);

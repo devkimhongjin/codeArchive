@@ -1,5 +1,5 @@
 import { CODEARCHIVE_API_BASE_URL } from "../apiConfig";
-import { listRelayPendingCaptures, markRelayConflicts, markRelayConflictsForRecords, markRelayImportReceipts, type RelayStateSnapshot } from "../solutionRepository";
+import { listRelayPendingCaptures, markRelayConflicts, markRelayConflictsForRecords, markRelayImportReceipts, nextRelayCaptureEligibility, type RelayStateSnapshot } from "../solutionRepository";
 import type { SolutionRecord } from "../solution";
 import { indexedDbRelayStateRepository, type RelayStateRecord, type RelayStateRepository } from "./relayState";
 import type { CodeArchiveAutomationState } from "../../../../packages/shared-types/src";
@@ -30,6 +30,7 @@ export interface RelayRuntimeDependencies {
   fetch?: RelayFetch;
   now?: () => number;
   listPending?: (grantId: string, generation: number, limit?: number) => Promise<SolutionRecord[]>;
+  nextEligibleAt?: (grantId: string, generation: number) => Promise<number | undefined>;
   markImported?: (ids: readonly string[], at: string) => Promise<void>;
   markConflicts?: (ids: readonly string[], at: string, errorCode?: string) => Promise<void>;
   markInvalid?: (records: readonly SolutionRecord[], at: string, errorCode: string) => Promise<void>;
@@ -123,6 +124,7 @@ export class RelayRuntime {
   private readonly request: RelayFetch;
   private readonly now: () => number;
   private readonly listPending: (grantId: string, generation: number, limit?: number) => Promise<SolutionRecord[]>;
+  private readonly nextEligibleAt: (grantId: string, generation: number) => Promise<number | undefined>;
   private readonly markImported: (ids: readonly string[], at: string) => Promise<void>;
   private readonly markConflicts: (ids: readonly string[], at: string, errorCode?: string) => Promise<void>;
   private readonly markInvalid: (records: readonly SolutionRecord[], at: string, errorCode: string) => Promise<void>;
@@ -135,6 +137,7 @@ export class RelayRuntime {
     this.request = dependencies.fetch ?? ((input, init) => fetch(input, init));
     this.now = dependencies.now ?? (() => Date.now());
     this.listPending = dependencies.listPending ?? listRelayPendingCaptures;
+    this.nextEligibleAt = dependencies.nextEligibleAt ?? nextRelayCaptureEligibility;
     this.markImported = dependencies.markImported ?? markRelayImportReceipts;
     this.markConflicts = dependencies.markConflicts ?? markRelayConflicts;
     this.markInvalid = dependencies.markInvalid ?? markRelayConflictsForRecords;
@@ -273,7 +276,11 @@ export class RelayRuntime {
           batchCodeChars += record.code.length;
           return true;
         });
-      if (records.length === 0) return;
+      if (records.length === 0) {
+        const nextEligibleAt = await this.nextEligibleAt(grantId, generation).catch(() => undefined);
+        if (nextEligibleAt && nextEligibleAt > this.now()) await this.scheduleIfEligible(nextEligibleAt - this.now());
+        return;
+      }
       const ids = records.map((record) => record.clientRecordId!);
       let response: RelayFetchResponse;
       try {
