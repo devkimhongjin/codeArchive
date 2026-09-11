@@ -401,7 +401,8 @@ export class DurableAutomationController {
     desired: Omit<DurableAutomationUpdate, "expectedVersion">,
     signal?: AbortSignal,
   ): Promise<DurableAutomationProfile> {
-    if (sameDesired(current, desired)) return current;
+    if (sameDesired(current, desired)
+      && !(desired.communityDefaultPublicPolicyVersion && current.communityDefaultPublicConsentActive !== true)) return current;
     return this.client.update({ ...desired, expectedVersion: current.version }, signal);
   }
 
