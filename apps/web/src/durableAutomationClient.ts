@@ -84,6 +84,7 @@ const numericId = (value: unknown): value is string => str(value) && /^[1-9][0-9
 const sha = (value: unknown): value is string => str(value) && /^[0-9a-f]{40}$/.test(value);
 const device = (value: unknown): value is string => str(value) && /^[A-Za-z0-9_-]{16,128}$/.test(value);
 const sessionBindingFingerprint = (value: unknown): value is string => str(value) && /^sb1_[A-Za-z0-9_-]{43}$/.test(value);
+const nullableDate = (value: unknown): value is string | null => value === null || absoluteDate(value);
 
 function target(value: unknown): value is GitHubAutoTarget {
   if (!object(value)) return false;
@@ -112,7 +113,10 @@ function profile(value: unknown): value is DurableAutomationProfile {
     && (value.githubEnabledAt === null || absoluteDate(value.githubEnabledAt))
     && safeNonNegative(value.version)
     && absoluteDate(value.updatedAt)
-    && sessionBindingFingerprint(value.sessionBindingFingerprint);
+    && sessionBindingFingerprint(value.sessionBindingFingerprint)
+    && (value.communityDefaultPublicPolicyVersion === undefined || value.communityDefaultPublicPolicyVersion === null || (str(value.communityDefaultPublicPolicyVersion) && value.communityDefaultPublicPolicyVersion.length <= 32))
+    && (value.communityDefaultPublicConsentedAt === undefined || nullableDate(value.communityDefaultPublicConsentedAt))
+    && (value.communityDefaultPublicConsentActive === undefined || bool(value.communityDefaultPublicConsentActive));
 }
 
 function challenge(value: unknown): value is RelayChallengeResponse {
@@ -154,10 +158,7 @@ export function createDurableAutomationClient(fetcher: FetchLike = globalThis.fe
     update: async (body, signal) => {
       if (!device(body.deviceId) || !safeNonNegative(body.expectedVersion)) throw new DurableAutomationRequestError("INVALID_REQUEST");
       if (body.target !== null && !target(body.target)) throw new DurableAutomationRequestError("INVALID_REQUEST");
-      return request("/api/v1/automation", "PUT", profile, {
-        ...body,
-        ...(body.communityDefaultPublicPolicyVersion ? {} : { communityDefaultPublicPolicyVersion: COMMUNITY_DEFAULT_PUBLIC_POLICY_VERSION }),
-      }, signal);
+      return request("/api/v1/automation", "PUT", profile, body, signal);
     },
     relayChallenge: async (deviceId, publicKey, signal) => {
       if (!device(deviceId) || !str(publicKey) || !publicKey || publicKey.length > 2048) throw new DurableAutomationRequestError("INVALID_REQUEST");
