@@ -1,6 +1,7 @@
 import { createAutoSyncConsentStore } from "./accountConsent";
 import { cancelAllDurableAutomationControllers, DurableAutomationController, type DashboardRelayPairingConnection } from "./durableAutomation";
 import { mainApiDurableAutomationClient } from "./durableAutomationClient";
+import { COMMUNITY_DEFAULT_PUBLIC_POLICY_VERSION } from "./durableAutomationClient";
 import { registerExplicitAutoSyncOffHandler } from "./durableAutomationIntent";
 import { registerDurableAutomationController } from "./durableAutomationRuntime";
 import {
@@ -28,6 +29,7 @@ export interface AutoSyncSessionController {
   revokeDurableAutomation(): Promise<boolean>;
   rearmDurableReconnect(): void;
   hasActiveSession(): boolean;
+  confirmCommunityDefaultPublic(): Promise<boolean>;
 }
 
 export function secureSyncSessionId(): string {
@@ -204,6 +206,14 @@ export function createAutoSyncSessionController(
   };
 
   return {
+    async confirmCommunityDefaultPublic() {
+      if (!durable || !desiredEligible) return false;
+      try {
+        const result = await durable.enableSourceTransfer(undefined, COMMUNITY_DEFAULT_PUBLIC_POLICY_VERSION);
+        setDurableAutomationProfile(result.profile);
+        return result.profile.communityDefaultPublicConsentActive === true;
+      } catch { return false; }
+    },
     setEligibility(eligible, authContextKey) {
       if (!eligible || desiredAuthContextKey !== (eligible ? authContextKey : "")) {
         cancelAllDurableAutomationControllers();

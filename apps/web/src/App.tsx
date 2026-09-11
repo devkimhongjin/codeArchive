@@ -121,6 +121,8 @@ export function App({
   const [consentPending, setConsentPending] = useState(false);
   // Restored only after /me verification and matching immutable account binding.
   const [autoSyncConsent, setAutoSyncConsent] = useState(false);
+  const [communityConsentActive, setCommunityConsentActive] = useState(false);
+  const [communityConsentPending, setCommunityConsentPending] = useState(false);
   const [activeSyncSessionId, setActiveSyncSessionId] = useState<string | null>(null);
   const [automationAutoSyncEnabled, setAutomationAutoSyncEnabled] = useState(false);
   const [githubAutoCommitEnabled, setGithubAutoCommitEnabled] = useState(false);
@@ -678,6 +680,13 @@ export function App({
     setConsentPending(false);
   }
 
+  async function confirmCommunityPublic() {
+    setCommunityConsentPending(true);
+    const active = await syncControllerRef.current.confirmCommunityDefaultPublic();
+    setCommunityConsentActive(active);
+    setCommunityConsentPending(false);
+  }
+
   async function logout() {
     cancelAllDurableAutomationControllers();
     accountRef.current = "";
@@ -748,6 +757,8 @@ export function App({
                     <strong>자동 동기화·커뮤니티 공개</strong>
                     <small>{autoSyncConsentStatus}</small>
                     <small>새로 캡처한 정답 풀이가 같은 문제를 푸는 자격 사용자에게 공개됩니다. 기존 풀이는 바뀌지 않으며, 나중에 개별 풀이를 비공개로 바꿀 수 있습니다. GitHub 공유 동의와는 별개입니다.</small>
+                    <small role="status">커뮤니티 기본 공개: {communityConsentPending ? "확인 중" : communityConsentActive ? "활성" : "확인 필요"}</small>
+                    {!communityConsentActive && <button type="button" disabled={communityConsentPending || logoutPending} onClick={() => void confirmCommunityPublic()}>기본 공개 확인</button>}
                   </span>
                 </label>
               </>
