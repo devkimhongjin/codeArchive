@@ -36,6 +36,12 @@ function durableProfile(): DurableAutomationProfile {
 }
 
 describe("Dashboard auto-sync session controller", () => {
+  it("resets server-derived community consent when eligibility ends", async () => {
+    const seen: boolean[] = [];
+    const controller = createAutoSyncSessionController(transport(), undefined, undefined, (active) => seen.push(active));
+    await controller.setEligibility(false, "");
+    expect(seen.at(-1)).toBe(false);
+  });
   it("stores only a versioned account binding and preference, ignoring legacy boolean", () => {
     const values = new Map<string, string>();
     values.set("codearchive.autoSyncConsent", "true");

@@ -51,6 +51,7 @@ export function createAutoSyncSessionController(
   transport: AutoSyncSessionTransport,
   generateSyncSessionId: () => string = secureSyncSessionId,
   onActiveSessionChange: (syncSessionId: string | null) => void = () => undefined,
+  onCommunityDefaultPublicConsentActiveChange: (active: boolean) => void = () => undefined,
 ): AutoSyncSessionController {
   let desiredEligible = false;
   let desiredAuthContextKey = "";
@@ -161,7 +162,9 @@ export function createAutoSyncSessionController(
         try {
           const result = await durable.enableSourceTransfer();
           setDurableAutomationProfile(result.profile);
+          onCommunityDefaultPublicConsentActiveChange(result.profile.communityDefaultPublicConsentActive === true);
         } catch {
+          onCommunityDefaultPublicConsentActiveChange(false);
           // Once relay capability has been detected, never fall back to a page-owned writer
           // after a possibly-partial durable profile transition.
         }
@@ -211,10 +214,13 @@ export function createAutoSyncSessionController(
       try {
         const result = await durable.enableSourceTransfer(undefined, COMMUNITY_DEFAULT_PUBLIC_POLICY_VERSION);
         setDurableAutomationProfile(result.profile);
-        return result.profile.communityDefaultPublicConsentActive === true;
-      } catch { return false; }
+        const active = result.profile.communityDefaultPublicConsentActive === true;
+        onCommunityDefaultPublicConsentActiveChange(active);
+        return active;
+      } catch { onCommunityDefaultPublicConsentActiveChange(false); return false; }
     },
     setEligibility(eligible, authContextKey) {
+      if (!eligible || desiredAuthContextKey !== (eligible ? authContextKey : "")) onCommunityDefaultPublicConsentActiveChange(false);
       if (!eligible || desiredAuthContextKey !== (eligible ? authContextKey : "")) {
         cancelAllDurableAutomationControllers();
         durable?.cancelPendingTransitions();

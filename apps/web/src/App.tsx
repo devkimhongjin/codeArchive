@@ -162,6 +162,7 @@ export function App({
       extensionConnection,
       syncSessionIdGenerator,
       setActiveSyncSessionId,
+      setCommunityConsentActive,
     ),
     [extensionConnection, syncSessionIdGenerator],
   );
