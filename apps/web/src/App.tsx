@@ -745,9 +745,9 @@ export function App({
                     onChange={(event) => void setConsent(event.target.checked)}
                   />
                   <span>
-                    <strong>자동 동기화</strong>
+                    <strong>자동 동기화·커뮤니티 공개</strong>
                     <small>{autoSyncConsentStatus}</small>
-                    <small>이 브라우저에서 같은 계정으로 다시 접속하면 동의를 기억합니다. 로그아웃·계정 변경·끄기 시 해제됩니다.</small>
+                    <small>새로 캡처한 정답 풀이가 같은 문제를 푸는 자격 사용자에게 공개됩니다. 기존 풀이는 바뀌지 않으며, 나중에 개별 풀이를 비공개로 바꿀 수 있습니다. GitHub 공유 동의와는 별개입니다.</small>
                   </span>
                 </label>
               </>

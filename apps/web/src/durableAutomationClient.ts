@@ -4,6 +4,7 @@ import type { GitHubAutoTarget } from "./githubClient";
 import { withRequestDeadline } from "./requestDeadline";
 
 export type DurableOwnershipMode = "PAGE_OWNED" | "DURABLE_SERVER";
+export const COMMUNITY_DEFAULT_PUBLIC_POLICY_VERSION = "2026-09-11";
 
 export interface DurableAutomationProfile {
   readonly userId: string;
@@ -22,6 +23,9 @@ export interface DurableAutomationProfile {
   readonly updatedAt: string;
   /** Non-secret, server-derived comparison value for the current AuthSession. */
   readonly sessionBindingFingerprint: string;
+  readonly communityDefaultPublicPolicyVersion?: string | null;
+  readonly communityDefaultPublicConsentedAt?: string | null;
+  readonly communityDefaultPublicConsentActive?: boolean;
 }
 
 export interface DurableAutomationUpdate {
@@ -34,6 +38,7 @@ export interface DurableAutomationUpdate {
   readonly visibilityRiskConsent: boolean;
   readonly publicUploadConsent: boolean;
   readonly expectedVersion: number;
+  readonly communityDefaultPublicPolicyVersion?: string;
 }
 
 export interface RelayChallengeResponse {
@@ -149,7 +154,10 @@ export function createDurableAutomationClient(fetcher: FetchLike = globalThis.fe
     update: async (body, signal) => {
       if (!device(body.deviceId) || !safeNonNegative(body.expectedVersion)) throw new DurableAutomationRequestError("INVALID_REQUEST");
       if (body.target !== null && !target(body.target)) throw new DurableAutomationRequestError("INVALID_REQUEST");
-      return request("/api/v1/automation", "PUT", profile, body, signal);
+      return request("/api/v1/automation", "PUT", profile, {
+        ...body,
+        ...(body.communityDefaultPublicPolicyVersion ? {} : { communityDefaultPublicPolicyVersion: COMMUNITY_DEFAULT_PUBLIC_POLICY_VERSION }),
+      }, signal);
     },
     relayChallenge: async (deviceId, publicKey, signal) => {
       if (!device(deviceId) || !str(publicKey) || !publicKey || publicKey.length > 2048) throw new DurableAutomationRequestError("INVALID_REQUEST");
