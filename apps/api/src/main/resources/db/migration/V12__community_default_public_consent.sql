@@ -10,6 +10,20 @@ ALTER TABLE automation_profiles
     ADD CONSTRAINT chk_automation_profile_community_public_generation
         CHECK (community_default_public_generation IS NULL OR community_default_public_generation >= 0);
 
+ALTER TABLE automation_profiles
+    ADD CONSTRAINT chk_automation_profile_community_public_consent_tuple
+        CHECK (
+            (community_default_public_policy_version IS NULL
+             AND community_default_public_consented_at IS NULL
+             AND community_default_public_auth_session_id IS NULL
+             AND community_default_public_generation IS NULL)
+            OR
+            (community_default_public_policy_version IS NOT NULL
+             AND community_default_public_consented_at IS NOT NULL
+             AND community_default_public_auth_session_id IS NOT NULL
+             AND community_default_public_generation IS NOT NULL)
+        );
+
 CREATE INDEX automation_profiles_community_public_consent
     ON automation_profiles(community_default_public_auth_session_id, community_default_public_generation)
     WHERE community_default_public_policy_version IS NOT NULL;

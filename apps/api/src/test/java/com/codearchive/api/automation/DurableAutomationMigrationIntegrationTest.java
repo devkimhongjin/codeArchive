@@ -52,6 +52,13 @@ class DurableAutomationMigrationIntegrationTest {
                 VALUES(?,?,?,?,CAST(? AS jsonb),?,?,?)
                 """, run, user, UUID.randomUUID(), "ACTIVE", "{}", java.sql.Timestamp.from(now),
                 java.sql.Timestamp.from(now.plusSeconds(60)), java.sql.Timestamp.from(now));
+        UUID solution = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO solutions(id,user_id,client_record_id,platform,problem_number,title,language,code,result,
+                    ai_usage,created_at,updated_at,accepted_capture,community_public,published_at,capture_generation,captured_at)
+                VALUES(?,?,?,?,?,?,?,?,?,'unknown',?,?,TRUE,FALSE,NULL,7,?)
+                """, solution, user, "legacy-solution", "SWEA", "1000", "Legacy", "Java", "class Main {}", "ACCEPTED",
+                java.sql.Timestamp.from(now), java.sql.Timestamp.from(now), java.sql.Timestamp.from(now));
 
         Flyway.configure().dataSource(dataSource).load().migrate();
 
@@ -71,5 +78,8 @@ class DurableAutomationMigrationIntegrationTest {
         assertThat(jdbc.queryForMap("SELECT state,error_code FROM github_auto_runs WHERE id=?", run))
                 .containsEntry("state", "OFF")
                 .containsEntry("error_code", "AUTOMATION_OWNERSHIP_CONFLICT");
+        assertThat(jdbc.queryForMap("SELECT community_public,published_at FROM solutions WHERE id=?", solution))
+                .containsEntry("community_public", false)
+                .containsEntry("published_at", null);
     }
 }

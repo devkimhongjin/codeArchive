@@ -24,9 +24,12 @@ IMPORTED 행**을 공개로 만든다. 이 확인은 기존 자동 동기화 동
 `publicUploadConsent`를 대체하지 않는다.
 
 - relay profile PUT 요청의 선택 필드 `communityDefaultPublicPolicyVersion`에 현재
-  정책 버전을 보내야 한다. 응답 profile은 현재 `communityDefaultPublicPolicyVersion`과
-  `communityDefaultPublicConsentedAt`을 표시한다. 알 수 없거나 오래된 버전은 400이며,
-  필드가 없으면 수집은 계속되지만 private으로 저장된다.
+  정책 버전을 보내야 한다. 응답 profile은 현재 `communityDefaultPublicPolicyVersion`,
+  `communityDefaultPublicConsentedAt`, 서버가 현재 durable source-transfer 상태와
+  authenticated session/generation을 검증한 `communityDefaultPublicConsentActive`를
+  표시한다. 클라이언트는 숨겨진 session ID나 version/timestamp만으로 유효성을 추론하지
+  않는다. 알 수 없거나 오래된 버전은 400이며, 필드가 없으면 수집은 계속되지만
+  private으로 저장된다.
 - 서버는 해당 version을 현재 authenticated session과 새 durable generation에 결합한다.
   logout, account switch, OFF, session/generation 변경, grant revoke 뒤의 기존 grant는
   기본 공개 권한을 얻지 못한다.

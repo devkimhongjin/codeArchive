@@ -647,6 +647,10 @@ Community default-public은 별도 disclosure 계약이다. Dashboard가 현재 
 `clientRecordId`의 EXISTING 재전송은 기존 private/revoke 상태를 변경하지 않는다.
 이 정책은 GitHub public-repository consent와 다르며, logout·account switch·OFF·stale
 generation·policy change에서는 old grant가 기본 공개 권한을 유지하지 못한다.
+Dashboard가 받는 automation profile에는 `communityDefaultPublicPolicyVersion`,
+`communityDefaultPublicConsentedAt`, `communityDefaultPublicConsentActive`가 포함된다.
+마지막 boolean만 현재 세션·durable generation에 유효한 공개 기본값 권한을 나타내며,
+session ID 자체는 Dashboard/Extension contract로 노출하지 않는다.
 
 Persisted provider HEAD는 unconditional authority가 아니다. GitHub write 직전에 installation ownership, repository identity/privacy, branch/protection, current HEAD를 provider에서 fresh revalidation하고 existing conditional create-only contract를 사용한다.
 
