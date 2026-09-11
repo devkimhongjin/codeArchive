@@ -15,6 +15,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import com.codearchive.api.common.exception.CodeArchiveException;
 import com.codearchive.api.common.exception.ErrorCode;
+import com.codearchive.api.community.CommunityDefaultPublicPolicy;
 import com.codearchive.api.integration.github.GitHubAutoCommitStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -42,7 +43,9 @@ public class DurableAutomationProfileStore {
                 SELECT user_id,device_id,generation,source_transfer_enabled,github_auto_commit_enabled,
                        ownership_mode,target_generation,target,automatic_transfer_consent,
                        visibility_risk_consent,public_upload_consent,github_enabled_at,version,updated_at,
-                       auth_session_id
+                       auth_session_id,community_default_public_policy_version,
+                       community_default_public_consented_at,community_default_public_auth_session_id,
+                       community_default_public_generation
                 FROM automation_profiles WHERE user_id=:user
                 """, new MapSqlParameterSource("user", userId), (rs, index) -> map(rs))
                 .stream().findFirst().orElseGet(() -> Profile.off(userId));
@@ -63,7 +66,8 @@ public class DurableAutomationProfileStore {
             long expectedVersion,
             Instant githubEnabledAt,
             long generation,
-            Instant now
+            Instant now,
+            String communityDefaultPublicPolicyVersion
     ) {
         return tx.execute(status -> {
             Profile current = locked(userId);
@@ -101,6 +105,11 @@ public class DurableAutomationProfileStore {
                     .addValue("automaticConsent", automaticTransferConsent)
                     .addValue("visibilityConsent", visibilityRiskConsent)
                     .addValue("publicConsent", publicUploadConsent)
+                    .addValue("communityPolicyVersion", communityDefaultPublicPolicyVersion == null ? current.communityDefaultPublicPolicyVersion() : communityDefaultPublicPolicyVersion)
+                    .addValue("communityConsentAt", communityDefaultPublicPolicyVersion == null ? timestamp(current.communityDefaultPublicConsentedAt()) : Timestamp.from(now))
+                    .addValue("communityConsentSession", communityDefaultPublicPolicyVersion == null ? current.communityDefaultPublicConsentSessionId() : authSessionId)
+                    .addValue("communityConsentGeneration", communityDefaultPublicPolicyVersion == null
+                            ? current.communityDefaultPublicConsentGeneration() : Long.valueOf(generation))
                     .addValue("authSession", persistedSession)
                     .addValue("enabledAt", githubEnabledAt == null ? null : Timestamp.from(githubEnabledAt))
                     .addValue("version", current.version() + 1)
@@ -111,11 +120,28 @@ public class DurableAutomationProfileStore {
                     ownership_mode=:mode,target_generation=:targetGeneration,target=CAST(:target AS jsonb),
                     automatic_transfer_consent=:automaticConsent,visibility_risk_consent=:visibilityConsent,
                     public_upload_consent=:publicConsent,github_enabled_at=:enabledAt,
+                    community_default_public_policy_version=:communityPolicyVersion,
+                    community_default_public_consented_at=:communityConsentAt,
+                    community_default_public_auth_session_id=:communityConsentSession,
+                    community_default_public_generation=:communityConsentGeneration,
                     auth_session_id=:authSession,
                     version=:version,updated_at=:now WHERE user_id=:user
                     """, args);
             return find(userId);
         });
+    }
+
+    /** Compatibility overload for internal callers/tests; durable enablement must use a bound session. */
+    public Profile update(
+            UUID userId, UUID authSessionId, String deviceId, boolean sourceTransferEnabled,
+            boolean githubAutoCommitEnabled, String ownershipMode, long targetGeneration,
+            GitHubAutoCommitStore.Target target, boolean automaticTransferConsent,
+            boolean visibilityRiskConsent, boolean publicUploadConsent, long expectedVersion,
+            Instant githubEnabledAt, long generation, Instant now
+    ) {
+        return update(userId, authSessionId, deviceId, sourceTransferEnabled, githubAutoCommitEnabled,
+                ownershipMode, targetGeneration, target, automaticTransferConsent, visibilityRiskConsent,
+                publicUploadConsent, expectedVersion, githubEnabledAt, generation, now, null);
     }
 
     /** Compatibility overload for internal callers/tests; durable enablement must use a bound session. */
@@ -127,7 +153,7 @@ public class DurableAutomationProfileStore {
         return update(userId, null, deviceId, sourceTransferEnabled, githubAutoCommitEnabled,
                 ownershipMode, targetGeneration, target, automaticTransferConsent,
                 visibilityRiskConsent, publicUploadConsent, expectedVersion, githubEnabledAt,
-                generation, now);
+                generation, now, null);
     }
 
     /**
@@ -156,6 +182,8 @@ public class DurableAutomationProfileStore {
                         ownership_mode='PAGE_OWNED',target=null,
                         automatic_transfer_consent=false,visibility_risk_consent=false,
                         public_upload_consent=false,github_enabled_at=null,
+                        community_default_public_policy_version=null,community_default_public_consented_at=null,
+                        community_default_public_auth_session_id=null,community_default_public_generation=null,
                         auth_session_id=null,version=version+1,updated_at=:now
                         WHERE user_id=:user
                         """, new MapSqlParameterSource("user", userId).addValue("now", Timestamp.from(now)));
@@ -215,7 +243,9 @@ public class DurableAutomationProfileStore {
                 SELECT user_id,device_id,generation,source_transfer_enabled,github_auto_commit_enabled,
                        ownership_mode,target_generation,target,automatic_transfer_consent,
                        visibility_risk_consent,public_upload_consent,github_enabled_at,version,updated_at,
-                       auth_session_id
+                       auth_session_id,community_default_public_policy_version,
+                       community_default_public_consented_at,community_default_public_auth_session_id,
+                       community_default_public_generation
                 FROM automation_profiles WHERE user_id=:user FOR UPDATE
                 """, new MapSqlParameterSource("user", userId), (rs, index) -> map(rs))
                 .stream().findFirst().orElseGet(() -> {
@@ -227,18 +257,34 @@ public class DurableAutomationProfileStore {
 
     private Profile map(java.sql.ResultSet rs) throws java.sql.SQLException {
         String targetJson = rs.getString("target");
+        UUID authSessionId = rs.getObject("auth_session_id", UUID.class);
+        String communityPolicy = rs.getString("community_default_public_policy_version");
+        Instant communityConsentAt = instant(rs, "community_default_public_consented_at");
+        UUID communityConsentSession = rs.getObject("community_default_public_auth_session_id", UUID.class);
+        Long communityConsentGeneration = rs.getObject("community_default_public_generation", Long.class);
+        long generation = rs.getLong("generation");
+        boolean communityConsentActive = CommunityDefaultPublicPolicy.CURRENT_VERSION.equals(communityPolicy)
+                && rs.getBoolean("source_transfer_enabled")
+                && "DURABLE_SERVER".equals(rs.getString("ownership_mode"))
+                && Objects.equals(authSessionId, communityConsentSession)
+                && Objects.equals(communityConsentGeneration, generation);
         return new Profile(rs.getObject("user_id", UUID.class), rs.getString("device_id"),
-                rs.getLong("generation"), rs.getBoolean("source_transfer_enabled"),
+                generation, rs.getBoolean("source_transfer_enabled"),
                 rs.getBoolean("github_auto_commit_enabled"), rs.getString("ownership_mode"),
                 rs.getLong("target_generation"), decode(targetJson), rs.getBoolean("automatic_transfer_consent"),
                 rs.getBoolean("visibility_risk_consent"), rs.getBoolean("public_upload_consent"),
                 instant(rs, "github_enabled_at"), rs.getLong("version"), instant(rs, "updated_at"),
-                rs.getObject("auth_session_id", UUID.class));
+                authSessionId, null, communityPolicy, communityConsentAt, communityConsentSession,
+                communityConsentGeneration, communityConsentActive);
     }
 
     private Instant instant(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
         java.sql.Timestamp value = rs.getTimestamp(column);
         return value == null ? null : value.toInstant();
+    }
+
+    private Timestamp timestamp(Instant value) {
+        return value == null ? null : Timestamp.from(value);
     }
 
     private String encode(GitHubAutoCommitStore.Target target) {
@@ -269,7 +315,11 @@ public class DurableAutomationProfileStore {
             boolean automaticTransferConsent, boolean visibilityRiskConsent, boolean publicUploadConsent,
             Instant githubEnabledAt, long version, Instant updatedAt,
             @com.fasterxml.jackson.annotation.JsonIgnore UUID authSessionId,
-            String sessionBindingFingerprint) {
+            String sessionBindingFingerprint,
+            String communityDefaultPublicPolicyVersion, Instant communityDefaultPublicConsentedAt,
+            @com.fasterxml.jackson.annotation.JsonIgnore UUID communityDefaultPublicConsentSessionId,
+            Long communityDefaultPublicConsentGeneration,
+            boolean communityDefaultPublicConsentActive) {
         public Profile(UUID userId, String deviceId, long generation,
                 boolean sourceTransferEnabled, boolean githubAutoCommitEnabled, String ownershipMode,
                 long targetGeneration, GitHubAutoCommitStore.Target target,
@@ -277,7 +327,8 @@ public class DurableAutomationProfileStore {
                 Instant githubEnabledAt, long version, Instant updatedAt) {
                 this(userId, deviceId, generation, sourceTransferEnabled, githubAutoCommitEnabled, ownershipMode,
                     targetGeneration, target, automaticTransferConsent, visibilityRiskConsent,
-                    publicUploadConsent, githubEnabledAt, version, updatedAt, null, null);
+                    publicUploadConsent, githubEnabledAt, version, updatedAt, null, null,
+                    null, null, null, null, false);
         }
 
         public Profile(UUID userId, String deviceId, long generation,
@@ -287,13 +338,17 @@ public class DurableAutomationProfileStore {
                 Instant githubEnabledAt, long version, Instant updatedAt, UUID authSessionId) {
             this(userId, deviceId, generation, sourceTransferEnabled, githubAutoCommitEnabled, ownershipMode,
                     targetGeneration, target, automaticTransferConsent, visibilityRiskConsent,
-                    publicUploadConsent, githubEnabledAt, version, updatedAt, authSessionId, null);
+                    publicUploadConsent, githubEnabledAt, version, updatedAt, authSessionId, null,
+                    null, null, null, null, false);
         }
 
         public Profile withSessionBindingFingerprint(String fingerprint) {
             return new Profile(userId, deviceId, generation, sourceTransferEnabled, githubAutoCommitEnabled,
                     ownershipMode, targetGeneration, target, automaticTransferConsent, visibilityRiskConsent,
-                    publicUploadConsent, githubEnabledAt, version, updatedAt, null, fingerprint);
+                    publicUploadConsent, githubEnabledAt, version, updatedAt, null, fingerprint,
+                    communityDefaultPublicPolicyVersion, communityDefaultPublicConsentedAt,
+                    communityDefaultPublicConsentSessionId, communityDefaultPublicConsentGeneration,
+                    communityDefaultPublicConsentActive);
         }
 
         static Profile off(UUID userId) {

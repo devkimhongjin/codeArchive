@@ -121,6 +121,8 @@ export function App({
   const [consentPending, setConsentPending] = useState(false);
   // Restored only after /me verification and matching immutable account binding.
   const [autoSyncConsent, setAutoSyncConsent] = useState(false);
+  const [communityConsentActive, setCommunityConsentActive] = useState(false);
+  const [communityConsentPending, setCommunityConsentPending] = useState(false);
   const [activeSyncSessionId, setActiveSyncSessionId] = useState<string | null>(null);
   const [automationAutoSyncEnabled, setAutomationAutoSyncEnabled] = useState(false);
   const [githubAutoCommitEnabled, setGithubAutoCommitEnabled] = useState(false);
@@ -160,6 +162,7 @@ export function App({
       extensionConnection,
       syncSessionIdGenerator,
       setActiveSyncSessionId,
+      setCommunityConsentActive,
     ),
     [extensionConnection, syncSessionIdGenerator],
   );
@@ -678,6 +681,14 @@ export function App({
     setConsentPending(false);
   }
 
+  async function confirmCommunityPublic() {
+    setCommunityConsentPending(true);
+    const active = await syncControllerRef.current.confirmCommunityDefaultPublic();
+    setCommunityConsentActive(active);
+    setCommunityConsentPending(false);
+  }
+  const communityConfirmationBlocked = !authenticated || !autoSyncConsent || !exactOrigin || !connected || !online || consentPending || automationSafetyStopped || communityConsentPending || logoutPending;
+
   async function logout() {
     cancelAllDurableAutomationControllers();
     accountRef.current = "";
@@ -745,11 +756,16 @@ export function App({
                     onChange={(event) => void setConsent(event.target.checked)}
                   />
                   <span>
-                    <strong>자동 동기화</strong>
+                    <strong>자동 동기화·커뮤니티 공개</strong>
                     <small>{autoSyncConsentStatus}</small>
-                    <small>이 브라우저에서 같은 계정으로 다시 접속하면 동의를 기억합니다. 로그아웃·계정 변경·끄기 시 해제됩니다.</small>
+                    <small>새로 캡처한 정답 풀이가 같은 문제를 푸는 자격 사용자에게 공개됩니다. 기존 풀이는 바뀌지 않으며, 나중에 개별 풀이를 비공개로 바꿀 수 있습니다. GitHub 공유 동의와는 별개입니다.</small>
+                    <small aria-live="polite" data-testid="community-consent-status">커뮤니티 기본 공개: {communityConsentPending ? "확인 중" : communityConsentActive ? "활성" : "확인 필요"}</small>
                   </span>
                 </label>
+                {!communityConsentActive && <>
+                  <button type="button" disabled={communityConfirmationBlocked} onClick={() => void confirmCommunityPublic()}>기본 공개 확인</button>
+                  <small>{communityConsentPending ? "확인 중입니다." : "로그인·자동 동기화·Extension 연결 후 확인할 수 있습니다."}</small>
+                </>}
               </>
             )}
             {authState.status === "unavailable" && (

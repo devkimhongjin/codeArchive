@@ -4,6 +4,7 @@ import type { GitHubAutoTarget } from "./githubClient";
 import { withRequestDeadline } from "./requestDeadline";
 
 export type DurableOwnershipMode = "PAGE_OWNED" | "DURABLE_SERVER";
+export const COMMUNITY_DEFAULT_PUBLIC_POLICY_VERSION = "2026-09-11";
 
 export interface DurableAutomationProfile {
   readonly userId: string;
@@ -22,6 +23,9 @@ export interface DurableAutomationProfile {
   readonly updatedAt: string;
   /** Non-secret, server-derived comparison value for the current AuthSession. */
   readonly sessionBindingFingerprint: string;
+  readonly communityDefaultPublicPolicyVersion?: string | null;
+  readonly communityDefaultPublicConsentedAt?: string | null;
+  readonly communityDefaultPublicConsentActive?: boolean;
 }
 
 export interface DurableAutomationUpdate {
@@ -34,6 +38,7 @@ export interface DurableAutomationUpdate {
   readonly visibilityRiskConsent: boolean;
   readonly publicUploadConsent: boolean;
   readonly expectedVersion: number;
+  readonly communityDefaultPublicPolicyVersion?: string;
 }
 
 export interface RelayChallengeResponse {
@@ -79,6 +84,7 @@ const numericId = (value: unknown): value is string => str(value) && /^[1-9][0-9
 const sha = (value: unknown): value is string => str(value) && /^[0-9a-f]{40}$/.test(value);
 const device = (value: unknown): value is string => str(value) && /^[A-Za-z0-9_-]{16,128}$/.test(value);
 const sessionBindingFingerprint = (value: unknown): value is string => str(value) && /^sb1_[A-Za-z0-9_-]{43}$/.test(value);
+const nullableDate = (value: unknown): value is string | null => value === null || absoluteDate(value);
 
 function target(value: unknown): value is GitHubAutoTarget {
   if (!object(value)) return false;
@@ -107,7 +113,10 @@ function profile(value: unknown): value is DurableAutomationProfile {
     && (value.githubEnabledAt === null || absoluteDate(value.githubEnabledAt))
     && safeNonNegative(value.version)
     && absoluteDate(value.updatedAt)
-    && sessionBindingFingerprint(value.sessionBindingFingerprint);
+    && sessionBindingFingerprint(value.sessionBindingFingerprint)
+    && (value.communityDefaultPublicPolicyVersion === undefined || value.communityDefaultPublicPolicyVersion === null || (str(value.communityDefaultPublicPolicyVersion) && value.communityDefaultPublicPolicyVersion.length <= 32))
+    && (value.communityDefaultPublicConsentedAt === undefined || nullableDate(value.communityDefaultPublicConsentedAt))
+    && (value.communityDefaultPublicConsentActive === undefined || bool(value.communityDefaultPublicConsentActive));
 }
 
 function challenge(value: unknown): value is RelayChallengeResponse {

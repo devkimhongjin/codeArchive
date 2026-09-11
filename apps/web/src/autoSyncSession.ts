@@ -1,6 +1,7 @@
 import { createAutoSyncConsentStore } from "./accountConsent";
 import { cancelAllDurableAutomationControllers, DurableAutomationController, type DashboardRelayPairingConnection } from "./durableAutomation";
 import { mainApiDurableAutomationClient } from "./durableAutomationClient";
+import { COMMUNITY_DEFAULT_PUBLIC_POLICY_VERSION } from "./durableAutomationClient";
 import { registerExplicitAutoSyncOffHandler } from "./durableAutomationIntent";
 import { registerDurableAutomationController } from "./durableAutomationRuntime";
 import {
@@ -28,6 +29,7 @@ export interface AutoSyncSessionController {
   revokeDurableAutomation(): Promise<boolean>;
   rearmDurableReconnect(): void;
   hasActiveSession(): boolean;
+  confirmCommunityDefaultPublic(): Promise<boolean>;
 }
 
 export function secureSyncSessionId(): string {
@@ -49,6 +51,7 @@ export function createAutoSyncSessionController(
   transport: AutoSyncSessionTransport,
   generateSyncSessionId: () => string = secureSyncSessionId,
   onActiveSessionChange: (syncSessionId: string | null) => void = () => undefined,
+  onCommunityDefaultPublicConsentActiveChange: (active: boolean) => void = () => undefined,
 ): AutoSyncSessionController {
   let desiredEligible = false;
   let desiredAuthContextKey = "";
@@ -159,7 +162,9 @@ export function createAutoSyncSessionController(
         try {
           const result = await durable.enableSourceTransfer();
           setDurableAutomationProfile(result.profile);
+          onCommunityDefaultPublicConsentActiveChange(result.profile.communityDefaultPublicConsentActive === true);
         } catch {
+          onCommunityDefaultPublicConsentActiveChange(false);
           // Once relay capability has been detected, never fall back to a page-owned writer
           // after a possibly-partial durable profile transition.
         }
@@ -204,7 +209,18 @@ export function createAutoSyncSessionController(
   };
 
   return {
+    async confirmCommunityDefaultPublic() {
+      if (!durable || !desiredEligible) return false;
+      try {
+        const result = await durable.enableSourceTransfer(undefined, COMMUNITY_DEFAULT_PUBLIC_POLICY_VERSION);
+        setDurableAutomationProfile(result.profile);
+        const active = result.profile.communityDefaultPublicConsentActive === true;
+        onCommunityDefaultPublicConsentActiveChange(active);
+        return active;
+      } catch { onCommunityDefaultPublicConsentActiveChange(false); return false; }
+    },
     setEligibility(eligible, authContextKey) {
+      if (!eligible || desiredAuthContextKey !== (eligible ? authContextKey : "")) onCommunityDefaultPublicConsentActiveChange(false);
       if (!eligible || desiredAuthContextKey !== (eligible ? authContextKey : "")) {
         cancelAllDurableAutomationControllers();
         durable?.cancelPendingTransitions();

@@ -11,6 +11,7 @@ import type {
   DurableAutomationProfile,
   DurableAutomationUpdate,
 } from "./durableAutomationClient";
+import { COMMUNITY_DEFAULT_PUBLIC_POLICY_VERSION } from "./durableAutomationClient";
 
 export interface DashboardRelayPairingConnection {
   relayPairingInfo(): Promise<CodeArchiveRelayPairingInfoResponse | null>;
@@ -171,15 +172,15 @@ export class DurableAutomationController {
     return { profile, pairing };
   }
 
-  async enableSourceTransfer(signal?: AbortSignal): Promise<DurableTransitionResult> {
+  async enableSourceTransfer(signal?: AbortSignal, communityPolicyVersion?: string): Promise<DurableTransitionResult> {
     const fence = this.fence(signal);
     return serializeDurableTransition(async () => {
       this.assertFence(fence);
-      return this.enableSourceTransferInternal(signal, fence);
+      return this.enableSourceTransferInternal(signal, fence, communityPolicyVersion);
     });
   }
 
-  private async enableSourceTransferInternal(signal: AbortSignal | undefined, fence: TransitionFence): Promise<DurableTransitionResult> {
+  private async enableSourceTransferInternal(signal: AbortSignal | undefined, fence: TransitionFence, communityPolicyVersion?: string): Promise<DurableTransitionResult> {
     this.assertFence(fence);
     const pairing = await this.requirePairingInfo();
     const current = await this.client.profile(signal);
@@ -195,6 +196,7 @@ export class DurableAutomationController {
       automaticTransferConsent: true,
       visibilityRiskConsent: migratingFromPageOwned ? false : current.visibilityRiskConsent,
       publicUploadConsent: migratingFromPageOwned ? false : current.publicUploadConsent,
+      ...(communityPolicyVersion === COMMUNITY_DEFAULT_PUBLIC_POLICY_VERSION ? { communityDefaultPublicPolicyVersion: communityPolicyVersion } : {}),
     };
     const profile = await this.updateIfNeeded(current, desired, signal);
     this.assertFence(fence);
@@ -399,7 +401,8 @@ export class DurableAutomationController {
     desired: Omit<DurableAutomationUpdate, "expectedVersion">,
     signal?: AbortSignal,
   ): Promise<DurableAutomationProfile> {
-    if (sameDesired(current, desired)) return current;
+    if (sameDesired(current, desired)
+      && !(desired.communityDefaultPublicPolicyVersion && current.communityDefaultPublicConsentActive !== true)) return current;
     return this.client.update({ ...desired, expectedVersion: current.version }, signal);
   }
 

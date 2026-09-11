@@ -16,6 +16,35 @@ Root/integrator가 apps/api/**, apps/web/**, 이 문서의 API·DB·UI 계약을
 - 일반 PUT으로 ACCEPTED를 쓰거나 source 표시를 바꾸는 것만으로 자격을 얻지 못한다. DB trigger가 코드·언어·플랫폼·문제·결과 변경 시 출처·공개를 해제한다. 제목 변경은 공개 글에 반영한다. AI 결과는 포함하지 않는다.
 - 신뢰 한계: 브라우저에서 관찰한 성공 결과이지 플랫폼의 공식 서명/재채점 검증은 아니다. 악의적으로 수집 API 전체를 위조하는 클라이언트를 증명으로 방어하지 못한다. UI에서 공식 검증이라고 표시하지 않는다.
 
+## Relay 신규 수집의 기본 공개 정책
+
+정책 버전 `2026-09-11`부터, Dashboard가 현재 계정·AuthSession·durable generation에
+대해 이 disclosure를 명시적으로 확인한 경우에 한해 검증된 relay 수집의 **새
+IMPORTED 행**을 공개로 만든다. 이 확인은 기존 자동 동기화 동의나 GitHub
+`publicUploadConsent`를 대체하지 않는다.
+
+- relay profile PUT 요청의 선택 필드 `communityDefaultPublicPolicyVersion`에 현재
+  정책 버전을 보내야 한다. 응답 profile은 현재 `communityDefaultPublicPolicyVersion`,
+  `communityDefaultPublicConsentedAt`, 서버가 현재 durable source-transfer 상태와
+  authenticated session/generation을 검증한 `communityDefaultPublicConsentActive`를
+  표시한다. 클라이언트는 숨겨진 session ID나 version/timestamp만으로 유효성을 추론하지
+  않는다. 알 수 없거나 오래된 버전은 400이며, 필드가 없으면 수집은 계속되지만
+  private으로 저장된다.
+- 서버는 해당 version을 현재 authenticated session과 새 durable generation에 결합한다.
+  logout, account switch, OFF, session/generation 변경, grant revoke 뒤의 기존 grant는
+  기본 공개 권한을 얻지 못한다.
+- 현재 정책이 유효한 새 IMPORTED 행만 `community_public=true`와 서버 ingest 시각의
+  `published_at`을 같은 INSERT transaction에서 받는다. `capturedAt`, `solvedAt`,
+  client payload의 public 플래그는 공개 시각·권한이 아니다.
+- 동일 payload의 `EXISTING` 재전송은 ACK-eligible이고 UPDATE를 하지 않는다. 기존 private,
+  revoke, `published_at` 값은 유지된다. 충돌, 수동/편집/비허용/AI/성능/로컬 전용 데이터는
+  자동 공개하지 않는다.
+- 기존 private 행은 migration, ACK reset, historical resend로 공개하지 않는다. 사용자는
+  기존 공개 API로 즉시 private/revoke할 수 있고, 재공개는 기존 revision 확인 규칙을 따른다.
+
+정책을 철회할 때는 새 relay grant 발급을 막거나 future IMPORTED 기본 공개만 비활성화한다.
+기존 행을 일괄 변경하거나 consent metadata를 파괴적으로 되돌리지 않는다.
+
 ## API와 수명
 
 모든 경로는 `/api/v1/community` 하위이며 기존 세션 인증/정확한 Dashboard Origin 검사를 사용한다. POST로 상태 변경, DELETE로 댓글 삭제. 응답은 기존 ApiResponse envelope이고 `Cache-Control: no-store, private`다.

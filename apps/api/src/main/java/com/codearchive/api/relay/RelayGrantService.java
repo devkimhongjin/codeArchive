@@ -28,6 +28,7 @@ import com.codearchive.api.auth.security.SecureTokenCodec;
 import com.codearchive.api.auth.session.SessionBindingFingerprint;
 import com.codearchive.api.common.exception.CodeArchiveException;
 import com.codearchive.api.common.exception.ErrorCode;
+import com.codearchive.api.community.CommunityDefaultPublicPolicy;
 
 @Service
 public class RelayGrantService {
@@ -255,6 +256,37 @@ public class RelayGrantService {
         if (!valid) throw new CodeArchiveException(ErrorCode.RELAY_GRANT_REVOKED);
     }
 
+    /**
+     * Returns publication authority only while the current relay generation
+     * holds the explicitly accepted community disclosure. The profile row is
+     * share-locked so a concurrent revoke/session transition cannot race the
+     * relay INSERT that consumes this decision.
+     */
+    public boolean communityDefaultPublicEligible(RelayGrantPrincipal principal) {
+        if (principal == null) return false;
+        return db.query("""
+                SELECT 1 FROM relay_grants g
+                JOIN automation_profiles p ON p.user_id=g.user_id
+                    AND p.auth_session_id=g.auth_session_id
+                JOIN auth_sessions s ON s.id=g.auth_session_id
+                WHERE g.id=:grant AND g.user_id=:user AND g.device_id=:device
+                  AND g.generation=:generation AND g.revoked_at IS NULL
+                  AND g.expires_at > clock_timestamp()
+                  AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
+                  AND p.ownership_mode='DURABLE_SERVER'
+                  AND p.source_transfer_enabled=true
+                  AND p.device_id=:device AND p.generation=g.generation
+                  AND p.community_default_public_policy_version=:policy
+                  AND p.community_default_public_auth_session_id=g.auth_session_id
+                  AND p.community_default_public_generation=g.generation
+                FOR SHARE OF p
+                """, new MapSqlParameterSource("grant", principal.grantId())
+                        .addValue("user", principal.userId()).addValue("device", principal.deviceId())
+                        .addValue("generation", principal.generation())
+                        .addValue("policy", CommunityDefaultPublicPolicy.CURRENT_VERSION),
+                (rs, index) -> 1).stream().findFirst().isPresent();
+    }
+
     private SessionGrantContext profileForDevice(UUID userId, UUID sessionId, String device, Instant now) {
         var session = db.query("""
                 SELECT expires_at FROM auth_sessions
@@ -283,6 +315,8 @@ public class RelayGrantService {
                     source_transfer_enabled=false,github_auto_commit_enabled=false,
                     target=null,automatic_transfer_consent=false,visibility_risk_consent=false,
                     public_upload_consent=false,github_enabled_at=null,auth_session_id=null,
+                    community_default_public_policy_version=null,community_default_public_consented_at=null,
+                    community_default_public_auth_session_id=null,community_default_public_generation=null,
                     version=version+1,updated_at=:now
                     WHERE user_id=:user
                     """, new MapSqlParameterSource("device", device).addValue("generation", generation)
@@ -299,6 +333,8 @@ public class RelayGrantService {
                 ownership_mode='PAGE_OWNED',target=null,
                 automatic_transfer_consent=false,visibility_risk_consent=false,
                 public_upload_consent=false,github_enabled_at=null,auth_session_id=null,
+                community_default_public_policy_version=null,community_default_public_consented_at=null,
+                community_default_public_auth_session_id=null,community_default_public_generation=null,
                 version=version+1,updated_at=:now
                 WHERE user_id=:user
                 """, new MapSqlParameterSource("user", userId).addValue("now", Timestamp.from(now)));

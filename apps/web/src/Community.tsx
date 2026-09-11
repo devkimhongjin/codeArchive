@@ -16,7 +16,7 @@ export function CommunitySharing({ solution, account, client = mainApiCommunityC
   // Parent is keyed by account + solution revision; stale UI never crosses that boundary.
   return <section className="community-section" aria-label="문제 커뮤니티">
     <h3>함께 푼 사람들의 코드</h3>
-    <p>이 문제의 성공 풀이를 공개하면 다른 사람의 풀이를 볼 수 있습니다. 자동 공개되지 않습니다.</p>
+    <p>확인된 동의 후 새로 자동 동기화된 성공 풀이는 기본 공개될 수 있습니다. 기존·비공개 풀이는 그대로이며, 각 풀이를 개별 공개하거나 비공개로 전환할 수 있습니다.</p>
     <button type="button" onClick={() => { setOpened(true); if (opened) sharing.refresh(); }}>공개 설정 확인</button>
     {sharing.busy && <p role="status">공개 상태를 확인하는 중입니다.</p>}
     {sharing.error && <p role="alert">{sharing.error}</p>}

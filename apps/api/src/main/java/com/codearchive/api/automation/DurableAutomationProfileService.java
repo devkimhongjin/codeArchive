@@ -13,6 +13,7 @@ import com.codearchive.api.auth.security.CodeArchivePrincipal;
 import com.codearchive.api.auth.session.SessionBindingFingerprint;
 import com.codearchive.api.common.exception.CodeArchiveException;
 import com.codearchive.api.common.exception.ErrorCode;
+import com.codearchive.api.community.CommunityDefaultPublicPolicy;
 import com.codearchive.api.integration.github.GitHubAutoCommitStore;
 
 @Service
@@ -43,6 +44,10 @@ public class DurableAutomationProfileService {
     public DurableAutomationProfileStore.Profile update(CodeArchivePrincipal principal, String origin, UpdateRequest request) {
         requireDashboard(principal, origin);
         if (request == null || request.expectedVersion() < 0) throw invalid();
+        if (request.communityDefaultPublicPolicyVersion() != null
+                && !CommunityDefaultPublicPolicy.CURRENT_VERSION.equals(request.communityDefaultPublicPolicyVersion())) {
+            throw invalid();
+        }
         store.ensureSessionBinding(principal.userId(), principal.sessionId(), clock.instant());
         String device = requiredDevice(request.deviceId());
         String mode = request.ownershipMode();
@@ -64,16 +69,25 @@ public class DurableAutomationProfileService {
                 || !current.ownershipMode().equals(mode)
                 || current.automaticTransferConsent() != request.automaticTransferConsent()
                 || current.visibilityRiskConsent() != request.visibilityRiskConsent()
-                || current.publicUploadConsent() != request.publicUploadConsent();
+                || current.publicUploadConsent() != request.publicUploadConsent()
+                || (request.communityDefaultPublicPolicyVersion() != null
+                    && (!CommunityDefaultPublicPolicy.CURRENT_VERSION.equals(current.communityDefaultPublicPolicyVersion())
+                        || !principal.sessionId().equals(current.communityDefaultPublicConsentSessionId())
+                        || !java.util.Objects.equals(current.communityDefaultPublicConsentGeneration(), current.generation())));
         long generation = changed ? current.generation() + 1 : current.generation();
         long targetGeneration = java.util.Objects.equals(current.target(), request.target())
                 ? current.targetGeneration() : current.targetGeneration() + 1;
         Instant enabledAt = request.githubAutoCommitEnabled()
                 ? (current.githubAutoCommitEnabled() && !changed ? current.githubEnabledAt() : clock.instant()) : null;
-        DurableAutomationProfileStore.Profile updated = store.update(principal.userId(), principal.sessionId(), device, request.sourceTransferEnabled(), request.githubAutoCommitEnabled(),
-                mode, targetGeneration, request.target(), request.automaticTransferConsent(),
-                request.visibilityRiskConsent(), request.publicUploadConsent(), request.expectedVersion(),
-                enabledAt, generation, clock.instant());
+        DurableAutomationProfileStore.Profile updated = request.communityDefaultPublicPolicyVersion() == null
+                ? store.update(principal.userId(), principal.sessionId(), device, request.sourceTransferEnabled(), request.githubAutoCommitEnabled(),
+                    mode, targetGeneration, request.target(), request.automaticTransferConsent(),
+                    request.visibilityRiskConsent(), request.publicUploadConsent(), request.expectedVersion(),
+                    enabledAt, generation, clock.instant())
+                : store.update(principal.userId(), principal.sessionId(), device, request.sourceTransferEnabled(), request.githubAutoCommitEnabled(),
+                    mode, targetGeneration, request.target(), request.automaticTransferConsent(),
+                    request.visibilityRiskConsent(), request.publicUploadConsent(), request.expectedVersion(),
+                    enabledAt, generation, clock.instant(), request.communityDefaultPublicPolicyVersion());
         return withSessionBinding(updated, principal);
     }
 
@@ -108,5 +122,13 @@ public class DurableAutomationProfileService {
     public record UpdateRequest(String deviceId, boolean sourceTransferEnabled, boolean githubAutoCommitEnabled,
             String ownershipMode, GitHubAutoCommitStore.Target target,
             boolean automaticTransferConsent, boolean visibilityRiskConsent, boolean publicUploadConsent,
-            long expectedVersion) {}
+            long expectedVersion, String communityDefaultPublicPolicyVersion) {
+        public UpdateRequest(String deviceId, boolean sourceTransferEnabled, boolean githubAutoCommitEnabled,
+                String ownershipMode, GitHubAutoCommitStore.Target target,
+                boolean automaticTransferConsent, boolean visibilityRiskConsent, boolean publicUploadConsent,
+                long expectedVersion) {
+            this(deviceId, sourceTransferEnabled, githubAutoCommitEnabled, ownershipMode, target,
+                    automaticTransferConsent, visibilityRiskConsent, publicUploadConsent, expectedVersion, null);
+        }
+    }
 }

@@ -25,6 +25,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.codearchive.api.auth.security.SecureTokenCodec;
 import com.codearchive.api.common.exception.CodeArchiveException;
+import com.codearchive.api.community.CommunityDefaultPublicPolicy;
 
 @SpringBootTest(properties = {
         "DB_PASSWORD=test-only",
@@ -71,6 +72,8 @@ class RelaySessionBindingPostgresIntegrationTest {
         }
         assertThat(db.queryForObject("SELECT count(*) FROM solutions WHERE user_id=?", Long.class, user))
                 .isEqualTo(1);
+        assertThat(db.queryForObject("SELECT community_public FROM solutions WHERE user_id=?", Boolean.class, user))
+                .isFalse();
 
         db.update("UPDATE relay_grants SET revoked_at=clock_timestamp() WHERE id=?", grant);
         assertThat(grants.authenticationRejectionReason(raw)).isEqualTo("GRANT_REVOKED");
@@ -79,6 +82,59 @@ class RelaySessionBindingPostgresIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON).content(capture))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("AUTH_REQUIRED"));
+    }
+
+    @Test
+    void currentPolicyMakesOnlyImportedRelayCapturePublicAndDuplicateDoesNotChangePrivateState() throws Exception {
+        UUID user = user();
+        UUID session = session(user, Instant.now().plusSeconds(3600));
+        UUID grant = grant(user, session, 7);
+        String raw = "relay-public-" + UUID.randomUUID();
+        db.update("UPDATE relay_grants SET token_hash=? WHERE id=?", tokens.hash(raw), grant);
+        profile(user, session, 7);
+        enableCommunityDefaultPublic(user, session, 7);
+
+        Instant before = Instant.now();
+        String capture = capture("public-record");
+        mvc.perform(post("/api/v1/relay/captures")
+                        .header("Origin", "chrome-extension://oohlcmihldmfninmdcmanddfmhoonmdl")
+                        .header("Authorization", "Bearer " + raw)
+                        .contentType(MediaType.APPLICATION_JSON).content(capture))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.results[0].outcome").value("IMPORTED"));
+        Instant published = db.queryForObject("SELECT published_at FROM solutions WHERE user_id=? AND client_record_id=?",
+                Timestamp.class, user, "public-record").toInstant();
+        assertThat(db.queryForObject("SELECT community_public FROM solutions WHERE user_id=? AND client_record_id=?",
+                Boolean.class, user, "public-record")).isTrue();
+        assertThat(published).isBetween(before, Instant.now());
+
+        db.update("UPDATE solutions SET community_public=false,published_at=NULL WHERE user_id=? AND client_record_id=?",
+                user, "public-record");
+        mvc.perform(post("/api/v1/relay/captures")
+                        .header("Authorization", "Bearer " + raw)
+                        .contentType(MediaType.APPLICATION_JSON).content(capture))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.results[0].outcome").value("EXISTING"));
+        assertThat(db.queryForObject("SELECT community_public FROM solutions WHERE user_id=? AND client_record_id=?",
+                Boolean.class, user, "public-record")).isFalse();
+        assertThat(db.queryForObject("SELECT published_at FROM solutions WHERE user_id=? AND client_record_id=?",
+                Timestamp.class, user, "public-record")).isNull();
+    }
+
+    @Test
+    void oldGenerationLosesDefaultPublicAuthorityAfterSessionReplacement() {
+        UUID user = user();
+        UUID session = session(user, Instant.now().plusSeconds(3600));
+        UUID grant = grant(user, session, 7);
+        profile(user, session, 7);
+        enableCommunityDefaultPublic(user, session, 7);
+        assertThat(grants.communityDefaultPublicEligible(
+                new RelayGrantPrincipal(user, grant, "device-1234567890", 7))).isTrue();
+
+        UUID replacement = session(user, Instant.now().plusSeconds(3600));
+        db.update("UPDATE automation_profiles SET auth_session_id=?,generation=8 WHERE user_id=?", replacement, user);
+        assertThat(grants.communityDefaultPublicEligible(
+                new RelayGrantPrincipal(user, grant, "device-1234567890", 7))).isFalse();
     }
 
     @AfterEach
@@ -148,5 +204,24 @@ class RelaySessionBindingPostgresIntegrationTest {
                     github_auto_commit_enabled,ownership_mode,auth_session_id,updated_at)
                 VALUES(?,?,?,TRUE,FALSE,'DURABLE_SERVER',?,clock_timestamp())
                 """, user, "device-1234567890", generation, session);
+    }
+
+    private void enableCommunityDefaultPublic(UUID user, UUID session, long generation) {
+        db.update("""
+                UPDATE automation_profiles SET community_default_public_policy_version=?,
+                    community_default_public_consented_at=clock_timestamp(),
+                    community_default_public_auth_session_id=?,community_default_public_generation=?
+                WHERE user_id=?
+                """, CommunityDefaultPublicPolicy.CURRENT_VERSION, session, generation, user);
+    }
+
+    private String capture(String clientRecordId) {
+        return """
+                {"records":[{"clientRecordId":"%s","platform":"PROGRAMMERS",
+                "problemNumber":"1234","title":"Synthetic capture","language":"Java",
+                "code":"class Synthetic {}","result":"ACCEPTED",
+                "solvedAt":"2026-09-01T00:00:00Z","observedAt":"2026-09-01T00:00:00Z",
+                "capturedAt":"2026-09-01T00:00:00Z","aiUsage":"unknown"}]}
+                """.formatted(clientRecordId);
     }
 }
