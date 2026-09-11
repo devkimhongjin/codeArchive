@@ -108,7 +108,8 @@ public class DurableAutomationProfileStore {
                     .addValue("communityPolicyVersion", communityDefaultPublicPolicyVersion == null ? current.communityDefaultPublicPolicyVersion() : communityDefaultPublicPolicyVersion)
                     .addValue("communityConsentAt", communityDefaultPublicPolicyVersion == null ? timestamp(current.communityDefaultPublicConsentedAt()) : Timestamp.from(now))
                     .addValue("communityConsentSession", communityDefaultPublicPolicyVersion == null ? current.communityDefaultPublicConsentSessionId() : authSessionId)
-                    .addValue("communityConsentGeneration", communityDefaultPublicPolicyVersion == null ? current.communityDefaultPublicConsentGeneration() : generation)
+                    .addValue("communityConsentGeneration", communityDefaultPublicPolicyVersion == null
+                            ? current.communityDefaultPublicConsentGeneration() : Long.valueOf(generation))
                     .addValue("authSession", persistedSession)
                     .addValue("enabledAt", githubEnabledAt == null ? null : Timestamp.from(githubEnabledAt))
                     .addValue("version", current.version() + 1)
@@ -273,7 +274,7 @@ public class DurableAutomationProfileStore {
                 rs.getLong("target_generation"), decode(targetJson), rs.getBoolean("automatic_transfer_consent"),
                 rs.getBoolean("visibility_risk_consent"), rs.getBoolean("public_upload_consent"),
                 instant(rs, "github_enabled_at"), rs.getLong("version"), instant(rs, "updated_at"),
-                authSessionId, communityPolicy, communityConsentAt, communityConsentSession,
+                authSessionId, null, communityPolicy, communityConsentAt, communityConsentSession,
                 communityConsentGeneration, communityConsentActive);
     }
 
