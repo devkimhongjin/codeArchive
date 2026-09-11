@@ -640,6 +640,14 @@ Replacement generation의 server/account-device state는 다음 의미만 지속
 6. `enabledAt` 또는 동등한 monotonic automation generation;
 7. worker claim/run/attempt/lease 및 terminal uncertainty state.
 
+Community default-public은 별도 disclosure 계약이다. Dashboard가 현재 정책 버전을
+명시적으로 확인하기 전에는 source transfer 동의만으로 relay capture를 공개하지 않는다.
+서버는 정책 버전을 AuthSession과 durable generation에 결합하고, relay INSERT에서만
+새 IMPORTED accepted capture의 `community_public`/`published_at`을 결정한다. 동일
+`clientRecordId`의 EXISTING 재전송은 기존 private/revoke 상태를 변경하지 않는다.
+이 정책은 GitHub public-repository consent와 다르며, logout·account switch·OFF·stale
+generation·policy change에서는 old grant가 기본 공개 권한을 유지하지 못한다.
+
 Persisted provider HEAD는 unconditional authority가 아니다. GitHub write 직전에 installation ownership, repository identity/privacy, branch/protection, current HEAD를 provider에서 fresh revalidation하고 existing conditional create-only contract를 사용한다.
 
 ### New-capture-only invariant

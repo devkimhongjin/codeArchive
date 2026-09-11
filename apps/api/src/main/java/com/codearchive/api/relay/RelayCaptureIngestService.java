@@ -64,6 +64,7 @@ public class RelayCaptureIngestService {
     @Transactional
     public Response ingest(RelayGrantPrincipal principal, Request request) {
         grants.requireCurrentGeneration(principal);
+        boolean defaultPublicEligible = grants.communityDefaultPublicEligible(principal);
         enforceRateLimit(principal.grantId());
         List<Item> records = boundedRecords(request);
         Instant now = clock.instant();
@@ -75,7 +76,7 @@ public class RelayCaptureIngestService {
         boolean persistedCapture = false;
         for (Item item : records) {
             String clientRecordId = item.clientRecordId().trim();
-            var args = parameters(principal, item, clientRecordId, now);
+            var args = parameters(principal, item, clientRecordId, now, defaultPublicEligible);
             int inserted = db.update("""
                     INSERT INTO solutions (
                         id,user_id,client_record_id,platform,problem_number,title,language,code,result,
@@ -84,7 +85,7 @@ public class RelayCaptureIngestService {
                     ) VALUES (
                         :id,:user,:clientRecordId,:platform,:problemNumber,:title,:language,:code,:result,
                         :solvedAt,:observedAt,:executionTime,:memoryUsage,:aiUsage,
-                        TRUE,FALSE,NULL,:generation,:capturedAt,:now,:now
+                        TRUE,:communityPublic,:publishedAt,:generation,:capturedAt,:now,:now
                     ) ON CONFLICT (user_id,client_record_id) DO NOTHING
                     """, args);
             if (inserted == 1) {
@@ -107,7 +108,8 @@ public class RelayCaptureIngestService {
             RelayGrantPrincipal principal,
             Item item,
             String clientRecordId,
-            Instant now
+            Instant now,
+            boolean defaultPublicEligible
     ) {
         return new MapSqlParameterSource()
                 .addValue("id", UUID.randomUUID())
@@ -124,6 +126,8 @@ public class RelayCaptureIngestService {
                 .addValue("executionTime", optional(item.executionTime(), 128))
                 .addValue("memoryUsage", optional(item.memoryUsage(), 128))
                 .addValue("aiUsage", aiUsage(item.aiUsage()))
+                .addValue("communityPublic", defaultPublicEligible)
+                .addValue("publishedAt", defaultPublicEligible ? Timestamp.from(now) : null)
                 .addValue("generation", principal.generation())
                 .addValue("capturedAt", Timestamp.from(item.capturedAt()))
                 .addValue("now", Timestamp.from(now));

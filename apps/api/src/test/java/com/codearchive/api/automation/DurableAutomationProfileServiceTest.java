@@ -64,6 +64,20 @@ class DurableAutomationProfileServiceTest {
     }
 
     @Test
+    void currentCommunityPolicyVersionIsExplicitlyBoundToTheNewGeneration() {
+        when(store.update(any(), any(), any(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), anyBoolean(),
+                anyBoolean(), anyBoolean(), anyLong(), any(), anyLong(), any(), any())).thenReturn(current);
+
+        service.update(principal, ORIGIN, new DurableAutomationProfileService.UpdateRequest(
+                current.deviceId(), true, false, "DURABLE_SERVER", null, true, true, true,
+                current.version(), com.codearchive.api.community.CommunityDefaultPublicPolicy.CURRENT_VERSION));
+
+        verify(store).update(eq(principal.userId()), eq(principal.sessionId()), eq(current.deviceId()), eq(true), eq(false),
+                eq("DURABLE_SERVER"), eq(2L), isNull(), eq(true), eq(true), eq(true), eq(7L), isNull(), eq(5L), eq(NOW),
+                eq(com.codearchive.api.community.CommunityDefaultPublicPolicy.CURRENT_VERSION));
+    }
+
+    @Test
     void switchingToDurableServerStopsPageOwnedRunsBeforePersistingMode() {
         when(store.update(any(), any(), any(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), anyBoolean(),
                 anyBoolean(), anyBoolean(), anyLong(), any(), anyLong(), any())).thenReturn(current);

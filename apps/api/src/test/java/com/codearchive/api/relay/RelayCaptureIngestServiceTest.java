@@ -61,8 +61,21 @@ class RelayCaptureIngestServiceTest {
                 .containsEntry("user", principal.userId())
                 .containsEntry("generation", principal.generation())
                 .containsEntry("result", "ACCEPTED");
+        assertThat(args.getValue().getValues()).containsEntry("communityPublic", false).containsEntry("publishedAt", null);
         verify(db, never()).update(contains("UPDATE solutions"), any(MapSqlParameterSource.class));
         verify(grants).requireCurrentGeneration(principal);
+    }
+
+    @Test
+    void currentCommunityDisclosureMakesOnlyImportedCapturePublicAtServerTime() {
+        when(grants.communityDefaultPublicEligible(principal)).thenReturn(true);
+
+        service.ingest(principal, new RelayCaptureIngestService.Request(List.of(item("client-public"))));
+
+        ArgumentCaptor<MapSqlParameterSource> args = ArgumentCaptor.forClass(MapSqlParameterSource.class);
+        verify(db).update(contains("INSERT INTO solutions"), args.capture());
+        assertThat(args.getValue().getValues()).containsEntry("communityPublic", true)
+                .containsEntry("publishedAt", Timestamp.from(NOW));
     }
 
     @Test
