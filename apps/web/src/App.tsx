@@ -687,6 +687,7 @@ export function App({
     setCommunityConsentActive(active);
     setCommunityConsentPending(false);
   }
+  const communityConfirmationBlocked = !authenticated || !autoSyncConsent || !exactOrigin || !connected || !online || consentPending || automationSafetyStopped || communityConsentPending || logoutPending;
 
   async function logout() {
     cancelAllDurableAutomationControllers();
@@ -761,7 +762,10 @@ export function App({
                     <small role="status">커뮤니티 기본 공개: {communityConsentPending ? "확인 중" : communityConsentActive ? "활성" : "확인 필요"}</small>
                   </span>
                 </label>
-                {!communityConsentActive && <button type="button" disabled={communityConsentPending || logoutPending} onClick={() => void confirmCommunityPublic()}>기본 공개 확인</button>}
+                {!communityConsentActive && <>
+                  <button type="button" disabled={communityConfirmationBlocked} onClick={() => void confirmCommunityPublic()}>기본 공개 확인</button>
+                  <small>{communityConsentPending ? "확인 중입니다." : "로그인·자동 동기화·Extension 연결 후 확인할 수 있습니다."}</small>
+                </>}
               </>
             )}
             {authState.status === "unavailable" && (
