@@ -71,7 +71,10 @@ export function SolutionCodeView({ code, language }: { code: string; language: s
         {THEMES.map((option) => <option key={option} value={option}>{option}</option>)}
       </select></label>
     </div>
-    {html ? <div className="code-view code-highlight-container" dangerouslySetInnerHTML={{ __html: html }} /> : <pre className="code-view"><code>{code}</code></pre>}
+    {html ? <>
+      <pre className="code-source-text" aria-label="원문 코드">{code}</pre>
+      <div className="code-view code-highlight-container" aria-hidden="true" dangerouslySetInnerHTML={{ __html: html }} />
+    </> : <pre className="code-view"><code>{code}</code></pre>}
   </section>;
 }
 
