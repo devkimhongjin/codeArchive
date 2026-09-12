@@ -759,8 +759,22 @@ export function App({
   }, [mobileDetailOpen, selectedId]);
 
   return (
-    <main className="dashboard-shell">
-      <header className="topbar">
+    <div className="dashboard-frame">
+      <aside className="workspace-nav" aria-label="Dashboard 탐색">
+        <div className="workspace-brand">
+          <span className="workspace-brand-mark" aria-hidden="true">CA</span>
+          <div><strong>CodeArchive</strong><small>풀이 작업공간</small></div>
+        </div>
+        <nav className="workspace-nav-links" aria-label="작업 영역">
+          <a href="#archive-workspace">전체 풀이</a>
+          <a href="#dashboard-overview">동기화 상태</a>
+          <a href="#github-workspace">GitHub 연동</a>
+          <a href="#community-workspace">커뮤니티</a>
+        </nav>
+        <p className="workspace-nav-note">Extension의 로컬 원본은 Dashboard 연결 상태와 관계없이 유지됩니다.</p>
+      </aside>
+      <main className="dashboard-shell">
+      <header className="topbar" id="dashboard-overview">
         <div>
           <p className="eyebrow">CodeArchive</p>
           <h1>전체 풀이</h1>
@@ -840,12 +854,12 @@ export function App({
         </section>
       </header>
 
-      {authenticated && authState.status === "authenticated" && <GitHubUpload key={`${authState.user.id ?? "missing"}:${authState.user.githubLogin}`} durableContextKey={account} accountIdValid={Boolean(immutableAccountId)} automationBlockedReason={githubAutomationBlockedReason} solution={selected ?? null} client={githubClient} syncEligible={eligible} automationIntent={automationIntent}
+      {authenticated && authState.status === "authenticated" && <section className="integration-slot" id="github-workspace" aria-label="GitHub 연동"><GitHubUpload key={`${authState.user.id ?? "missing"}:${authState.user.githubLogin}`} durableContextKey={account} accountIdValid={Boolean(immutableAccountId)} automationBlockedReason={githubAutomationBlockedReason} solution={selected ?? null} client={githubClient} syncEligible={eligible} automationIntent={automationIntent}
         onAutomationStateChange={(enabled, errorCode) => { setGithubAutoCommitEnabled(enabled); setAutomationError(errorCode); }}
         onTargetConfiguredChange={setGithubTargetConfigured}
-        onSessionExpired={() => { if (accountRef.current === account) expireSession(); }} />}
+        onSessionExpired={() => { if (accountRef.current === account) expireSession(); }} /></section>}
 
-      <section className="toolbar" aria-label="풀이 검색">
+      <section className="toolbar" id="archive-workspace" aria-label="풀이 검색">
         <div className="archive-filters">
           <label className="archive-search">
             <span>검색</span>
@@ -884,7 +898,7 @@ export function App({
         <p id="archive-filter-scope" className="archive-filter-scope">현재 불러온 서버 기록 최대 50건 안에서 검색·필터·정렬합니다. 전체 기록 검색이나 통계가 아닙니다.</p>
       </section>
 
-      <CommunityPermalink account={account} client={communityClient} onSessionExpired={() => { if (accountRef.current === account) expireSession(); }} />
+      <section className="community-slot" id="community-workspace" aria-label="커뮤니티"><CommunityPermalink account={account} client={communityClient} onSessionExpired={() => { if (accountRef.current === account) expireSession(); }} /></section>
       {account && deleteNotice.account === account && deleteNotice.message && (
         <p className="tool-feedback" role="status">{deleteNotice.message}</p>
       )}
@@ -967,6 +981,7 @@ export function App({
           </section>
         </div>
       )}
-    </main>
+      </main>
+    </div>
   );
 }
