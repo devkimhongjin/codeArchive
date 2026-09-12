@@ -38,6 +38,7 @@ import {
   type PendingDrainApiClient,
 } from "./pendingDrain";
 import { SolutionDetailActions } from "./DashboardSolutionDetailActions";
+import { SolutionCodeView } from "./SolutionCodeView";
 import { mainApiAiArtifactClient, type DashboardAiArtifactClient } from "./aiArtifactClient";
 import { mainApiSolutionDeleteClient, type DashboardSolutionDeleteClient } from "./solutionDeleteClient";
 import {
@@ -80,7 +81,20 @@ type AuthState =
   | { status: "unavailable" };
 
 function formatDate(value: string | null): string {
-  return value ?? "미입력";
+  if (!value) return "미입력";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return value;
+  return `${new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(timestamp))} KST`;
 }
 
 function sourceLabel(source: DashboardSolution["source"]): string {
@@ -105,6 +119,10 @@ export function App({
 }: AppProps) {
   const [archive, setArchive] = useState<{ account: string; records: readonly DashboardSolution[] }>({ account: "", records: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const archiveListRef = useRef<HTMLElement | null>(null);
+  const detailHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const mobileReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const [filters, setFilters] = useState(EMPTY_ARCHIVE_FILTERS);
   const [sortOrder, setSortOrder] = useState<ArchiveSortOrder>("updated_desc");
   const [loading, setLoading] = useState(false);
@@ -722,7 +740,23 @@ export function App({
   function resetArchiveFilters() {
     setFilters(EMPTY_ARCHIVE_FILTERS);
     setSortOrder("updated_desc");
+    requestAnimationFrame(() => archiveListRef.current?.focus());
   }
+
+  function selectRecord(id: string, trigger?: HTMLButtonElement) {
+    setSelectedId(id);
+    setMobileDetailOpen(true);
+    mobileReturnFocusRef.current = trigger ?? null;
+  }
+
+  function closeMobileDetail() {
+    setMobileDetailOpen(false);
+    requestAnimationFrame(() => mobileReturnFocusRef.current?.focus());
+  }
+
+  useEffect(() => {
+    if (mobileDetailOpen && selectedId) requestAnimationFrame(() => detailHeadingRef.current?.focus());
+  }, [mobileDetailOpen, selectedId]);
 
   return (
     <main className="dashboard-shell">
@@ -732,7 +766,9 @@ export function App({
           <h1>전체 풀이</h1>
           <p className="subtitle">가볍게 탐색하는 풀이 아카이브</p>
         </div>
-        <div className="header-statuses">
+        <section className="operations-summary" aria-labelledby="operations-summary-title">
+          <div className="operations-heading"><strong id="operations-summary-title">운영 상태</strong><span>계정·Extension·동기화</span></div>
+          <div className="header-statuses">
           <div className="auth-status" aria-live="polite">
             {authState.status === "loading" && <span>로그인 상태 확인 중</span>}
             {authState.status === "signed_out" && (
@@ -800,7 +836,8 @@ export function App({
             </button>
             <small>{manualSyncBlockReason() || manualSyncMessage || "현재 pending 풀이를 즉시 서버에 동기화합니다."}</small>
           </div>
-        </div>
+          </div>
+        </section>
       </header>
 
       {authenticated && authState.status === "authenticated" && <GitHubUpload key={`${authState.user.id ?? "missing"}:${authState.user.githubLogin}`} durableContextKey={account} accountIdValid={Boolean(immutableAccountId)} automationBlockedReason={githubAutomationBlockedReason} solution={selected ?? null} client={githubClient} syncEligible={eligible} automationIntent={automationIntent}
@@ -863,24 +900,34 @@ export function App({
       ) : records.length === 0 ? (
         <p className="state-card">아직 표시할 풀이가 없습니다.</p>
       ) : (
-        <div className="archive-layout">
-          <section className="archive-list" aria-label="전체 풀이 목록">
-            {groups.length === 0 ? <p className="state-card">검색 결과가 없습니다. 검색·필터 초기화로 다시 확인하세요.</p> : groups.map((group) => (
+        <div className={mobileDetailOpen ? "archive-layout mobile-detail-open" : "archive-layout"}>
+          <section ref={archiveListRef} tabIndex={-1} className="archive-list" aria-label="전체 풀이 목록">
+            {groups.length === 0 ? <div className="state-card" role="status"><p>검색 결과가 없습니다.</p><button type="button" aria-label="검색 결과 초기화" onClick={resetArchiveFilters}>검색·필터 초기화</button></div> : groups.map((group) => (
               <article className="problem-group" key={group.key}>
-                <div className="problem-heading"><div><strong>{group.title}</strong><span>{group.platform} · {group.problemNumber}</span></div><small>{group.records.length}회</small></div>
-                <div className="submission-list">{group.records.map((record) => (
-                  <button type="button" key={record.id} aria-pressed={record.id === selected?.id} className={record.id === selected?.id ? "submission selected" : "submission"} onClick={() => setSelectedId(record.id)}>
-                    <span>{sourceLabel(record.source)} · {record.language}</span><small>{formatDate(record.solvedAt)}</small>
-                  </button>
-                ))}</div>
+                {group.records.length === 1 ? (() => {
+                  const record = group.records[0];
+                  const performance = [record.executionTime && `실행 ${record.executionTime}`, record.memoryUsage && `메모리 ${record.memoryUsage}`].filter(Boolean).join(" · ");
+                  return <button type="button" aria-pressed={record.id === selected?.id} className={record.id === selected?.id ? "submission single-submission selected" : "submission single-submission"} onClick={(event) => selectRecord(record.id, event.currentTarget)}>
+                    <span className="submission-content"><strong>{group.title}</strong><span>{group.platform} · {group.problemNumber} · {sourceLabel(record.source)} · {record.language}</span><small>{[formatDate(record.solvedAt), performance].filter(Boolean).join(" · ")}</small></span>
+                  </button>;
+                })() : <>
+                  <div className="problem-heading"><div><strong>{group.title}</strong><span>{group.platform} · {group.problemNumber}</span></div><small>{group.records.length}회</small></div>
+                  <div className="submission-list">{group.records.map((record) => {
+                    const performance = [record.executionTime && `실행 ${record.executionTime}`, record.memoryUsage && `메모리 ${record.memoryUsage}`].filter(Boolean).join(" · ");
+                    return <button type="button" key={record.id} aria-pressed={record.id === selected?.id} className={record.id === selected?.id ? "submission selected" : "submission"} onClick={(event) => selectRecord(record.id, event.currentTarget)}>
+                      <span className="submission-content"><span className="submission-primary">{sourceLabel(record.source)} · {record.language}</span><small>{[formatDate(record.solvedAt), performance].filter(Boolean).join(" · ")}</small></span>
+                    </button>;
+                  })}</div>
+                </>}
               </article>
             ))}
           </section>
 
           <section className="detail-panel" aria-label="풀이 상세">
+            <button type="button" className="mobile-back-button" onClick={closeMobileDetail}>목록으로</button>
             {!selected ? <p className="state-card">목록에서 풀이를 선택하세요.</p> : (
               <article className="detail-card">
-                <div className="detail-heading"><div><p className="eyebrow">{selected.platform} · {selected.problemNumber}</p><h2>{selected.title}</h2></div><span className="badge">{sourceLabel(selected.source)}</span></div>
+                <div className="detail-heading"><div><p className="eyebrow">{selected.platform} · {selected.problemNumber}</p><h2 ref={detailHeadingRef} tabIndex={-1}>{selected.title}</h2></div><span className="badge">{sourceLabel(selected.source)}</span></div>
                 <dl className="metadata"><div><dt>언어</dt><dd>{selected.language}</dd></div><div><dt>풀이 날짜</dt><dd>{formatDate(selected.solvedAt)}</dd></div><div><dt>실행시간</dt><dd>{selected.executionTime ?? "미입력"}</dd></div><div><dt>메모리</dt><dd>{selected.memoryUsage ?? "미입력"}</dd></div></dl>
                 <SolutionDetailActions
                   key={`${account}:${selected.id}`}
@@ -911,7 +958,7 @@ export function App({
                   }}
                   onSessionExpired={() => { if (accountRef.current === account) expireSession(); }}
                 />
-                <pre className="code-view"><code>{selected.code}</code></pre>
+                <SolutionCodeView code={selected.code} language={selected.language} />
                 <CommunitySharing key={`${account}:${selected.id}:${selected.updatedAt}`} solution={selected} account={account} client={communityClient}
                   onSessionExpired={() => { if (accountRef.current === account) expireSession(); }} />
                 <p className="future-note">Main API에 보관된 풀이입니다. 서버에서 수정·삭제해도 Extension의 로컬 원본은 유지됩니다.</p>

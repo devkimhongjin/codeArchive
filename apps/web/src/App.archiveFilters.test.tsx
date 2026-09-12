@@ -104,4 +104,17 @@ describe("Dashboard archive discovery", () => {
     expect(screen.getByRole("combobox", { name: "정렬" })).toHaveValue("updated_desc");
     expect(props.extensionConnection.startSyncSession).not.toHaveBeenCalled();
   });
+
+  it("provides a local detail-to-list return action without changing the selected record", async () => {
+    render(<App {...fixtures()} />);
+    await screen.findByText("4건 · 3문제");
+    const submission = within(list()).getByRole("button", { name: /Java.*2026-08-31/ });
+    fireEvent.click(submission);
+    const back = screen.getByRole("button", { name: "목록으로" });
+    expect(within(detail()).getByRole("heading", { name: "열 번째 문제" })).toBeInTheDocument();
+    fireEvent.click(back);
+    expect(within(detail()).getByRole("heading", { name: "열 번째 문제" })).toBeInTheDocument();
+    expect(within(list()).getByRole("button", { name: /Java.*2026-08-31/ })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(submission).toHaveFocus());
+  });
 });
