@@ -82,6 +82,7 @@ type AuthState =
 
 function formatDate(value: string | null): string {
   if (!value) return "미입력";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return value;
   return `${new Intl.DateTimeFormat("sv-SE", {
@@ -121,6 +122,7 @@ export function App({
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const archiveListRef = useRef<HTMLElement | null>(null);
   const detailHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const mobileReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const [filters, setFilters] = useState(EMPTY_ARCHIVE_FILTERS);
   const [sortOrder, setSortOrder] = useState<ArchiveSortOrder>("updated_desc");
   const [loading, setLoading] = useState(false);
@@ -741,9 +743,15 @@ export function App({
     requestAnimationFrame(() => archiveListRef.current?.focus());
   }
 
-  function selectRecord(id: string) {
+  function selectRecord(id: string, trigger?: HTMLButtonElement) {
     setSelectedId(id);
     setMobileDetailOpen(true);
+    mobileReturnFocusRef.current = trigger ?? null;
+  }
+
+  function closeMobileDetail() {
+    setMobileDetailOpen(false);
+    requestAnimationFrame(() => mobileReturnFocusRef.current?.focus());
   }
 
   useEffect(() => {
@@ -899,14 +907,14 @@ export function App({
                 {group.records.length === 1 ? (() => {
                   const record = group.records[0];
                   const performance = [record.executionTime && `실행 ${record.executionTime}`, record.memoryUsage && `메모리 ${record.memoryUsage}`].filter(Boolean).join(" · ");
-                  return <button type="button" aria-pressed={record.id === selected?.id} className={record.id === selected?.id ? "submission single-submission selected" : "submission single-submission"} onClick={() => selectRecord(record.id)}>
+                  return <button type="button" aria-pressed={record.id === selected?.id} className={record.id === selected?.id ? "submission single-submission selected" : "submission single-submission"} onClick={(event) => selectRecord(record.id, event.currentTarget)}>
                     <span className="submission-content"><strong>{group.title}</strong><span>{group.platform} · {group.problemNumber} · {sourceLabel(record.source)} · {record.language}</span><small>{[formatDate(record.solvedAt), performance].filter(Boolean).join(" · ")}</small></span>
                   </button>;
                 })() : <>
                   <div className="problem-heading"><div><strong>{group.title}</strong><span>{group.platform} · {group.problemNumber}</span></div><small>{group.records.length}회</small></div>
                   <div className="submission-list">{group.records.map((record) => {
                     const performance = [record.executionTime && `실행 ${record.executionTime}`, record.memoryUsage && `메모리 ${record.memoryUsage}`].filter(Boolean).join(" · ");
-                    return <button type="button" key={record.id} aria-pressed={record.id === selected?.id} className={record.id === selected?.id ? "submission selected" : "submission"} onClick={() => selectRecord(record.id)}>
+                    return <button type="button" key={record.id} aria-pressed={record.id === selected?.id} className={record.id === selected?.id ? "submission selected" : "submission"} onClick={(event) => selectRecord(record.id, event.currentTarget)}>
                       <span className="submission-content"><span className="submission-primary">{sourceLabel(record.source)} · {record.language}</span><small>{[formatDate(record.solvedAt), performance].filter(Boolean).join(" · ")}</small></span>
                     </button>;
                   })}</div>
@@ -916,7 +924,7 @@ export function App({
           </section>
 
           <section className="detail-panel" aria-label="풀이 상세">
-            <button type="button" className="mobile-back-button" onClick={() => setMobileDetailOpen(false)}>목록으로</button>
+            <button type="button" className="mobile-back-button" onClick={closeMobileDetail}>목록으로</button>
             {!selected ? <p className="state-card">목록에서 풀이를 선택하세요.</p> : (
               <article className="detail-card">
                 <div className="detail-heading"><div><p className="eyebrow">{selected.platform} · {selected.problemNumber}</p><h2 ref={detailHeadingRef} tabIndex={-1}>{selected.title}</h2></div><span className="badge">{sourceLabel(selected.source)}</span></div>
