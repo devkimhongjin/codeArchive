@@ -72,7 +72,7 @@ export function SolutionCodeView({ code, language }: { code: string; language: s
       </select></label>
     </div>
     {html ? <>
-      <pre className="code-source-text" aria-label="원문 코드">{code}</pre>
+      <textarea className="code-source-text" aria-label="원문 코드" readOnly value={code} />
       <div className="code-view code-highlight-container" aria-hidden="true" dangerouslySetInnerHTML={{ __html: html }} />
     </> : <pre className="code-view"><code>{code}</code></pre>}
   </section>;

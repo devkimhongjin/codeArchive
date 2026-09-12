@@ -75,10 +75,9 @@ describe("Dashboard server solution deletion", () => {
     expect(screen.getByRole("button", { name: "수정" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "삭제 중..." }));
     expect(deleteSolution).toHaveBeenCalledExactlyOnceWith(solution.id, expect.any(AbortSignal));
-    expect(screen.getByText(solution.code)).toBeInTheDocument();
+    expect(screen.getByLabelText("원문 코드")).toHaveValue(solution.code);
     await act(async () => finish());
-    expect(await screen.findByText(second.code)).toBeInTheDocument();
-    expect(screen.queryByText(solution.code)).not.toBeInTheDocument();
+    expect(await screen.findByLabelText("원문 코드")).toHaveValue(second.code);
     expect(screen.getByText("1건 · 1문제")).toBeInTheDocument();
     expect(screen.getByText(/서버 풀이를 삭제했습니다/)).toBeInTheDocument();
     expect(listSolutions).toHaveBeenCalledTimes(2);
@@ -95,7 +94,7 @@ describe("Dashboard server solution deletion", () => {
     fireEvent.click(screen.getByRole("button", { name: "삭제 확인" }));
     await waitFor(() => expect(screen.getByText("0건 · 0문제")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "서버에서 삭제" })).not.toBeInTheDocument();
-    expect(screen.queryByText(solution.code)).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "원문 코드" })).not.toBeInTheDocument();
   });
 
   it.each([404, 500, "malformed"])("preserves the solution on %s and allows explicit refresh", async (result) => {
@@ -108,11 +107,11 @@ describe("Dashboard server solution deletion", () => {
     fireEvent.click(screen.getByRole("button", { name: "삭제 확인" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("삭제 완료를 확인하지 못했습니다");
     expect(screen.queryByText(/sensitive details/)).not.toBeInTheDocument();
-    expect(screen.getByText(solution.code)).toBeInTheDocument();
+    expect(screen.getByLabelText("원문 코드")).toHaveValue(solution.code);
     expect(fetcher).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "목록 새로고침" }));
     await waitFor(() => expect(listSolutions).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText(solution.code)).toBeInTheDocument();
+    expect(await screen.findByLabelText("원문 코드")).toHaveValue(solution.code);
   });
 
   it("clears the archive and remembered consent on current-session 401", async () => {
@@ -121,7 +120,7 @@ describe("Dashboard server solution deletion", () => {
     await openConfirmation();
     fireEvent.click(screen.getByRole("button", { name: "삭제 확인" }));
     expect(await screen.findByRole("button", { name: "GitHub로 로그인" })).toBeInTheDocument();
-    expect(screen.queryByText(solution.code)).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "원문 코드" })).not.toBeInTheDocument();
     expect(write).toHaveBeenCalledWith(false, undefined);
   });
 
@@ -138,7 +137,7 @@ describe("Dashboard server solution deletion", () => {
     fireEvent.click(screen.getByRole("button", { name: /PYTHON/ }));
     expect(signal?.aborted).toBe(true);
     await act(async () => complete());
-    expect(screen.getByText(second.code)).toBeInTheDocument();
+    expect(screen.getByLabelText("원문 코드")).toHaveValue(second.code);
     expect(screen.queryByRole("button", { name: "GitHub로 로그인" })).not.toBeInTheDocument();
     expect(screen.queryByText(/서버 풀이를 삭제했습니다/)).not.toBeInTheDocument();
     expect(screen.getByText("2건 · 2문제")).toBeInTheDocument();
@@ -180,10 +179,10 @@ describe("Dashboard server solution deletion", () => {
     await openConfirmation();
     fireEvent.click(screen.getByRole("button", { name: "삭제 확인" }));
     view.rerender(<App {...props} authClient={auth("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")} dataSource={{ listSolutions: async () => [second] }} />);
-    await screen.findByText(second.code);
+    await screen.findByLabelText("원문 코드");
     expect(signal?.aborted).toBe(true);
     await act(async () => finish());
-    expect(screen.getByText(second.code)).toBeInTheDocument();
+    expect(screen.getByLabelText("원문 코드")).toHaveValue(second.code);
     expect(screen.queryByRole("button", { name: "GitHub로 로그인" })).not.toBeInTheDocument();
     expect(screen.queryByText(/서버 풀이를 삭제했습니다/)).not.toBeInTheDocument();
   });
@@ -195,7 +194,7 @@ describe("Dashboard server solution deletion", () => {
       return () => undefined;
     };
     render(<App authClient={auth()} extensionConnection={extension} dashboardOrigin="https://codearchive-dashboard-beta.onrender.com" syncSessionIdGenerator={() => "synthetic-session"} consentStore={{ read: () => false, write() {} }} dataSource={{ listSolutions: async () => [solution] }} solutionDeleteClient={{ deleteSolution: async () => { throw new ArchiveSessionExpiredError(); } }} />);
-    await screen.findByText(solution.code);
+    await screen.findByLabelText("원문 코드");
     fireEvent.click(screen.getByRole("checkbox", { name: /자동 동기화/ }));
     await waitFor(() => expect(extension.startSyncSession).toHaveBeenCalledWith("synthetic-session"));
     await openConfirmation();

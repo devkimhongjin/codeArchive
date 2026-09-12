@@ -58,7 +58,7 @@ describe("Dashboard AI artifacts", () => {
     expect(await screen.findByText(artifact.content)).toBeInTheDocument();
     expect(document.querySelector(".ai-content script")).toBeNull();
     expect(screen.getByText(/테스트용 결과 · 실제 AI 분석 아님/)).toBeInTheDocument();
-    expect(screen.getByText(solution.code)).toBeInTheDocument();
+    expect(screen.getByLabelText("원문 코드")).toHaveValue(solution.code);
     expect(ai.create).toHaveBeenCalledExactlyOnceWith(solution.id, type, expect.any(AbortSignal));
     expect(screen.queryByRole("region", { name: "AI 요청 확인" })).not.toBeInTheDocument();
   });

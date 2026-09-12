@@ -67,15 +67,14 @@ describe("Dashboard solution edit integration", () => {
       solutionUpdateClient={updateClient}
     />);
 
-    expect(await screen.findByText("class Main {}")).toBeInTheDocument();
+    expect(await screen.findByLabelText("원문 코드")).toHaveValue("class Main {}");
     fireEvent.click(screen.getByRole("button", { name: "수정" }));
     fireEvent.change(screen.getByRole("textbox", { name: /^제목 \*$/ }), { target: { value: "View revised" } });
     fireEvent.change(screen.getByRole("textbox", { name: /^코드 \*$/ }), { target: { value: "class Main { int revised; }" } });
     fireEvent.click(screen.getByRole("button", { name: "수정 저장" }));
 
     expect(await screen.findByRole("heading", { name: "View revised" })).toBeInTheDocument();
-    expect(screen.getByText("class Main { int revised; }")).toBeInTheDocument();
-    expect(screen.queryByText("class Main {}")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("원문 코드")).toHaveValue("class Main { int revised; }");
   });
 
   it("uses the existing signed-out teardown when editing receives 401", async () => {
@@ -92,12 +91,12 @@ describe("Dashboard solution edit integration", () => {
       consentStore={{ read: () => false, write: writeConsent }}
     />);
 
-    await screen.findByText("class Main {}");
+    await screen.findByLabelText("원문 코드");
     fireEvent.click(screen.getByRole("button", { name: "수정" }));
     fireEvent.click(screen.getByRole("button", { name: "수정 저장" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "GitHub로 로그인" })).toBeInTheDocument());
-    expect(screen.queryByText("class Main {}")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "원문 코드" })).not.toBeInTheDocument();
     expect(writeConsent).toHaveBeenCalledWith(false, undefined);
   });
 });
