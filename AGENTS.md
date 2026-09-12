@@ -93,6 +93,14 @@ Run the narrowest relevant checks first, then broader checks when available.
 - Analysis API: from `apps/analysis`, run `pytest`
 - Infrastructure: `docker compose -f infra/compose.yaml config`
 
+### Owner-local validation policy
+
+- If the agent execution environment already has the repository toolchain ready, or existing CI already provides the required evidence, use that evidence normally.
+- If a required validation command is straightforward for the owner to run locally but the agent environment lacks the required package manager/dependencies/toolchain, stop environment-repair attempts immediately. Do **not** install global tools, activate package managers through network access, retry registry/DNS workarounds, change dependency versions, or otherwise repair the agent environment only to obtain validation evidence.
+- Instead, finish bounded static review, tell the owner the exact branch/ref to check out first, provide the exact commands, and request only the minimum result required: exact `HEAD` plus PASS/failure summary.
+- Owner-local results may be used as validation evidence only when they clearly correspond to the exact PR head. Never infer or fabricate PASS for commands that were not actually executed.
+- If owner-local validation fails, route only the bounded implementation defect back to the owning builder; do not turn a local-tooling problem into repository changes.
+
 Some workspace packages are still placeholders. If a root command cannot run because a package has not yet been initialized, report that as an expected repository gap; do not fabricate a passing result.
 
 For the capture-only transition, real-Chrome acceptance must cover at least:
