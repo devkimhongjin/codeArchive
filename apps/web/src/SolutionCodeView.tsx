@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { BundledLanguage, BundledTheme } from "shiki";
 
 const THEME_KEY = "codearchive.code-theme";
-const THEMES = ["github-dark", "github-light", "one-dark-pro"] as const;
+const THEMES = ["github-dark", "github-light", "one-light", "one-dark-pro"] as const;
 type CodeTheme = (typeof THEMES)[number];
 
 const LANGUAGES: Record<string, BundledLanguage> = {
@@ -18,7 +18,7 @@ const languageLoaders: Record<string, () => Promise<{ default: unknown }>> = {
   python: () => import("shiki/dist/langs/python"), javascript: () => import("shiki/dist/langs/javascript"), typescript: () => import("shiki/dist/langs/typescript"),
 };
 const themeLoaders: Record<CodeTheme, () => Promise<{ default: unknown }>> = {
-  "github-dark": () => import("shiki/dist/themes/github-dark"), "github-light": () => import("shiki/dist/themes/github-light"), "one-dark-pro": () => import("shiki/dist/themes/one-dark-pro"),
+  "github-dark": () => import("shiki/dist/themes/github-dark"), "github-light": () => import("shiki/dist/themes/github-light"), "one-light": () => import("shiki/dist/themes/one-light"), "one-dark-pro": () => import("shiki/dist/themes/one-dark-pro"),
 };
 
 function safeTheme(value: string | null): CodeTheme {

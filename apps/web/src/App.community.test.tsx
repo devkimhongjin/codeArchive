@@ -51,7 +51,7 @@ describe("archive and community integration", () => {
     expect(signal?.aborted).toBe(true);
     await act(async () => finish(peer));
     expect(screen.queryByText(peer.code!)).not.toBeInTheDocument();
-    expect(screen.getByText("own-2")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("own-2")).toBeInTheDocument());
     expect(p.communityClient.publish).not.toHaveBeenCalled();
     expect(p.extensionConnection.startSyncSession).not.toHaveBeenCalled();
   });

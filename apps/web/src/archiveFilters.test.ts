@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archiveFilterOptions, EMPTY_ARCHIVE_FILTERS, filterDashboardSolutions } from "./archiveFilters";
+import { archiveFilterOptions, displayLanguage, EMPTY_ARCHIVE_FILTERS, filterDashboardSolutions } from "./archiveFilters";
 import type { DashboardSolution } from "./archiveTypes";
 
 const records: DashboardSolution[] = [
@@ -22,5 +22,11 @@ describe("archive filters", () => {
     });
     expect(archiveFilterOptions([])).toEqual({ platforms: [], languages: [] });
     expect(records.map((r) => r.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("collapses legacy language casing into one display/filter option", () => {
+    expect(displayLanguage("JAVA")).toBe("Java");
+    expect(archiveFilterOptions([{ ...records[0], language: "JAVA" }, records[0]]).languages).toEqual(["Java"]);
+    expect(filterDashboardSolutions([{ ...records[0], language: "JAVA" }], { query: "", platform: "", language: "Java" })).toHaveLength(1);
   });
 });
