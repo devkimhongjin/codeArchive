@@ -6,7 +6,7 @@ import { invalidateCommunity } from "./communityLifecycle";
 import { mainApiCommunityClient, type CommunityClient } from "./communityClient";
 import { createAccountConsentController, validatedAccountId } from "./accountConsent";
 import { ArchiveSessionExpiredError, mainApiArchiveDataSource } from "./archiveDataSource";
-import { archiveFilterOptions, EMPTY_ARCHIVE_FILTERS, filterDashboardSolutions } from "./archiveFilters";
+import { archiveFilterOptions, displayLanguage, EMPTY_ARCHIVE_FILTERS, filterDashboardSolutions } from "./archiveFilters";
 import {
   groupDashboardSolutions,
   type ArchiveSortOrder,
@@ -45,6 +45,16 @@ import {
   mainApiSolutionUpdateClient,
   type DashboardSolutionUpdateClient,
 } from "./solutionUpdateClient";
+
+function NavIcon({ name }: { name: "archive" | "sync" | "github" | "community" }) {
+  const paths = {
+    archive: <><path d="M4 6.5h16v13H4z" /><path d="M3 4h18v3H3zM8 11h8M8 15h5" /></>,
+    sync: <><path d="M4 7h11l-2.5-2.5M20 17H9l2.5 2.5" /><path d="M15 7h2a3 3 0 0 1 3 3M9 17H7a3 3 0 0 1-3-3" /></>,
+    github: <path d="M12 3.5a8.5 8.5 0 0 0-2.7 16.56c.43.08.59-.18.59-.41v-1.6c-2.4.52-2.91-1.02-2.91-1.02-.39-.99-.94-1.25-.94-1.25-.78-.54.06-.53.06-.53.86.06 1.31.88 1.31.88.77 1.31 2.02.93 2.51.71.08-.56.3-.93.55-1.14-1.92-.22-3.94-.96-3.94-4.28 0-.95.34-1.72.88-2.33-.09-.22-.38-1.1.08-2.3 0 0 .72-.23 2.35.89a8.2 8.2 0 0 1 4.28 0c1.63-1.12 2.35-.89 2.35-.89.46 1.2.17 2.08.08 2.3.55.27.58.8.58 1.61v2.39c0 .23.15.5.59.41A8.5 8.5 0 0 0 12 3.5Z" />,
+    community: <><path d="M5 5.5h14v10H9l-4 3v-13Z" /><path d="M8 9h8M8 12h5" /></>,
+  } as const;
+  return <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">{paths[name]}</svg>;
+}
 import {
   sanitizeAutomationState,
   type AutomationStateInput,
@@ -766,10 +776,10 @@ export function App({
           <div><strong>CodeArchive</strong><small>풀이 작업공간</small></div>
         </div>
         <nav className="workspace-nav-links" aria-label="작업 영역">
-          <a href="#archive-workspace">전체 풀이</a>
-          <a href="#dashboard-overview">동기화 상태</a>
-          <a href="#github-workspace">GitHub 연동</a>
-          <a href="#community-workspace">커뮤니티</a>
+          <a href="#archive-workspace"><NavIcon name="archive" />전체 풀이</a>
+          <a href="#dashboard-overview"><NavIcon name="sync" />동기화 상태</a>
+          <a href="#github-workspace"><NavIcon name="github" />GitHub 연동</a>
+          <a href="#community-workspace"><NavIcon name="community" />커뮤니티</a>
         </nav>
         <p className="workspace-nav-note">Extension의 로컬 원본은 Dashboard 연결 상태와 관계없이 유지됩니다.</p>
       </aside>
@@ -922,14 +932,14 @@ export function App({
                   const record = group.records[0];
                   const performance = [record.executionTime && `실행 ${record.executionTime}`, record.memoryUsage && `메모리 ${record.memoryUsage}`].filter(Boolean).join(" · ");
                   return <button type="button" aria-pressed={record.id === selected?.id} className={record.id === selected?.id ? "submission single-submission selected" : "submission single-submission"} onClick={(event) => selectRecord(record.id, event.currentTarget)}>
-                    <span className="submission-content"><strong>{group.title}</strong><span>{group.platform} · {group.problemNumber} · {sourceLabel(record.source)} · {record.language}</span><small>{[formatDate(record.solvedAt), performance].filter(Boolean).join(" · ")}</small></span>
+                    <span className="submission-content"><strong>{group.title}</strong><span>{group.platform} · {group.problemNumber} · {sourceLabel(record.source)} · {displayLanguage(record.language)}</span><small>{[formatDate(record.solvedAt), performance].filter(Boolean).join(" · ")}</small></span>
                   </button>;
                 })() : <>
                   <div className="problem-heading"><div><strong>{group.title}</strong><span>{group.platform} · {group.problemNumber}</span></div><small>{group.records.length}회</small></div>
                   <div className="submission-list">{group.records.map((record) => {
                     const performance = [record.executionTime && `실행 ${record.executionTime}`, record.memoryUsage && `메모리 ${record.memoryUsage}`].filter(Boolean).join(" · ");
                     return <button type="button" key={record.id} aria-pressed={record.id === selected?.id} className={record.id === selected?.id ? "submission selected" : "submission"} onClick={(event) => selectRecord(record.id, event.currentTarget)}>
-                      <span className="submission-content"><span className="submission-primary">{sourceLabel(record.source)} · {record.language}</span><small>{[formatDate(record.solvedAt), performance].filter(Boolean).join(" · ")}</small></span>
+                      <span className="submission-content"><span className="submission-primary">{sourceLabel(record.source)} · {displayLanguage(record.language)}</span><small>{[formatDate(record.solvedAt), performance].filter(Boolean).join(" · ")}</small></span>
                     </button>;
                   })}</div>
                 </>}
@@ -942,7 +952,7 @@ export function App({
             {!selected ? <p className="state-card">목록에서 풀이를 선택하세요.</p> : (
               <article className="detail-card">
                 <div className="detail-heading"><div><p className="eyebrow">{selected.platform} · {selected.problemNumber}</p><h2 ref={detailHeadingRef} tabIndex={-1}>{selected.title}</h2></div><span className="badge">{sourceLabel(selected.source)}</span></div>
-                <dl className="metadata"><div><dt>언어</dt><dd>{selected.language}</dd></div><div><dt>풀이 날짜</dt><dd>{formatDate(selected.solvedAt)}</dd></div><div><dt>실행시간</dt><dd>{selected.executionTime ?? "미입력"}</dd></div><div><dt>메모리</dt><dd>{selected.memoryUsage ?? "미입력"}</dd></div></dl>
+                <dl className="metadata"><div><dt>언어</dt><dd>{displayLanguage(selected.language)}</dd></div><div><dt>풀이 날짜</dt><dd>{formatDate(selected.solvedAt)}</dd></div><div><dt>실행시간</dt><dd>{selected.executionTime ?? "미입력"}</dd></div><div><dt>메모리</dt><dd>{selected.memoryUsage ?? "미입력"}</dd></div></dl>
                 <SolutionDetailActions
                   key={`${account}:${selected.id}`}
                   solution={selected}

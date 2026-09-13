@@ -14,6 +14,7 @@ describe("SolutionCodeView", () => {
   it("uses the safe default for invalid persisted themes", () => {
     expect(safeTheme("not-a-theme")).toBe("github-dark");
     expect(safeTheme("github-light")).toBe("github-light");
+    expect(safeTheme("one-light")).toBe("one-light");
   });
 
   it("keeps the accessible raw source out of the keyboard tab order", async () => {
