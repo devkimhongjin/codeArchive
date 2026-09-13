@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { ArchiveSessionExpiredError } from "./archiveDataSource";
@@ -56,9 +56,9 @@ describe("Dashboard solution edit integration", () => {
       code: "class Main { int revised; }",
       updatedAt: "2026-08-30T02:00:00Z",
     };
-    const updateClient: DashboardSolutionUpdateClient = {
-      updateSolution: vi.fn(async () => updated),
-    };
+    let resolveUpdate!: (value: DashboardServerSolution) => void;
+    const updateResponse = new Promise<DashboardServerSolution>((resolve) => { resolveUpdate = resolve; });
+    const updateClient: DashboardSolutionUpdateClient = { updateSolution: vi.fn(() => updateResponse) };
 
     render(<App
       dataSource={{ listSolutions: async () => [solution] }}
@@ -68,14 +68,15 @@ describe("Dashboard solution edit integration", () => {
       consentStore={{ read: () => false, write: vi.fn() }}
     />);
 
-    expect(await screen.findByLabelText("원문 코드")).toHaveValue("class Main {}");
+    expect(await screen.findByRole("heading", { name: "View" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "수정" }));
     fireEvent.change(screen.getByRole("textbox", { name: /^제목 \*$/ }), { target: { value: "View revised" } });
     fireEvent.change(screen.getByRole("textbox", { name: /^코드 \*$/ }), { target: { value: "class Main { int revised; }" } });
     fireEvent.click(screen.getByRole("button", { name: "수정 저장" }));
 
+    await waitFor(() => expect(updateClient.updateSolution).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ title: "View revised", code: "class Main { int revised; }" })));
+    await act(async () => { resolveUpdate(updated); });
     await waitFor(() => {
-      expect(updateClient.updateSolution).toHaveBeenCalledTimes(1);
       expect(screen.getByRole("heading", { name: "View revised" })).toBeInTheDocument();
       expect(screen.getByLabelText("원문 코드")).toHaveValue("class Main { int revised; }");
     });
