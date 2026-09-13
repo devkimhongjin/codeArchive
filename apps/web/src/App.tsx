@@ -931,18 +931,14 @@ export function App({
                 {group.records.length === 1 ? (() => {
                   const record = group.records[0];
                   const performance = [record.executionTime && `실행 ${record.executionTime}`, record.memoryUsage && `메모리 ${record.memoryUsage}`].filter(Boolean).join(" · ");
-                  const languageName = displayLanguage(record.language);
-                  const accessibleName = `${group.title} ${group.platform} ${group.problemNumber} ${sourceLabel(record.source)} ${languageName}${record.language === languageName ? "" : ` (${record.language})`} ${formatDate(record.solvedAt)}${record.id === selected?.id ? " 선택됨" : ""}`;
-                  return <button type="button" aria-label={accessibleName} aria-pressed={record.id === selected?.id} className={record.id === selected?.id ? "submission single-submission selected" : "submission single-submission"} onClick={(event) => selectRecord(record.id, event.currentTarget)}>
+                  return <button type="button" aria-pressed={record.id === selected?.id} className={record.id === selected?.id ? "submission single-submission selected" : "submission single-submission"} onClick={(event) => selectRecord(record.id, event.currentTarget)}>
                     <span className="submission-content"><strong>{group.title}</strong><span>{group.platform} · {group.problemNumber} · {sourceLabel(record.source)} · {displayLanguage(record.language)}</span><small>{[formatDate(record.solvedAt), performance].filter(Boolean).join(" · ")}</small></span>
                   </button>;
                 })() : <>
                   <div className="problem-heading"><div><strong>{group.title}</strong><span>{group.platform} · {group.problemNumber}</span></div><small>{group.records.length}회</small></div>
                   <div className="submission-list">{group.records.map((record) => {
                     const performance = [record.executionTime && `실행 ${record.executionTime}`, record.memoryUsage && `메모리 ${record.memoryUsage}`].filter(Boolean).join(" · ");
-                    const languageName = displayLanguage(record.language);
-                    const accessibleName = `${group.title} ${group.platform} ${group.problemNumber} ${sourceLabel(record.source)} ${languageName}${record.language === languageName ? "" : ` (${record.language})`} ${formatDate(record.solvedAt)}${record.id === selected?.id ? " 선택됨" : ""}`;
-                    return <button type="button" key={record.id} aria-label={accessibleName} aria-pressed={record.id === selected?.id} className={record.id === selected?.id ? "submission selected" : "submission"} onClick={(event) => selectRecord(record.id, event.currentTarget)}>
+                    return <button type="button" key={record.id} aria-pressed={record.id === selected?.id} className={record.id === selected?.id ? "submission selected" : "submission"} onClick={(event) => selectRecord(record.id, event.currentTarget)}>
                       <span className="submission-content"><span className="submission-primary">{sourceLabel(record.source)} · {displayLanguage(record.language)}</span><small>{[formatDate(record.solvedAt), performance].filter(Boolean).join(" · ")}</small></span>
                     </button>;
                   })}</div>
