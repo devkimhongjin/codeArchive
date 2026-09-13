@@ -73,6 +73,7 @@ describe("Dashboard solution edit integration", () => {
     fireEvent.change(screen.getByRole("textbox", { name: /^코드 \*$/ }), { target: { value: "class Main { int revised; }" } });
     fireEvent.click(screen.getByRole("button", { name: "수정 저장" }));
 
+    await waitFor(() => expect(updateClient.updateSolution).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("heading", { name: "View revised" })).toBeInTheDocument();
     expect(screen.getByLabelText("원문 코드")).toHaveValue("class Main { int revised; }");
   });
