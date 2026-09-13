@@ -134,7 +134,7 @@ describe("Dashboard server solution deletion", () => {
     render(<App authClient={auth()} extensionConnection={bridge()} dataSource={{ listSolutions: async () => [solution, second] }} solutionDeleteClient={client} />);
     await openConfirmation();
     fireEvent.click(screen.getByRole("button", { name: "삭제 확인" }));
-    fireEvent.click(screen.getByRole("button", { name: /PYTHON/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Python/ }));
     expect(signal?.aborted).toBe(true);
     await act(async () => complete());
     expect(screen.getByLabelText("원문 코드")).toHaveValue(second.code);

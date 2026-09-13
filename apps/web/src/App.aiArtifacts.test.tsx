@@ -111,7 +111,7 @@ describe("Dashboard AI artifacts", () => {
     const props = { extensionConnection: bridge(), dataSource: { listSolutions: async () => [solution, second] }, aiArtifactClient: ai };
     const view = render(<App {...props} authClient={auth()} />);
     await open(); submit();
-    if (change === "solution") fireEvent.click(screen.getByRole("button", { name: /PYTHON/ }));
+    if (change === "solution") fireEvent.click(screen.getByRole("button", { name: /Python/ }));
     else if (change === "account") { view.rerender(<App {...props} authClient={auth("account-b")} />); await screen.findByText("@account-b"); }
     else { fireEvent.click(screen.getByRole("button", { name: "로그아웃" })); await screen.findByRole("button", { name: "GitHub로 로그인" }); }
     expect(signal?.aborted).toBe(true);
