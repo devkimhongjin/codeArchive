@@ -39,7 +39,8 @@ afterEach(() => globalThis.history.replaceState(null, "", "/"));
 describe("archive and community integration", () => {
   it("aborts the old peer detail when an archive filter selects a different problem", async () => {
     const p = props(); let finish!: (value: SharedSolution) => void; let signal: AbortSignal | undefined;
-    p.communityClient.detail = vi.fn((_id, next) => { signal = next; return new Promise<SharedSolution>((resolve) => { finish = resolve; }); });
+    const detailResponse = new Promise<SharedSolution>((resolve) => { finish = resolve; });
+    p.communityClient.detail = vi.fn((id, next) => { signal = next; return detailResponse; });
     render(<App {...p} />); await screen.findByText("2건 · 2문제");
     fireEvent.change(screen.getByRole("combobox", { name: "언어" }), { target: { value: "Java" } });
     expect(screen.getByText("own-10")).toBeInTheDocument();
@@ -47,6 +48,7 @@ describe("archive and community integration", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "다른 풀이 보기" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "다른 풀이 보기" }));
     fireEvent.click(await screen.findByRole("button", { name: /@peer · Java/ }));
+    await waitFor(() => expect(p.communityClient.detail).toHaveBeenCalledWith(peerId, expect.any(AbortSignal)));
     fireEvent.change(screen.getByRole("combobox", { name: "언어" }), { target: { value: "Python" } });
     expect(signal?.aborted).toBe(true);
     await act(async () => finish(peer));
