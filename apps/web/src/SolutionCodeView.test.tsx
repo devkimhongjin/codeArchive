@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { SolutionCodeView, languageFor, safeTheme } from "./SolutionCodeView";
+import { SolutionCodeView, languageFor, safeTheme, THEMES } from "./SolutionCodeView";
 
 describe("SolutionCodeView", () => {
   it("maps only supported dashboard labels and falls back unknown labels to raw code", () => {
@@ -15,6 +15,8 @@ describe("SolutionCodeView", () => {
     expect(safeTheme("not-a-theme")).toBe("github-dark");
     expect(safeTheme("github-light")).toBe("github-light");
     expect(safeTheme("one-light")).toBe("one-light");
+    expect(THEMES).toContain("catppuccin-latte");
+    expect(THEMES).toContain("vitesse-light");
   });
 
   it("keeps the accessible raw source out of the keyboard tab order", async () => {
