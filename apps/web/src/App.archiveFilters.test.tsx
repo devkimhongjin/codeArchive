@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import type { DashboardSolution } from "./archiveTypes";
 import type { DashboardAuthClient } from "./authClient";
 import type { DashboardExtensionConnection } from "./extensionConnection";
+import { mainApiGitHubClient } from "./githubClient";
 
 const records: DashboardSolution[] = [
   { id: "ten-new", platform: "SWEA", problemNumber: "10", title: "열 번째 문제", language: "Java", code: "new java", solvedAt: "2026-08-31", updatedAt: "2026-08-31T00:00:00Z", source: "captured" },
@@ -36,6 +37,13 @@ function fixtures() {
 const change = (label: string, value: string) => fireEvent.change(screen.getByRole("combobox", { name: label }), { target: { value } });
 const list = () => screen.getByRole("region", { name: "전체 풀이 목록" });
 const detail = () => screen.getByRole("region", { name: "풀이 상세" });
+
+beforeEach(() => {
+  vi.spyOn(mainApiGitHubClient, "autoStatus").mockResolvedValue({
+    runId: null, state: "OFF", target: null, enabledAt: null, leaseUntil: null, errorCode: null, lastResult: null,
+  });
+});
+afterEach(() => vi.restoreAllMocks());
 
 describe("Dashboard archive discovery", () => {
   it("combines filters, clears hidden details, and resets no results without API or sync side effects", async () => {
