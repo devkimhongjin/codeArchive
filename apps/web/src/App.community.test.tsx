@@ -1,10 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import type { DashboardSolution } from "./archiveTypes";
 import type { DashboardAuthClient } from "./authClient";
 import type { CommunityClient, SharedSolution } from "./communityClient";
 import type { DashboardExtensionConnection } from "./extensionConnection";
+import { mainApiGitHubClient } from "./githubClient";
 
 const account = "11111111-1111-4111-8111-111111111111";
 const peerId = "22222222-2222-4222-8222-222222222222";
@@ -35,7 +36,15 @@ function props() {
   return { authClient, extensionConnection, communityClient, dataSource: { listSolutions: vi.fn(async () => records) },
     consentStore: { read: () => false, write: vi.fn() }, dashboardOrigin: "https://codearchive-dashboard-beta.netlify.app" };
 }
-afterEach(() => globalThis.history.replaceState(null, "", "/"));
+beforeEach(() => {
+  vi.spyOn(mainApiGitHubClient, "autoStatus").mockResolvedValue({
+    runId: null, state: "OFF", target: null, enabledAt: null, leaseUntil: null, errorCode: null, lastResult: null,
+  });
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  globalThis.history.replaceState(null, "", "/");
+});
 describe("archive and community integration", () => {
   it("aborts the old peer detail when an archive filter selects a different problem", async () => {
     const p = props(); let finish!: (value: SharedSolution) => void; let signal: AbortSignal | undefined;
