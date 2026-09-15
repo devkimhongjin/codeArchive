@@ -1,43 +1,54 @@
 package com.codearchive.api.solution;
 
+import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.UUID;
 
-public record SolutionResponse(
-        UUID id,
-        String clientRecordId,
-        String platform,
-        String problemNumber,
-        String title,
-        String language,
-        String code,
-        String result,
-        Instant solvedAt,
-        Instant observedAt,
-        String executionTime,
-        String memoryUsage,
-        String aiUsage,
-        Instant createdAt,
-        Instant updatedAt
-) {
+public class SolutionResponse {
+    private final Long id;
+    private final String captureId;
+    private final Platform platform;
+    private final String problemNumber;
+    private final String title;
+    private final String problemUrl;
+    private final String language;
+    private final String sourceCode;
+    private final String result;
+    private final Instant observedAt;
+    private final Instant solvedAt;
+    private final BigDecimal executionTime;
+    private final BigDecimal memoryUsage;
+
+    private SolutionResponse(Solution solution) {
+        this.id = solution.getId();
+        this.captureId = solution.getCaptureId();
+        this.platform = solution.getPlatform();
+        this.problemNumber = solution.getProblemNumber();
+        this.title = solution.getTitle();
+        this.problemUrl = solution.getProblemUrl();
+        this.language = solution.getLanguage();
+        this.sourceCode = solution.getSourceCode();
+        this.result = solution.getResult();
+        this.observedAt = solution.getObservedAt();
+        this.solvedAt = solution.getSolvedAt();
+        this.executionTime = solution.getExecutionTime();
+        this.memoryUsage = solution.getMemoryUsage();
+    }
 
     public static SolutionResponse from(Solution solution) {
-        return new SolutionResponse(
-                solution.getId(),
-                solution.getClientRecordId(),
-                solution.getPlatform(),
-                solution.getProblemNumber(),
-                solution.getTitle(),
-                solution.getLanguage(),
-                solution.getCode(),
-                solution.getResult(),
-                solution.getSolvedAt(),
-                solution.getObservedAt(),
-                solution.getExecutionTime(),
-                solution.getMemoryUsage(),
-                solution.getAiUsage(),
-                solution.getCreatedAt(),
-                solution.getUpdatedAt()
-        );
+        return new SolutionResponse(solution);
     }
+
+    public Long getId() { return id; }
+    public String getCaptureId() { return captureId; }
+    public Platform getPlatform() { return platform; }
+    public String getProblemNumber() { return problemNumber; }
+    public String getTitle() { return title; }
+    public String getProblemUrl() { return problemUrl; }
+    public String getLanguage() { return language; }
+    public String getSourceCode() { return sourceCode; }
+    public String getResult() { return result; }
+    public Instant getObservedAt() { return observedAt; }
+    public Instant getSolvedAt() { return solvedAt; }
+    public BigDecimal getExecutionTime() { return executionTime; }
+    public BigDecimal getMemoryUsage() { return memoryUsage; }
 }

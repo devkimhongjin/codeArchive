@@ -1,0 +1,74 @@
+spring:
+  application:
+    name: codearchive-api
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/codearchive}
+    username: ${DB_USERNAME:codearchive}
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+    clean-disabled: true
+  jackson:
+    time-zone: UTC
+codearchive:
+  github:
+    client-id: ${GITHUB_CLIENT_ID:}
+    client-secret: ${GITHUB_CLIENT_SECRET:}
+    redirect-uri: ${GITHUB_REDIRECT_URI:http://localhost:5173/api/login/oauth2/code/github}
+    dashboard-origin: ${DASHBOARD_ORIGIN:http://localhost:5173}
+server:
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        same-site: lax
+  error:
+    include-message: never
+    include-stacktrace: never
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: jdbc:h2:file:./data/codearchive;MODE=PostgreSQL;AUTO_SERVER=TRUE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  h2:
+    console:
+      enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: update
+  flyway:
+    enabled: false
+server:
+  address: 127.0.0.1
+
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+  datasource:
+    url: jdbc:h2:mem:codearchive-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+  flyway:
+    enabled: false

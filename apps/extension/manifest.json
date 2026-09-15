@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "CodeArchive",
+  "version": "0.1.0",
+  "description": "Capture accepted algorithm solutions locally for CodeArchive.",
+  "minimum_chrome_version": "120",
+  "permissions": [],
+  "host_permissions": [
+    "https://swexpertacademy.com/*",
+    "https://school.programmers.co.kr/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "CodeArchive",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do*",
+        "https://school.programmers.co.kr/learn/courses/30/lessons/*"
+      ],
+      "world": "MAIN",
+      "js": ["mainWorld.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do*",
+        "https://school.programmers.co.kr/learn/courses/30/lessons/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "world": "ISOLATED"
+    }
+  ],
+  "externally_connectable": {
+    "matches": ["http://localhost:5173/*"]
+  }
+}

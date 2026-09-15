@@ -1,0 +1,187 @@
+import type {
+  EditorData,
+  PerformanceData,
+  PlatformAdapter,
+  ProblemMetadata,
+  SubmissionSnapshot,
+  SubmissionResultDetection
+} from "../types";
+import { elementText, firstElement, isVisible, mainWorldSyncFailed, normalizeText } from "./dom";
+import {
+  SWEA_CONTEST_PROBLEM_ID_SELECTOR,
+  SWEA_EDITOR_SELECTORS,
+  SWEA_ORIGIN,
+  SWEA_RESULT_SELECTOR,
+  SWEA_SOLVING_HEADING_SELECTOR,
+  SWEA_SOLVING_PATH,
+  SWEA_SUBMIT_SELECTORS
+} from "./sweaSelectors";
+
+export const SWEA_ATTEMPT_TTL_MS = 60_000;
+
+function exactSolvingPage(location: Location): boolean {
+  return location.origin === SWEA_ORIGIN && location.pathname === SWEA_SOLVING_PATH;
+}
+
+function resultElement(document: Document): Element | null {
+  const candidates = Array.from(document.querySelectorAll(SWEA_RESULT_SELECTOR)).filter(isVisible);
+  return candidates.length === 1 ? candidates[0] ?? null : null;
+}
+
+/** SWEA's accepted popup is a literal `PASS입니다.` result. */
+export function isSweaAccepted(text: string): boolean {
+  return normalizeText(text).toLowerCase() === "pass입니다.";
+}
+
+function firstContestProblemId(document: Document): string | null {
+  const values = Array.from(document.querySelectorAll(SWEA_CONTEST_PROBLEM_ID_SELECTOR))
+    .map((element) => ("value" in element ? String((element as HTMLInputElement).value) : element.getAttribute("value") ?? ""))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return values.at(-1) ?? null;
+}
+
+function detectProblem(document: Document, location: Location): ProblemMetadata | null {
+  if (!exactSolvingPage(location)) return null;
+  const heading = normalizeText(document.querySelector(SWEA_SOLVING_HEADING_SELECTOR)?.textContent);
+  const match = heading.match(/^(\d+)\.\s*(.+)$/);
+  if (!match?.[1] || !match[2]) return null;
+
+  const hiddenId = firstContestProblemId(document);
+  const urlId = new URL(location.href).searchParams.get("contestProbId")?.trim() || null;
+  if (hiddenId && urlId && hiddenId !== urlId) return null;
+
+  return {
+    problemNumber: match[1],
+    title: normalizeText(match[2]),
+    problemUrl: location.href
+  };
+}
+
+function normalizeSweaLanguage(value: string | null | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  const normalized = raw.toLowerCase();
+  if (normalized.includes("javascript") || normalized === "js") return "JavaScript";
+  if (normalized.includes("kotlin")) return "Kotlin";
+  if (normalized.includes("python")) return "Python";
+  if (normalized.includes("java")) return "Java";
+  if (normalized.includes("c++") || normalized.includes("cpp")) return "C++";
+  if (normalized === "c" || /^c\s*\d/.test(normalized)) return "C";
+  return raw;
+}
+
+function detectEditor(document: Document, location: Location): EditorData | null {
+  if (mainWorldSyncFailed(document)) return null;
+  const select = firstElement<HTMLSelectElement>(document, SWEA_EDITOR_SELECTORS.language);
+  const language = normalizeSweaLanguage(select?.selectedOptions?.[0]?.textContent || select?.value || select?.textContent || null)
+    ?? normalizeSweaLanguage(new URL(location.href).searchParams.get("selectCodeLang"));
+  const codeElement = firstElement<HTMLTextAreaElement>(document, SWEA_EDITOR_SELECTORS.code);
+  if (!language || !codeElement || typeof codeElement.value !== "string") return null;
+  return { language, sourceCode: codeElement.value };
+}
+
+function matchesSubmitControl(element: Element): boolean {
+  return SWEA_SUBMIT_SELECTORS.some((selector) => {
+    try { return element.matches(selector); } catch { return false; }
+  });
+}
+
+interface PendingAttempt {
+  startedAt: number;
+  context: string;
+  baseline: WeakMap<Element, string>;
+  consumed: WeakSet<Element>;
+  observedNoResult: boolean;
+  snapshot: SubmissionSnapshot;
+}
+
+export class SweaAdapter implements PlatformAdapter {
+  readonly platform = "SWEA" as const;
+  private pendingAttempt: PendingAttempt | null = null;
+
+  constructor(
+    private readonly document: Document,
+    private readonly location: Location,
+    private readonly attemptTtlMs = SWEA_ATTEMPT_TTL_MS,
+    private readonly clock: () => number = () => Date.now()
+  ) {}
+
+  detectProblem(): ProblemMetadata | null {
+    return detectProblem(this.document, this.location);
+  }
+
+  detectSubmissionResult(options: { freshOnly?: boolean } = {}): SubmissionResultDetection | null {
+    this.expireAttempt();
+    const attempt = this.pendingAttempt;
+    if (!attempt) return null;
+    const result = resultElement(this.document);
+    if (!result) {
+      attempt.observedNoResult = true;
+      return null;
+    }
+    const resultText = elementText(result);
+    if (!isSweaAccepted(resultText)) {
+      attempt.observedNoResult = true;
+      return null;
+    }
+
+    const baseline = attempt.baseline.get(result);
+    const fresh = baseline === undefined || baseline !== resultText || attempt.observedNoResult;
+    if ((options.freshOnly ?? true) && (!fresh || attempt.consumed.has(result))) return null;
+    return { accepted: true, resultText, element: result, attemptToken: attempt };
+  }
+
+  detectEditor(): EditorData | null {
+    return detectEditor(this.document, this.location);
+  }
+
+  collectPerformance(): PerformanceData | null {
+    // SWEA publishes the authoritative performance row on a separate Problem
+    // page request. The local capture path never guesses from popup prose.
+    return null;
+  }
+
+  isSubmitControl(element: Element): boolean {
+    return matchesSubmitControl(element);
+  }
+
+  beginSubmissionAttempt(now: Date = new Date()): void {
+    const baseline = new WeakMap<Element, string>();
+    const result = resultElement(this.document);
+    if (result) baseline.set(result, elementText(result));
+    this.pendingAttempt = {
+      startedAt: now.getTime(),
+      context: this.location.href,
+      baseline,
+      consumed: new WeakSet<Element>(),
+      observedNoResult: false,
+      // This is intentionally read at the click boundary, after the packaged
+      // MAIN-world synchronizer has called the platform editor's save method.
+      snapshot: { problem: this.detectProblem(), editor: this.detectEditor() }
+    };
+  }
+
+  getSubmissionSnapshot(): SubmissionSnapshot | null {
+    this.expireAttempt();
+    return this.pendingAttempt?.snapshot ?? null;
+  }
+
+  consumeSubmissionResult(detection: SubmissionResultDetection): void {
+    if (detection.element && this.pendingAttempt && detection.attemptToken === this.pendingAttempt) {
+      this.pendingAttempt.consumed.add(detection.element);
+      // Local persistence is the idempotency boundary for this submission
+      // attempt. A newer click attempt must survive an older response.
+      this.pendingAttempt = null;
+    }
+  }
+
+  private expireAttempt(now = this.clock()): void {
+    if (!this.pendingAttempt) return;
+    if (this.location.href !== this.pendingAttempt.context || now - this.pendingAttempt.startedAt > this.attemptTtlMs) {
+      this.pendingAttempt = null;
+    }
+  }
+}
+
+export { SWEA_RESULT_SELECTOR };

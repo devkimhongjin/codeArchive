@@ -1,88 +1,112 @@
 package com.codearchive.api.solution;
 
-import java.time.Instant;
-import java.util.UUID;
-
+import com.codearchive.api.auth.AppUser;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import java.math.BigDecimal;
+import java.time.Instant;
 
 @Entity
-@Table(
-        name = "solutions",
-        uniqueConstraints = @UniqueConstraint(
-                name = "uq_solutions_user_client_record",
-                columnNames = {"user_id", "client_record_id"}
-        )
-)
+@Table(name = "solutions", uniqueConstraints = @UniqueConstraint(
+        name = "uk_solution_user_capture", columnNames = {"user_id", "capture_id"}))
 public class Solution {
 
     @Id
-    private UUID id;
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
-    @Column(name = "user_id", nullable = false)
-    private UUID userId;
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "user_id", nullable = false)
+    private AppUser user;
 
-    @Column(name = "client_record_id", nullable = false, length = 128)
-    private String clientRecordId;
+    @Column(name = "capture_id", nullable = false, length = 36)
+    private String captureId;
 
-    @Column(nullable = false, length = 32)
-    private String platform;
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private Platform platform;
 
-    @Column(name = "problem_number", nullable = false, length = 64)
+    @Column(name = "problem_number", nullable = false, length = 100)
     private String problemNumber;
 
-    @Column(nullable = false, length = 255)
+    @Column(nullable = false, length = 500)
     private String title;
 
-    @Column(nullable = false, length = 64)
+    @Column(name = "problem_url", nullable = false, length = 2048)
+    private String problemUrl;
+
+    @Column(nullable = false, length = 100)
     private String language;
 
-    @Column(nullable = false, columnDefinition = "TEXT")
-    private String code;
+    @Column(name = "source_code", nullable = false, columnDefinition = "TEXT")
+    private String sourceCode;
 
-    @Column(nullable = false, length = 32)
+    @Column(nullable = false, length = 20)
     private String result;
 
-    @Column(name = "solved_at")
-    private Instant solvedAt;
-
-    @Column(name = "observed_at")
+    @Column(name = "observed_at", nullable = false)
     private Instant observedAt;
 
-    @Column(name = "execution_time", length = 128)
-    private String executionTime;
+    @Column(name = "solved_at", nullable = false)
+    private Instant solvedAt;
 
-    @Column(name = "memory_usage", length = 128)
-    private String memoryUsage;
+    @Column(name = "execution_time", precision = 19, scale = 6)
+    private BigDecimal executionTime;
 
-    @Column(name = "ai_usage", nullable = false, length = 16)
-    private String aiUsage;
-
-    @Column(name = "created_at", nullable = false)
-    private Instant createdAt;
-
-    @Column(name = "updated_at", nullable = false)
-    private Instant updatedAt;
+    @Column(name = "memory_usage", precision = 19, scale = 6)
+    private BigDecimal memoryUsage;
 
     protected Solution() {
     }
 
-    public UUID getId() {
+    public Solution(AppUser user, String captureId, Platform platform, String problemNumber, String title,
+                    String problemUrl, String language, String sourceCode, String result,
+                    Instant observedAt, Instant solvedAt, BigDecimal executionTime, BigDecimal memoryUsage) {
+        this.user = user;
+        this.captureId = captureId;
+        update(platform, problemNumber, title, problemUrl, language, sourceCode, result,
+                observedAt, solvedAt, executionTime, memoryUsage);
+    }
+
+    public void update(Platform platform, String problemNumber, String title, String problemUrl,
+                       String language, String sourceCode, String result, Instant observedAt,
+                       Instant solvedAt, BigDecimal executionTime, BigDecimal memoryUsage) {
+        this.platform = platform;
+        this.problemNumber = problemNumber;
+        this.title = title;
+        this.problemUrl = problemUrl;
+        this.language = language;
+        this.sourceCode = sourceCode;
+        this.result = result;
+        this.observedAt = observedAt;
+        this.solvedAt = solvedAt;
+        this.executionTime = executionTime;
+        this.memoryUsage = memoryUsage;
+    }
+
+    public Long getId() {
         return id;
     }
 
-    public UUID getUserId() {
-        return userId;
+    public AppUser getUser() {
+        return user;
     }
 
-    public String getClientRecordId() {
-        return clientRecordId;
+    public String getCaptureId() {
+        return captureId;
     }
 
-    public String getPlatform() {
+    public Platform getPlatform() {
         return platform;
     }
 
@@ -94,43 +118,35 @@ public class Solution {
         return title;
     }
 
+    public String getProblemUrl() {
+        return problemUrl;
+    }
+
     public String getLanguage() {
         return language;
     }
 
-    public String getCode() {
-        return code;
+    public String getSourceCode() {
+        return sourceCode;
     }
 
     public String getResult() {
         return result;
     }
 
-    public Instant getSolvedAt() {
-        return solvedAt;
-    }
-
     public Instant getObservedAt() {
         return observedAt;
     }
 
-    public String getExecutionTime() {
+    public Instant getSolvedAt() {
+        return solvedAt;
+    }
+
+    public BigDecimal getExecutionTime() {
         return executionTime;
     }
 
-    public String getMemoryUsage() {
+    public BigDecimal getMemoryUsage() {
         return memoryUsage;
-    }
-
-    public String getAiUsage() {
-        return aiUsage;
-    }
-
-    public Instant getCreatedAt() {
-        return createdAt;
-    }
-
-    public Instant getUpdatedAt() {
-        return updatedAt;
     }
 }

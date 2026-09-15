@@ -1,134 +1,122 @@
 package com.codearchive.api.solution;
 
+import com.codearchive.api.common.ApiError;
+import com.codearchive.api.auth.GithubAuthentication;
+import com.codearchive.api.auth.GithubIdentity;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.UUID;
-
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.validation.annotation.Validated;
-import org.springframework.web.bind.annotation.DeleteMapping;
+import java.util.Optional;
+import java.util.Set;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.codearchive.api.auth.security.CodeArchivePrincipal;
-import com.codearchive.api.common.filter.RequestIdFilter;
-import com.codearchive.api.common.response.ApiResponse;
-
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.Max;
-import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
-
 @RestController
-@RequestMapping("/api/v1/solutions")
-@Validated
+@RequestMapping("/api/solutions")
 public class SolutionController {
 
+    private final ObjectMapper objectMapper;
     private final SolutionService solutionService;
-    private final CaptureBulkUpsertService captureBulkUpsertService;
 
-    public SolutionController(
-            SolutionService solutionService,
-            CaptureBulkUpsertService captureBulkUpsertService
-    ) {
+    public SolutionController(ObjectMapper objectMapper, SolutionService solutionService) {
+        this.objectMapper = objectMapper;
         this.solutionService = solutionService;
-        this.captureBulkUpsertService = captureBulkUpsertService;
-    }
-
-    @PostMapping("/bulk-upsert")
-    public ApiResponse<CaptureBulkUpsertResponse> bulkUpsert(
-            @AuthenticationPrincipal CodeArchivePrincipal principal,
-            @Valid @RequestBody CaptureBulkUpsertRequest request,
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        return ApiResponse.success(
-                captureBulkUpsertService.bulkUpsert(
-                        principal,
-                        request
-                ),
-                requestId
-        );
-    }
-
-    @PutMapping("/by-client-id/{clientRecordId}")
-    public ApiResponse<SolutionResponse> upsert(
-            @AuthenticationPrincipal CodeArchivePrincipal principal,
-            @PathVariable
-            @NotBlank
-            @Size(max = 128)
-            String clientRecordId,
-            @Valid @RequestBody SolutionUpsertRequest request,
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        return ApiResponse.success(
-                solutionService.upsert(
-                        principal,
-                        clientRecordId,
-                        request
-                ),
-                requestId
-        );
-    }
-
-    @DeleteMapping("/{id}")
-    public ApiResponse<DeleteResponse> delete(
-            @AuthenticationPrincipal CodeArchivePrincipal principal,
-            @PathVariable UUID id,
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        solutionService.delete(principal, id);
-        return ApiResponse.success(
-                new DeleteResponse(true),
-                requestId
-        );
-    }
-
-    @GetMapping("/{id}")
-    public ApiResponse<SolutionResponse> get(
-            @AuthenticationPrincipal CodeArchivePrincipal principal,
-            @PathVariable UUID id,
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        return ApiResponse.success(
-                solutionService.get(principal, id),
-                requestId
-        );
     }
 
     @GetMapping
-    public ApiResponse<List<SolutionResponse>> list(
-            @AuthenticationPrincipal CodeArchivePrincipal principal,
-            @RequestParam(defaultValue = "50")
-            @Min(1)
-            @Max(100)
-            int limit,
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        return ApiResponse.success(
-                solutionService.list(principal, limit),
-                requestId
-        );
+    public ResponseEntity<?> list(
+            Authentication authentication,
+            @RequestHeader(value = "X-CodeArchive-Account", required = false) String accountAssertion) {
+        Optional<GithubIdentity> identity = GithubAuthentication.identity(authentication);
+        if (identity.isEmpty()) {
+            return ResponseEntity.status(401).body(new ApiError("Authentication is required"));
+        }
+        String githubId = identity.get().githubId();
+        ResponseEntity<?> assertionFailure = validateAccountAssertion(githubId, accountAssertion);
+        if (assertionFailure != null) {
+            return assertionFailure;
+        }
+        List<SolutionResponse> solutions = solutionService.listForUser(githubId).stream()
+                .map(SolutionResponse::from)
+                .toList();
+        return ResponseEntity.ok(solutions);
     }
 
-    public record DeleteResponse(
-            boolean deleted
-    ) {
+    @PostMapping("/bulk")
+    public ResponseEntity<?> bulk(
+            @RequestBody JsonNode body,
+            Authentication authentication,
+            @RequestHeader(value = "X-CodeArchive-Account", required = false) String accountAssertion) {
+        Optional<GithubIdentity> identity = GithubAuthentication.identity(authentication);
+        if (identity.isEmpty()) {
+            return ResponseEntity.status(401).body(new ApiError("Authentication is required"));
+        }
+        String githubId = identity.get().githubId();
+        ResponseEntity<?> assertionFailure = validateAccountAssertion(githubId, accountAssertion);
+        if (assertionFailure != null) {
+            return assertionFailure;
+        }
+        if (body == null || !body.isObject() || !body.has("captures") || !body.get("captures").isArray()) {
+            return ResponseEntity.badRequest().body(new ApiError("captures must be an array"));
+        }
+        if (body.get("captures").size() > 50) {
+            return ResponseEntity.badRequest().body(new ApiError("captures cannot contain more than 50 items"));
+        }
+
+        Set<String> acceptedCaptureIds = new LinkedHashSet<>();
+        List<CaptureFailure> failures = new ArrayList<>();
+        for (JsonNode node : body.get("captures")) {
+            String rawCaptureId = extractCaptureId(node);
+            try {
+                CapturePayload payload = objectMapper.treeToValue(node, CapturePayload.class);
+                Solution saved = saveWithOneRetry(githubId, payload);
+                acceptedCaptureIds.add(saved.getCaptureId());
+            } catch (CaptureValidationException exception) {
+                failures.add(new CaptureFailure(rawCaptureId, exception.getMessage()));
+            } catch (Exception exception) {
+                failures.add(new CaptureFailure(rawCaptureId, "Capture could not be saved"));
+            }
+        }
+
+        return ResponseEntity.ok(new BulkUpsertResponse(new ArrayList<>(acceptedCaptureIds), failures));
+    }
+
+    private Solution saveWithOneRetry(String githubId, CapturePayload payload) {
+        try {
+            return solutionService.upsert(githubId, payload);
+        } catch (DataIntegrityViolationException firstFailure) {
+            // A concurrent request may have created the unique (user,captureId) row after the initial lookup.
+            // The failed transaction is already closed because upsert uses REQUIRES_NEW, so a second lookup is safe.
+            return solutionService.upsert(githubId, payload);
+        }
+    }
+
+    private String extractCaptureId(JsonNode node) {
+        if (node != null && node.isObject() && node.has("captureId") && !node.get("captureId").isNull()) {
+            return node.get("captureId").asText();
+        }
+        return null;
+    }
+
+    private ResponseEntity<?> validateAccountAssertion(String githubId, String assertion) {
+        if (assertion == null) {
+            return null;
+        }
+        String expected = githubId.trim();
+        String provided = assertion.trim();
+        if (!expected.equals(provided)) {
+            return ResponseEntity.status(409)
+                    .body(new ApiError("Account context changed; refresh and retry"));
+        }
+        return null;
     }
 }
