@@ -59,7 +59,7 @@ describe("Dashboard automation authority", () => {
       authClient={auth()}
       extensionConnection={extensionConnection}
       consentStore={{ read: () => true, write: vi.fn() }}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
     />);
 
     await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: true, connectionAvailable: true }));
@@ -95,7 +95,7 @@ describe("Dashboard automation authority", () => {
       authClient={auth()}
       extensionConnection={extensionConnection}
       consentStore={{ read: () => true, write: vi.fn() }}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
     />);
 
     await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: true, connectionAvailable: true }));
@@ -165,7 +165,7 @@ describe("Dashboard automation authority", () => {
       authClient={auth()}
       extensionConnection={extensionConnection}
       consentStore={{ read: () => true, write: vi.fn() }}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
     />);
 
     await waitFor(() => expect(published.at(-1)).toMatchObject({ autoSyncEnabled: true, connectionAvailable: true }));
@@ -210,7 +210,7 @@ describe("Dashboard automation authority", () => {
       authClient={auth()}
       extensionConnection={extensionConnection}
       consentStore={{ read: () => true, write: vi.fn() }}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
     />);
 
     await waitFor(() => expect(fixture.published.at(-1)).toMatchObject({ autoSyncEnabled: true, connectionAvailable: true }));
@@ -241,7 +241,7 @@ describe("Dashboard automation authority", () => {
       startSyncSession: vi.fn(async () => true),
       endSyncSession: vi.fn(async () => undefined),
     };
-    render(<App dataSource={{ listSolutions: async () => [] }} authClient={auth()} extensionConnection={extensionConnection} consentStore={{ read: () => false, write: vi.fn() }} dashboardOrigin="https://codearchive-dashboard-beta.onrender.com" />);
+    render(<App dataSource={{ listSolutions: async () => [] }} authClient={auth()} extensionConnection={extensionConnection} consentStore={{ read: () => false, write: vi.fn() }} dashboardOrigin="https://codearchive-dashboard-beta.netlify.app" />);
     fireEvent.click(await screen.findByRole("button", { name: "다시 확인" }));
     await screen.findByText("Extension 연결됨");
     await waitFor(() => expect(published.at(-1)).toMatchObject({ authenticated: true, connectionAvailable: true, autoSyncEnabled: false, githubAutoCommitEnabled: false, errorCode: null }));
@@ -250,7 +250,7 @@ describe("Dashboard automation authority", () => {
 
   it("answers state requests with only the sanitized authoritative shape and rejects ON without consent", async () => {
     const fixture = bridge();
-    render(<App dataSource={{ listSolutions: async () => [] }} authClient={auth()} extensionConnection={fixture.extensionConnection} consentStore={{ read: () => false, write: vi.fn() }} dashboardOrigin="https://codearchive-dashboard-beta.onrender.com" />);
+    render(<App dataSource={{ listSolutions: async () => [] }} authClient={auth()} extensionConnection={fixture.extensionConnection} consentStore={{ read: () => false, write: vi.fn() }} dashboardOrigin="https://codearchive-dashboard-beta.netlify.app" />);
     await screen.findByRole("checkbox", { name: /자동 동기화/ });
     await act(async () => fixture.send({ type: "CODEARCHIVE_AUTOMATION_STATE_REQUEST", protocolVersion: 1 }));
     await act(async () => fixture.send({ type: "CODEARCHIVE_AUTOMATION_SET_REQUEST", protocolVersion: 1, automation: "AUTO_SYNC", enabled: true }));
@@ -263,7 +263,7 @@ describe("Dashboard automation authority", () => {
   it("stops both automation paths on multiple-dashboard safety stop and does not resume implicitly", async () => {
     const fixture = bridge();
     const store = { read: () => false, write: vi.fn() };
-    render(<App dataSource={{ listSolutions: async () => [] }} authClient={auth()} extensionConnection={fixture.extensionConnection} consentStore={store} dashboardOrigin="https://codearchive-dashboard-beta.onrender.com" />);
+    render(<App dataSource={{ listSolutions: async () => [] }} authClient={auth()} extensionConnection={fixture.extensionConnection} consentStore={store} dashboardOrigin="https://codearchive-dashboard-beta.netlify.app" />);
     const consent = await screen.findByRole("checkbox", { name: /자동 동기화/ });
     fireEvent.click(consent);
     await waitFor(() => expect(fixture.startSyncSession).toHaveBeenCalledTimes(1));
@@ -276,7 +276,7 @@ describe("Dashboard automation authority", () => {
   it("clears the multi-tab safety state only after an explicit valid AUTO_SYNC re-enable", async () => {
     const fixture = bridge();
     const store = { read: () => false, write: vi.fn() };
-    render(<App dataSource={{ listSolutions: async () => [] }} authClient={auth()} extensionConnection={fixture.extensionConnection} consentStore={store} dashboardOrigin="https://codearchive-dashboard-beta.onrender.com" />);
+    render(<App dataSource={{ listSolutions: async () => [] }} authClient={auth()} extensionConnection={fixture.extensionConnection} consentStore={store} dashboardOrigin="https://codearchive-dashboard-beta.netlify.app" />);
     fireEvent.click(await screen.findByRole("checkbox", { name: /자동 동기화/ }));
     await waitFor(() => expect(fixture.startSyncSession).toHaveBeenCalledTimes(1));
     await act(async () => fixture.send({ type: "CODEARCHIVE_AUTOMATION_SAFETY_STOP", protocolVersion: 1, errorCode: "MULTIPLE_DASHBOARD_TABS" }));
@@ -290,7 +290,7 @@ describe("Dashboard automation authority", () => {
   it("turns automatic mode off without revoking source-transfer consent", async () => {
     const fixture = bridge();
     const write = vi.fn();
-    render(<App dataSource={{ listSolutions: async () => [] }} authClient={auth()} extensionConnection={fixture.extensionConnection} consentStore={{ read: () => false, write }} dashboardOrigin="https://codearchive-dashboard-beta.onrender.com" />);
+    render(<App dataSource={{ listSolutions: async () => [] }} authClient={auth()} extensionConnection={fixture.extensionConnection} consentStore={{ read: () => false, write }} dashboardOrigin="https://codearchive-dashboard-beta.netlify.app" />);
     fireEvent.click(await screen.findByRole("checkbox", { name: /자동 동기화/ }));
     await waitFor(() => expect(fixture.startSyncSession).toHaveBeenCalledTimes(1));
     await act(async () => fixture.send({ type: "CODEARCHIVE_AUTOMATION_SET_REQUEST", protocolVersion: 1, automation: "AUTO_SYNC", enabled: false }));
@@ -312,7 +312,7 @@ describe("Dashboard automation authority", () => {
       extensionConnection={fixture.extensionConnection}
       consentStore={{ read, write }}
       githubClient={githubClient}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
       syncSessionIdGenerator={() => "session-a"}
     />);
 

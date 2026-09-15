@@ -21,7 +21,7 @@ function setupProps() {
     start(onState) { onState({ status: "connected", summary: { protocolVersion: 1, pendingCount: 0, allCount: 0, revision: 1 } }); return () => {}; },
     startSyncSession: start, endSyncSession: end,
   };
-  return { dataSource: source, extensionConnection: connection, consentStore: createAutoSyncConsentStore(localStorage), dashboardOrigin: "https://codearchive-dashboard-beta.onrender.com", start, end };
+  return { dataSource: source, extensionConnection: connection, consentStore: createAutoSyncConsentStore(localStorage), dashboardOrigin: "https://codearchive-dashboard-beta.netlify.app", start, end };
 }
 async function remember() {
   createAutoSyncConsentStore(localStorage).write(true, await deriveAccountBinding(ID));

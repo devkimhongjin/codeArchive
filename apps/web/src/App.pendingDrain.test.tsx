@@ -88,7 +88,7 @@ describe("Dashboard automatic pending catch-up", () => {
       extensionConnection={bridge.connection}
       authClient={authenticated}
       consentStore={consent(false)}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
       syncSessionIdGenerator={() => manualReady ? "manual-session" : "auto-session"}
       importBatchIdGenerator={() => "batch-a"}
       pendingDrainApiClient={{ upsert }}
@@ -118,7 +118,7 @@ describe("Dashboard automatic pending catch-up", () => {
       extensionConnection={bridge.connection}
       authClient={authenticated}
       consentStore={consent(false)}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
       syncSessionIdGenerator={() => "session-a"}
     />);
 
@@ -140,7 +140,7 @@ describe("Dashboard automatic pending catch-up", () => {
       extensionConnection={bridge.connection}
       authClient={authenticated}
       consentStore={consent(false)}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
       syncSessionIdGenerator={() => manualReady ? "manual-session" : "auto-session"}
       pendingDrainApiClient={{ upsert }}
     />);
@@ -176,7 +176,7 @@ describe("Dashboard automatic pending catch-up", () => {
       extensionConnection={bridge.connection}
       authClient={authenticated}
       consentStore={consent(false)}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
       syncSessionIdGenerator={() => manualReady ? (sessionIds.shift() ?? "manual-unexpected") : "auto-session"}
       pendingDrainApiClient={{ upsert: vi.fn(async () => ["one"]) }}
     />);
@@ -212,7 +212,7 @@ describe("Dashboard automatic pending catch-up", () => {
       extensionConnection={bridge.connection}
       authClient={authenticated}
       consentStore={consent(false)}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
     />);
 
     await screen.findByText("Octo Cat");
@@ -228,7 +228,7 @@ describe("Dashboard automatic pending catch-up", () => {
       extensionConnection={bridge.connection}
       authClient={authenticated}
       consentStore={consent(false)}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
       syncSessionIdGenerator={() => "session-a"}
       importBatchIdGenerator={() => "batch-a"}
     />);
@@ -246,7 +246,7 @@ describe("Dashboard automatic pending catch-up", () => {
       extensionConnection={bridge.connection}
       authClient={authenticated}
       consentStore={consent(true)}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
       syncSessionIdGenerator={() => "session-a"}
       importBatchIdGenerator={() => "batch-a"}
       pendingDrainApiClient={{ upsert: vi.fn(async () => ["one"]) }}
@@ -273,7 +273,7 @@ describe("Dashboard automatic pending catch-up", () => {
       extensionConnection={bridge.connection}
       authClient={signedOut}
       consentStore={consent(false)}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
       syncSessionIdGenerator={() => "session-a"}
     />);
     await screen.findByRole("button", { name: "GitHub로 로그인" });
@@ -287,7 +287,7 @@ describe("Dashboard automatic pending catch-up", () => {
       extensionConnection={bridge.connection}
       authClient={authenticated}
       consentStore={consent(false)}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
       syncSessionIdGenerator={() => "session-a"}
     />);
     fireEvent.click(await screen.findByRole("checkbox", { name: /자동 동기화/ }));

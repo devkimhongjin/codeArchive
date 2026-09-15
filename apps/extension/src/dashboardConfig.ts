@@ -1,1 +1,1 @@
-export const CODEARCHIVE_DASHBOARD_ORIGIN = "https://codearchive-dashboard-beta.onrender.com";
+export const CODEARCHIVE_DASHBOARD_ORIGIN = "https://codearchive-dashboard-beta.netlify.app";

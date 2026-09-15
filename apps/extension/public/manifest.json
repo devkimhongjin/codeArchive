@@ -15,7 +15,7 @@
   "background": { "service_worker": "background.js", "type": "module" },
   "externally_connectable": {
     "matches": [
-      "https://codearchive-dashboard-beta.onrender.com/*"
+      "https://codearchive-dashboard-beta.netlify.app/*"
     ]
   },
   "content_scripts": [

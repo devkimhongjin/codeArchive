@@ -8,7 +8,7 @@
 
 Chrome 확장 프로그램이 정답 코드를 내 브라우저에 저장하고, 웹 Dashboard에서 GitHub 로그인·동기화·풀이 관리를 할 수 있습니다. Chrome 웹 스토어 앱이 아니라 압축 해제 설치 방식이라 아래 설치 안내를 먼저 읽어주세요. 개발 도구나 서버 설치는 필요 없습니다.
 
-- Dashboard: https://codearchive-dashboard-beta.onrender.com
+- Dashboard: https://codearchive-dashboard-beta.netlify.app
 - 설치 ZIP: **[운영자가 실제 파일 첨부 또는 접근 가능한 비공개 링크 입력]**
 - ZIP SHA-256: **[운영자가 생성된 확인값 입력]**
 - 패키지 소스 커밋 / 버전: **[release-info.json 값 입력]**
@@ -21,7 +21,7 @@ ZIP의 `docs/beta-install.md`가 설치 안내, `docs/dashboard-beta-tester-guid
 처음에는 본인이 작성한 중요하지 않은 테스트 풀이로 아래 순서를 확인해주세요.
 
 1. SWEA 정답 제출 후 **로컬 풀이 보기**에서 저장 확인
-2. Dashboard 열기 → API 준비 확인 → GitHub 로그인·계정 확인·Extension 연결 확인
+2. Dashboard 즉시 열기 → 기존 세션 확인 또는 GitHub 로그인·계정 확인·Extension 연결 확인
 3. 대기 중인 코드 전송에 동의하는 경우에만 **자동 동기화** 켜기
 4. Dashboard에서 풀이 찾기·복사·다운로드
 5. 불편한 점이나 오류를 코드/개인정보 없이 알려주기

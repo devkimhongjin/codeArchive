@@ -8,7 +8,7 @@ CodeArchive는 Chrome Extension으로 코딩테스트 정답 풀이를 자동 �
 
 **출시 전 초대형 베타입니다.** 설치 후보와 가이드는 준비되어 있어도 실제 두 계정 동기화·데이터 보존 검증까지 끝난 정식 배포본은 아닙니다. 운영자가 사용 가능하다고 확인한 패키지만 설치하고, 중요한 원본 코드는 별도로 보관하세요.
 
-- [웹 Dashboard 열기](https://codearchive-dashboard-beta.onrender.com)
+- [웹 Dashboard 열기](https://codearchive-dashboard-beta.netlify.app)
 - [설치·업데이트 안내](docs/beta-install.md) — 처음 설치하는 분과 기존 사용자의 절차가 다릅니다.
 - [사용 가이드](docs/dashboard-beta-tester-guide.md) — 수집 → 로그인 → 동기화 → 풀이 관리
 - [문제 해결·오류 제보](docs/beta-troubleshooting.md)
@@ -19,7 +19,7 @@ CodeArchive는 Chrome Extension으로 코딩테스트 정답 풀이를 자동 �
 
 1. 받은 ZIP을 압축 해제하고 Chrome에서 그 안의 `extension` 폴더를 로드합니다. [자세한 설치 순서](docs/beta-install.md)
 2. 본인 소유의 테스트 풀이를 SWEA에서 정답 제출하고 팝업의 **로컬 풀이 보기**에서 저장을 확인합니다.
-3. **전체 풀이 보기**로 Dashboard를 엽니다. API 준비 확인이 끝나면 기존 세션을 확인하고, 로그인되어 있지 않으면 **GitHub로 로그인**합니다. 계정과 **Extension 연결됨** 상태를 확인합니다.
+3. **전체 풀이 보기**로 Dashboard를 엽니다. 정적 화면은 즉시 열리므로 기존 세션을 확인하고, 로그인되어 있지 않으면 **GitHub로 로그인**합니다. 계정과 **Extension 연결됨** 상태를 확인합니다. Main API가 늦으면 해당 기능의 로딩·오류·재시도 안내를 따릅니다.
 4. 전송할 대기 기록을 먼저 확인한 뒤 **자동 동기화**를 켭니다. 선택한 한 건이 아니라 **대기 중인 기록 전체가 대상**입니다.
 5. Dashboard에서 풀이를 찾아 복사·다운로드·수정합니다. AI는 작업별 별도 동의가 필요하며 현재 `fake` 결과는 테스트용입니다.
 
@@ -56,7 +56,7 @@ Dashboard가 닫혀 있거나 로그아웃되어 있어도 Extension의 로컬 �
 
 ## 현재 베타 상태와 목표 구조
 
-- Dashboard: [codearchive-dashboard-beta.onrender.com](https://codearchive-dashboard-beta.onrender.com)
+- Dashboard: [codearchive-dashboard-beta.netlify.app](https://codearchive-dashboard-beta.netlify.app)
 - Main API: `https://codearchive-api.onrender.com`
 - Analysis API: `https://codearchive-analysis.onrender.com`
 - 안정화된 Extension ID: `oohlcmihldmfninmdcmanddfmhoonmdl`

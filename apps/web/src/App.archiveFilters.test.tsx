@@ -29,7 +29,7 @@ function fixtures() {
     authClient, extensionConnection,
     dataSource: { listSolutions: vi.fn(async () => records) },
     consentStore: { read: () => false, write: vi.fn() },
-    dashboardOrigin: "https://codearchive-dashboard-beta.onrender.com",
+    dashboardOrigin: "https://codearchive-dashboard-beta.netlify.app",
   };
 }
 

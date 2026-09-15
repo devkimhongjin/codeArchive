@@ -59,12 +59,12 @@ try {
         Assert-NoReparse $file.FullName
         if (!$file.PSIsContainer) {
             $relative = [IO.Path]::GetRelativePath($dist, $file.FullName).Replace('\', '/')
-            if ($relative -notmatch '^(manifest\.json|popup\.html|archive\.html|background\.js|content/swea\.js|assets/[^/]+\.(js|css))$') {
+            if ($relative -notmatch '^(manifest\.json|popup\.html|archive\.html|background\.js|content/(swea|programmers)\.js|assets/[^/]+\.(js|css))$') {
                 throw "Unexpected distribution file: $relative"
             }
         }
     }
-    foreach ($required in @('manifest.json', 'popup.html', 'archive.html', 'background.js', 'content/swea.js')) {
+    foreach ($required in @('manifest.json', 'popup.html', 'archive.html', 'background.js', 'content/swea.js', 'content/programmers.js')) {
         if (!(Test-Path -LiteralPath (Join-Path $dist $required) -PathType Leaf)) { throw "Missing built file: $required" }
     }
     if ((Get-FileHash "$dist/manifest.json").Hash -ne (Get-FileHash 'apps/extension/public/manifest.json').Hash) {
@@ -74,7 +74,7 @@ try {
     $idCharacters = foreach ($byte in $publicKeyHash[0..15]) { [char](97 + ($byte -shr 4)); [char](97 + ($byte -band 15)) }
     $extensionId = -join $idCharacters
     if ($extensionId -ne 'oohlcmihldmfninmdcmanddfmhoonmdl') { throw 'Extension ID changed.' }
-    if (@($manifest.externally_connectable.matches).Count -ne 1 -or $manifest.externally_connectable.matches[0] -ne 'https://codearchive-dashboard-beta.onrender.com/*') {
+    if (@($manifest.externally_connectable.matches).Count -ne 1 -or $manifest.externally_connectable.matches[0] -ne 'https://codearchive-dashboard-beta.netlify.app/*') {
         throw 'Unapproved Dashboard origin.'
     }
     New-Item -ItemType Directory -Path "$stage/extension", "$stage/docs" | Out-Null
@@ -95,7 +95,7 @@ try {
 
 1. [설치·업데이트](docs/beta-install.md)를 읽고 `extension` 폴더를 Chrome에 로드합니다.
 2. [사용 가이드](docs/dashboard-beta-tester-guide.md)를 따라 로컬 저장부터 확인합니다.
-3. Dashboard를 열고 API 준비 확인 후 기존 세션을 확인하거나 GitHub로 로그인합니다.
+3. Dashboard를 열고 기존 세션을 확인하거나 GitHub로 로그인합니다. Main API가 늦으면 해당 기능의 로딩·오류·재시도 안내를 따릅니다.
 4. [문제 해결·제보](docs/beta-troubleshooting.md)를 확인합니다.
 
 소스 커밋·버전은 `release-info.json`, ZIP 무결성은 별도 `.zip.sha256`에서 확인하세요.
@@ -108,7 +108,7 @@ try {
         $hashes[[IO.Path]::GetRelativePath($stage, $file.FullName).Replace('\', '/')] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     $info = [ordered]@{ sourceCommit = $sourceCommit; branch = $branch; version = $manifest.version;
-        extensionId = $extensionId; dashboardUrl = 'https://codearchive-dashboard-beta.onrender.com';
+        extensionId = $extensionId; dashboardUrl = 'https://codearchive-dashboard-beta.netlify.app';
         generatedUtc = [DateTime]::UtcNow.ToString('o'); distributionStatus = 'candidate';
         nodeVersion = $nodeVersion; pnpmVersion = $pnpmVersion;
         checks = @('extension typecheck', 'extension tests', 'extension production build', 'manifest and file allowlist', 'beta guide links');

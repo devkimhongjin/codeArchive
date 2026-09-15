@@ -193,7 +193,7 @@ describe("Dashboard server solution deletion", () => {
       onState({ status: "connected", summary: { protocolVersion: 1, pendingCount: 0, allCount: 1, revision: 1 } });
       return () => undefined;
     };
-    render(<App authClient={auth()} extensionConnection={extension} dashboardOrigin="https://codearchive-dashboard-beta.onrender.com" syncSessionIdGenerator={() => "synthetic-session"} consentStore={{ read: () => false, write() {} }} dataSource={{ listSolutions: async () => [solution] }} solutionDeleteClient={{ deleteSolution: async () => { throw new ArchiveSessionExpiredError(); } }} />);
+    render(<App authClient={auth()} extensionConnection={extension} dashboardOrigin="https://codearchive-dashboard-beta.netlify.app" syncSessionIdGenerator={() => "synthetic-session"} consentStore={{ read: () => false, write() {} }} dataSource={{ listSolutions: async () => [solution] }} solutionDeleteClient={{ deleteSolution: async () => { throw new ArchiveSessionExpiredError(); } }} />);
     await screen.findByLabelText("원문 코드");
     fireEvent.click(screen.getByRole("checkbox", { name: /자동 동기화/ }));
     await waitFor(() => expect(extension.startSyncSession).toHaveBeenCalledWith("synthetic-session"));

@@ -78,7 +78,7 @@ describe("Dashboard archive shell", () => {
     const start = vi.fn(async () => true);
     const connection = extensionConnection("connected", start);
     const store = consentStore(false);
-    const props = { dataSource: source, extensionConnection: connection, consentStore: store, dashboardOrigin: "https://codearchive-dashboard-beta.onrender.com" };
+    const props = { dataSource: source, extensionConnection: connection, consentStore: store, dashboardOrigin: "https://codearchive-dashboard-beta.netlify.app" };
     const { rerender } = render(<App {...props} authClient={authenticatedAuth()} />);
     const checkbox = await screen.findByRole("checkbox", { name: /자동 동기화/ });
     expect(checkbox).not.toBeChecked();
@@ -127,7 +127,7 @@ describe("Dashboard archive shell", () => {
       extensionConnection={extensionConnection("connected", startSyncSession)}
       authClient={signedOutAuth()}
       consentStore={consentStore(false)}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
       syncSessionIdGenerator={() => "session-a"}
     />);
     await screen.findByRole("button", { name: "GitHub로 로그인" });
@@ -141,7 +141,7 @@ describe("Dashboard archive shell", () => {
       extensionConnection={extensionConnection("connected", startSyncSession)}
       authClient={authenticatedAuth()}
       consentStore={consentStore(false)}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
     />);
     expect(await screen.findByRole("checkbox", { name: /자동 동기화/ })).not.toBeChecked();
     expect(startSyncSession).not.toHaveBeenCalled();
@@ -155,7 +155,7 @@ describe("Dashboard archive shell", () => {
       extensionConnection={extensionConnection("connected", startSyncSession)}
       authClient={authenticatedAuth()}
       consentStore={store}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
       syncSessionIdGenerator={() => "session-a"}
     />);
     const checkbox = await screen.findByRole("checkbox", { name: /자동 동기화/ });
@@ -169,7 +169,7 @@ describe("Dashboard archive shell", () => {
       extensionConnection={extensionConnection("connected", startSyncSession)}
       authClient={authenticatedAuth()}
       consentStore={store}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
       syncSessionIdGenerator={() => "session-a"}
     />);
     expect(startSyncSession).toHaveBeenCalledTimes(1);
@@ -198,7 +198,7 @@ describe("Dashboard archive shell", () => {
       extensionConnection={extensionConnection("connected", vi.fn(async () => true), endSyncSession)}
       authClient={authenticatedAuth()}
       consentStore={store}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
       syncSessionIdGenerator={() => "session-a"}
     />);
     const checkbox = await screen.findByRole("checkbox", { name: /자동 동기화/ });
@@ -227,7 +227,7 @@ describe("Dashboard archive shell", () => {
       extensionConnection={extensionConnection("connected", vi.fn(async () => true), endSyncSession)}
       authClient={client}
       consentStore={consentStore(false)}
-      dashboardOrigin="https://codearchive-dashboard-beta.onrender.com"
+      dashboardOrigin="https://codearchive-dashboard-beta.netlify.app"
       syncSessionIdGenerator={() => "session-a"}
     />);
     await screen.findByText("Octo Cat");
