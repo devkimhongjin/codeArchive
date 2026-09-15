@@ -65,6 +65,7 @@ describe("Dashboard solution edit integration", () => {
       authClient={authenticatedAuth()}
       extensionConnection={unavailableExtension()}
       solutionUpdateClient={updateClient}
+      consentStore={{ read: () => false, write: vi.fn() }}
     />);
 
     expect(await screen.findByLabelText("원문 코드")).toHaveValue("class Main {}");
