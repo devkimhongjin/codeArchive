@@ -42,7 +42,8 @@ import jakarta.servlet.http.Cookie;
 )
 @Import(SecurityConfig.class)
 @TestPropertySource(properties = {
-        "codearchive.auth.dashboard-origin=https://codearchive-dashboard-beta.onrender.com"
+        "codearchive.auth.dashboard-origin=https://codearchive-dashboard-beta.onrender.com",
+        "codearchive.auth.dashboard-allowed-origins=https://codearchive-dashboard-beta.onrender.com,https://codearchive-dashboard-beta.netlify.app"
 })
 class DashboardAuthSecurityMockMvcTest {
 
@@ -50,6 +51,8 @@ class DashboardAuthSecurityMockMvcTest {
             "dashboard-auth-security-test";
     private static final String DASHBOARD_ORIGIN =
             "https://codearchive-dashboard-beta.onrender.com";
+    private static final String NETLIFY_DASHBOARD_ORIGIN =
+            "https://codearchive-dashboard-beta.netlify.app";
 
     @Autowired
     private MockMvc mockMvc;
@@ -514,5 +517,43 @@ class DashboardAuthSecurityMockMvcTest {
                 .andExpect(header().doesNotExist(
                         HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN
                 ));
+    }
+
+    @Test
+    void netlifyDashboardCorsAndCookieMutationAllowOnlyTheApprovedExactOrigin()
+            throws Exception {
+        mockMvc.perform(
+                        options("/api/v1/auth/logout")
+                                .header(HttpHeaders.ORIGIN, NETLIFY_DASHBOARD_ORIGIN)
+                                .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                )
+                .andExpect(status().isOk())
+                .andExpect(header().string(
+                        HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN,
+                        NETLIFY_DASHBOARD_ORIGIN
+                ))
+                .andExpect(header().string(
+                        HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS,
+                        "true"
+                ));
+
+        CodeArchivePrincipal principal = new CodeArchivePrincipal(
+                UUID.randomUUID(), UUID.randomUUID(), "netlify-user"
+        );
+        when(authService.authenticate("netlify-session"))
+                .thenReturn(Optional.of(principal));
+
+        mockMvc.perform(
+                        post("/api/v1/auth/logout")
+                                .header(HttpHeaders.ORIGIN, NETLIFY_DASHBOARD_ORIGIN)
+                                .cookie(new Cookie(
+                                        ApiAuthenticationFilter.SESSION_COOKIE_NAME,
+                                        "netlify-session"
+                                ))
+                                .requestAttr(RequestIdFilter.REQUEST_ID_ATTRIBUTE, REQUEST_ID)
+                )
+                .andExpect(status().isOk());
+
+        verify(authService).logout(principal);
     }
 }

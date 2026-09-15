@@ -2,12 +2,16 @@ package com.codearchive.api.auth.config;
 
 import java.net.URI;
 import java.util.Locale;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.Optional;
 
 public final class DashboardOriginValidator {
 
     private static final String APPROVED_BETA_DASHBOARD_ORIGIN =
             "https://codearchive-dashboard-beta.onrender.com";
+    private static final String APPROVED_NETLIFY_BETA_DASHBOARD_ORIGIN =
+            "https://codearchive-dashboard-beta.netlify.app";
 
     private DashboardOriginValidator() {
     }
@@ -48,9 +52,27 @@ public final class DashboardOriginValidator {
         String normalized = "https://"
                 + uri.getHost().toLowerCase(Locale.ROOT);
         if (!APPROVED_BETA_DASHBOARD_ORIGIN.equals(normalized)) {
-            return Optional.empty();
+            if (!APPROVED_NETLIFY_BETA_DASHBOARD_ORIGIN.equals(normalized)) {
+                return Optional.empty();
+            }
         }
 
         return Optional.of(normalized);
+    }
+
+    public static Set<String> normalizeAllowed(String configured) {
+        if (configured == null || configured.isBlank()) {
+            return Set.of();
+        }
+
+        Set<String> normalized = new LinkedHashSet<>();
+        for (String value : configured.split(",", -1)) {
+            Optional<String> origin = normalize(value.trim());
+            if (origin.isEmpty()) {
+                return Set.of();
+            }
+            normalized.add(origin.get());
+        }
+        return Set.copyOf(normalized);
     }
 }

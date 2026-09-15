@@ -32,16 +32,16 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             Set.of("POST", "PUT", "PATCH", "DELETE");
 
     private final AuthService authService;
-    private final String dashboardOrigin;
+    private final Set<String> dashboardOrigins;
     private final JsonAuthenticationEntryPoint authenticationEntryPoint =
             new JsonAuthenticationEntryPoint();
 
     public ApiAuthenticationFilter(
             AuthService authService,
-            String dashboardOrigin
+            Set<String> dashboardOrigins
     ) {
         this.authService = authService;
-        this.dashboardOrigin = dashboardOrigin;
+        this.dashboardOrigins = Set.copyOf(dashboardOrigins);
     }
 
     @Override
@@ -73,7 +73,7 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
         }
 
         if (cookieToken != null) {
-            if (dashboardOrigin == null) {
+            if (dashboardOrigins.isEmpty()) {
                 rejectAuthentication(request, response);
                 return;
             }
@@ -82,7 +82,7 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
                 String origin = request.getHeader(
                         HttpHeaders.ORIGIN
                 );
-                if (!dashboardOrigin.equals(origin)) {
+                if (origin == null || !dashboardOrigins.contains(origin)) {
                     response.setStatus(
                             HttpServletResponse.SC_FORBIDDEN
                     );
