@@ -119,6 +119,13 @@ function formatMetric(value: number | string | undefined, suffix: string) {
   return `${value}${suffix}`
 }
 
+function formatObservedTime(value?: string) {
+  if (!value) return '기록 없음'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date)
+}
+
 
 
 function displayUser(user: User) {
@@ -894,7 +901,7 @@ function SolutionDetail({ solution, mode, onCopy, onDownload }: { solution: Solu
           <div className="metrics-row">
             <MetricCard label="실행 시간" value={formatMetric(solution.executionTime, typeof solution.executionTime === 'number' && solution.executionTime < 10 ? ' s' : ' ms')} icon="clock" />
             <MetricCard label="메모리 사용량" value={formatMetric(solution.memoryUsage, ' MB')} icon="spark" />
-            <MetricCard label="관측 시각" value={formatDate(solution.observedAt ?? solution.solvedAt)} icon="check" />
+            <MetricCard label="관측 시각" value={formatObservedTime(solution.observedAt ?? solution.solvedAt)} icon="check" />
           </div>
           <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
           <CodeBlock code={solution.sourceCode} language={solution.language} />
