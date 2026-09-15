@@ -35,11 +35,14 @@ public class SecurityConfig {
             ObjectProvider<RelayGrantService> relayGrantServices,
             CorsConfigurationSource corsConfigurationSource,
             @Value("${codearchive.auth.dashboard-origin:}")
-            String configuredDashboardOrigin
+            String configuredDashboardOrigin,
+            @Value("${codearchive.auth.dashboard-allowed-origins:}")
+            String configuredDashboardAllowedOrigins
     ) throws Exception {
-        String dashboardOrigin = DashboardOriginValidator
-                .normalize(configuredDashboardOrigin)
-                .orElse(null);
+        java.util.Set<String> dashboardOrigins = dashboardOrigins(
+                configuredDashboardOrigin,
+                configuredDashboardAllowedOrigins
+        );
 
         http
                 .csrf(AbstractHttpConfigurer::disable)
@@ -78,7 +81,7 @@ public class SecurityConfig {
                 .addFilterBefore(
                         new ApiAuthenticationFilter(
                                 authService,
-                                dashboardOrigin
+                                dashboardOrigins
                         ),
                         UsernamePasswordAuthenticationFilter.class
                 );
@@ -97,23 +100,25 @@ public class SecurityConfig {
     @Bean
     CorsConfigurationSource corsConfigurationSource(
             @Value("${codearchive.auth.dashboard-origin:}")
-            String configuredDashboardOrigin
+            String configuredDashboardOrigin,
+            @Value("${codearchive.auth.dashboard-allowed-origins:}")
+            String configuredDashboardAllowedOrigins
     ) {
-        String dashboardOrigin = DashboardOriginValidator
-                .normalize(configuredDashboardOrigin)
-                .orElse(null);
-
         CorsConfiguration extensionConfiguration =
                 corsConfiguration(
-                        BETA_EXTENSION_ORIGIN,
+                        java.util.Set.of(BETA_EXTENSION_ORIGIN),
                         false
                 );
 
+        java.util.Set<String> dashboardOrigins = dashboardOrigins(
+                configuredDashboardOrigin,
+                configuredDashboardAllowedOrigins
+        );
         CorsConfiguration dashboardConfiguration =
-                dashboardOrigin == null
+                dashboardOrigins.isEmpty()
                         ? null
                         : corsConfiguration(
-                                dashboardOrigin,
+                                dashboardOrigins,
                                 true
                         );
 
@@ -122,7 +127,8 @@ public class SecurityConfig {
                     org.springframework.http.HttpHeaders.ORIGIN
             );
             if (dashboardConfiguration != null
-                    && dashboardOrigin.equals(origin)) {
+                    && origin != null
+                    && dashboardOrigins.contains(origin)) {
                 return dashboardConfiguration;
             }
             return extensionConfiguration;
@@ -130,13 +136,13 @@ public class SecurityConfig {
     }
 
     private CorsConfiguration corsConfiguration(
-            String allowedOrigin,
+            java.util.Set<String> allowedOrigins,
             boolean allowCredentials
     ) {
         CorsConfiguration configuration =
                 new CorsConfiguration();
         configuration.setAllowedOrigins(
-                List.of(allowedOrigin)
+                List.copyOf(allowedOrigins)
         );
         configuration.setAllowedMethods(
                 List.of("GET", "POST", "PUT", "DELETE", "OPTIONS")
@@ -146,5 +152,21 @@ public class SecurityConfig {
         );
         configuration.setAllowCredentials(allowCredentials);
         return configuration;
+    }
+
+    static java.util.Set<String> dashboardOrigins(
+            String configuredDashboardOrigin,
+            String configuredDashboardAllowedOrigins
+    ) {
+        java.util.Set<String> configured = DashboardOriginValidator
+                .normalizeAllowed(configuredDashboardAllowedOrigins);
+        if (configuredDashboardAllowedOrigins != null
+                && !configuredDashboardAllowedOrigins.isBlank()) {
+            return configured;
+        }
+        return DashboardOriginValidator
+                .normalize(configuredDashboardOrigin)
+                .map(java.util.Set::of)
+                .orElseGet(java.util.Set::of);
     }
 }
