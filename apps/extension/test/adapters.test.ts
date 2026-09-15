@@ -35,6 +35,10 @@ test("Programmers accepts only the canonical lesson host/path and hidden #code s
 
 test("result phrases are exact and never accept surrounding failure prose", () => {
   assert.equal(isSweaAccepted("PASS입니다."), true);
+  assert.equal(isSweaAccepted("축하합니다. Pass입니다.제출이 완료되었습니다."), true);
+  assert.equal(isSweaAccepted("축하합니다. Pass입니다.\n제출이 완료되었습니다."), true);
+  assert.equal(isSweaAccepted("축하합니다. Pass입니다. 컴파일 오류"), false);
+  assert.equal(isSweaAccepted("이전 제출은 축하합니다. Pass입니다.제출이 완료되었습니다."), false);
   assert.equal(isSweaAccepted("PASS입니다. 컴파일 오류"), false);
   assert.equal(isSweaAccepted("PASS"), false);
   assert.equal(isProgrammersAccepted("정답입니다!"), true);

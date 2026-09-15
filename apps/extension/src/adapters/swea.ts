@@ -28,9 +28,9 @@ function resultElement(document: Document): Element | null {
   return candidates.length === 1 ? candidates[0] ?? null : null;
 }
 
-/** SWEA's accepted popup is a literal `PASS입니다.` result. */
+/** Exact legacy and observed live success dialogs; never match a history row. */
 export function isSweaAccepted(text: string): boolean {
-  return normalizeText(text).toLowerCase() === "pass입니다.";
+  return /^(?:pass입니다\.|축하합니다\.\s*pass입니다\.\s*제출이 완료되었습니다\.)$/i.test(normalizeText(text));
 }
 
 function firstContestProblemId(document: Document): string | null {

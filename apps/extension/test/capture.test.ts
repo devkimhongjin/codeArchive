@@ -57,6 +57,21 @@ test('a lost storage reply keeps the same capture ID across later observer check
   assert.equal(collectAcceptedCaptureAttempt(adapter), null);
 });
 
+test('SWEA captures the observed live success popup with br-separated sentences', () => {
+  const { document } = sweaDocument();
+  const adapter = new SweaAdapter(document, locationFor('https://swexpertacademy.com/main/solvingProblem/solvingProblem.do'));
+  adapter.beginSubmissionAttempt();
+  const popup = document.querySelector('.popup_layer')!;
+  popup.classList.add('show');
+  popup.querySelector('p')!.innerHTML = '축하합니다. Pass입니다.<br>제출이 완료되었습니다.<br><br>';
+  const captured = collectAcceptedCaptureAttempt(adapter);
+  assert.ok(captured);
+  assert.equal(captured.capture.problemNumber, '5678');
+  assert.equal(captured.capture.sourceCode, 'class Solution {}');
+  adapter.consumeSubmissionResult(captured.detection);
+  assert.equal(collectAcceptedCaptureAttempt(adapter), null);
+});
+
 test("Programmers ignores a stale accepted dialog and captures a new result with submit snapshot", () => {
   const { document } = programmersDocument();
   const location = locationFor("https://school.programmers.co.kr/learn/courses/30/lessons/1234");

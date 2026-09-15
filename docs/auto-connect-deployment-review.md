@@ -4,7 +4,7 @@
 
 - #228: 이전 beta 공개 manifest key로 고정 ID oohlcmihldmfninmdcmanddfmhoonmdl 복원. GitHub 로그인 후 자동 연결, 제한된 재시도와 데이터 없는 heartbeat. 사용자 연결 해제와 로그아웃을 존중합니다. 풀이 전송은 지금 동기화로 시작합니다.
 - 기존 개발 ID ifchmkigiaigmdkgmmgdimpobgcahhom은 알려진 이전 설치로만 허용합니다. 고정 ID가 없으면 fallback 연결하며, 설정의 이전 개발 기록 확인으로 별도 연결할 수 있습니다. 새 ID는 별도 로컬 저장소이므로 이전 확장은 기록을 모두 옮기기 전에 삭제하지 마세요. 코드가 기존 IndexedDB를 삭제하거나 자동 이전하지 않습니다.
-- #229: SWEA MAIN-world cEditor 직접 전역 바인딩과 window 속성 양쪽을 지원합니다. 실제 lexical binding을 사용하는 번들 테스트로 검증합니다. 실제 PASS → IndexedDB 저장은 사용자의 확장 갱신 후 확인해야 합니다.
+- #229: SWEA MAIN-world cEditor 직접 전역 바인딩과 window 속성 양쪽을 지원합니다. 실제 lexical binding을 사용하는 번들 테스트로 검증합니다. 실제 7206 문제에서 성공 팝업의 전체 문구(축하합니다. Pass입니다.제출이 완료되었습니다.)를 관찰했고 정확한 성공 문구로 추가했습니다. PASS → IndexedDB 저장은 수정 빌드로 재확인합니다.
 - #230: Shiki 4.4.3, 제한된 언어와 github-light 테마, React token 출력 및 plain text fallback. 문법/엔진은 비동기 청크입니다. C++ 문법과 WASM 청크가 크므로 저사양 성능은 후속 관찰 대상입니다.
 - #231: 복사/다운로드 각각 문제 메타데이터 주석 포함 설정. 기본 off, 원본 주석 유지. 알 수 없는 언어에는 임의 주석을 추가하지 않습니다.
 - #232: 다운로드 파일명 템플릿 및 미리보기. 지원 변수는 {platform}, {number}, {title}, {language}. 파일명 확장자는 자동이며 경로·제어 문자와 예약 이름을 정리합니다.

@@ -33,7 +33,12 @@ export function exportCode(solution: Solution, header: boolean): string {
   const prefix = ['py', 'rb'].includes(ext) ? '#' : ext === 'sql' ? '--' : ext === 'txt' ? '' : '//'
   // Unknown languages have no safe universal comment syntax.
   if (!prefix) return solution.sourceCode
-  const clean = (value: string) => value.replace(/[\r\n\u2028\u2029]/g, ' ')
+  const clean = (value: string) => {
+    const line = value.replace(/[\r\n\u2028\u2029]/g, ' ')
+    // Java expands Unicode escapes before tokenizing comments. Metadata must
+    // never contain a backslash escape that can introduce a source newline.
+    return ext === 'java' ? line.replace(/\\/g, '/') : line
+  }
   const lines = [`${solution.platform} #${solution.problemNumber} · ${solution.title}`, solution.problemUrl, `Language: ${solution.language}`]
   const headerText = lines.map(line => `${prefix} ${clean(line)}`).join('\n') + '\n\n'
   // Preserve interpreter directives at the first line.

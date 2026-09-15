@@ -10,6 +10,8 @@ describe('code export', () => {
     expect(exportCode({ ...solution, language: 'Unknown' }, true)).toBe(solution.sourceCode)
     const injected = exportCode({ ...solution, title: 'title\nmalicious();' }, true)
     expect(injected).not.toContain('\nmalicious();')
+    const unicodeEscape = String.raw`title\u000aclass Injected {}`
+    expect(exportCode({ ...solution, title: unicodeEscape }, true)).not.toContain(String.raw`\u000a`)
   })
   it('expands names without paths, reserved Windows names or duplicate extensions', () => {
     expect(downloadFilename(solution, '{number}-{title}')).not.toMatch(/[\\/:*?"<>|]/)

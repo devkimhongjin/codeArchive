@@ -54,7 +54,7 @@ until a server-side target is configured.
 
 The extension uses exact, platform-scoped selectors. SWEA captures only the
 visible `div.popup_layer.show > div > p.txt` result whose normalized text is
-the literal `PASS입니다.`. Programmers captures only the active
+the exact legacy `PASS입니다.` or the observed live `축하합니다. Pass입니다.제출이 완료되었습니다.` text (allowing whitespace between sentences). Programmers captures only the active
 `#modal-dialog.modal.show[role="dialog"][aria-modal="true"]` dialog whose
 `h4.modal-title` is `정답입니다!`. A result is eligible only after the exact
 submit control starts a current-page attempt; stale dialogs and unchanged
