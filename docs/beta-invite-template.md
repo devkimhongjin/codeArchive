@@ -8,7 +8,7 @@
 
 Chrome 확장 프로그램이 정답 코드를 내 브라우저에 저장하고, 웹 Dashboard에서 GitHub 로그인·동기화·풀이 관리를 할 수 있습니다. Chrome 웹 스토어 앱이 아니라 압축 해제 설치 방식이라 아래 설치 안내를 먼저 읽어주세요. 개발 도구나 서버 설치는 필요 없습니다.
 
-- Dashboard: https://codearchive-dashboard-beta.onrender.com
+- Dashboard: https://codearchive-dashboard-beta.netlify.app
 - 설치 ZIP: **[운영자가 실제 파일 첨부 또는 접근 가능한 비공개 링크 입력]**
 - ZIP SHA-256: **[운영자가 생성된 확인값 입력]**
 - 패키지 소스 커밋 / 버전: **[release-info.json 값 입력]**

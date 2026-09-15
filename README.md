@@ -8,7 +8,7 @@ CodeArchive는 Chrome Extension으로 코딩테스트 정답 풀이를 자동 �
 
 **출시 전 초대형 베타입니다.** 설치 후보와 가이드는 준비되어 있어도 실제 두 계정 동기화·데이터 보존 검증까지 끝난 정식 배포본은 아닙니다. 운영자가 사용 가능하다고 확인한 패키지만 설치하고, 중요한 원본 코드는 별도로 보관하세요.
 
-- [웹 Dashboard 열기](https://codearchive-dashboard-beta.onrender.com)
+- [웹 Dashboard 열기](https://codearchive-dashboard-beta.netlify.app)
 - [설치·업데이트 안내](docs/beta-install.md) — 처음 설치하는 분과 기존 사용자의 절차가 다릅니다.
 - [사용 가이드](docs/dashboard-beta-tester-guide.md) — 수집 → 로그인 → 동기화 → 풀이 관리
 - [문제 해결·오류 제보](docs/beta-troubleshooting.md)
@@ -56,7 +56,7 @@ Dashboard가 닫혀 있거나 로그아웃되어 있어도 Extension의 로컬 �
 
 ## 현재 베타 상태와 목표 구조
 
-- Dashboard: [codearchive-dashboard-beta.onrender.com](https://codearchive-dashboard-beta.onrender.com)
+- Dashboard: [codearchive-dashboard-beta.netlify.app](https://codearchive-dashboard-beta.netlify.app)
 - Main API: `https://codearchive-api.onrender.com`
 - Analysis API: `https://codearchive-analysis.onrender.com`
 - 안정화된 Extension ID: `oohlcmihldmfninmdcmanddfmhoonmdl`

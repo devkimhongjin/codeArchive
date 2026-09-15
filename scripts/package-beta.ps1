@@ -74,7 +74,7 @@ try {
     $idCharacters = foreach ($byte in $publicKeyHash[0..15]) { [char](97 + ($byte -shr 4)); [char](97 + ($byte -band 15)) }
     $extensionId = -join $idCharacters
     if ($extensionId -ne 'oohlcmihldmfninmdcmanddfmhoonmdl') { throw 'Extension ID changed.' }
-    if (@($manifest.externally_connectable.matches).Count -ne 1 -or $manifest.externally_connectable.matches[0] -ne 'https://codearchive-dashboard-beta.onrender.com/*') {
+    if (@($manifest.externally_connectable.matches).Count -ne 1 -or $manifest.externally_connectable.matches[0] -ne 'https://codearchive-dashboard-beta.netlify.app/*') {
         throw 'Unapproved Dashboard origin.'
     }
     New-Item -ItemType Directory -Path "$stage/extension", "$stage/docs" | Out-Null
@@ -108,7 +108,7 @@ try {
         $hashes[[IO.Path]::GetRelativePath($stage, $file.FullName).Replace('\', '/')] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     $info = [ordered]@{ sourceCommit = $sourceCommit; branch = $branch; version = $manifest.version;
-        extensionId = $extensionId; dashboardUrl = 'https://codearchive-dashboard-beta.onrender.com';
+        extensionId = $extensionId; dashboardUrl = 'https://codearchive-dashboard-beta.netlify.app';
         generatedUtc = [DateTime]::UtcNow.ToString('o'); distributionStatus = 'candidate';
         nodeVersion = $nodeVersion; pnpmVersion = $pnpmVersion;
         checks = @('extension typecheck', 'extension tests', 'extension production build', 'manifest and file allowlist', 'beta guide links');

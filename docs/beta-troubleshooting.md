@@ -18,7 +18,7 @@
 | AI가 느리거나 오류/한도 안내 | `fake` 표기와 현재 요청 상태 | 결과 새로고침으로 완료 여부부터 확인; 생성 버튼 연속 클릭 금지 |
 | 업데이트 후 로컬 건수가 다름 | 같은 프로필·ID·로드 폴더인지 | 자동 동기화를 끄고 중단; 제거/저장소 초기화 없이 운영자에게 문의 |
 
-공식 Dashboard: [codearchive-dashboard-beta.onrender.com](https://codearchive-dashboard-beta.onrender.com)
+공식 Dashboard: [codearchive-dashboard-beta.netlify.app](https://codearchive-dashboard-beta.netlify.app)
 
 무료 서버는 처음 요청할 때 응답이 늦을 수 있습니다. 시간 초과는 데이터가 삭제됐다는 뜻이 아닙니다. 특히 AI 요청은 브라우저에 오류가 표시돼도 서버에서 계속 처리 중일 수 있으므로 기존 결과를 먼저 확인합니다.
 
