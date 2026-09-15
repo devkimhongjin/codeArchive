@@ -1,0 +1,6 @@
+interface:
+  display_name: "CodeArchive Astra Worker"
+  short_description: "Implement bounded CodeArchive changes"
+  default_prompt: "Use $codearchive-astra-worker to implement the assigned bounded CodeArchive task."
+policy:
+  allow_implicit_invocation: false

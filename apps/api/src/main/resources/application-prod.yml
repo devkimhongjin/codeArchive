@@ -1,0 +1,6 @@
+spring:
+  datasource:
+    password: ${DB_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: validate

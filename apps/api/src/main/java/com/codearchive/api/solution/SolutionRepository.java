@@ -2,43 +2,10 @@ package com.codearchive.api.solution;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
-
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Modifying;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 
-public interface SolutionRepository
-        extends JpaRepository<Solution, UUID> {
+public interface SolutionRepository extends JpaRepository<Solution, Long> {
+    Optional<Solution> findByUserIdAndCaptureId(Long userId, String captureId);
 
-    Optional<Solution> findByIdAndUserId(
-            UUID id,
-            UUID userId
-    );
-
-    Optional<Solution> findByUserIdAndClientRecordId(
-            UUID userId,
-            String clientRecordId
-    );
-
-    List<Solution> findByUserIdOrderByObservedAtDescCreatedAtDesc(
-            UUID userId,
-            Pageable pageable
-    );
-
-    long countByUserIdAndClientRecordId(
-            UUID userId,
-            String clientRecordId
-    );
-
-    @Modifying
-    @Query("delete from Solution solution "
-            + "where solution.id = :id "
-            + "and solution.userId = :userId")
-    int deleteByIdAndUserId(
-            @Param("id") UUID id,
-            @Param("userId") UUID userId
-    );
+    List<Solution> findByUserIdOrderBySolvedAtDesc(Long userId);
 }

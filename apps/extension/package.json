@@ -2,27 +2,21 @@
   "name": "@codearchive/extension",
   "version": "0.1.0",
   "private": true,
+  "description": "Local-first CodeArchive Chrome extension",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
-    "build": "tsc -p tsconfig.json --noEmit && vite build && vite build --config vite.content.config.ts && vite build --config vite.programmers-content.config.ts && vite build --config vite.background.config.ts"
+    "typecheck": "tsc --noEmit",
+    "build": "node build.mjs",
+    "test": "npm run typecheck && node --import tsx --test test/*.test.ts"
   },
-  "dependencies": {
-    "@vitejs/plugin-react": "^5.0.4",
-    "vite": "^7.1.7",
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "@testing-library/jest-dom": "^6.8.0",
-    "@testing-library/react": "^16.3.0",
-    "@types/node": "^22.10.0",
-    "@types/react": "^19.1.13",
-    "@types/react-dom": "^19.1.9",
-    "jsdom": "^26.1.0",
-    "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "@types/chrome": "^0.2.9",
+    "@types/node": "^26.5.1",
+    "esbuild": "^0.28.2",
+    "fake-indexeddb": "^6.2.5",
+    "linkedom": "^0.18.13",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
   }
 }

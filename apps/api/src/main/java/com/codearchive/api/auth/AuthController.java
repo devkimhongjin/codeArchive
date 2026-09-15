@@ -1,260 +1,72 @@
 package com.codearchive.api.auth;
 
-import java.net.URI;
-import java.time.Duration;
-
+import com.codearchive.api.common.ApiError;
+import com.codearchive.api.config.GithubOAuth2AvailabilityFilter;
+import com.codearchive.api.config.GithubOAuth2Properties;
+import jakarta.servlet.http.HttpServletResponse;
+import java.util.Map;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.validation.annotation.Validated;
-import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestAttribute;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.codearchive.api.auth.security.ApiAuthenticationFilter;
-import com.codearchive.api.auth.security.CodeArchivePrincipal;
-import com.codearchive.api.common.filter.RequestIdFilter;
-import com.codearchive.api.common.response.ApiResponse;
-
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
-
 @RestController
-@RequestMapping("/api/v1/auth")
+@RequestMapping("/api/auth")
 @Validated
 public class AuthController {
 
-    static final String OAUTH_STATE_COOKIE_NAME =
-            "__Secure-codearchive_oauth_state";
-    static final String OAUTH_STATE_COOKIE_PATH =
-            "/api/v1/auth/github";
+    private final UserRepository userRepository;
+    private final GithubOAuth2Properties githubProperties;
 
-    private final AuthService authService;
-
-    public AuthController(AuthService authService) {
-        this.authService = authService;
+    public AuthController(UserRepository userRepository, GithubOAuth2Properties githubProperties) {
+        this.userRepository = userRepository;
+        this.githubProperties = githubProperties;
     }
 
-    @GetMapping("/github/login")
-    public ApiResponse<AuthService.LoginStart> login(
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        return ApiResponse.success(
-                authService.beginGitHubLogin(),
-                requestId
-        );
-    }
-
-    @GetMapping("/github/extension-login")
-    public ApiResponse<AuthService.LoginStart> extensionLogin(
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        return ApiResponse.success(
-                authService.beginGitHubExtensionLogin(),
-                requestId
-        );
-    }
-
-    @GetMapping("/github/dashboard-login")
-    public ResponseEntity<Void> dashboardLogin() {
-        AuthService.DashboardLoginStart start =
-                authService.beginGitHubDashboardLogin();
-
-        ResponseCookie stateCookie = ResponseCookie
-                .from(
-                        OAUTH_STATE_COOKIE_NAME,
-                        start.rawState()
-                )
-                .httpOnly(true)
-                .secure(true)
+    @GetMapping("/csrf")
+    public CsrfResponse csrf(CsrfToken csrfToken, HttpServletResponse response) {
+        String token = csrfToken.getToken();
+        // CookieCsrfTokenRepository writes this cookie during normal filter processing. The explicit
+        // header keeps the contract deterministic for clients and MockMvc when the token is deferred.
+        response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from("XSRF-TOKEN", token)
+                .path("/")
+                .httpOnly(false)
                 .sameSite("Lax")
-                .path(OAUTH_STATE_COOKIE_PATH)
-                .maxAge(authService.oauthStateTtl())
-                .build();
-
-        return ResponseEntity
-                .status(HttpStatus.FOUND)
-                .location(URI.create(start.authorizationUrl()))
-                .header(
-                        HttpHeaders.SET_COOKIE,
-                        stateCookie.toString()
-                )
-                .cacheControl(
-                        org.springframework.http.CacheControl
-                                .noStore()
-                )
-                .build();
+                .build()
+                .toString());
+        return new CsrfResponse(token);
     }
 
-    @GetMapping("/github/callback")
-    public ResponseEntity<?> callback(
-            @RequestParam(required = false) String code,
-            @RequestParam(required = false) String state,
-            @CookieValue(
-                    name = OAUTH_STATE_COOKIE_NAME,
-                    required = false
-            ) String preAuthStateCookie,
-            @CookieValue(
-                    name = ApiAuthenticationFilter.SESSION_COOKIE_NAME,
-                    required = false
-            ) String priorDashboardSessionCookie,
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        AuthService.CallbackExchange completion;
-        if (priorDashboardSessionCookie == null) {
-            completion = preAuthStateCookie == null
-                    ? authService.completeGitHubCallback(code, state)
-                    : authService.completeGitHubCallback(code, state, preAuthStateCookie);
-        } else {
-            completion = authService.completeGitHubCallback(code, state,
-                    preAuthStateCookie, priorDashboardSessionCookie);
-        }
-
-        if (completion.dashboardSession() != null) {
-            ResponseCookie sessionCookie = ResponseCookie
-                    .from(
-                            ApiAuthenticationFilter
-                                    .SESSION_COOKIE_NAME,
-                            completion.dashboardSession()
-                                    .accessToken()
-                    )
-                    .httpOnly(true)
-                    .secure(true)
-                    .sameSite("None")
-                    .path("/")
-                    .maxAge(authService.sessionTtl())
-                    .build();
-
-            ResponseCookie clearStateCookie = ResponseCookie
-                    .from(
-                            OAUTH_STATE_COOKIE_NAME,
-                            ""
-                    )
-                    .httpOnly(true)
-                    .secure(true)
-                    .sameSite("Lax")
-                    .path(OAUTH_STATE_COOKIE_PATH)
-                    .maxAge(Duration.ZERO)
-                    .build();
-
-            return ResponseEntity
-                    .status(HttpStatus.SEE_OTHER)
-                    .location(URI.create(
-                            completion.completionRedirectUri()
-                    ))
-                    .header(
-                            HttpHeaders.SET_COOKIE,
-                            sessionCookie.toString(),
-                            clearStateCookie.toString()
-                    )
-                    .cacheControl(
-                            org.springframework.http.CacheControl
-                                    .noStore()
-                    )
-                    .header(
-                            "Referrer-Policy",
-                            "no-referrer"
-                    )
-                    .build();
-        }
-
-        if (completion.completionRedirectUri() != null) {
-            return ResponseEntity
-                    .status(HttpStatus.FOUND)
-                    .location(URI.create(
-                            completion.completionRedirectUri()
-                    ))
-                    .build();
-        }
-
-        return ResponseEntity.ok(
-                ApiResponse.success(
-                        completion,
-                        requestId
-                )
-        );
+    @GetMapping("/providers")
+    public Map<String, GithubProviderResponse> providers() {
+        return Map.of("github", new GithubProviderResponse(
+                githubProperties.isEnabled(), GithubOAuth2AvailabilityFilter.AUTHORIZATION_PATH));
     }
 
-    @PostMapping("/exchange")
-    public ApiResponse<AuthService.IssuedSession> exchange(
-            @Valid @RequestBody ExchangeRequest request,
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        return ApiResponse.success(
-                authService.exchange(request.code()),
-                requestId
-        );
+    @GetMapping("/me")
+    public ResponseEntity<?> me(Authentication authentication) {
+        return GithubAuthentication.identity(authentication)
+                .flatMap(identity -> userRepository.findByGithubId(identity.githubId()))
+                .<ResponseEntity<?>>map(user -> ResponseEntity.ok(UserResponse.from(user)))
+                .orElseGet(() -> ResponseEntity.status(401).body(new ApiError("Authentication is required")));
     }
 
-    @PostMapping("/logout")
-    public ResponseEntity<ApiResponse<LogoutResponse>> logout(
-            @AuthenticationPrincipal
-            CodeArchivePrincipal principal,
-            @CookieValue(
-                    name = ApiAuthenticationFilter
-                            .SESSION_COOKIE_NAME,
-                    required = false
-            ) String dashboardSessionCookie,
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        authService.logout(principal);
-
-        ResponseEntity.BodyBuilder response =
-                ResponseEntity.ok();
-
-        if (dashboardSessionCookie != null
-                && !dashboardSessionCookie.isBlank()) {
-            ResponseCookie clearSessionCookie = ResponseCookie
-                    .from(
-                            ApiAuthenticationFilter
-                                    .SESSION_COOKIE_NAME,
-                            ""
-                    )
-                    .httpOnly(true)
-                    .secure(true)
-                    .sameSite("None")
-                    .path("/")
-                    .maxAge(Duration.ZERO)
-                    .build();
-
-            response.header(
-                    HttpHeaders.SET_COOKIE,
-                    clearSessionCookie.toString()
-            );
-        }
-
-        return response.body(
-                ApiResponse.success(
-                        new LogoutResponse(true),
-                        requestId
-                )
-        );
+    /**
+     * Keep a deliberate migration response for clients that still post the old
+     * email/password payload. No credentials are read or authenticated.
+     */
+    @PostMapping({"/register", "/login"})
+    public ResponseEntity<ApiError> legacyPasswordAuth() {
+        return ResponseEntity.status(410)
+                .body(new ApiError("Email and password authentication has been removed; use GitHub"));
     }
 
-    public record ExchangeRequest(
-            @NotBlank String code
-    ) {
-    }
-
-    public record LogoutResponse(
-            boolean revoked
-    ) {
+    public record GithubProviderResponse(boolean enabled, String loginUrl) {
     }
 }

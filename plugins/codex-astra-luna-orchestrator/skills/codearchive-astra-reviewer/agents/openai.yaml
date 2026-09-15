@@ -1,0 +1,6 @@
+interface:
+  display_name: "CodeArchive Astra Reviewer"
+  short_description: "Review changes independently for material risks"
+  default_prompt: "Use $codearchive-astra-reviewer to review the specified CodeArchive change without editing it."
+policy:
+  allow_implicit_invocation: false

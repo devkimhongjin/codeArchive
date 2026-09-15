@@ -1,0 +1,30 @@
+{
+  "name": "@codearchive/dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "jsdom": "^30.0.1",
+    "vitest": "latest"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

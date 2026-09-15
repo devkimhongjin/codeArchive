@@ -1,0 +1,24 @@
+name: Master Release Source
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  require-develop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require develop as the release source
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REF" != "develop" ] || [ "$HEAD_REPOSITORY" != "$BASE_REPOSITORY" ]; then
+            echo "Pull requests into master must use develop from this repository as their source."
+            exit 1
+          fi
