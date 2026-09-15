@@ -2,6 +2,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import App from './App'
+import { EXTENSION_ID, LEGACY_EXTENSION_ID } from './extensionConfig'
+import { BridgeError } from './bridge'
 
 const mocks = vi.hoisted(() => ({
   me: vi.fn(),
@@ -42,7 +44,6 @@ async function openConnectedSettings() {
   render(<App />)
   await screen.findByRole('button', { name: '로그아웃' })
   fireEvent.click(screen.getByRole('button', { name: '설정' }))
-  fireEvent.click(screen.getByRole('button', { name: '브리지 연결' }))
   await waitFor(() => expect(screen.getByText('연결됨')).toBeTruthy())
 }
 
@@ -50,6 +51,52 @@ afterEach(() => {
   cleanup()
   localStorage.clear()
   vi.clearAllMocks()
+})
+
+it('auto-connects only known IDs, falls back for migration and transfers no code until sync', async () => {
+  localStorage.setItem('codearchive-extension-id', 'a'.repeat(32))
+  mocks.me.mockResolvedValue(user)
+  mocks.list.mockResolvedValue([])
+  mocks.bridge.mockImplementation((id: string, message: { type: string }) => {
+    if (message.type === 'CONNECT' && id === EXTENSION_ID) return Promise.reject(new Error('not installed'))
+    if (message.type === 'CONNECT') return Promise.resolve({ capability: 'legacy' })
+    return Promise.resolve({ ok: true })
+  })
+  await openConnectedSettings()
+  expect(bridgeCalls('CONNECT').map(([id]) => id)).toEqual([EXTENSION_ID, LEGACY_EXTENSION_ID])
+  expect(bridgeCalls('GET_PENDING')).toHaveLength(0)
+  expect(screen.queryByLabelText('확장 프로그램 ID')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: '연결 해제' }))
+  await waitFor(() => expect(screen.getByText('연결 안 됨')).toBeTruthy())
+  expect(bridgeCalls('CONNECT')).toHaveLength(2)
+})
+
+it('does not connect for an unauthenticated demo', async () => {
+  mocks.me.mockRejectedValue(new Error('not signed in'))
+  render(<App />)
+  await waitFor(() => expect(mocks.me).toHaveBeenCalled())
+  expect(bridgeCalls('CONNECT')).toHaveLength(0)
+})
+
+it('renews an expired capability within the same explicit sync without uploading twice', async () => {
+  mocks.me.mockResolvedValue(user)
+  mocks.list.mockResolvedValue([])
+  mocks.bulk.mockResolvedValue({ acceptedCaptureIds: ['capture-1'], failures: [] })
+  let reads = 0
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => {
+    if (message.type === 'CONNECT') return Promise.resolve({ capability: `cap-${bridgeCalls('CONNECT').length}` })
+    if (message.type === 'GET_PENDING') {
+      if (reads++ === 0) return Promise.reject(new BridgeError('UNAUTHORIZED'))
+      return Promise.resolve({ captures: [capture] })
+    }
+    return Promise.resolve({ ok: true })
+  })
+  await openConnectedSettings()
+  fireEvent.click(screen.getByRole('button', { name: '지금 동기화' }))
+  await waitFor(() => expect(bridgeCalls('ACK')).toHaveLength(1))
+  expect(bridgeCalls('CONNECT')).toHaveLength(2)
+  expect(mocks.bulk).toHaveBeenCalledOnce()
+  expect(screen.getByText('연결됨')).toBeTruthy()
 })
 
 it('keeps the bridge connected after an empty sync and reuses it for the next sync', async () => {

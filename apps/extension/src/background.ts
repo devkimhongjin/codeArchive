@@ -8,13 +8,27 @@ const bridge = new DashboardBridge(store);
 type InternalMessage =
   | { type: "STORE_CAPTURE"; capture: unknown }
   | { type: "GET_POPUP_STATE" }
+  | { type: "GET_ARCHIVE_STATE" }
   | { type: "UPDATE_SETTINGS"; patch: Record<string, unknown> };
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
-chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+function isArchivePageSender(sender: chrome.runtime.MessageSender): boolean {
+  if (typeof sender.url !== "string") return false;
+  try {
+    const senderUrl = new URL(sender.url);
+    return senderUrl.protocol === "chrome-extension:" &&
+      senderUrl.hostname === chrome.runtime.id &&
+      senderUrl.pathname === "/archive.html" &&
+      (!sender.id || sender.id === chrome.runtime.id);
+  } catch {
+    return false;
+  }
+}
+
+chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
   const object = asObject(message) as Partial<InternalMessage> | null;
   if (!object?.type) return false;
 
@@ -32,9 +46,27 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   }
 
   if (object.type === "GET_POPUP_STATE") {
-    void Promise.all([store.countPending(), store.getSettings()])
-      .then(([pendingCount, settings]) => sendResponse({ pendingCount, settings }))
-      .catch(() => sendResponse({ pendingCount: 0, settings: null, error: "STORAGE_ERROR" }));
+    void Promise.all([store.countPending(), store.getSettings(), store.listAll(3)])
+      .then(([pendingCount, settings, recentCaptures]) => sendResponse({
+        pendingCount,
+        settings,
+        // The popup only needs metadata. Keep source code in the archive page's
+        // extension-internal response so it never crosses the dashboard bridge.
+        recentCaptures: recentCaptures.map(({ sourceCode: _sourceCode, ...preview }) => preview)
+      }))
+      .catch(() => sendResponse({ pendingCount: 0, settings: null, recentCaptures: [], error: "STORAGE_ERROR" }));
+    return true;
+  }
+
+  if (object.type === "GET_ARCHIVE_STATE") {
+    if (!isArchivePageSender(sender)) {
+      sendResponse({ captures: [], error: "UNAUTHORIZED" });
+      return false;
+    }
+    void store
+      .listAll()
+      .then((captures) => sendResponse({ captures }))
+      .catch(() => sendResponse({ captures: [], error: "STORAGE_ERROR" }));
     return true;
   }
 

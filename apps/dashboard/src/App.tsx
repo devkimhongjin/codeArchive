@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpen,
   Check,
@@ -26,6 +26,9 @@ import { demoSolutions } from './demoData'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
 import { GITHUB_LOGIN_URL, type AuthProviders, type BulkResponse, type Solution, type Toast, type User, type ViewName } from './types'
+import { CodeBlock } from './CodeBlock'
+import { EXTENSION_ID, LEGACY_EXTENSION_ID, EXTENSION_CANDIDATES } from './extensionConfig'
+import { readExportSettings, EXPORT_SETTINGS_KEY, exportCode, downloadFilename, sourceFileExtension, type ExportSettings } from './codeExport'
 import './styles.css'
 
 type IconName =
@@ -116,16 +119,14 @@ function formatMetric(value: number | string | undefined, suffix: string) {
   return `${value}${suffix}`
 }
 
-function sourceFileExtension(language: string) {
-  const normalized = language.toLowerCase()
-  if (normalized.includes('python')) return 'py'
-  if (normalized.includes('javascript') || normalized === 'js') return 'js'
-  if (normalized.includes('typescript') || normalized === 'ts') return 'ts'
-  if (normalized.includes('kotlin')) return 'kt'
-  if (normalized.includes('java')) return 'java'
-  if (normalized.includes('c++')) return 'cpp'
-  return 'txt'
+function formatObservedTime(value?: string) {
+  if (!value) return '기록 없음'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date)
 }
+
+
 
 function displayUser(user: User) {
   const name = user.name?.trim()
@@ -149,8 +150,11 @@ export default function App() {
   const [githubProviderError, setGithubProviderError] = useState<string | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
-  const [extensionId, setExtensionId] = useState(() => window.localStorage.getItem('codearchive-extension-id') ?? '')
-  const [extensionDraft, setExtensionDraft] = useState(extensionId)
+  const [extensionId, setExtensionId] = useState<string>(EXTENSION_ID)
+  const currentExtensionId = useRef<string>(EXTENSION_ID)
+  const [autoConnect, setAutoConnect] = useState(true)
+  const connectInFlight = useRef(false)
+  const [exportSettings, setExportSettings] = useState(readExportSettings)
   const [bridgeStatus, setBridgeStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
   const [bridgeCapability, setBridgeCapability] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -332,7 +336,7 @@ export default function App() {
     const resetOperation = ++bridgeOperation.current
     setLoading(false)
     const capability = bridgeCapabilityRef.current
-    const disconnectExtensionId = extensionId
+    const disconnectExtensionId = currentExtensionId.current
     const shouldDisconnect = Boolean(disconnectExtensionId && capability)
     if (shouldDisconnect) {
       try {
@@ -397,53 +401,82 @@ export default function App() {
     }
   }
 
-  const saveExtensionId = () => {
-    const nextId = extensionDraft.trim()
-    if (nextId && !/^[a-p]{32}$/.test(nextId)) {
-      showToast('error', '확장 프로그램 ID 형식을 확인해 주세요.')
-      return
-    }
-    if (nextId !== extensionId) void resetBridge()
-    setExtensionId(nextId)
-    setExtensionDraft(nextId)
-    if (nextId) window.localStorage.setItem('codearchive-extension-id', nextId)
-    else window.localStorage.removeItem('codearchive-extension-id')
-    showToast('success', nextId ? '확장 프로그램 ID를 저장했습니다.' : '확장 프로그램 ID를 지웠습니다.')
-  }
-
-  const connectBridge = async () => {
-    if (authMutationInFlight.current !== null) return false
-    if (!extensionId) {
-      showToast('info', '설정에서 확장 프로그램 ID를 먼저 입력해 주세요.')
-      setView('settings')
-      return false
-    }
-    const requestedExtensionId = extensionId
+  const connectBridge = async (silent = false, legacyOnly = false) => {
+    if (authMutationInFlight.current !== null || !user || mode !== 'live' || connectInFlight.current) return false
+    connectInFlight.current = true
     const fence: RequestFence = { generation: accountGeneration.current, operation: ++bridgeOperation.current }
     setBridgeStatus('connecting')
+    const oldCapability = bridgeCapabilityRef.current
+    const oldId = currentExtensionId.current
+    bridgeCapabilityRef.current = null
+    setBridgeCapability(null)
     try {
-      const response = await requestBridge(requestedExtensionId, { type: 'CONNECT' })
-      const { capability } = parseConnectResponse(response)
-      if (!requestIsCurrent(fence, accountGeneration.current, bridgeOperation.current) || extensionId !== requestedExtensionId) {
+      if (oldCapability) await requestBridge(oldId, { type: 'DISCONNECT', capability: oldCapability }).catch(() => undefined)
+      for (const candidate of legacyOnly ? [LEGACY_EXTENSION_ID] : EXTENSION_CANDIDATES) {
+        if (!requestIsCurrent(fence, accountGeneration.current, bridgeOperation.current)) return false
         try {
-          await requestBridge(requestedExtensionId, { type: 'DISCONNECT', capability })
-        } catch {
-          // The stale bridge may already have been disconnected by resetBridge.
-        }
-        return false
+          const { capability } = parseConnectResponse(await requestBridge(candidate, { type: 'CONNECT' }))
+          if (!requestIsCurrent(fence, accountGeneration.current, bridgeOperation.current)) {
+            await requestBridge(candidate, { type: 'DISCONNECT', capability }).catch(() => undefined)
+            return false
+          }
+          currentExtensionId.current = candidate
+          setExtensionId(candidate)
+          bridgeCapabilityRef.current = capability
+          setBridgeCapability(capability)
+          setBridgeStatus('connected')
+          if (!silent) showToast('success', '확장 프로그램을 연결했습니다.')
+          return capability
+        } catch { /* Only the two known installation identities are eligible. */ }
       }
-      bridgeCapabilityRef.current = capability
-      setBridgeCapability(capability)
-      setBridgeStatus('connected')
-      showToast('success', '확장 프로그램 브리지를 연결했습니다.')
-      return capability
-    } catch (error) {
-      if (requestIsCurrent(fence, accountGeneration.current, bridgeOperation.current) && extensionId === requestedExtensionId) {
+      if (requestIsCurrent(fence, accountGeneration.current, bridgeOperation.current)) {
         setBridgeStatus('disconnected')
-        showToast('error', error instanceof BridgeError || error instanceof Error ? error.message : '확장 프로그램에 연결하지 못했습니다.')
+        if (!silent) showToast('error', '확장 프로그램을 찾지 못했습니다. 설치 후 다시 시도해 주세요.')
       }
       return false
+    } finally { connectInFlight.current = false }
+  }
+
+  useEffect(() => {
+    if (!user || mode !== 'live' || !autoConnect) return
+    let active = true
+    let timer: ReturnType<typeof setTimeout>
+    let attempts = 0
+    const tick = async () => {
+      if (!active) return
+      const capability = bridgeCapabilityRef.current
+      const operation = bridgeOperation.current
+      if (capability && currentExtensionId.current === EXTENSION_ID && !syncInFlight.current && authMutationInFlight.current === null) {
+        try { parseAckResponse(await requestBridge(EXTENSION_ID, { type: 'PING', capability })) }
+        catch {
+          if (active && operation === bridgeOperation.current && capability === bridgeCapabilityRef.current) {
+            bridgeCapabilityRef.current = null
+            setBridgeCapability(null)
+            setBridgeStatus('disconnected')
+          }
+        }
+      }
+      if (!active) return
+      if (!bridgeCapabilityRef.current && !syncInFlight.current) await connectBridge(true)
+      if (active) timer = setTimeout(tick, Math.min(30000, 2000 * 2 ** Math.min(attempts++, 4)))
     }
+    void tick()
+    return () => {
+      active = false
+      clearTimeout(timer)
+      bridgeOperation.current += 1
+      const capability = bridgeCapabilityRef.current
+      bridgeCapabilityRef.current = null
+      setBridgeCapability(null)
+      setBridgeStatus('disconnected')
+      if (capability) void requestBridge(currentExtensionId.current, { type: 'DISCONNECT', capability }).catch(() => undefined)
+    }
+  }, [user?.githubId, mode, autoConnect])
+
+  const updateExportSettings = (next: ExportSettings) => {
+    setExportSettings(next)
+    try { localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify(next)) }
+    catch { showToast('info', '설정은 현재 화면에 적용됐지만 브라우저에 저장하지 못했습니다.') }
   }
 
   const syncPending = async () => {
@@ -454,12 +487,7 @@ export default function App() {
       setGithubLoginOpen(true)
       return
     }
-    if (!extensionId) {
-      showToast('info', '설정에서 확장 프로그램 ID를 먼저 입력해 주세요.')
-      setView('settings')
-      return
-    }
-    const syncExtensionId = extensionId
+    let syncExtensionId = currentExtensionId.current
     syncInFlight.current = true
     setSyncing(true)
     let syncContext: SyncBridgeContext | null = null
@@ -504,6 +532,7 @@ export default function App() {
         const connectedCapability = await connectBridge()
         if (!connectedCapability) return
         syncCapability = connectedCapability
+        syncExtensionId = currentExtensionId.current
       }
       syncContext = {
         generation: syncGeneration,
@@ -516,16 +545,26 @@ export default function App() {
         syncContext.generation === accountGeneration.current &&
         syncContext.operation === bridgeOperation.current &&
         syncContext.capability === bridgeCapabilityRef.current &&
-        syncContext.extensionId === extensionId
+        syncContext.extensionId === currentExtensionId.current
       if (!syncBridgeIsCurrent()) {
         showToast('info', '계정 또는 브리지 상태가 바뀌어 동기화를 중단했습니다.')
         return
       }
-      const pendingResponse = await requestBridge(syncExtensionId, {
-        type: 'GET_PENDING',
-        capability: syncCapability,
-        limit: 50,
-      })
+      const readPending = () => requestBridge(syncExtensionId, { type: 'GET_PENDING', capability: syncCapability, limit: 50 })
+      let pendingResponse: object
+      try { pendingResponse = await readPending() }
+      catch (error) {
+        // An idle capability may expire, especially during migration from an
+        // older extension without heartbeat support. Reconnect once within the
+        // same explicit sync action; never replay a partially uploaded batch.
+        if (!(error instanceof BridgeError) || error.message !== 'UNAUTHORIZED' || !syncBridgeIsCurrent()) throw error
+        const renewed = await connectBridge(true, syncExtensionId === LEGACY_EXTENSION_ID)
+        if (!renewed || syncGeneration !== accountGeneration.current) return
+        syncCapability = renewed
+        syncExtensionId = currentExtensionId.current
+        syncContext = { generation: syncGeneration, operation: bridgeOperation.current, capability: renewed, extensionId: syncExtensionId }
+        pendingResponse = await readPending()
+      }
       const { captures } = parsePendingResponse(pendingResponse)
       if (!syncBridgeIsCurrent()) {
         showToast('info', '계정 또는 브리지 상태가 바뀌어 동기화를 중단했습니다.')
@@ -580,7 +619,7 @@ export default function App() {
           syncContext.generation === accountGeneration.current &&
           syncContext.operation === bridgeOperation.current &&
           syncContext.capability === bridgeCapabilityRef.current &&
-          syncContext.extensionId === extensionId
+          syncContext.extensionId === currentExtensionId.current
         if (isCurrent) await resetBridge()
       }
       syncInFlight.current = false
@@ -591,7 +630,7 @@ export default function App() {
   const copyCode = async () => {
     if (!selectedSolution) return
     try {
-      await navigator.clipboard.writeText(selectedSolution.sourceCode)
+      await navigator.clipboard.writeText(exportCode(selectedSolution, exportSettings.copyHeader))
       showToast('success', '코드를 클립보드에 복사했습니다.')
     } catch {
       showToast('error', '클립보드에 복사하지 못했습니다.')
@@ -600,12 +639,10 @@ export default function App() {
 
   const downloadCode = () => {
     if (!selectedSolution) return
-    const extension = sourceFileExtension(selectedSolution.language)
-    const safeTitle = selectedSolution.title.replace(/[\\/:*?"<>|]/g, '-').slice(0, 48)
-    const objectUrl = URL.createObjectURL(new Blob([selectedSolution.sourceCode], { type: 'text/plain;charset=utf-8' }))
+    const objectUrl = URL.createObjectURL(new Blob([exportCode(selectedSolution, exportSettings.downloadHeader)], { type: 'text/plain;charset=utf-8' }))
     const anchor = document.createElement('a')
     anchor.href = objectUrl
-    anchor.download = `${selectedSolution.platform}-${selectedSolution.problemNumber}-${safeTitle}.${extension}`
+    anchor.download = downloadFilename(selectedSolution, exportSettings.filenameTemplate)
     anchor.click()
     URL.revokeObjectURL(objectUrl)
     showToast('success', '소스 파일을 다운로드했습니다.')
@@ -708,13 +745,14 @@ export default function App() {
         {view === 'settings' && (
           <SettingsView
             user={user}
-            extensionDraft={extensionDraft}
-            setExtensionDraft={setExtensionDraft}
-            saveExtensionId={saveExtensionId}
+            exportSettings={exportSettings}
+            updateExportSettings={updateExportSettings}
+            previewSolution={selectedSolution ?? demoSolutions[0]}
             extensionId={extensionId}
             bridgeStatus={bridgeStatus}
-            onConnect={connectBridge}
-            onDisconnect={() => void resetBridge()}
+            onConnect={() => { setAutoConnect(true); void connectBridge() }}
+            onConnectLegacy={() => { setAutoConnect(true); void connectBridge(false, true) }}
+            onDisconnect={() => { setAutoConnect(false); void resetBridge() }}
             onSync={() => void syncPending()}
             onLogin={() => setGithubLoginOpen(true)}
             onLogout={() => void handleLogout()}
@@ -846,7 +884,6 @@ function SolutionRow({ solution, selected, onSelect }: { solution: Solution; sel
 }
 
 function SolutionDetail({ solution, mode, onCopy, onDownload }: { solution: Solution | null; mode: 'demo' | 'live'; onCopy: () => void; onDownload: () => void }) {
-  const lines = solution?.sourceCode.split('\n') ?? []
   return (
     <section className="solution-detail" aria-label="선택한 풀이 상세">
       {!solution ? (
@@ -864,13 +901,10 @@ function SolutionDetail({ solution, mode, onCopy, onDownload }: { solution: Solu
           <div className="metrics-row">
             <MetricCard label="실행 시간" value={formatMetric(solution.executionTime, typeof solution.executionTime === 'number' && solution.executionTime < 10 ? ' s' : ' ms')} icon="clock" />
             <MetricCard label="메모리 사용량" value={formatMetric(solution.memoryUsage, ' MB')} icon="spark" />
-            <MetricCard label="관측 시각" value={formatDate(solution.observedAt ?? solution.solvedAt)} icon="check" />
+            <MetricCard label="관측 시각" value={formatObservedTime(solution.observedAt ?? solution.solvedAt)} icon="check" />
           </div>
           <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
-          <div className="code-viewer" role="region" aria-label="소스 코드">
-            <div className="code-gutter">{lines.map((_, index) => <span key={index}>{String(index + 1).padStart(2, '0')}</span>)}</div>
-            <pre><code>{lines.map((line, index) => <span className="code-line" key={`${index}-${line}`}><span className="code-content">{highlightLine(line)}</span>{index < lines.length - 1 ? '\n' : ''}</span>)}</code></pre>
-          </div>
+          <CodeBlock code={solution.sourceCode} language={solution.language} />
           <div className="detail-note"><Icon name="spark" size={14} /><span>{mode === 'demo' ? '데모 예시 데이터입니다. 로그인하면 실제 확장 프로그램 기록으로 바뀝니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
         </>
       )}
@@ -882,21 +916,6 @@ function MetricCard({ label, value, icon }: { label: string; value: string; icon
   return <div className="metric-card"><span className="metric-icon"><Icon name={icon} size={15} /></span><span className="metric-label">{label}</span><strong>{value}</strong></div>
 }
 
-function highlightLine(line: string): ReactNode {
-  const tokenPattern = /(^#[^\n]*|\b(?:def|return|for|in|if|else|while|const|let|function|fun|static|int|val|true|false)\b|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g
-  const parts: ReactNode[] = []
-  let cursor = 0
-  for (const match of line.matchAll(tokenPattern)) {
-    const token = match[0]
-    const index = match.index ?? cursor
-    if (index > cursor) parts.push(line.slice(cursor, index))
-    const className = token.startsWith('#') ? 'token-comment' : token.startsWith('"') || token.startsWith("'") ? 'token-string' : 'token-keyword'
-    parts.push(<span className={className} key={`${index}-${token}`}>{token}</span>)
-    cursor = index + token.length
-  }
-  if (cursor < line.length) parts.push(line.slice(cursor))
-  return <>{parts}</>
-}
 
 function ListSkeleton() {
   return <div className="skeleton-list">{[1, 2, 3, 4].map((item) => <div className="skeleton-row" key={item}><span /><div><i /><i /><i /></div></div>)}</div>
@@ -913,8 +932,8 @@ function GuideView({ onSettings }: { onSettings: () => void }) {
       <div className="guide-grid">
         <article className="guide-card guide-hero"><div className="guide-hero-icon"><Icon name="link" size={25} /></div><div><span className="card-kicker">CODEARCHIVE BRIDGE</span><h2>3분 안에 첫 풀이를 모아보세요</h2><p>확장 프로그램이 문제 페이지의 제출 코드를 관측하고, 동기화할 때만 서버로 전송합니다.</p></div><button className="primary-button" onClick={onSettings}>브리지 설정하기 <Icon name="chevron" size={14} /></button></article>
         <GuideStep number="01" title="확장 프로그램 설치" text="CodeArchive Extension을 Chrome에 설치하고, SWEA 또는 프로그래머스 문제를 한 번 제출해 주세요." action="chrome://extensions" />
-        <GuideStep number="02" title="확장 프로그램 ID 입력" text="확장 프로그램 관리 화면의 ID를 복사해 설정 화면에 저장합니다. ID만 브라우저에 보관됩니다." action="설정에서 입력" onAction={onSettings} />
-        <GuideStep number="03" title="GitHub 로그인 후 동기화" text="GitHub로 로그인한 상태에서 브리지 연결과 동기화를 누르면 서버가 저장한 항목만 확장 프로그램에서 확인 처리합니다." action="동기화 시작" onAction={onSettings} />
+        <GuideStep number="02" title="GitHub 로그인 · 자동 연결" text="로그인하면 설치된 CodeArchive에 자동 연결합니다. ID를 복사하거나 붙여 넣을 필요가 없습니다." action="연결 상태 확인" onAction={onSettings} />
+        <GuideStep number="03" title="지금 동기화" text="동기화를 누르면 대기 중인 풀이를 가져옵니다. 서버가 저장한 항목만 확장 프로그램에서 확인 처리합니다." action="동기화 시작" onAction={onSettings} />
       </div>
       <div className="guide-contract"><div className="contract-icon"><Icon name="spark" size={18} /></div><div><strong>데이터 흐름을 확인하세요</strong><p>확장 프로그램 → 대기 중인 캡처 50개 → 서버의 일괄 검증 → 승인된 captureId만 ACK</p></div><span className="contract-badge">EXPLICIT SYNC</span></div>
     </section>
@@ -927,24 +946,26 @@ function GuideStep({ number, title, text, action, onAction }: { number: string; 
 
 function SettingsView({
   user,
-  extensionDraft,
-  setExtensionDraft,
-  saveExtensionId,
+  exportSettings,
+  updateExportSettings,
+  previewSolution,
   extensionId,
   bridgeStatus,
   onConnect,
+  onConnectLegacy,
   onDisconnect,
   onSync,
   onLogin,
   onLogout,
 }: {
   user: User | null
-  extensionDraft: string
-  setExtensionDraft: (value: string) => void
-  saveExtensionId: () => void
+  exportSettings: ExportSettings
+  updateExportSettings: (settings: ExportSettings) => void
+  previewSolution: Solution
   extensionId: string
   bridgeStatus: 'disconnected' | 'connecting' | 'connected'
   onConnect: () => void
+  onConnectLegacy: () => void
   onDisconnect: () => void
   onSync: () => void
   onLogin: () => void
@@ -955,7 +976,12 @@ function SettingsView({
       <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> WORKSPACE / SETTINGS</p><h1>설정</h1><p>CodeArchive가 문제 풀이를 가져오는 방법을 관리합니다.</p></div>
       <div className="settings-layout">
         <div className="settings-column">
-          <article className="settings-card"><div className="settings-card-heading"><div className="settings-card-icon purple"><Icon name="link" size={18} /></div><div><h2>Chrome 확장 프로그램</h2><p>SWEA·프로그래머스 캡처 브리지</p></div><span className={`connection-state ${bridgeStatus}`}><i /> {bridgeStatus === 'connected' ? '연결됨' : bridgeStatus === 'connecting' ? '연결 중' : '연결 안 됨'}</span></div><div className="setting-field"><label htmlFor="extension-id">확장 프로그램 ID</label><div className="setting-input-row"><input id="extension-id" value={extensionDraft} onChange={(event) => setExtensionDraft(event.target.value)} placeholder="예: abcdefghijklmnop" spellCheck={false} /><button className="secondary-button" onClick={saveExtensionId}>저장</button></div><span className="field-help">chrome://extensions에서 확인할 수 있습니다. ID는 이 브라우저에만 저장됩니다.</span></div><div className="settings-actions"><button className="primary-button" onClick={onConnect} disabled={!extensionId || bridgeStatus === 'connecting'}><Icon name="link" size={14} /> {bridgeStatus === 'connected' ? '다시 연결' : '브리지 연결'}</button>{bridgeStatus === 'connected' && <button className="ghost-button" onClick={onDisconnect}>연결 해제</button>}<button className="ghost-button" onClick={onSync} disabled={bridgeStatus !== 'connected'}><Icon name="sync" size={14} /> 지금 동기화</button></div></article>
+          <article className="settings-card"><div className="settings-card-heading"><div className="settings-card-icon purple"><Icon name="link" size={18} /></div><div><h2>Chrome 확장 프로그램</h2><p>SWEA·프로그래머스 캡처 브리지</p></div><span className={`connection-state ${bridgeStatus}`}><i /> {bridgeStatus === 'connected' ? '연결됨' : bridgeStatus === 'connecting' ? '연결 중' : '연결 안 됨'}</span></div><div className="setting-field"><p>로그인하면 설치된 CodeArchive에 자동 연결합니다. 풀이 전송은 지금 동기화를 누를 때만 시작합니다.</p>{extensionId === LEGACY_EXTENSION_ID && <p role="status">이전 개발 확장에 연결됐습니다. 대기 풀이를 동기화한 뒤 고정 ID 버전으로 전환하세요. 기존 확장은 먼저 삭제하지 마세요.</p>}</div><div className="settings-actions"><button className="primary-button" onClick={onConnect} disabled={!user || bridgeStatus === 'connecting'}><Icon name="link" size={14} /> {bridgeStatus === 'connected' ? '다시 연결' : '연결 재시도'}</button>{bridgeStatus === 'connected' && <button className="ghost-button" onClick={onDisconnect}>연결 해제</button>}<button className="ghost-button" onClick={onSync} disabled={bridgeStatus !== 'connected'}><Icon name="sync" size={14} /> 지금 동기화</button></div></article>
+          <details className="settings-card"><summary>이전 개발 확장에 남은 기록</summary><p>고정 ID 버전을 설치하기 전의 기록은 별도 저장소에 남습니다. 이전 확장을 삭제하지 않은 상태에서 연결한 뒤 지금 동기화를 눌러 가져오세요.</p><button className="secondary-button" onClick={onConnectLegacy} disabled={!user || bridgeStatus === 'connecting'}>이전 개발 기록 확인</button></details><article className="settings-card export-settings"><h2>코드 복사 · 다운로드</h2><p>문제 정보 주석을 추가합니다. 원본 코드의 주석은 유지합니다.</p>
+            <label><input type="checkbox" checked={exportSettings.copyHeader} onChange={event => updateExportSettings({ ...exportSettings, copyHeader: event.target.checked })} /> 복사할 때 문제 정보 주석 포함</label>
+            <label><input type="checkbox" checked={exportSettings.downloadHeader} onChange={event => updateExportSettings({ ...exportSettings, downloadHeader: event.target.checked })} /> 다운로드할 때 문제 정보 주석 포함</label>
+            <div className="setting-field"><label htmlFor="filename-template">다운로드 파일명</label><input id="filename-template" maxLength={160} value={exportSettings.filenameTemplate} onChange={event => updateExportSettings({ ...exportSettings, filenameTemplate: event.target.value })} /><span className="field-help">{'{platform} · {number} · {title} · {language} 사용 가능. 확장자는 자동으로 붙습니다.'}</span><p>미리보기: <output>{downloadFilename(previewSolution, exportSettings.filenameTemplate)}</output></p></div>
+          </article>
           <article className="settings-card github-card"><div className="settings-card-heading"><div className="settings-card-icon dark"><Icon name="github" size={19} /></div><div><h2>GitHub 연동</h2><p>풀이 파일과 README 자동 커밋</p></div><span className="coming-soon">UPCOMING</span></div><div className="disabled-integration"><span>저장소 선택과 커밋 범위 설정을 준비 중입니다.</span><button disabled>연동 시작</button></div></article>
         </div>
         <aside className="settings-sidebar"><article className="account-card"><span className="card-kicker">ACCOUNT</span>{user ? <><div className="account-large"><span className="account-avatar large"><Icon name="user" size={18} /></span><div><strong>{displayUser(user)}</strong><span>@{user.githubLogin} · CodeArchive 계정</span></div></div><button className="wide-ghost-button" onClick={onLogout}><Icon name="logout" size={14} /> 로그아웃</button></> : <><div className="account-logged-out"><div className="logged-out-icon"><Icon name="user" size={18} /></div><strong>로그인이 필요합니다</strong><span>내 풀이를 저장하고 동기화하세요.</span></div><button className="primary-button wide" onClick={onLogin}>GitHub로 로그인 <Icon name="github" size={14} /></button></>}</article><article className="privacy-card"><Icon name="check" size={16} /><div><strong>데이터를 직접 통제하세요</strong><p>자동 전송하지 않습니다. 동기화를 누른 순간에만 대기 중인 캡처를 확인합니다.</p></div></article></aside>

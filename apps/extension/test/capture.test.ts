@@ -37,6 +37,41 @@ function sweaDocument(code = "class Solution {}") {
   `);
 }
 
+test('a lost storage reply keeps the same capture ID across later observer checks', async () => {
+  const { document } = programmersDocument();
+  const adapter = new ProgrammersAdapter(document, locationFor('https://school.programmers.co.kr/learn/courses/30/lessons/1234'));
+  adapter.beginSubmissionAttempt();
+  const modal = document.querySelector('#modal-dialog')!;
+  modal.classList.add('show');
+  modal.setAttribute('aria-modal', 'true');
+  const first = collectAcceptedCaptureAttempt(adapter);
+  assert.ok(first);
+  const store = new MemoryCaptureStore();
+  await store.putCapture(first.capture); // persistence succeeds but caller loses reply
+  const retry = collectAcceptedCaptureAttempt(adapter, new Date(Date.now() + 1000));
+  assert.ok(retry);
+  assert.equal(retry.capture.captureId, first.capture.captureId);
+  await store.putCapture(retry.capture);
+  assert.equal(await store.countPending(), 1);
+  adapter.consumeSubmissionResult(retry.detection);
+  assert.equal(collectAcceptedCaptureAttempt(adapter), null);
+});
+
+test('SWEA captures the observed live success popup with br-separated sentences', () => {
+  const { document } = sweaDocument();
+  const adapter = new SweaAdapter(document, locationFor('https://swexpertacademy.com/main/solvingProblem/solvingProblem.do'));
+  adapter.beginSubmissionAttempt();
+  const popup = document.querySelector('.popup_layer')!;
+  popup.classList.add('show');
+  popup.querySelector('p')!.innerHTML = '축하합니다. Pass입니다.<br>제출이 완료되었습니다.<br><br>';
+  const captured = collectAcceptedCaptureAttempt(adapter);
+  assert.ok(captured);
+  assert.equal(captured.capture.problemNumber, '5678');
+  assert.equal(captured.capture.sourceCode, 'class Solution {}');
+  adapter.consumeSubmissionResult(captured.detection);
+  assert.equal(collectAcceptedCaptureAttempt(adapter), null);
+});
+
 test("Programmers ignores a stale accepted dialog and captures a new result with submit snapshot", () => {
   const { document } = programmersDocument();
   const location = locationFor("https://school.programmers.co.kr/learn/courses/30/lessons/1234");
@@ -202,9 +237,48 @@ test("IndexedDB store keeps captures pending until an issued ACK marks them sync
     assert.equal((await store.listPending())[0]?.captureId, capture.captureId);
     assert.deepEqual(await store.markSynced([capture.captureId]), [capture.captureId]);
     assert.equal(await store.countPending(), 0);
+    assert.equal((await store.listAll())[0]?.captureId, capture.captureId);
+    assert.equal((await store.listAll())[0]?.syncState, "SYNCED");
   } finally {
     (globalThis as typeof globalThis & { IDBKeyRange?: typeof IDBKeyRange }).IDBKeyRange = previous;
   }
+});
+
+test("local archive lists retained captures newest first, including synced records", async () => {
+  const store = new MemoryCaptureStore();
+  const older = createCapture({
+    captureId: "11111111-1111-4111-8111-111111111111",
+    platform: "SWEA",
+    problemNumber: "1",
+    title: "Older",
+    problemUrl: "https://swexpertacademy.com/problem/1",
+    language: "Java",
+    sourceCode: "class Older {}",
+    result: "ACCEPTED",
+    observedAt: "2026-09-15T10:00:00.000Z",
+    solvedAt: "2026-09-15T10:00:00.000Z"
+  });
+  const newer = createCapture({
+    captureId: "22222222-2222-4222-8222-222222222222",
+    platform: "SWEA",
+    problemNumber: "2",
+    title: "Newer",
+    problemUrl: "https://swexpertacademy.com/problem/2",
+    language: "Java",
+    sourceCode: "class Newer {}",
+    result: "ACCEPTED",
+    observedAt: "2026-09-15T11:00:00.000Z",
+    solvedAt: "2026-09-15T11:00:00.000Z"
+  });
+  assert.ok(older);
+  assert.ok(newer);
+  await store.putCapture(older);
+  await store.putCapture(newer);
+  await store.markSynced([older.captureId]);
+  const captures = await store.listAll();
+  assert.deepEqual(captures.map((capture) => capture.captureId), [newer.captureId, older.captureId]);
+  assert.equal(captures[1]?.syncState, "SYNCED");
+  assert.deepEqual((await store.listAll(1)).map((capture) => capture.captureId), [newer.captureId]);
 });
 
 test("memory store defaults both automation flags off and never enables GitHub without a target", async () => {

@@ -199,3 +199,9 @@ h1, h2, p { margin-top: 0; }
 @media (max-width: 360px) {
   .topbar-actions .sync-button { display: none; }
 }
+
+.export-settings > p { color: #756c84; font-size: 13px; line-height: 1.6; }
+.export-settings > label { display: flex; gap: 8px; align-items: center; margin: 16px 0; font-size: 13px; }
+.export-settings input[type=checkbox] { accent-color: #7954e8; }
+.export-settings input[type=text], .export-settings input:not([type]) { width: 100%; padding: 10px; border: 1px solid #ddd5ec; border-radius: 8px; }
+.export-settings output { overflow-wrap: anywhere; font-size: 12px; }

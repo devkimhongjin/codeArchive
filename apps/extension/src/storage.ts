@@ -8,6 +8,8 @@ const SETTINGS_KEY = "settings";
 
 export interface CaptureStore {
   putCapture(capture: Capture): Promise<{ created: boolean }>;
+  /** Returns retained captures, newest first. A limit is useful for small UI previews. */
+  listAll(limit?: number): Promise<Capture[]>;
   listPending(excludedCaptureIds?: Iterable<string>, limit?: number): Promise<Capture[]>;
   countPending(): Promise<number>;
   markSynced(captureIds: Iterable<string>): Promise<string[]>;
@@ -22,6 +24,11 @@ interface StoredCapture extends Capture {
 function clampLimit(limit: number | undefined): number {
   if (!Number.isFinite(limit)) return 50;
   return Math.max(1, Math.min(50, Math.floor(limit as number)));
+}
+
+function sortNewestFirst(left: Capture, right: Capture): number {
+  const byObservedAt = right.observedAt.localeCompare(left.observedAt);
+  return byObservedAt === 0 ? right.captureId.localeCompare(left.captureId) : byObservedAt;
 }
 
 function settingsWithDefaults(value: Partial<CaptureSettings> | undefined): CaptureSettings {
@@ -79,6 +86,15 @@ export class IndexedDbCaptureStore implements CaptureStore {
     store.add(capture as StoredCapture);
     await transactionComplete(transaction);
     return { created: true };
+  }
+
+  async listAll(limit?: number): Promise<Capture[]> {
+    const database = await this.open();
+    const transaction = database.transaction(CAPTURE_STORE_NAME, "readonly");
+    const values = (await requestResult(transaction.objectStore(CAPTURE_STORE_NAME).getAll())) as StoredCapture[];
+    const sorted = values.sort(sortNewestFirst);
+    const limited = limit === undefined ? sorted : sorted.slice(0, clampLimit(limit));
+    return limited.map((capture) => structuredClone(capture));
   }
 
   async listPending(excludedCaptureIds: Iterable<string> = [], limit = 50): Promise<Capture[]> {
@@ -181,6 +197,12 @@ export class MemoryCaptureStore implements CaptureStore {
     if (this.captures.has(capture.captureId)) return { created: false };
     this.captures.set(capture.captureId, structuredClone(capture));
     return { created: true };
+  }
+
+  async listAll(limit?: number): Promise<Capture[]> {
+    const sorted = [...this.captures.values()].sort(sortNewestFirst);
+    const limited = limit === undefined ? sorted : sorted.slice(0, clampLimit(limit));
+    return limited.map((capture) => structuredClone(capture));
   }
 
   async listPending(excludedCaptureIds: Iterable<string> = [], limit = 50): Promise<Capture[]> {

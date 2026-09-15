@@ -9,6 +9,7 @@ export const MAX_PENDING_PAGE_SIZE = 50;
 
 export type DashboardMessage =
   | { type: "CONNECT" }
+  | { type: "PING"; capability: string }
   | { type: "GET_PENDING"; capability: string; limit?: number }
   | { type: "ACK"; capability: string; captureIds: string[] }
   | { type: "DISCONNECT"; capability: string };
@@ -80,7 +81,7 @@ function asObject(value: unknown): Record<string, unknown> | null {
 }
 
 function isMessageType(value: unknown): value is DashboardMessage["type"] {
-  return value === "CONNECT" || value === "GET_PENDING" || value === "ACK" || value === "DISCONNECT";
+  return value === "CONNECT" || value === "PING" || value === "GET_PENDING" || value === "ACK" || value === "DISCONNECT";
 }
 
 export class DashboardBridge {
@@ -114,6 +115,8 @@ export class DashboardBridge {
     if (typeof capability !== "string") return { error: "UNAUTHORIZED" };
     const session = this.authorize(capability, identity);
     if (!session) return { error: "UNAUTHORIZED" };
+
+    if (type === "PING") return { ok: true };
 
     if (type === "GET_PENDING") {
       const rawLimit = object?.limit;
@@ -166,11 +169,11 @@ export class DashboardBridge {
     if (capability.length < 1 || capability.length > 200) return null;
     const session = this.sessions.get(capability);
     if (!session) return null;
+    if (!sameIdentity(session.identity, identity)) return null;
     const now = this.now();
     if (
       now - session.lastUsedAt > this.idleTtlMs ||
-      now - session.issuedAt > this.absoluteTtlMs ||
-      !sameIdentity(session.identity, identity)
+      now - session.issuedAt > this.absoluteTtlMs
     ) {
       this.sessions.delete(capability);
       return null;

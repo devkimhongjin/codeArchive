@@ -14,7 +14,8 @@ await build({
     background: resolve(root, "src/background.ts"),
     content: resolve(root, "src/content.ts"),
     mainWorld: resolve(root, "src/mainWorld.ts"),
-    popup: resolve(root, "src/popup.ts")
+    popup: resolve(root, "src/popup.ts"),
+    archive: resolve(root, "src/archive.ts")
   },
   bundle: true,
   format: "iife",
@@ -28,3 +29,5 @@ await build({
 await cp(resolve(root, "manifest.json"), resolve(dist, "manifest.json"));
 await cp(resolve(root, "src/popup.html"), resolve(dist, "popup.html"));
 await cp(resolve(root, "src/popup.css"), resolve(dist, "popup.css"));
+await cp(resolve(root, "src/archive.html"), resolve(dist, "archive.html"));
+await cp(resolve(root, "src/archive.css"), resolve(dist, "archive.css"));
