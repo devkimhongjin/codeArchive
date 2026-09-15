@@ -37,6 +37,26 @@ function sweaDocument(code = "class Solution {}") {
   `);
 }
 
+test('a lost storage reply keeps the same capture ID across later observer checks', async () => {
+  const { document } = programmersDocument();
+  const adapter = new ProgrammersAdapter(document, locationFor('https://school.programmers.co.kr/learn/courses/30/lessons/1234'));
+  adapter.beginSubmissionAttempt();
+  const modal = document.querySelector('#modal-dialog')!;
+  modal.classList.add('show');
+  modal.setAttribute('aria-modal', 'true');
+  const first = collectAcceptedCaptureAttempt(adapter);
+  assert.ok(first);
+  const store = new MemoryCaptureStore();
+  await store.putCapture(first.capture); // persistence succeeds but caller loses reply
+  const retry = collectAcceptedCaptureAttempt(adapter, new Date(Date.now() + 1000));
+  assert.ok(retry);
+  assert.equal(retry.capture.captureId, first.capture.captureId);
+  await store.putCapture(retry.capture);
+  assert.equal(await store.countPending(), 1);
+  adapter.consumeSubmissionResult(retry.detection);
+  assert.equal(collectAcceptedCaptureAttempt(adapter), null);
+});
+
 test("Programmers ignores a stale accepted dialog and captures a new result with submit snapshot", () => {
   const { document } = programmersDocument();
   const location = locationFor("https://school.programmers.co.kr/learn/courses/30/lessons/1234");

@@ -144,6 +144,10 @@ export interface CollectedCapture {
   detection: SubmissionResultDetection;
 }
 
+// Keep the idempotency key when storage succeeds but its response is lost.
+// Weak keys release the payload when the adapter drops its submission attempt.
+const attemptCaptures = new WeakMap<object, Capture>();
+
 /** Collects only when an adapter has positively observed an accepted result. */
 export function collectAcceptedCaptureAttempt(
   adapter: PlatformAdapter,
@@ -151,6 +155,8 @@ export function collectAcceptedCaptureAttempt(
 ): CollectedCapture | null {
   const detection = adapter.detectSubmissionResult({ freshOnly: true });
   if (!detection?.accepted) return null;
+  const previous = detection.attemptToken && attemptCaptures.get(detection.attemptToken);
+  if (previous) return { capture: previous, detection };
 
   const snapshot = adapter.getSubmissionSnapshot?.();
   if (!snapshot?.problem || !snapshot.editor) return null;
@@ -173,6 +179,7 @@ export function collectAcceptedCaptureAttempt(
     observedAt: now,
     solvedAt: now
   });
+  if (capture && detection.attemptToken) attemptCaptures.set(detection.attemptToken, capture);
   return capture ? { capture, detection } : null;
 }
 

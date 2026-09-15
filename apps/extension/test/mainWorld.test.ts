@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { buildSync } from "esbuild";
 import test from "node:test";
+import { dirname } from "node:path";
+import vm from "node:vm";
+import { fileURLToPath } from "node:url";
 import { parseHTML } from "linkedom";
 import {
   EDITOR_SYNC_ATTRIBUTE,
@@ -28,6 +32,50 @@ test("MAIN-world SWEA sync calls cEditor.save before the isolated snapshot", () 
   assert.equal(saves, 1);
   assert.equal((document.querySelector("#textSource") as HTMLTextAreaElement).value, "latest source");
   assert.match(document.documentElement.getAttribute(EDITOR_SYNC_ATTRIBUTE) ?? "", /^synced:/);
+});
+
+test("bundled MAIN-world SWEA sync resolves lexical cEditor without window.cEditor", () => {
+  const { document } = parseHTML('<html><body><textarea id="textSource"></textarea></body></html>');
+  const mainWorldPath = fileURLToPath(new URL("../src/mainWorld.ts", import.meta.url));
+  const harness = `import { syncEditorAtSubmitClick } from ${JSON.stringify(mainWorldPath)}; globalThis.__syncEditorAtSubmitClick = syncEditorAtSubmitClick;`;
+  const bundled = buildSync({
+    stdin: {
+      contents: harness,
+      loader: "ts",
+      resolveDir: dirname(mainWorldPath),
+      sourcefile: "mainWorld-test-harness.ts"
+    },
+    bundle: true,
+    format: "iife",
+    platform: "browser",
+    target: "chrome120",
+    write: false
+  }).outputFiles[0]?.text;
+  assert.ok(bundled);
+
+  const context = vm.createContext({
+    document,
+    window: {}
+  });
+  vm.runInContext(`
+    let saves = 0;
+    let cEditor = {
+      save() {
+        saves += 1;
+        document.querySelector("#textSource").value = "latest lexical source";
+      }
+    };
+    ${bundled}
+  `, context);
+
+  assert.equal(vm.runInContext("Object.prototype.hasOwnProperty.call(globalThis, 'cEditor')", context), false);
+  const sync = (context as typeof context & {
+    __syncEditorAtSubmitClick: typeof syncEditorAtSubmitClick;
+  }).__syncEditorAtSubmitClick;
+  const location = locationFor("https://swexpertacademy.com/main/solvingProblem/solvingProblem.do?contestProbId=AV1");
+  assert.equal(sync(document, location, {} as Window), true);
+  assert.equal(vm.runInContext("saves", context), 1);
+  assert.equal((document.querySelector("#textSource") as HTMLTextAreaElement).value, "latest lexical source");
 });
 
 test("MAIN-world Programmers sync calls the CodeMirror save/getValue path", () => {

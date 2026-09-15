@@ -53,8 +53,8 @@ $env:DASHBOARD_ORIGIN = 'http://localhost:5173'
 1. npm run build로 확장 프로그램을 빌드합니다.
 2. Chrome의 chrome://extensions에서 개발자 모드를 켭니다.
 3. **압축해제된 확장 프로그램을 로드합니다**에서 apps/extension/dist를 선택합니다.
-4. 표시된 확장 프로그램 ID를 Dashboard 연결 설정에 입력합니다.
-5. 로그인 후 연결하고, 저장된 Capture를 명시적으로 동기화합니다.
+4. GitHub로 로그인하면 고정 ID의 확장 프로그램에 자동 연결합니다.
+5. 지금 동기화를 눌러 저장된 Capture를 가져옵니다. 이전 개발 ID의 기록은 설정의 이전 개발 기록 확인에서 가져올 수 있습니다.
 
 개발 환경의 연결 허용 origin은 정확히 http://localhost:5173 입니다. 127.0.0.1, 다른 포트나 운영 주소는 별도 허용 설정 없이 연결되지 않습니다.
 

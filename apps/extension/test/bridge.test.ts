@@ -13,6 +13,21 @@ function sender(documentId = "doc-1", tabId = 7, url = `${DASHBOARD_ORIGIN}/app`
   };
 }
 
+test('heartbeat is capability-bound, exposes no captures and keeps absolute expiry', async () => {
+  let now = 0;
+  const store = new MemoryCaptureStore();
+  const bridge = new DashboardBridge(store, { now: () => now, idleTtlMs: 10, absoluteTtlMs: 20 });
+  const connected = await bridge.handleMessage({ type: 'CONNECT' }, sender());
+  assert.ok('capability' in connected);
+  now = 9;
+  assert.deepEqual(await bridge.handleMessage({ type: 'PING', capability: connected.capability }, sender()), { ok: true });
+  assert.deepEqual(await bridge.handleMessage({ type: 'PING', capability: connected.capability }, sender('other')), { error: 'UNAUTHORIZED' });
+  now = 18;
+  assert.deepEqual(await bridge.handleMessage({ type: 'PING', capability: connected.capability }, sender()), { ok: true });
+  now = 21;
+  assert.deepEqual(await bridge.handleMessage({ type: 'PING', capability: connected.capability }, sender()), { error: 'UNAUTHORIZED' });
+});
+
 async function capture(number: string) {
   const result = createCapture({
     platform: "PROGRAMMERS",

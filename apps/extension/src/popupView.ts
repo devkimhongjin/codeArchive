@@ -44,7 +44,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
   copy.addEventListener('click', () => {
     copy.disabled = true;
     void services.copy(services.extensionId).then(() => {
-      copyStatus.textContent = 'ID를 복사했어요. 대시보드 설정에 붙여 넣어 주세요.';
+      copyStatus.textContent = '진단용 ID를 복사했어요. 연결에는 입력할 필요가 없어요.';
     }).catch(() => {
       copyStatus.textContent = `복사하지 못했어요. ID: ${services.extensionId}`;
     }).finally(() => { copy.disabled = false; });

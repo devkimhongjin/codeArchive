@@ -3,6 +3,12 @@ import { SWEA_EDITOR_SELECTORS, SWEA_ORIGIN, SWEA_SOLVING_PATH, SWEA_SUBMIT_SELE
 
 export const EDITOR_SYNC_ATTRIBUTE = "data-codearchive-editor-sync";
 
+// SWEA's editor has historically been exposed as a global `cEditor` binding.
+// Some page revisions declare it with `let`, which makes it available to page
+// scripts and inline handlers but does not create `window.cEditor`. Keep the
+// declaration type-only and resolve the binding at call time in MAIN world.
+declare const cEditor: { save?: () => unknown } | undefined;
+
 type MainWorldWindow = Window & {
   cEditor?: { save?: () => unknown };
 };
@@ -21,7 +27,12 @@ function setSyncStatus(document: Document, status: "synced" | "failed"): void {
 
 function syncSwea(document: Document, window: MainWorldWindow): boolean {
   try {
-    const editor = window.cEditor;
+    let editor: MainWorldWindow["cEditor"];
+    // `typeof` is safe when the page does not define the binding. The direct
+    // lookup is required for page scripts that use a lexical global (`let
+    // cEditor`) instead of an own property on window.
+    if (typeof cEditor !== "undefined") editor = cEditor;
+    else editor = window.cEditor;
     if (!editor || typeof editor.save !== "function") return false;
     editor.save();
     return SWEA_EDITOR_SELECTORS.code.some((selector) => !!document.querySelector(selector));
