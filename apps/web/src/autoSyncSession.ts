@@ -11,7 +11,7 @@ import {
 } from "./durableAutomationState";
 import type { RelayPairingProbe } from "./extensionConnection";
 export { createAutoSyncConsentStore, type AutoSyncConsentStore } from "./accountConsent";
-export const DASHBOARD_BETA_ORIGIN = "https://codearchive-dashboard-beta.onrender.com";
+export const DASHBOARD_BETA_ORIGIN = "https://codearchive-dashboard-beta.netlify.app";
 
 export interface AutoSyncSessionTransport {
   startSyncSession(syncSessionId: string): Promise<boolean>;

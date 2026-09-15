@@ -60,7 +60,7 @@ describe("Dashboard auto-sync session controller", () => {
   });
 
   it("requires the exact beta Dashboard origin", () => {
-    expect(isExactDashboardOrigin("https://codearchive-dashboard-beta.onrender.com")).toBe(true);
+    expect(isExactDashboardOrigin("https://codearchive-dashboard-beta.netlify.app")).toBe(true);
     expect(isExactDashboardOrigin("http://codearchive-dashboard-beta.onrender.com")).toBe(false);
     expect(isExactDashboardOrigin("https://example.com")).toBe(false);
   });

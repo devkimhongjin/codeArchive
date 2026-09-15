@@ -41,7 +41,7 @@ describe("Popup", () => {
     render(<Popup repository={repository} />);
     expect(await screen.findByText("로컬 풀이 1건 · 1문제")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "전체 풀이 보기" }));
-    expect(open).toHaveBeenCalledExactlyOnceWith("https://codearchive-dashboard-beta.onrender.com", "_blank", "noopener,noreferrer");
+    expect(open).toHaveBeenCalledExactlyOnceWith("https://codearchive-dashboard-beta.netlify.app", "_blank", "noopener,noreferrer");
     expect(screen.getByText("새 탭으로 열립니다. 자동 동기화는 Dashboard에서 직접 켜야 시작됩니다.")).toBeInTheDocument();
     expect(repository.create).not.toHaveBeenCalled();
     expect(repository.update).not.toHaveBeenCalled();

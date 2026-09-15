@@ -33,7 +33,7 @@ function props() {
     publish: vi.fn(), addComment: vi.fn(), editComment: vi.fn(), deleteComment: vi.fn(), like: vi.fn(), report: vi.fn(),
   };
   return { authClient, extensionConnection, communityClient, dataSource: { listSolutions: vi.fn(async () => records) },
-    consentStore: { read: () => false, write: vi.fn() }, dashboardOrigin: "https://codearchive-dashboard-beta.onrender.com" };
+    consentStore: { read: () => false, write: vi.fn() }, dashboardOrigin: "https://codearchive-dashboard-beta.netlify.app" };
 }
 afterEach(() => globalThis.history.replaceState(null, "", "/"));
 describe("archive and community integration", () => {
