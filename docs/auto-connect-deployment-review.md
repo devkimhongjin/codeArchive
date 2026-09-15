@@ -11,6 +11,8 @@
 
 ## 배포 상태 (#233)
 
+로컬 목록(#236): 팝업에는 최근 저장한 풀이 3개와 동기화 상태를 표시합니다. 로컬 저장 전체보기는 동기화 완료 기록을 포함한 전체 기록과 코드를 보여 줍니다. 최근 항목을 누르면 해당 코드가 펼쳐집니다. 확장 내부 페이지에서만 전체 코드를 조회하며 외부 브리지는 변경하지 않습니다. Dashboard 21개, Extension 35개 테스트 및 빌드가 통과했습니다.
+
 - Render의 dashboard, API, analysis 최신 배포 상태는 live, 커밋 7ce3a1f(9월13일). 모두 autoDeploy off. 신규 코드로 바꾸려면 apps/web/pnpm, Dockerfile, 삭제된 analysis 참조부터 정리해야 합니다. live는 배포 상태이며 현재 응답 성능을 보장하지 않습니다.
 - Neon codearchive-beta / production / neondb에는 기존 테이블 19개와 Flyway V12가 있습니다. 신규 V1–V3를 기존 DB에 바로 적용하지 않습니다. 이 검토는 스키마 메타데이터 SELECT만 수행했습니다.
 - Netlify codearchive-dashboard-beta 배포 6aa8c39dc9c8d3899435d7fd는 ready, 9월15일 CLI 배포이며 commit_ref는 비어 있습니다. redirect/functions 없음. /api/auth/providers는 HTTP 404로 확인했습니다. 현재 배포는 신규 API 로그인·동기화를 완성하지 못합니다.

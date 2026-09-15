@@ -39,3 +39,37 @@ test('popup copies actual extension ID and provides a manual fallback', async ()
   assert.match(document.querySelector('#copy-status')!.textContent!, /aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/);
   assert.equal(document.querySelector('a.primary')!.getAttribute('href'), 'http://localhost:5173');
 });
+
+test('popup renders at most the newest preview records and links them to the local archive', async () => {
+  const { document } = parseHTML(html);
+  const makeCapture = (captureId: string, observedAt: string, syncState: 'PENDING' | 'SYNCED') => ({
+    captureId,
+    platform: 'SWEA',
+    problemNumber: captureId.slice(0, 4),
+    title: `Problem ${captureId.slice(0, 4)}`,
+    problemUrl: 'https://swexpertacademy.com/problem/1',
+    language: 'Java',
+    sourceCode: 'class Solution {}',
+    result: 'ACCEPTED',
+    observedAt,
+    solvedAt: observedAt,
+    syncState
+  });
+  const captures = [
+    makeCapture('11111111-1111-4111-8111-111111111111', '2026-09-15T10:00:00.000Z', 'PENDING'),
+    makeCapture('22222222-2222-4222-8222-222222222222', '2026-09-15T11:00:00.000Z', 'SYNCED'),
+    makeCapture('33333333-3333-4333-8333-333333333333', '2026-09-15T12:00:00.000Z', 'PENDING'),
+    makeCapture('44444444-4444-4444-8444-444444444444', '2026-09-15T13:00:00.000Z', 'SYNCED')
+  ];
+  mountPopup(document, {
+    extensionId: 'a'.repeat(32),
+    copy: async () => {},
+    load: async () => ({ pendingCount: 2, settings: {}, recentCaptures: captures })
+  });
+  await settle();
+  assert.equal(document.querySelectorAll('.recent-item').length, 3);
+  assert.match(document.querySelector('.recent-list')!.textContent!, /Problem 1111/);
+  assert.doesNotMatch(document.querySelector('.recent-list')!.textContent!, /Problem 4444/);
+  assert.equal(document.querySelector('.recent-title')!.getAttribute('href'), 'archive.html#11111111-1111-4111-8111-111111111111');
+  assert.equal(document.querySelector('.archive-link')!.textContent?.trim(), '로컬 저장 전체보기 ↗');
+});

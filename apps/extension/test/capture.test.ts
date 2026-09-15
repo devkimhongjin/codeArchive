@@ -237,9 +237,48 @@ test("IndexedDB store keeps captures pending until an issued ACK marks them sync
     assert.equal((await store.listPending())[0]?.captureId, capture.captureId);
     assert.deepEqual(await store.markSynced([capture.captureId]), [capture.captureId]);
     assert.equal(await store.countPending(), 0);
+    assert.equal((await store.listAll())[0]?.captureId, capture.captureId);
+    assert.equal((await store.listAll())[0]?.syncState, "SYNCED");
   } finally {
     (globalThis as typeof globalThis & { IDBKeyRange?: typeof IDBKeyRange }).IDBKeyRange = previous;
   }
+});
+
+test("local archive lists retained captures newest first, including synced records", async () => {
+  const store = new MemoryCaptureStore();
+  const older = createCapture({
+    captureId: "11111111-1111-4111-8111-111111111111",
+    platform: "SWEA",
+    problemNumber: "1",
+    title: "Older",
+    problemUrl: "https://swexpertacademy.com/problem/1",
+    language: "Java",
+    sourceCode: "class Older {}",
+    result: "ACCEPTED",
+    observedAt: "2026-09-15T10:00:00.000Z",
+    solvedAt: "2026-09-15T10:00:00.000Z"
+  });
+  const newer = createCapture({
+    captureId: "22222222-2222-4222-8222-222222222222",
+    platform: "SWEA",
+    problemNumber: "2",
+    title: "Newer",
+    problemUrl: "https://swexpertacademy.com/problem/2",
+    language: "Java",
+    sourceCode: "class Newer {}",
+    result: "ACCEPTED",
+    observedAt: "2026-09-15T11:00:00.000Z",
+    solvedAt: "2026-09-15T11:00:00.000Z"
+  });
+  assert.ok(older);
+  assert.ok(newer);
+  await store.putCapture(older);
+  await store.putCapture(newer);
+  await store.markSynced([older.captureId]);
+  const captures = await store.listAll();
+  assert.deepEqual(captures.map((capture) => capture.captureId), [newer.captureId, older.captureId]);
+  assert.equal(captures[1]?.syncState, "SYNCED");
+  assert.deepEqual((await store.listAll(1)).map((capture) => capture.captureId), [newer.captureId]);
 });
 
 test("memory store defaults both automation flags off and never enables GitHub without a target", async () => {
