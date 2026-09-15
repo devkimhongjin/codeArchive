@@ -59,12 +59,12 @@ try {
         Assert-NoReparse $file.FullName
         if (!$file.PSIsContainer) {
             $relative = [IO.Path]::GetRelativePath($dist, $file.FullName).Replace('\', '/')
-            if ($relative -notmatch '^(manifest\.json|popup\.html|archive\.html|background\.js|content/swea\.js|assets/[^/]+\.(js|css))$') {
+            if ($relative -notmatch '^(manifest\.json|popup\.html|archive\.html|background\.js|content/(swea|programmers)\.js|assets/[^/]+\.(js|css))$') {
                 throw "Unexpected distribution file: $relative"
             }
         }
     }
-    foreach ($required in @('manifest.json', 'popup.html', 'archive.html', 'background.js', 'content/swea.js')) {
+    foreach ($required in @('manifest.json', 'popup.html', 'archive.html', 'background.js', 'content/swea.js', 'content/programmers.js')) {
         if (!(Test-Path -LiteralPath (Join-Path $dist $required) -PathType Leaf)) { throw "Missing built file: $required" }
     }
     if ((Get-FileHash "$dist/manifest.json").Hash -ne (Get-FileHash 'apps/extension/public/manifest.json').Hash) {
