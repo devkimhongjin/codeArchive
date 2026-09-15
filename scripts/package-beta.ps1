@@ -95,7 +95,7 @@ try {
 
 1. [설치·업데이트](docs/beta-install.md)를 읽고 `extension` 폴더를 Chrome에 로드합니다.
 2. [사용 가이드](docs/dashboard-beta-tester-guide.md)를 따라 로컬 저장부터 확인합니다.
-3. Dashboard를 열고 API 준비 확인 후 기존 세션을 확인하거나 GitHub로 로그인합니다.
+3. Dashboard를 열고 기존 세션을 확인하거나 GitHub로 로그인합니다. Main API가 늦으면 해당 기능의 로딩·오류·재시도 안내를 따릅니다.
 4. [문제 해결·제보](docs/beta-troubleshooting.md)를 확인합니다.
 
 소스 커밋·버전은 `release-info.json`, ZIP 무결성은 별도 `.zip.sha256`에서 확인하세요.
