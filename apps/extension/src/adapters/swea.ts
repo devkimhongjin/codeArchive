@@ -7,8 +7,8 @@ import type {
   SubmissionResultDetection
 } from "../types";
 import { elementText, firstElement, isVisible, mainWorldSyncFailed, normalizeText } from "./dom";
+import { normalizeSweaDetailUrl, readSweaContestProbId } from "../sweaProblemContext";
 import {
-  SWEA_CONTEST_PROBLEM_ID_SELECTOR,
   SWEA_EDITOR_SELECTORS,
   SWEA_ORIGIN,
   SWEA_RESULT_SELECTOR,
@@ -33,28 +33,38 @@ export function isSweaAccepted(text: string): boolean {
   return /^(?:pass입니다\.|축하합니다\.\s*pass입니다\.\s*제출이 완료되었습니다\.)$/i.test(normalizeText(text));
 }
 
-function firstContestProblemId(document: Document): string | null {
-  const values = Array.from(document.querySelectorAll(SWEA_CONTEST_PROBLEM_ID_SELECTOR))
-    .map((element) => ("value" in element ? String((element as HTMLInputElement).value) : element.getAttribute("value") ?? ""))
-    .map((value) => value.trim())
-    .filter(Boolean);
-  return values.at(-1) ?? null;
-}
-
-function detectProblem(document: Document, location: Location): ProblemMetadata | null {
+function detectProblem(document: Document, location: Location, resolvedProblemUrl: string | null): ProblemMetadata | null {
   if (!exactSolvingPage(location)) return null;
   const heading = normalizeText(document.querySelector(SWEA_SOLVING_HEADING_SELECTOR)?.textContent);
   const match = heading.match(/^(\d+)\.\s*(.+)$/);
   if (!match?.[1] || !match[2]) return null;
 
-  const hiddenId = firstContestProblemId(document);
-  const urlId = new URL(location.href).searchParams.get("contestProbId")?.trim() || null;
-  if (hiddenId && urlId && hiddenId !== urlId) return null;
+  const hiddenId = readSweaContestProbId(document);
+  if (!hiddenId) return null;
+  const currentUrl = new URL(location.href);
+  const urlIds = currentUrl.searchParams.getAll("contestProbId");
+  if (urlIds.length > 1) return null;
+  const urlId = urlIds[0]?.trim() || null;
+  if (urlId && hiddenId !== urlId) return null;
+
+  let problemUrl = resolvedProblemUrl;
+  if (problemUrl) {
+    const normalizedProblemUrl = normalizeSweaDetailUrl(problemUrl);
+    if (!normalizedProblemUrl) return null;
+    const resolved = new URL(normalizedProblemUrl);
+    const resolvedIds = resolved.searchParams.getAll("contestProbId");
+    if (resolvedIds.length !== 1 || resolvedIds[0]?.trim() !== hiddenId) return null;
+    problemUrl = normalizedProblemUrl;
+  } else if (urlId) {
+    currentUrl.hash = "";
+    problemUrl = currentUrl.href;
+  }
+  if (!problemUrl) return null;
 
   return {
     problemNumber: match[1],
     title: normalizeText(match[2]),
-    problemUrl: location.href
+    problemUrl
   };
 }
 
@@ -104,11 +114,12 @@ export class SweaAdapter implements PlatformAdapter {
     private readonly document: Document,
     private readonly location: Location,
     private readonly attemptTtlMs = SWEA_ATTEMPT_TTL_MS,
-    private readonly clock: () => number = () => Date.now()
+    private readonly clock: () => number = () => Date.now(),
+    private readonly resolvedProblemUrl: string | null = null
   ) {}
 
   detectProblem(): ProblemMetadata | null {
-    return detectProblem(this.document, this.location);
+    return detectProblem(this.document, this.location, this.resolvedProblemUrl);
   }
 
   detectSubmissionResult(options: { freshOnly?: boolean } = {}): SubmissionResultDetection | null {

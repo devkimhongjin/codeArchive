@@ -13,6 +13,8 @@
 
 문제 번호와 제목은 `div.problem_box > h3`의 `1234. 문제 제목` 형식에서 읽고, `contestProbId`는 별개의 문자열 식별자로 취급한다. URL과 입력 필드의 식별자가 충돌하면 수집하지 않는다.
 
+문제 원문 링크는 일반 문제의 `/main/code/problem/problemDetail.do`와 사용자 문제의 `/main/code/userProblem/userProblemDetail.do`에서 URL query와 단일 hidden `contestProbId`가 일치할 때만 로컬 컨텍스트로 보존한다. Query가 없는 풀이 페이지에서는 현재 hidden ID와 정확한 `document.referrer`가 보존한 컨텍스트에 모두 일치해야 원문 링크로 사용한다. 컨텍스트는 새 창과 장시간 대기를 위해 유지하지만, 다른 문제 ID·중복 ID·빈 ID·오래된 referrer가 관찰되면 임의로 URL을 만들지 않고 수집하지 않는다.
+
 편집기는 `cEditor.save()`로 원본 저장 필드를 갱신한 뒤 `#textSource`를 읽는 기존 방식을 참고한다. 기존 코드의 인라인 onclick 브리지 대신 패키지에 포함된 MAIN world 스크립트를 사용해 페이지 CSP에 의존하는 인라인 실행을 피한다.
 
 ## Programmers

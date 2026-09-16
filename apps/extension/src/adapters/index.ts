@@ -2,9 +2,13 @@ import type { PlatformAdapter } from "../types";
 import { ProgrammersAdapter } from "./programmers";
 import { SweaAdapter } from "./swea";
 
-export function createAdapter(document: Document, location: Location): PlatformAdapter | null {
+export function createAdapter(
+  document: Document,
+  location: Location,
+  sweaProblemUrl: string | null = null
+): PlatformAdapter | null {
   if (location.origin === "https://swexpertacademy.com" && location.pathname === "/main/solvingProblem/solvingProblem.do") {
-    return new SweaAdapter(document, location);
+    return new SweaAdapter(document, location, undefined, undefined, sweaProblemUrl);
   }
   if (location.origin === "https://school.programmers.co.kr" && /^\/learn\/courses\/30\/lessons\/\d+\/?$/.test(location.pathname)) {
     return new ProgrammersAdapter(document, location);

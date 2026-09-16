@@ -1,9 +1,11 @@
 import { DEFAULT_CAPTURE_SETTINGS, type Capture, type CaptureSettings, type SyncState } from "./types";
+import type { SweaProblemContext } from "./sweaProblemContext";
 
 export const DATABASE_NAME = "codearchive-local";
-export const DATABASE_VERSION = 1;
+export const DATABASE_VERSION = 2;
 export const CAPTURE_STORE_NAME = "captures";
 export const SETTINGS_STORE_NAME = "settings";
+export const SWEA_PROBLEM_CONTEXT_STORE_NAME = "sweaProblemContexts";
 const SETTINGS_KEY = "settings";
 
 export interface CaptureStore {
@@ -15,6 +17,8 @@ export interface CaptureStore {
   markSynced(captureIds: Iterable<string>): Promise<string[]>;
   getSettings(): Promise<CaptureSettings>;
   updateSettings(patch: Partial<CaptureSettings>): Promise<CaptureSettings>;
+  putSweaProblemContext(context: SweaProblemContext): Promise<void>;
+  getSweaProblemContext(problemUrl: string): Promise<SweaProblemContext | null>;
 }
 
 interface StoredCapture extends Capture {
@@ -161,6 +165,20 @@ export class IndexedDbCaptureStore implements CaptureStore {
     return next;
   }
 
+  async putSweaProblemContext(context: SweaProblemContext): Promise<void> {
+    const database = await this.open();
+    const transaction = database.transaction(SWEA_PROBLEM_CONTEXT_STORE_NAME, "readwrite");
+    transaction.objectStore(SWEA_PROBLEM_CONTEXT_STORE_NAME).put(context);
+    await transactionComplete(transaction);
+  }
+
+  async getSweaProblemContext(problemUrl: string): Promise<SweaProblemContext | null> {
+    const database = await this.open();
+    const transaction = database.transaction(SWEA_PROBLEM_CONTEXT_STORE_NAME, "readonly");
+    const context = await requestResult(transaction.objectStore(SWEA_PROBLEM_CONTEXT_STORE_NAME).get(problemUrl));
+    return context ? structuredClone(context as SweaProblemContext) : null;
+  }
+
   private open(): Promise<IDBDatabase> {
     if (this.databasePromise) return this.databasePromise;
     const opening: Promise<IDBDatabase> = new Promise((resolve, reject) => {
@@ -175,6 +193,9 @@ export class IndexedDbCaptureStore implements CaptureStore {
         }
         if (!database.objectStoreNames.contains(SETTINGS_STORE_NAME)) {
           database.createObjectStore(SETTINGS_STORE_NAME, { keyPath: "id" });
+        }
+        if (!database.objectStoreNames.contains(SWEA_PROBLEM_CONTEXT_STORE_NAME)) {
+          database.createObjectStore(SWEA_PROBLEM_CONTEXT_STORE_NAME, { keyPath: "problemUrl" });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -191,6 +212,7 @@ export class IndexedDbCaptureStore implements CaptureStore {
 /** Small deterministic store used by unit tests and non-browser callers. */
 export class MemoryCaptureStore implements CaptureStore {
   private readonly captures = new Map<string, Capture>();
+  private readonly sweaProblemContexts = new Map<string, SweaProblemContext>();
   private settings: CaptureSettings = { ...DEFAULT_CAPTURE_SETTINGS };
 
   async putCapture(capture: Capture): Promise<{ created: boolean }> {
@@ -238,5 +260,14 @@ export class MemoryCaptureStore implements CaptureStore {
     this.settings = settingsWithDefaults({ ...this.settings, ...patch });
     if (!this.settings.githubTargetConfigured) this.settings.githubAutoCommitEnabled = false;
     return { ...this.settings };
+  }
+
+  async putSweaProblemContext(context: SweaProblemContext): Promise<void> {
+    this.sweaProblemContexts.set(context.problemUrl, structuredClone(context));
+  }
+
+  async getSweaProblemContext(problemUrl: string): Promise<SweaProblemContext | null> {
+    const context = this.sweaProblemContexts.get(problemUrl);
+    return context ? structuredClone(context) : null;
   }
 }

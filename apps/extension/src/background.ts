@@ -1,6 +1,11 @@
 import { isCaptureRecord } from "./capture";
 import { DashboardBridge } from "./bridge";
 import { IndexedDbCaptureStore } from "./storage";
+import {
+  normalizeSweaDetailUrl,
+  validateSweaProblemContext
+} from "./sweaProblemContext";
+import { SWEA_ORIGIN, SWEA_SOLVING_PATH } from "./adapters/sweaSelectors";
 
 const store = new IndexedDbCaptureStore();
 const bridge = new DashboardBridge(store);
@@ -9,7 +14,9 @@ type InternalMessage =
   | { type: "STORE_CAPTURE"; capture: unknown }
   | { type: "GET_POPUP_STATE" }
   | { type: "GET_ARCHIVE_STATE" }
-  | { type: "UPDATE_SETTINGS"; patch: Record<string, unknown> };
+  | { type: "UPDATE_SETTINGS"; patch: Record<string, unknown> }
+  | { type: "STORE_SWEA_PROBLEM_CONTEXT"; context: unknown }
+  | { type: "GET_SWEA_PROBLEM_CONTEXT"; sourceUrl: unknown };
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -26,6 +33,16 @@ function isArchivePageSender(sender: chrome.runtime.MessageSender): boolean {
   } catch {
     return false;
   }
+}
+
+function senderUrl(sender: chrome.runtime.MessageSender): URL | null {
+  if (typeof sender.url !== "string") return null;
+  try { return new URL(sender.url); } catch { return null; }
+}
+
+function isSweaSolvingPageSender(sender: chrome.runtime.MessageSender): boolean {
+  const url = senderUrl(sender);
+  return !!url && url.origin === SWEA_ORIGIN && url.pathname === SWEA_SOLVING_PATH;
 }
 
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
@@ -88,6 +105,33 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       .updateSettings(safePatch)
       .then((settings) => sendResponse({ ok: true, settings }))
       .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
+    return true;
+  }
+
+  if (object.type === "STORE_SWEA_PROBLEM_CONTEXT") {
+    const context = validateSweaProblemContext(object.context);
+    const sourceUrl = typeof sender.url === "string" ? normalizeSweaDetailUrl(sender.url) : null;
+    if (!context || sourceUrl !== context.problemUrl) {
+      sendResponse({ ok: false, error: "INVALID_SWEA_CONTEXT" });
+      return false;
+    }
+    void store
+      .putSweaProblemContext(context)
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
+    return true;
+  }
+
+  if (object.type === "GET_SWEA_PROBLEM_CONTEXT") {
+    const sourceUrl = typeof object.sourceUrl === "string" ? normalizeSweaDetailUrl(object.sourceUrl) : null;
+    if (!sourceUrl || !isSweaSolvingPageSender(sender)) {
+      sendResponse({ context: null });
+      return false;
+    }
+    void store
+      .getSweaProblemContext(sourceUrl)
+      .then((context) => sendResponse({ context }))
+      .catch(() => sendResponse({ context: null, error: "STORAGE_ERROR" }));
     return true;
   }
 

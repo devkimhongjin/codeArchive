@@ -1,5 +1,9 @@
 export const SWEA_ORIGIN = "https://swexpertacademy.com";
 export const SWEA_SOLVING_PATH = "/main/solvingProblem/solvingProblem.do";
+export const SWEA_PROBLEM_DETAIL_PATHS = [
+  "/main/code/problem/problemDetail.do",
+  "/main/code/userProblem/userProblemDetail.do"
+] as const;
 
 /** The solving page has a stable problem heading and source field. */
 export const SWEA_SOLVING_HEADING_SELECTOR = "div.problem_box > h3";
