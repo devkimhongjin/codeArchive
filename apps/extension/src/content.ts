@@ -3,7 +3,8 @@ import { collectAcceptedCaptureAttempt } from "./capture";
 import type { Capture, PlatformAdapter } from "./types";
 import {
   createSweaProblemContext,
-  resolveSweaProblemUrl,
+  resolveSweaProblem,
+  SWEA_CONTEXT_LOOKUP_ERROR,
   type SweaProblemContext
 } from "./sweaProblemContext";
 import { SWEA_ORIGIN, SWEA_SOLVING_PATH } from "./adapters/sweaSelectors";
@@ -32,13 +33,16 @@ export async function storeSweaProblemContext(
 export async function loadSweaProblemContext(
   sourceUrl: string,
   send: SendRuntimeMessage = (message) => chrome.runtime.sendMessage(message)
-): Promise<SweaProblemContext | null> {
+): Promise<SweaProblemContext | null | typeof SWEA_CONTEXT_LOOKUP_ERROR> {
   try {
     const response = await send({ type: "GET_SWEA_PROBLEM_CONTEXT", sourceUrl });
-    const context = (response as { context?: unknown } | null)?.context;
-    return context && typeof context === "object" ? context as SweaProblemContext : null;
+    const result = response as { context?: unknown; missing?: unknown; error?: unknown } | null;
+    if (!result || result.error !== undefined) return SWEA_CONTEXT_LOOKUP_ERROR;
+    const context = result.context;
+    if (context === null && result.missing === true) return null;
+    return context && typeof context === "object" ? context as SweaProblemContext : SWEA_CONTEXT_LOOKUP_ERROR;
   } catch {
-    return null;
+    return SWEA_CONTEXT_LOOKUP_ERROR;
   }
 }
 
@@ -158,12 +162,18 @@ export async function bootstrapContent(
   }
 
   let sweaProblemUrl: string | null = null;
+  let allowSweaQuerylessFallback = true;
   if (location.origin === SWEA_ORIGIN && location.pathname === SWEA_SOLVING_PATH) {
-    const storedContext = await loadSweaProblemContext(referrer, send);
-    sweaProblemUrl = resolveSweaProblemUrl(document, location, referrer, storedContext);
+    // An empty browser referrer is genuinely absent context, not a failed
+    // storage lookup. Do not manufacture a worker request that would turn
+    // that ordinary privacy setting into a fail-closed storage error.
+    const storedContext = referrer ? await loadSweaProblemContext(referrer, send) : null;
+    const resolution = resolveSweaProblem(document, location, referrer, storedContext);
+    sweaProblemUrl = resolution.problemUrl;
+    allowSweaQuerylessFallback = resolution.kind === "missing";
   }
 
-  const adapter = createAdapter(document, location, sweaProblemUrl);
+  const adapter = createAdapter(document, location, sweaProblemUrl, allowSweaQuerylessFallback);
   if (adapter) startCapture(adapter, document);
 }
 

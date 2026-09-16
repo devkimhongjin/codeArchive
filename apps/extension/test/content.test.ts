@@ -3,6 +3,7 @@ import test from "node:test";
 import { parseHTML } from "linkedom";
 import { createCapture } from "../src/capture";
 import { loadSweaProblemContext, storeCaptureWithRetry, storeSweaProblemContext } from "../src/content";
+import { SWEA_CONTEXT_LOOKUP_ERROR } from "../src/sweaProblemContext";
 
 function locationFor(href: string): Location {
   return new URL(href) as unknown as Location;
@@ -107,4 +108,11 @@ test("solving-page content requests context by exact referrer", async () => {
     return { context };
   }), context);
   assert.deepEqual(messages, [{ type: "GET_SWEA_PROBLEM_CONTEXT", sourceUrl }]);
+});
+
+test("solving-page context lookup distinguishes a genuine no-row from runtime or storage failures", async () => {
+  const sourceUrl = "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=A";
+  assert.equal(await loadSweaProblemContext(sourceUrl, async () => ({ context: null, missing: true })), null);
+  assert.equal(await loadSweaProblemContext(sourceUrl, async () => ({ context: null, error: "STORAGE_ERROR" })), SWEA_CONTEXT_LOOKUP_ERROR);
+  assert.equal(await loadSweaProblemContext(sourceUrl, async () => { throw new Error("worker unavailable"); }), SWEA_CONTEXT_LOOKUP_ERROR);
 });

@@ -15,6 +15,8 @@ export type DashboardMessage =
   | { type: "CONNECT" }
   | { type: "PING"; capability: string }
   | { type: "GET_PENDING"; capability: string; limit?: number }
+  /** Read-only, capability-bound local archive view for an unauthenticated dashboard. */
+  | { type: "GET_LOCAL_ARCHIVE"; capability: string; limit?: number }
   | { type: "ACK"; capability: string; captureIds: string[] }
   | { type: "CONFIGURE_RELAY"; capability: string; relay: { endpoint: string; secret: string; accountId: string; generation: number } | null; accountId?: string; settingsVersion?: number; autoSyncEnabled?: boolean; githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; copyHeader?: boolean; downloadHeader?: boolean; downloadFilenameTemplate?: string; gitPathTemplate?: string; name?: string | null; nickname?: string | null; lightTheme?: string; darkTheme?: string }
   | { type: "DISCONNECT"; capability: string };
@@ -28,7 +30,7 @@ export interface DashboardSender {
 
 export type BridgeResponse =
   | { capability: string; expiresAt: number }
-  | { captures: Capture[]; hasMore: boolean }
+  | { captures: Capture[]; hasMore: boolean; localOnly?: boolean }
   | { ok: true }
   | { error: "UNAUTHORIZED" | "BAD_REQUEST" | "STALE_CONFIGURATION" };
 
@@ -86,7 +88,7 @@ function asObject(value: unknown): Record<string, unknown> | null {
 }
 
 function isMessageType(value: unknown): value is DashboardMessage["type"] {
-  return value === "CONNECT" || value === "PING" || value === "GET_PENDING" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
+  return value === "CONNECT" || value === "PING" || value === "GET_PENDING" || value === "GET_LOCAL_ARCHIVE" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
 }
 
 export class DashboardBridge {
@@ -169,6 +171,16 @@ export class DashboardBridge {
       for (const capture of captures) session.issuedCaptureIds.add(capture.captureId);
       const hasMore = captures.length === Math.min(MAX_PENDING_PAGE_SIZE, Math.max(1, Math.floor(limit))) && (await this.store.countPending()) > session.issuedCaptureIds.size;
       return { captures, hasMore };
+    }
+
+    if (type === "GET_LOCAL_ARCHIVE") {
+      const rawLimit = object?.limit;
+      const limit = typeof rawLimit === "number" && Number.isFinite(rawLimit) ? rawLimit : MAX_PENDING_PAGE_SIZE;
+      // This path is deliberately read-only. It neither issues captures for
+      // ACK nor invokes relay/upload code, so a signed-out dashboard cannot
+      // turn a local preview into a remote write.
+      const captures = await this.store.listAll(Math.min(MAX_PENDING_PAGE_SIZE, Math.max(1, Math.floor(limit))));
+      return { captures, hasMore: captures.length === Math.min(MAX_PENDING_PAGE_SIZE, Math.max(1, Math.floor(limit))), localOnly: true };
     }
 
     if (type === "ACK") {

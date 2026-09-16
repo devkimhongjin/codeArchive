@@ -6,7 +6,9 @@ import { SweaAdapter } from "../src/adapters/swea";
 import { IndexedDbCaptureStore } from "../src/storage";
 import {
   createSweaProblemContext,
-  resolveSweaProblemUrl
+  resolveSweaProblem,
+  resolveSweaProblemUrl,
+  SWEA_CONTEXT_LOOKUP_ERROR
 } from "../src/sweaProblemContext";
 
 const NORMAL_DETAIL = "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=A";
@@ -75,6 +77,37 @@ test("query-less solving page resolves an exact persisted source across a new pa
     title: "숫자 게임",
     problemUrl: NORMAL_DETAIL
   });
+});
+
+test("query-less solving capture retains validated identity when canonical source enrichment is unavailable", () => {
+  const { document } = parseHTML('<div class="problem_box"><h3>7206. 숫자 게임</h3></div><input id="contestProbId" value="A">');
+  const adapter = new SweaAdapter(document, locationFor(QUERYLESS_SOLVING));
+  assert.deepEqual(adapter.detectProblem(), {
+    problemNumber: "7206",
+    title: "숫자 게임",
+    problemUrl: QUERYLESS_SOLVING
+  });
+});
+
+test("query-less fallback is allowed only for missing context and not conflicting context", () => {
+  const { document } = parseHTML('<div class="problem_box"><h3>7206. 숫자 게임</h3></div><input id="contestProbId" value="A">');
+  const missing = resolveSweaProblem(document, locationFor(QUERYLESS_SOLVING), "", null);
+  assert.equal(missing.kind, "missing");
+  assert.deepEqual(new SweaAdapter(document, locationFor(QUERYLESS_SOLVING), undefined, undefined, missing.problemUrl, true).detectProblem()?.problemNumber, "7206");
+  const conflicting = resolveSweaProblem(document, locationFor(QUERYLESS_SOLVING), NORMAL_DETAIL, {
+    contestProbId: "B", problemUrl: NORMAL_DETAIL.replace("A", "B"), sourcePath: "/main/code/problem/problemDetail.do", observedAt: 1
+  });
+  assert.equal(conflicting.kind, "invalid");
+  assert.equal(new SweaAdapter(document, locationFor(QUERYLESS_SOLVING), undefined, undefined, conflicting.problemUrl, false).detectProblem(), null);
+});
+
+test("a no-row lookup validates its detail referrer but rejects referrer conflicts and lookup errors", () => {
+  const { document } = parseHTML('<div class="problem_box"><h3>7206. 숫자 게임</h3></div><input id="contestProbId" value="A">');
+  const matching = resolveSweaProblem(document, locationFor(QUERYLESS_SOLVING), NORMAL_DETAIL, null);
+  assert.deepEqual(matching, { kind: "verified", problemUrl: NORMAL_DETAIL });
+  const conflict = resolveSweaProblem(document, locationFor(QUERYLESS_SOLVING), NORMAL_DETAIL.replace("A", "B"), null);
+  assert.deepEqual(conflict, { kind: "invalid", problemUrl: null });
+  assert.deepEqual(resolveSweaProblem(document, locationFor(QUERYLESS_SOLVING), "", SWEA_CONTEXT_LOOKUP_ERROR), { kind: "invalid", problemUrl: null });
 });
 
 test("query-less solving page rejects another problem, stale referrer, and ambiguous hidden identity", () => {

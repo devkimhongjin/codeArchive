@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   me: vi.fn(),
   list: vi.fn(),
   bulk: vi.fn(),
+  grant: vi.fn(),
+  settings: vi.fn(),
   bridge: vi.fn(),
 }))
 
@@ -17,6 +19,8 @@ vi.mock('./api', async (original) => ({
   getMe: mocks.me,
   getSolutions: mocks.list,
   bulkUpload: mocks.bulk,
+  issueRelayGrant: mocks.grant,
+  getAccountSettings: mocks.settings,
 }))
 
 vi.mock('./bridge', async (original) => ({
@@ -34,6 +38,12 @@ const capture = {
   language: 'JavaScript',
   sourceCode: 'console.log(1234)',
   result: 'ACCEPTED' as const,
+}
+const liveSettings = {
+  version: 4, name: '연결 사용자', nickname: null, copyHeader: false, downloadHeader: false,
+  downloadFilenameTemplate: '{platform}-{number}-{title}', gitPathTemplate: '{platform}/{number}-{title}',
+  lightTheme: 'github-light' as const, darkTheme: 'github-dark' as const, autoSyncEnabled: true, githubAutoCommitEnabled: true,
+  githubTargetConfigured: true, githubStatus: 'AVAILABLE' as const, githubInstallationId: 44, githubOwner: 'private-account', githubRepository: 'archive', githubBranch: 'main', githubRootPath: null,
 }
 
 function bridgeCalls(type: string) {
@@ -70,11 +80,14 @@ it('auto-connects only known IDs, falls back for migration and transfers no code
   expect(screen.queryByText('연결 안 됨')).toBeNull()
 })
 
-it('does not connect for an unauthenticated demo', async () => {
+it('reads only the extension-local archive after unauthenticated startup', async () => {
   mocks.me.mockRejectedValue(new Error('not signed in'))
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT'
+    ? Promise.resolve({ capability: 'local-capability' })
+    : Promise.resolve({ captures: [], localOnly: true }))
   render(<App />)
-  await waitFor(() => expect(mocks.me).toHaveBeenCalled())
-  expect(bridgeCalls('CONNECT')).toHaveLength(0)
+  await waitFor(() => expect(bridgeCalls('GET_LOCAL_ARCHIVE')).toHaveLength(1))
+  expect(bridgeCalls('GET_PENDING')).toHaveLength(0)
 })
 
 it('renews an expired capability within the same explicit sync without uploading twice', async () => {
@@ -165,4 +178,53 @@ it('retires a failed capability so the next sync reconnects and can retry', asyn
   fireEvent.click(screen.getByRole('button', { name: '동기화' }))
   await waitFor(() => expect(bridgeCalls('ACK')).toHaveLength(1))
   expect(bridgeCalls('CONNECT')).toHaveLength(2)
+})
+
+it('uses local archive records after an authenticated solution-list outage without ACK or upload', async () => {
+  mocks.me.mockResolvedValue(user)
+  mocks.list.mockRejectedValue(new Error('solutions unavailable'))
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT'
+    ? Promise.resolve({ capability: 'local-after-outage' })
+    : Promise.resolve({ captures: [capture], localOnly: true }))
+  render(<App />)
+  await waitFor(() => expect(bridgeCalls('GET_LOCAL_ARCHIVE')).toHaveLength(1))
+  expect((await screen.findAllByText('테스트 풀이')).length).toBeGreaterThan(0)
+  expect(bridgeCalls('ACK')).toHaveLength(0)
+  expect(bridgeCalls('CONFIGURE_RELAY')).toHaveLength(0)
+  expect(bridgeCalls('GET_PENDING')).toHaveLength(0)
+  expect(mocks.grant).not.toHaveBeenCalled()
+  expect(mocks.bulk).not.toHaveBeenCalled()
+})
+
+it('keeps a manual live refresh read-only when its solution list fails after settings and bridge connection', async () => {
+  mocks.me.mockResolvedValue(user)
+  mocks.list.mockRejectedValue(new Error('solution-list outage'))
+  mocks.settings.mockResolvedValue(liveSettings)
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT'
+    ? Promise.resolve({ capability: 'manual-local-capability' })
+    : Promise.resolve({ captures: [capture], localOnly: true }))
+  render(<App />)
+  await waitFor(() => expect(bridgeCalls('GET_LOCAL_ARCHIVE')).toHaveLength(1))
+  await waitFor(() => expect(mocks.settings).toHaveBeenCalledOnce())
+  fireEvent.click(screen.getByRole('button', { name: '라이브 연결 새로고침' }))
+  await waitFor(() => expect(screen.queryAllByText('solution-list outage').length).toBeGreaterThan(0))
+  expect(mocks.grant).not.toHaveBeenCalled()
+  expect(bridgeCalls('CONFIGURE_RELAY').filter(([, message]) => (message as { relay?: unknown }).relay !== null)).toHaveLength(0)
+  expect(bridgeCalls('GET_PENDING')).toHaveLength(0)
+  expect(bridgeCalls('ACK')).toHaveLength(0)
+})
+
+it('persists an offline inline code-view theme and seeds the next local archive render', async () => {
+  mocks.me.mockRejectedValue(new Error('not signed in'))
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT'
+    ? Promise.resolve({ capability: 'offline-theme' })
+    : Promise.resolve({ captures: [capture], localOnly: true }))
+  const first = render(<App />)
+  await screen.findAllByText('테스트 풀이')
+  fireEvent.change(screen.getByLabelText('밝은 테마'), { target: { value: 'vitesse-light' } })
+  await waitFor(() => expect(JSON.parse(localStorage.getItem('codearchive-local-code-themes') ?? '{}').lightTheme).toBe('vitesse-light'))
+  first.unmount()
+  render(<App />)
+  await screen.findAllByText('테스트 풀이')
+  expect((screen.getByLabelText('밝은 테마') as HTMLSelectElement).value).toBe('vitesse-light')
 })

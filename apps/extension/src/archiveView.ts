@@ -3,6 +3,7 @@ import { tokensForSource } from "./highlighter";
 
 interface ArchiveServices {
   load: () => Promise<unknown>;
+  updateThemes?: (lightTheme: string, darkTheme: string) => Promise<unknown>;
 }
 
 function asDisplayCapture(value: unknown): Capture | null {
@@ -118,6 +119,17 @@ function renderCapture(document: Document, capture: Capture): { item: HTMLElemen
   return { item, source };
 }
 
+function selectTheme(select: HTMLSelectElement, value: string): void {
+  try { select.value = value; return; } catch {
+    // Browser selects support value assignment; the lightweight archive test DOM
+    // exposes a getter only, so preserve the same selected-option semantics.
+    for (const option of Array.from(select.querySelectorAll('option'))) {
+      if (option.getAttribute('value') === value) option.setAttribute('selected', '');
+      else option.removeAttribute('selected');
+    }
+  }
+}
+
 export function mountArchive(document: Document, services: ArchiveServices): void {
   const card = document.querySelector<HTMLElement>(".archive-card")!;
   const refresh = document.querySelector<HTMLButtonElement>("#archive-refresh")!;
@@ -125,6 +137,8 @@ export function mountArchive(document: Document, services: ArchiveServices): voi
   const error = document.querySelector<HTMLElement>("#archive-error")!;
   const list = document.querySelector<HTMLElement>("#archive-list")!;
   const empty = document.querySelector<HTMLElement>("#archive-empty")!;
+  const lightTheme = document.querySelector<HTMLSelectElement>("#archive-light-theme");
+  const darkTheme = document.querySelector<HTMLSelectElement>("#archive-dark-theme");
   let loading = false;
   let renderGeneration = 0;
 
@@ -142,6 +156,8 @@ export function mountArchive(document: Document, services: ArchiveServices): voi
       if (!state || state.error || !Array.isArray(state.captures)) throw new Error("Invalid state");
       const captures = state.captures.map(asDisplayCapture).filter((capture): capture is Capture => capture !== null);
       const settings = state.settings && typeof state.settings === "object" ? state.settings as { lightTheme?: "github-light" | "vitesse-light" | "catppuccin-latte" | "solarized-light" | "one-light"; darkTheme?: "github-dark" | "vitesse-dark" | "vitesse-dark" | "catppuccin-mocha" | "dracula" | "one-dark-pro" } : {};
+      if (lightTheme && settings.lightTheme) selectTheme(lightTheme, settings.lightTheme);
+      if (darkTheme && settings.darkTheme) selectTheme(darkTheme, settings.darkTheme);
       const generation = ++renderGeneration;
       const dark = document.defaultView?.matchMedia?.("(prefers-color-scheme: dark)").matches === true;
       count.textContent = String(captures.length);
@@ -182,5 +198,11 @@ export function mountArchive(document: Document, services: ArchiveServices): voi
   }
 
   refresh.addEventListener("click", () => void load());
+  const saveThemes = () => {
+    if (!lightTheme || !darkTheme || !services.updateThemes) return;
+    void services.updateThemes(lightTheme.value, darkTheme.value).then(() => void load()).catch(() => void load());
+  };
+  lightTheme?.addEventListener("change", saveThemes);
+  darkTheme?.addEventListener("change", saveThemes);
   void load();
 }

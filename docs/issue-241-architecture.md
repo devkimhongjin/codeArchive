@@ -8,6 +8,15 @@ writer; a stale update receives `409`.  Download names and Git paths intentional
 use separate templates: download names reject directories, while Git paths must be
 relative and cannot traverse outside the configured root.
 
+Dashboard settings, authenticated relay grant/revocation, and GitHub target-browse
+requests additionally carry `X-CodeArchive-Github-Id`: the immutable GitHub numeric
+identity that the rendered Dashboard expects. It is an assertion, not credentials;
+the server first authenticates the session and resolves its `AppUser`, then compares
+the assertion before any provider call, grant/revoke, read, or write. Missing or
+malformed assertions return `400`, and a changed session identity returns `409` so
+the client discards its draft, closes authority, and requires reconnect. The
+bearer-only self-revocation route remains bearer-bound and does not use this header.
+
 The supported Shiki selections are `github-light`, `vitesse-light`,
 `catppuccin-latte`, `solarized-light`, `one-light` and `github-dark`,
 `vitesse-dark`, `catppuccin-mocha`, `dracula`, `one-dark-pro`.  All are exact Shiki
@@ -49,11 +58,24 @@ both automation flags, target configuration and capture before invoking the inje
 provider boundary. Retryable pre-write failures are bounded to three attempts;
 `UNKNOWN` is terminal and is never automatically retried. The concrete provider
 stays fail-closed while the required server configuration is absent.
-Automatic GitHub writes currently support personal-owner repositories only: the
-requested owner must equal the authenticated GitHub login. Organization installation
-selection is deferred until a dedicated App-install authorization callback can bind
-an installation to the immutable account. A fresh `RUNNING` worker lease is never
-reclaimed; only stale leases become terminal `UNKNOWN`.
+
+## GitHub target selection
+
+The Dashboard reads a server-verified cascade under `/api/github/targets`: personal
+App installations whose immutable installation-account ID matches the authenticated
+GitHub identity, then installation-token repositories, branches, and directory
+children. Client-supplied
+owner, repository, installation, and path text is never authority. The server resolves
+repository IDs within the verified installation (searching at most 100 pages), validates
+branch membership, accepts only safe relative directories, and filters non-directory,
+symlink, and submodule content entries. Requests return `401` without GitHub session,
+`403` for installation/repository/branch mismatch, `400` for invalid pagination/path,
+and `503` when the provider is unconfigured or unavailable.
+
+Saving a complete target repeats that verification before persisting the existing target
+fields used by the closed-Dashboard worker. A target or settings generation change
+revokes active relay grants; automatic commits require renewed consent. A fresh
+`RUNNING` worker lease is never reclaimed; only stale leases become terminal `UNKNOWN`.
 
 ## Memory migration
 
@@ -63,3 +85,11 @@ that legacy number. New captures use `memory_value` plus `memory_unit` (`KB`, `K
 Programmers' authoritative result row supplies MB. The supported SWEA solving page
 does not expose an authoritative metric row locally, so its captures intentionally
 remain `UNKNOWN` rather than guessing KB.
+
+## Verification
+
+The Issue #241 follow-up checks completed on the feature branch: Dashboard Vitest
+reports 52 passing tests, Extension Node tests report 63 passing tests, and the Java
+17 Temurin Maven container reports 49 tests passing (5 PostgreSQL-only migration
+tests skipped). Both Dashboard and MV3 Extension typechecks and production builds
+pass; `git diff --check` reports no whitespace errors.

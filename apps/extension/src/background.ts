@@ -48,6 +48,7 @@ type InternalMessage =
   | { type: "COPY_RECENT_CAPTURE"; captureId: string }
   | { type: "DOWNLOAD_RECENT_CAPTURE"; captureId: string }
   | { type: "GET_ARCHIVE_STATE" }
+  | { type: "UPDATE_ARCHIVE_THEMES"; lightTheme: unknown; darkTheme: unknown }
   | { type: "UPDATE_SETTINGS"; patch: Record<string, unknown> }
   | { type: "STORE_SWEA_PROBLEM_CONTEXT"; context: unknown }
   | { type: "GET_SWEA_PROBLEM_CONTEXT"; sourceUrl: unknown };
@@ -151,6 +152,17 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     return true;
   }
 
+  if (object.type === "UPDATE_ARCHIVE_THEMES") {
+    if (!isArchivePageSender(sender) || typeof object.lightTheme !== "string" || typeof object.darkTheme !== "string") { sendResponse({ ok: false, error: "UNAUTHORIZED" }); return false; }
+    const light = ["github-light", "vitesse-light", "catppuccin-latte", "solarized-light", "one-light"];
+    const dark = ["github-dark", "vitesse-dark", "catppuccin-mocha", "dracula", "one-dark-pro"];
+    if (!light.includes(object.lightTheme) || !dark.includes(object.darkTheme)) { sendResponse({ ok: false, error: "BAD_REQUEST" }); return false; }
+    void store.mutateSettings(current => ({ ...current, lightTheme: object.lightTheme as never, darkTheme: object.darkTheme as never }))
+      .then(settings => sendResponse({ ok: true, settings }))
+      .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
+    return true;
+  }
+
   if (object.type === "UPDATE_SETTINGS") {
     const patch = object.patch;
     if (!patch || typeof patch !== "object") {
@@ -190,12 +202,12 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   if (object.type === "GET_SWEA_PROBLEM_CONTEXT") {
     const sourceUrl = typeof object.sourceUrl === "string" ? normalizeSweaDetailUrl(object.sourceUrl) : null;
     if (!sourceUrl || !isSweaSolvingPageSender(sender)) {
-      sendResponse({ context: null });
+      sendResponse({ context: null, error: "INVALID_SWEA_CONTEXT_LOOKUP" });
       return false;
     }
     void store
       .getSweaProblemContext(sourceUrl)
-      .then((context) => sendResponse({ context }))
+      .then((context) => sendResponse(context ? { context } : { context: null, missing: true }))
       .catch(() => sendResponse({ context: null, error: "STORAGE_ERROR" }));
     return true;
   }

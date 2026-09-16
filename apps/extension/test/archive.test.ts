@@ -56,3 +56,27 @@ test('archive clears stale records and reports storage failures', async () => {
   assert.equal(document.querySelectorAll('.capture-card').length, 0);
   assert.equal((document.querySelector('#archive-error') as HTMLElement).hidden, false);
 });
+
+test('archive theme changes call the local updater and re-render with the selected palette metadata', async () => {
+  const { document } = parseHTML(html);
+  let settings = { lightTheme: 'github-light', darkTheme: 'github-dark' };
+  const updates: Array<[string, string]> = [];
+  mountArchive(document, {
+    load: async () => ({ captures: [capture('44444444-4444-4444-8444-444444444444', 'PENDING', 'const theme = true;')], settings }),
+    updateThemes: async (lightTheme, darkTheme) => { updates.push([lightTheme, darkTheme]); settings = { lightTheme, darkTheme }; }
+  });
+  for (let i = 0; i < 12; i += 1) await settle();
+  const select = document.querySelector<HTMLSelectElement>('#archive-light-theme')!;
+  const darkSelect = document.querySelector<HTMLSelectElement>('#archive-dark-theme')!;
+  darkSelect.querySelector('option[value="github-dark"]')!.setAttribute('selected', '');
+  select.querySelector('option[value="github-light"]')!.removeAttribute('selected');
+  select.querySelector('option[value="solarized-light"]')!.setAttribute('selected', '');
+  select.dispatchEvent(new document.defaultView!.Event('change'));
+  for (let i = 0; i < 12; i += 1) await settle();
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.deepEqual(updates, [['solarized-light', 'github-dark']]);
+  assert.equal(select.value, 'solarized-light');
+  assert.equal(document.querySelectorAll('.capture-card').length, 1);
+  assert.equal(document.querySelector<HTMLElement>('.source-code')!.dataset.shikiTheme, 'solarized-light');
+  assert.notEqual(document.querySelector<HTMLElement>('.source-code')!.style.backgroundColor, '');
+});

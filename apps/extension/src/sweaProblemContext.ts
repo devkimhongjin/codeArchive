@@ -11,6 +11,13 @@ export interface SweaProblemContext {
   sourcePath: (typeof SWEA_PROBLEM_DETAIL_PATHS)[number];
   observedAt: number;
 }
+export type SweaProblemResolution =
+  | { kind: "missing"; problemUrl: null }
+  | { kind: "verified"; problemUrl: string }
+  | { kind: "invalid"; problemUrl: null };
+
+/** An extension runtime/storage failure is not evidence that no context exists. */
+export const SWEA_CONTEXT_LOOKUP_ERROR = Symbol("SWEA_CONTEXT_LOOKUP_ERROR");
 
 function normalizedUrl(value: string): URL | null {
   try {
@@ -108,25 +115,53 @@ export function resolveSweaProblemUrl(
   referrer: string,
   storedContext: unknown
 ): string | null {
-  if (location.origin !== SWEA_ORIGIN || location.pathname !== SWEA_SOLVING_PATH) return null;
+  return resolveSweaProblem(document, location, referrer, storedContext).problemUrl;
+}
+
+/** Keeps absent context distinct from corrupt or conflicting context. */
+export function resolveSweaProblem(
+  document: Document,
+  location: Location,
+  referrer: string,
+  storedContext: unknown
+): SweaProblemResolution {
+  if (location.origin !== SWEA_ORIGIN || location.pathname !== SWEA_SOLVING_PATH) return { kind: "invalid", problemUrl: null };
   const currentContestProbId = readSweaContestProbId(document);
-  if (!currentContestProbId) return null;
+  if (!currentContestProbId) return { kind: "invalid", problemUrl: null };
 
   const currentUrl = normalizedUrl(location.href);
-  if (!currentUrl) return null;
+  if (!currentUrl) return { kind: "invalid", problemUrl: null };
   const currentQueryIds = currentUrl.searchParams.getAll("contestProbId");
-  if (currentQueryIds.length > 1) return null;
-  if (currentQueryIds.length === 1 && currentQueryIds[0]?.trim() !== currentContestProbId) return null;
+  if (currentQueryIds.length > 1) return { kind: "invalid", problemUrl: null };
+  if (currentQueryIds.length === 1 && currentQueryIds[0]?.trim() !== currentContestProbId) return { kind: "invalid", problemUrl: null };
 
+  const absent = storedContext === null || storedContext === undefined;
   const context = validateSweaProblemContext(storedContext);
   const normalizedReferrer = normalizeSweaDetailUrl(referrer);
   if (
     context &&
     normalizedReferrer === context.problemUrl &&
     context.contestProbId === currentContestProbId
-  ) return context.problemUrl;
+  ) return { kind: "verified", problemUrl: context.problemUrl };
+
+  // A normalized detail referrer is itself an immutable page identity. It is
+  // enough to bind a genuine no-row lookup to the current hidden ID; a
+  // different ID is conflict evidence and must never enable fallback.
+  if (absent && normalizedReferrer) {
+    const referrerContestProbId = singleQueryContestProbId(new URL(normalizedReferrer));
+    return referrerContestProbId === currentContestProbId
+      ? { kind: "verified", problemUrl: normalizedReferrer }
+      : { kind: "invalid", problemUrl: null };
+  }
+
+  // A supplied context (including malformed storage content) is evidence, not
+  // an optional hint. Do not silently downgrade a conflicting page/referrer
+  // binding into the query-less fallback.
+  if (!absent) return { kind: "invalid", problemUrl: null };
 
   // Preserve the pre-existing direct-link behavior when the solving URL is
   // already self-identifying. Query-less pages require trusted source context.
-  return currentQueryIds.length === 1 ? currentUrl.href : null;
+  return currentQueryIds.length === 1
+    ? { kind: "verified", problemUrl: currentUrl.href }
+    : { kind: "missing", problemUrl: null };
 }

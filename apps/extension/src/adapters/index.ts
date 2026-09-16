@@ -5,10 +5,11 @@ import { SweaAdapter } from "./swea";
 export function createAdapter(
   document: Document,
   location: Location,
-  sweaProblemUrl: string | null = null
+  sweaProblemUrl: string | null = null,
+  allowSweaQuerylessFallback = true
 ): PlatformAdapter | null {
   if (location.origin === "https://swexpertacademy.com" && location.pathname === "/main/solvingProblem/solvingProblem.do") {
-    return new SweaAdapter(document, location, undefined, undefined, sweaProblemUrl);
+    return new SweaAdapter(document, location, undefined, undefined, sweaProblemUrl, allowSweaQuerylessFallback);
   }
   if (location.origin === "https://school.programmers.co.kr" && /^\/learn\/courses\/30\/lessons\/\d+\/?$/.test(location.pathname)) {
     return new ProgrammersAdapter(document, location);

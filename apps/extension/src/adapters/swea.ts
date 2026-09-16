@@ -33,7 +33,7 @@ export function isSweaAccepted(text: string): boolean {
   return /^(?:pass입니다\.|축하합니다\.\s*pass입니다\.\s*제출이 완료되었습니다\.)$/i.test(normalizeText(text));
 }
 
-function detectProblem(document: Document, location: Location, resolvedProblemUrl: string | null): ProblemMetadata | null {
+function detectProblem(document: Document, location: Location, resolvedProblemUrl: string | null, allowQuerylessFallback: boolean): ProblemMetadata | null {
   if (!exactSolvingPage(location)) return null;
   const heading = normalizeText(document.querySelector(SWEA_SOLVING_HEADING_SELECTOR)?.textContent);
   const match = heading.match(/^(\d+)\.\s*(.+)$/);
@@ -59,7 +59,15 @@ function detectProblem(document: Document, location: Location, resolvedProblemUr
     currentUrl.hash = "";
     problemUrl = currentUrl.href;
   }
-  if (!problemUrl) return null;
+  // #237's source-link validation is enrichment, not capture identity. A
+  // query-less solving page is still a single, validated contest problem
+  // when its heading and one hidden contestProbId agree. Keep that page URL
+  // rather than dropping an otherwise durable accepted capture.
+  if (!problemUrl && !allowQuerylessFallback) return null;
+  if (!problemUrl) {
+    currentUrl.hash = "";
+    problemUrl = currentUrl.href;
+  }
 
   return {
     problemNumber: match[1],
@@ -115,11 +123,12 @@ export class SweaAdapter implements PlatformAdapter {
     private readonly location: Location,
     private readonly attemptTtlMs = SWEA_ATTEMPT_TTL_MS,
     private readonly clock: () => number = () => Date.now(),
-    private readonly resolvedProblemUrl: string | null = null
+    private readonly resolvedProblemUrl: string | null = null,
+    private readonly allowQuerylessFallback = true
   ) {}
 
   detectProblem(): ProblemMetadata | null {
-    return detectProblem(this.document, this.location, this.resolvedProblemUrl);
+    return detectProblem(this.document, this.location, this.resolvedProblemUrl, this.allowQuerylessFallback);
   }
 
   detectSubmissionResult(options: { freshOnly?: boolean } = {}): SubmissionResultDetection | null {
