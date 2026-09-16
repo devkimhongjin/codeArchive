@@ -83,6 +83,15 @@ class CodeArchiveApiIntegrationTest {
     }
 
     @Test
+    void actuatorHealthIsPublicWithoutMakingOtherActuatorEndpointsPublic() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("UP")));
+        mockMvc.perform(get("/actuator/env"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void providersReportDisabledAndLegacyPasswordAuthIsGone() throws Exception {
         mockMvc.perform(get("/api/auth/providers"))
                 .andExpect(status().isOk())

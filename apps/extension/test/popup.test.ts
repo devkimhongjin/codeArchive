@@ -37,7 +37,7 @@ test('popup copies actual extension ID and provides a manual fallback', async ()
   fail = true;
   (document.querySelector('#copy-id') as HTMLButtonElement).click(); await settle();
   assert.match(document.querySelector('#copy-status')!.textContent!, /aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/);
-  assert.equal(document.querySelector('a.primary')!.getAttribute('href'), 'http://localhost:5173');
+  assert.equal(document.querySelector('a.primary')!.getAttribute('href'), 'https://codearchive-dashboard-beta.netlify.app');
 });
 
 test('popup renders at most the newest preview records and links them to the local archive', async () => {

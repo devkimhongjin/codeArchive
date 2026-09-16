@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 $taskRepo = Split-Path -Parent $PSScriptRoot
 $taskContainerId = $null
 $taskExitCode = 1
-$taskEnvironmentNames = @('POSTGRES_PASSWORD', 'PG_TEST_URL', 'PG_TEST_USER', 'PG_TEST_PASSWORD')
+$taskEnvironmentNames = @('POSTGRES_PASSWORD', 'PG_TEST_URL', 'PG_TEST_USER', 'PG_TEST_PASSWORD', 'PG_TEST_ALLOW_PUBLIC_SCHEMA_MUTATION')
 $taskPreviousEnvironment = @{}
 foreach ($taskName in $taskEnvironmentNames) {
     $taskPreviousEnvironment[$taskName] = [Environment]::GetEnvironmentVariable($taskName, 'Process')
@@ -43,6 +43,9 @@ try {
     $env:PG_TEST_URL = "jdbc:postgresql://127.0.0.1:$($Matches[1])/codearchive_migration_test"
     $env:PG_TEST_USER = 'codearchive'
     $env:PG_TEST_PASSWORD = $env:POSTGRES_PASSWORD
+    # The runner owns this disposable container, so it can explicitly opt in
+    # to fixtures that create and drop public source tables.
+    $env:PG_TEST_ALLOW_PUBLIC_SCHEMA_MUTATION = 'true'
     Push-Location (Join-Path $taskRepo 'apps/api')
     try {
         & .\mvnw.cmd '-Dtest=PostgreSqlMigrationTest' test

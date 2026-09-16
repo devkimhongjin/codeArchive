@@ -1,0 +1,52 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: codearchive_migration_test
+          POSTGRES_USER: codearchive
+          POSTGRES_PASSWORD: test-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U codearchive -d codearchive_migration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: |
+            apps/dashboard/package-lock.json
+            apps/extension/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - run: npm --prefix apps/dashboard ci
+      - run: npm --prefix apps/dashboard test
+      - run: npm --prefix apps/dashboard run build
+      - run: npm --prefix apps/extension ci
+      - run: npm --prefix apps/extension test
+      - run: npm --prefix apps/extension run build
+      - run: chmod +x ./mvnw
+        working-directory: apps/api
+      - run: ./mvnw test
+        working-directory: apps/api
+      - run: ./mvnw -Dtest=PostgreSqlMigrationTest test
+        working-directory: apps/api
+        env:
+          PG_TEST_URL: jdbc:postgresql://localhost:5432/codearchive_migration_test
+          PG_TEST_USER: codearchive
+          PG_TEST_PASSWORD: test-only-password
+          PG_TEST_ALLOW_PUBLIC_SCHEMA_MUTATION: "true"

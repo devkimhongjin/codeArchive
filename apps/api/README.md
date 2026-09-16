@@ -33,7 +33,7 @@ never receives a client secret. The default GitHub callback is
 different exact callback, and set `DASHBOARD_ORIGIN` to the fixed dashboard
 origin used after login (default `http://localhost:5173`).
 
-For production, `DB_PASSWORD` is required by `application-prod.yml`; use `SPRING_PROFILES_ACTIVE=prod` with a managed PostgreSQL instance. The default and production profiles apply PostgreSQL schema changes through Flyway and use Hibernate `validate`; the local and test H2 profiles retain their existing Hibernate schema generation. See [docs/database-migrations.md](docs/database-migrations.md) before adopting an existing database.
+For production, `DB_PASSWORD` is required by `application-prod.yml`; use `SPRING_PROFILES_ACTIVE=prod` with a managed PostgreSQL instance. The production profile creates and uses only the `codearchive_v2` Flyway/Hibernate schema, leaving `public` tables and `public.flyway_schema_history` untouched. It exposes unauthenticated liveness at `GET /actuator/health`; all other API security remains unchanged. See [docs/database-migrations.md](docs/database-migrations.md) before adopting an existing database.
 
 ## API contract
 
