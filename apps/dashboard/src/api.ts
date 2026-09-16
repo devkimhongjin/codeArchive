@@ -1,4 +1,4 @@
-import { GITHUB_LOGIN_URL, type AccountSettings, type AuthProviders, type BulkResponse, type Capture, type RelayGrant, type Solution, type User } from './types'
+import { GITHUB_LOGIN_URL, type AccountSettings, type AuthProviders, type BulkResponse, type Capture, type RelayGrant, type Solution, type User, type GithubInstallation, type GithubRepositoryTarget, type GithubBranchTarget, type GithubDirectoryTarget, type GithubPage } from './types'
 
 export { GITHUB_LOGIN_URL } from './types'
 
@@ -108,6 +108,11 @@ export function accountAssertionHeaders(githubId: string): HeadersInit {
   return { 'X-CodeArchive-Account': githubId }
 }
 
+export const EXPECTED_GITHUB_ID_HEADER = 'X-CodeArchive-Github-Id'
+export function expectedGithubIdHeaders(githubId: string): HeadersInit {
+  return { [EXPECTED_GITHUB_ID_HEADER]: githubId }
+}
+
 export async function getSolutions(expectedGithubId: string): Promise<Solution[]> {
   const payload = await requestJson<Solution[] | { solutions?: Solution[] }>('/api/solutions', {
     headers: accountAssertionHeaders(expectedGithubId),
@@ -123,14 +128,15 @@ export async function bulkUpload(captures: Capture[], expectedGithubId: string):
   })
 }
 
-export async function getAccountSettings(): Promise<AccountSettings> { return requestJson<AccountSettings>('/api/settings') }
-export async function updateAccountSettings(settings: AccountSettings): Promise<AccountSettings> {
-  return requestJson<AccountSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(settings) })
+export async function getAccountSettings(expectedGithubId: string): Promise<AccountSettings> { return requestJson<AccountSettings>('/api/settings', { headers: expectedGithubIdHeaders(expectedGithubId) }) }
+export async function updateAccountSettings(settings: AccountSettings, expectedGithubId: string): Promise<AccountSettings> {
+  return requestJson<AccountSettings>('/api/settings', { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify(settings) })
 }
 
-export async function issueRelayGrant(deviceId: string, generation: number): Promise<RelayGrant> {
+export async function issueRelayGrant(deviceId: string, generation: number, expectedGithubId: string): Promise<RelayGrant> {
   return requestJson<RelayGrant>('/api/relay/grants', {
     method: 'POST',
+    headers: expectedGithubIdHeaders(expectedGithubId),
     body: JSON.stringify({ deviceId, generation }),
   })
 }
@@ -140,6 +146,10 @@ export async function issueRelayGrant(deviceId: string, generation: number): Pro
  * servers may not expose this revocation route yet; callers still clear the
  * extension first, so a failed network request can never keep local relay on.
  */
-export async function revokeRelayGrant(deviceId: string): Promise<void> {
-  await requestJson(`/api/relay/grants/${encodeURIComponent(deviceId)}`, { method: 'DELETE' })
+export async function revokeRelayGrant(deviceId: string, expectedGithubId: string): Promise<void> {
+  await requestJson(`/api/relay/grants/${encodeURIComponent(deviceId)}`, { method: 'DELETE', headers: expectedGithubIdHeaders(expectedGithubId) })
 }
+export const getGithubInstallations = (expectedGithubId: string) => requestJson<GithubInstallation[]>('/api/github/targets/installations', { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const getGithubRepositories = (expectedGithubId: string, installationId: number, page = 1) => requestJson<GithubPage<GithubRepositoryTarget>>(`/api/github/targets/installations/${installationId}/repositories?page=${page}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const getGithubBranches = (expectedGithubId: string, installationId: number, repositoryId: number, page = 1) => requestJson<GithubPage<GithubBranchTarget>>(`/api/github/targets/installations/${installationId}/repositories/${repositoryId}/branches?page=${page}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const getGithubDirectories = (expectedGithubId: string, installationId: number, repositoryId: number, branch: string, path = '') => requestJson<GithubDirectoryTarget>(`/api/github/targets/installations/${installationId}/repositories/${repositoryId}/directories?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}`, { headers: expectedGithubIdHeaders(expectedGithubId) })

@@ -23,6 +23,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import com.codearchive.api.auth.GithubAuthentication;
 import com.codearchive.api.auth.UserRepository;
+import com.codearchive.api.common.GithubAccountAssertion;
 import com.codearchive.api.relay.RelayGrantService;
 
 @Configuration
@@ -116,7 +117,7 @@ public class SecurityConfig {
         configuration.setAllowedOrigins(origins);
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList(
-                "Content-Type", "X-XSRF-TOKEN", "X-CSRF-TOKEN", "X-CodeArchive-Account"));
+                "Content-Type", "X-XSRF-TOKEN", "X-CSRF-TOKEN", "X-CodeArchive-Account", GithubAccountAssertion.HEADER));
         configuration.setExposedHeaders(Arrays.asList("Set-Cookie"));
         configuration.setAllowCredentials(true);
 

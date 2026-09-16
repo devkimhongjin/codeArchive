@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ThemedToken } from 'shiki'
 import { sourceFileExtension } from './codeExport'
-import type { DarkTheme, LightTheme } from './types'
+import { DARK_THEMES, LIGHT_THEMES, type DarkTheme, type LightTheme } from './types'
 
 let highlighter: ReturnType<typeof loadHighlighter> | undefined
 async function loadHighlighter() {
@@ -16,7 +16,7 @@ async function loadHighlighter() {
 export function highlightLanguage(language: string) {
   return ({ py: 'python', js: 'javascript', ts: 'typescript', kt: 'kotlin', cs: 'csharp', cpp: 'cpp', c: 'c', java: 'java', sql: 'sql', go: 'go', rs: 'rust', rb: 'ruby', swift: 'swift', scala: 'scala' } as Record<string, string>)[sourceFileExtension(language)] ?? 'text'
 }
-export function CodeBlock({ code, language, lightTheme = 'github-light', darkTheme = 'github-dark' }: { code: string; language: string; lightTheme?: LightTheme; darkTheme?: DarkTheme }) {
+export function CodeBlock({ code, language, lightTheme = 'github-light', darkTheme = 'github-dark', onLightThemeChange, onDarkThemeChange }: { code: string; language: string; lightTheme?: LightTheme; darkTheme?: DarkTheme; onLightThemeChange?: (theme: LightTheme) => void; onDarkThemeChange?: (theme: DarkTheme) => void }) {
   const [result, setResult] = useState<{ code: string; language: string; theme: string; tokens: ThemedToken[][]; foreground?: string; background?: string } | null>(null)
   useEffect(() => {
     let active = true
@@ -36,7 +36,11 @@ export function CodeBlock({ code, language, lightTheme = 'github-light', darkThe
   const tokens = highlighted?.tokens ?? null
   const lines = code.split('\n')
   return <div className="code-viewer" role="region" aria-label="소스 코드" data-shiki-theme={highlighted?.theme} style={{ backgroundColor: highlighted?.background, color: highlighted?.foreground }}>
-    <div className="code-gutter" aria-hidden="true" style={{ color: highlighted?.foreground }}>{lines.map((_, index) => <span key={index}>{String(index + 1).padStart(2, '0')}</span>)}</div>
+    {(onLightThemeChange || onDarkThemeChange) && <div className="code-theme-controls" aria-label="코드 보기 테마">
+      {onLightThemeChange && <label>밝은 테마 <select value={lightTheme} onChange={event => onLightThemeChange(event.target.value as LightTheme)}>{LIGHT_THEMES.map(theme => <option key={theme} value={theme}>{theme}</option>)}</select></label>}
+      {onDarkThemeChange && <label>어두운 테마 <select value={darkTheme} onChange={event => onDarkThemeChange(event.target.value as DarkTheme)}>{DARK_THEMES.map(theme => <option key={theme} value={theme}>{theme}</option>)}</select></label>}
+    </div>}
+    <div className="code-gutter" aria-hidden="true" style={{ color: highlighted?.foreground }}>{lines.map((_, index) => <span className="code-gutter-line" key={index}>{index + 1}</span>)}</div>
     <pre style={{ backgroundColor: highlighted?.background, color: highlighted?.foreground }}><code>{lines.map((line, index) => <span className="code-line" key={index}><span className="code-content">{tokens?.[index] ? tokens[index].map((token, i) => <span key={i} style={{ color: token.color, fontStyle: token.fontStyle && token.fontStyle & 1 ? 'italic' : undefined, fontWeight: token.fontStyle && token.fontStyle & 2 ? 'bold' : undefined }}>{token.content}</span>) : line}</span>{index < lines.length - 1 ? '\n' : ''}</span>)}</code></pre>
   </div>
 }

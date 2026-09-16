@@ -87,6 +87,11 @@ export type RelayGrant = {
   endpoint: string
   expiresAt: string
 }
+export type GithubInstallation = { id: number; accountLogin: string }
+export type GithubRepositoryTarget = { id: number; owner: string; name: string; fullName: string; privateRepository: boolean; defaultBranch: string }
+export type GithubBranchTarget = { name: string; protectedBranch: boolean; commitSha: string }
+export type GithubDirectoryTarget = { currentPath: string; parentPath: string; directories: string[] }
+export type GithubPage<T> = { items: T[]; hasMore: boolean }
 export const LIGHT_THEMES = ['github-light', 'vitesse-light', 'catppuccin-latte', 'solarized-light', 'one-light'] as const
 export const DARK_THEMES = ['github-dark', 'vitesse-dark', 'catppuccin-mocha', 'dracula', 'one-dark-pro'] as const
 export type LightTheme = typeof LIGHT_THEMES[number]

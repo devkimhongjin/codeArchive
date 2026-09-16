@@ -16,6 +16,12 @@ it('does not show old asynchronous highlighting after switching solutions', asyn
   expect(screen.getByRole('region', { name: '소스 코드' })).toBeTruthy()
   await waitFor(() => expect(container.querySelector('code')?.textContent).toBe('new <literal>'))
 })
+it('renders each gutter number as an aligned row rather than concatenated inline text', () => {
+  const { container } = render(<CodeBlock code={'one\ntwo\nthree'} language="Unknown" />)
+  const rows = [...container.querySelectorAll('.code-gutter-line')]
+  expect(rows.map(row => row.textContent)).toEqual(['1', '2', '3'])
+  expect(rows.every(row => row.classList.contains('code-gutter-line'))).toBe(true)
+})
 it('applies the active Shiki light and dark foreground/background palettes to the DOM', async () => {
   const original = window.matchMedia
   try {

@@ -45,6 +45,6 @@ it('clears the authenticated screen when sync cleanup finishes during server log
   await act(async () => { pending.resolve({ captures: [] }) })
   await act(async () => { loggedOut.resolve() })
   await waitFor(() => expect(screen.queryByRole('button', { name: '로그아웃' })).toBeNull())
-  expect(screen.getByText('데모 모드 · 예시 데이터')).toBeTruthy()
+  expect(screen.getByText('로컬 보관함')).toBeTruthy()
   expect(screen.queryByText('private-account')).toBeNull()
 })

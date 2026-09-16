@@ -145,6 +145,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
       const settings = state.settings as { autoSyncEnabled?: boolean; githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; relay?: { status?: string } };
       if (autoSync && githubAuto && automationStatus && automationHelp) {
         autoSync.checked = settings.autoSyncEnabled === true; githubAuto.checked = settings.githubAutoCommitEnabled === true;
+        autoSync.setAttribute("aria-checked", String(autoSync.checked)); githubAuto.setAttribute("aria-checked", String(githubAuto.checked));
         // ON grants are dashboard-confirmed. The popup can only turn an
         // existing confirmed setting OFF, never pretend an ON was accepted.
         autoSync.disabled = settings.autoSyncEnabled !== true;
@@ -179,7 +180,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
 
   refresh.addEventListener("click", () => void load());
   const updateAutomation = (patch: Record<string, boolean>) => void chrome.runtime.sendMessage({ type: "UPDATE_SETTINGS", patch }).then(() => void load()).catch(() => void load());
-  autoSync?.addEventListener("change", () => updateAutomation({ autoSyncEnabled: autoSync.checked }));
+  autoSync?.addEventListener("change", () => { autoSync.setAttribute("aria-checked", String(autoSync.checked)); updateAutomation({ autoSyncEnabled: autoSync.checked }); });
   copy.disabled = !/^[a-p]{32}$/.test(services.extensionId);
   copy.addEventListener("click", () => {
     copy.disabled = true;

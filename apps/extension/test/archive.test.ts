@@ -6,6 +6,13 @@ import { mountArchive } from '../src/archiveView';
 
 const html = readFileSync(new URL('../src/archive.html', import.meta.url), 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
+async function waitFor(condition: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error(`Condition was not met within ${timeoutMs}ms`);
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+}
 
 function capture(captureId: string, syncState: 'PENDING' | 'SYNCED', sourceCode: string) {
   return {
@@ -55,4 +62,32 @@ test('archive clears stale records and reports storage failures', async () => {
   await settle();
   assert.equal(document.querySelectorAll('.capture-card').length, 0);
   assert.equal((document.querySelector('#archive-error') as HTMLElement).hidden, false);
+});
+
+test('archive theme changes call the local updater and re-render with the selected palette metadata', async () => {
+  const { document } = parseHTML(html);
+  let settings = { lightTheme: 'github-light', darkTheme: 'github-dark' };
+  const updates: Array<[string, string]> = [];
+  mountArchive(document, {
+    load: async () => ({ captures: [capture('44444444-4444-4444-8444-444444444444', 'PENDING', 'const theme = true;')], settings }),
+    updateThemes: async (lightTheme, darkTheme) => { updates.push([lightTheme, darkTheme]); settings = { lightTheme, darkTheme }; }
+  });
+  for (let i = 0; i < 12; i += 1) await settle();
+  const select = document.querySelector<HTMLSelectElement>('#archive-light-theme')!;
+  const darkSelect = document.querySelector<HTMLSelectElement>('#archive-dark-theme')!;
+  darkSelect.querySelector('option[value="github-dark"]')!.setAttribute('selected', '');
+  select.querySelector('option[value="github-light"]')!.removeAttribute('selected');
+  select.querySelector('option[value="solarized-light"]')!.setAttribute('selected', '');
+  select.dispatchEvent(new document.defaultView!.Event('change'));
+  for (let i = 0; i < 12; i += 1) await settle();
+  assert.deepEqual(updates, [['solarized-light', 'github-dark']]);
+  assert.equal(select.value, 'solarized-light');
+  assert.equal(document.querySelectorAll('.capture-card').length, 1);
+  const source = document.querySelector<HTMLElement>('.source-code')!;
+  // Shiki initializes its WASM engine asynchronously. Await the observable
+  // render completion instead of assuming a fixed wall-clock delay is enough
+  // on every CI host.
+  await waitFor(() => source.dataset.shikiTheme === 'solarized-light');
+  assert.equal(source.dataset.shikiTheme, 'solarized-light');
+  assert.notEqual(source.style.backgroundColor, '');
 });

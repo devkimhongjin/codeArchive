@@ -13,6 +13,20 @@ function sender(documentId = "doc-1", tabId = 7, url = `${DASHBOARD_ORIGIN}/app`
   };
 }
 
+test('capability-bound local archive reads are read-only and do not issue ACK state', async () => {
+  const store = new MemoryCaptureStore();
+  const capture = createCapture({ captureId: '11111111-1111-4111-8111-111111111111', platform: 'SWEA', problemNumber: '1', title: 'local', problemUrl: 'https://example.test/1', language: 'Java', sourceCode: 'class A {}', result: 'ACCEPTED' });
+  assert.ok(capture);
+  await store.putCapture(capture);
+  const bridge = new DashboardBridge(store);
+  const connected = await bridge.handleMessage({ type: 'CONNECT' }, sender());
+  assert.ok('capability' in connected);
+  const local = await bridge.handleMessage({ type: 'GET_LOCAL_ARCHIVE', capability: connected.capability }, sender());
+  assert.equal('localOnly' in local && local.localOnly, true);
+  assert.equal('captures' in local && local.captures.length, 1);
+  assert.equal(await store.countPending(), 1);
+});
+
 test('heartbeat is capability-bound, exposes no captures and keeps absolute expiry', async () => {
   let now = 0;
   const store = new MemoryCaptureStore();

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { accountAssertionHeaders, bulkUpload, GITHUB_LOGIN_URL, getAuthProviders, getSolutions } from './api'
+import { accountAssertionHeaders, bulkUpload, GITHUB_LOGIN_URL, getAccountSettings, getAuthProviders, getGithubBranches, getGithubDirectories, getGithubInstallations, getGithubRepositories, getSolutions, expectedGithubIdHeaders } from './api'
 
 describe('GitHub authentication contract', () => {
   const fetchMock = vi.fn<typeof fetch>()
@@ -83,6 +83,19 @@ describe('GitHub account assertions', () => {
     const headers = new Headers(init?.headers)
     expect(headers.get('X-CodeArchive-Account')).toBe('github-user-42')
     expect(headers.get('X-XSRF-TOKEN')).toBe('csrf-token')
+  })
+
+  it('binds settings and every GitHub target browse read to the rendered immutable GitHub id', async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ version: 1 }), { headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], hasMore: false }), { headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], hasMore: false }), { headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ currentPath: '', parentPath: '', directories: [] }), { headers: { 'content-type': 'application/json' } }))
+
+    await getAccountSettings('42'); await getGithubInstallations('42'); await getGithubRepositories('42', 7, 2); await getGithubBranches('42', 7, 8, 2); await getGithubDirectories('42', 7, 8, 'release/v1', 'src')
+    for (const [, init] of fetchMock.mock.calls) expect(new Headers(init?.headers).get('X-CodeArchive-Github-Id')).toBe('42')
+    expect(expectedGithubIdHeaders('42')).toEqual({ 'X-CodeArchive-Github-Id': '42' })
   })
 })
 
