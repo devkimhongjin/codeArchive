@@ -1,4 +1,5 @@
 import type { Capture } from "./types";
+import { tokensForSource } from "./highlighter";
 
 interface ArchiveServices {
   load: () => Promise<unknown>;
@@ -65,7 +66,7 @@ function appendTitle(document: Document, item: HTMLElement, capture: Capture): v
   item.append(link);
 }
 
-function renderCapture(document: Document, capture: Capture): HTMLElement {
+function renderCapture(document: Document, capture: Capture): { item: HTMLElement; source: HTMLElement } {
   const item = document.createElement("article");
   item.className = "capture-card";
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(capture.captureId)) {
@@ -106,14 +107,15 @@ function renderCapture(document: Document, capture: Capture): HTMLElement {
 
   const metrics: string[] = [];
   if (capture.executionTime !== undefined) metrics.push(`실행 ${capture.executionTime}ms`);
-  if (capture.memoryUsage !== undefined) metrics.push(`메모리 ${capture.memoryUsage}MB`);
+  if (capture.memoryValue !== undefined && capture.memoryUnit && capture.memoryUnit !== "UNKNOWN") metrics.push(`메모리 ${capture.memoryValue}${capture.memoryUnit}`);
+  else if (capture.memoryUsage !== undefined) metrics.push(`메모리 ${capture.memoryUsage} (단위 미확인)`);
   if (metrics.length) {
     const metricLine = document.createElement("p");
     metricLine.className = "capture-metrics";
     metricLine.textContent = metrics.join(" · ");
     item.append(metricLine);
   }
-  return item;
+  return { item, source };
 }
 
 export function mountArchive(document: Document, services: ArchiveServices): void {
@@ -124,6 +126,7 @@ export function mountArchive(document: Document, services: ArchiveServices): voi
   const list = document.querySelector<HTMLElement>("#archive-list")!;
   const empty = document.querySelector<HTMLElement>("#archive-empty")!;
   let loading = false;
+  let renderGeneration = 0;
 
   async function load(): Promise<void> {
     if (loading) return;
@@ -135,12 +138,28 @@ export function mountArchive(document: Document, services: ArchiveServices): voi
     list.replaceChildren();
     count.textContent = "—";
     try {
-      const state = await services.load() as { captures?: unknown; error?: unknown } | null;
+      const state = await services.load() as { captures?: unknown; settings?: unknown; error?: unknown } | null;
       if (!state || state.error || !Array.isArray(state.captures)) throw new Error("Invalid state");
       const captures = state.captures.map(asDisplayCapture).filter((capture): capture is Capture => capture !== null);
+      const settings = state.settings && typeof state.settings === "object" ? state.settings as { lightTheme?: "github-light" | "vitesse-light" | "catppuccin-latte" | "solarized-light" | "one-light"; darkTheme?: "github-dark" | "vitesse-dark" | "vitesse-dark" | "catppuccin-mocha" | "dracula" | "one-dark-pro" } : {};
+      const generation = ++renderGeneration;
+      const dark = document.defaultView?.matchMedia?.("(prefers-color-scheme: dark)").matches === true;
       count.textContent = String(captures.length);
       empty.hidden = captures.length !== 0;
-      for (const capture of captures) list.append(renderCapture(document, capture));
+      for (const capture of captures) {
+        const rendered = renderCapture(document, capture); list.append(rendered.item);
+        void tokensForSource(capture.sourceCode, capture.language, settings, dark).then(highlighted => {
+          if (generation !== renderGeneration || !highlighted || !rendered.source.isConnected) return;
+          rendered.source.replaceChildren();
+          rendered.source.dataset.shikiTheme = highlighted.theme;
+          rendered.source.style.backgroundColor = highlighted.background ?? "";
+          rendered.source.style.color = highlighted.foreground ?? "";
+          highlighted.tokens.forEach((line, lineIndex) => {
+            line.forEach(token => { const span = document.createElement("span"); span.textContent = token.content; if (token.color) span.style.color = token.color; rendered.source.append(span); });
+            if (lineIndex < highlighted.tokens.length - 1) rendered.source.append("\n");
+          });
+        }).catch(() => undefined);
+      }
       const rawHash = document.defaultView?.location.hash.slice(1) ?? "";
       if (rawHash) {
         try {

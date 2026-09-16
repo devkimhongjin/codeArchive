@@ -154,3 +154,32 @@ test("bridge accepts both exact dashboard origins and rejects lookalikes or mixe
     documentId: "mixed", frameId: 0, tab: { id: 7, url: "http://localhost:5173/app" }
   }), { error: "UNAUTHORIZED" });
 });
+
+test("relay configuration persists only opaque acknowledged profile/export/theme settings and OFF clears it", async () => {
+  const store = new MemoryCaptureStore(); const bridge = new DashboardBridge(store, { capabilityFactory: () => "capability-relay" });
+  const connected = await bridge.handleMessage({ type: "CONNECT" }, sender()); assert.ok("capability" in connected);
+  assert.deepEqual(await bridge.handleMessage({ type: "CONFIGURE_RELAY", capability: connected.capability, relay: { endpoint: "/api/relay/captures", secret: "opaque-only", accountId: "17", generation: 3 }, settingsVersion: 3, autoSyncEnabled: true, githubAutoCommitEnabled: true, githubTargetConfigured: true, copyHeader: true, downloadHeader: true, downloadFilenameTemplate: "{number}", gitPathTemplate: "java/{number}", name: "name", nickname: "nick", lightTheme: "one-light", darkTheme: "dracula" }, sender()), { ok: true });
+  const configured = await store.getSettings();
+  assert.deepEqual(configured.relay, { endpoint: "/api/relay/captures", secret: "opaque-only", accountId: "17", generation: 3, status: "CONFIRMED" });
+  assert.equal(configured.downloadFilenameTemplate, "{number}"); assert.equal(configured.lightTheme, "one-light"); assert.equal(configured.darkTheme, "dracula");
+  assert.deepEqual(await bridge.handleMessage({ type: "CONFIGURE_RELAY", capability: connected.capability, relay: null, accountId: "17", settingsVersion: 4, copyHeader: false, downloadHeader: true, downloadFilenameTemplate: "{nickname}-{number}", gitPathTemplate: "offline/{id}", name: null, nickname: "새 별명", lightTheme: "solarized-light", darkTheme: "one-dark-pro", githubTargetConfigured: true }, sender()), { ok: true });
+  const off = await store.getSettings();
+  assert.equal(off.relay, undefined);
+  assert.equal(off.autoSyncEnabled, false);
+  assert.equal(off.githubAutoCommitEnabled, false);
+  assert.equal(off.accountId, "17");
+  assert.equal(off.copyHeader, false); assert.equal(off.downloadHeader, true);
+  assert.equal(off.downloadFilenameTemplate, "{nickname}-{number}"); assert.equal(off.gitPathTemplate, "offline/{id}");
+  assert.equal(off.name, undefined); assert.equal(off.nickname, "새 별명");
+  assert.equal(off.lightTheme, "solarized-light"); assert.equal(off.darkTheme, "one-dark-pro");
+});
+
+test("older same-account bridge configuration cannot overwrite a newer relay settings version", async () => {
+  const store = new MemoryCaptureStore(); const bridge = new DashboardBridge(store, { capabilityFactory: () => "capability-version" });
+  const connected = await bridge.handleMessage({ type: "CONNECT" }, sender()); assert.ok("capability" in connected);
+  const newest = { type: "CONFIGURE_RELAY" as const, capability: connected.capability, relay: { endpoint: "/api/relay/captures", secret: "new-secret", accountId: "17", generation: 8 }, accountId: "17", settingsVersion: 8, autoSyncEnabled: true, githubTargetConfigured: true };
+  assert.deepEqual(await bridge.handleMessage(newest, sender()), { ok: true });
+  assert.deepEqual(await bridge.handleMessage({ ...newest, relay: { ...newest.relay, secret: "old-secret", generation: 7 }, settingsVersion: 7, autoSyncEnabled: false }, sender()), { error: "STALE_CONFIGURATION" });
+  const settings = await store.getSettings();
+  assert.equal(settings.accountSettingsVersion, 8); assert.equal(settings.autoSyncEnabled, true); assert.equal(settings.relay?.secret, "new-secret");
+});

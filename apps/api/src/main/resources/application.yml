@@ -26,6 +26,16 @@ codearchive:
     client-secret: ${GITHUB_CLIENT_SECRET:}
     redirect-uri: ${GITHUB_REDIRECT_URI:http://localhost:5173/api/login/oauth2/code/github}
     dashboard-origin: ${DASHBOARD_ORIGIN:http://localhost:5173}
+    # GitHub App credentials are server-only. Leaving either blank keeps the
+    # provider fail-closed and records an actionable unavailable state.
+    app-id: ${GITHUB_APP_ID:}
+    app-private-key: ${GITHUB_APP_PRIVATE_KEY:}
+    app-slug: ${GITHUB_APP_SLUG:}
+    # Both bounds are deliberately short: retries are safe only before a
+    # possible provider mutation, which the worker classifies separately.
+    connect-timeout-ms: ${GITHUB_CONNECT_TIMEOUT_MS:5000}
+    request-timeout-ms: ${GITHUB_REQUEST_TIMEOUT_MS:10000}
+    worker-delay-ms: ${GITHUB_WORKER_DELAY_MS:30000}
 server:
   servlet:
     session:

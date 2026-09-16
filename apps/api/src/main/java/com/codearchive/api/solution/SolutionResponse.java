@@ -17,6 +17,8 @@ public class SolutionResponse {
     private final Instant solvedAt;
     private final BigDecimal executionTime;
     private final BigDecimal memoryUsage;
+    private final BigDecimal memoryValue;
+    private final String memoryUnit;
 
     private SolutionResponse(Solution solution) {
         this.id = solution.getId();
@@ -32,6 +34,8 @@ public class SolutionResponse {
         this.solvedAt = solution.getSolvedAt();
         this.executionTime = solution.getExecutionTime();
         this.memoryUsage = solution.getMemoryUsage();
+        this.memoryValue = solution.getMemoryValue();
+        this.memoryUnit = solution.getMemoryUnit();
     }
 
     public static SolutionResponse from(Solution solution) {
@@ -51,4 +55,6 @@ public class SolutionResponse {
     public Instant getSolvedAt() { return solvedAt; }
     public BigDecimal getExecutionTime() { return executionTime; }
     public BigDecimal getMemoryUsage() { return memoryUsage; }
+    public BigDecimal getMemoryValue() { return memoryValue; }
+    public String getMemoryUnit() { return memoryUnit; }
 }

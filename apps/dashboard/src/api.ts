@@ -1,4 +1,4 @@
-import { GITHUB_LOGIN_URL, type AuthProviders, type BulkResponse, type Capture, type Solution, type User } from './types'
+import { GITHUB_LOGIN_URL, type AccountSettings, type AuthProviders, type BulkResponse, type Capture, type RelayGrant, type Solution, type User } from './types'
 
 export { GITHUB_LOGIN_URL } from './types'
 
@@ -121,4 +121,25 @@ export async function bulkUpload(captures: Capture[], expectedGithubId: string):
     headers: accountAssertionHeaders(expectedGithubId),
     body: JSON.stringify({ captures }),
   })
+}
+
+export async function getAccountSettings(): Promise<AccountSettings> { return requestJson<AccountSettings>('/api/settings') }
+export async function updateAccountSettings(settings: AccountSettings): Promise<AccountSettings> {
+  return requestJson<AccountSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(settings) })
+}
+
+export async function issueRelayGrant(deviceId: string, generation: number): Promise<RelayGrant> {
+  return requestJson<RelayGrant>('/api/relay/grants', {
+    method: 'POST',
+    body: JSON.stringify({ deviceId, generation }),
+  })
+}
+
+/**
+ * The relay route is intentionally separate from normal dashboard auth. Older
+ * servers may not expose this revocation route yet; callers still clear the
+ * extension first, so a failed network request can never keep local relay on.
+ */
+export async function revokeRelayGrant(deviceId: string): Promise<void> {
+  await requestJson(`/api/relay/grants/${encodeURIComponent(deviceId)}`, { method: 'DELETE' })
 }

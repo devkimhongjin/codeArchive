@@ -86,12 +86,16 @@ export function createCapture(
 
   const executionTime = draft.executionTime;
   const memoryUsage = draft.memoryUsage;
+  const memoryValue = draft.memoryValue;
+  const memoryUnit = draft.memoryUnit;
   if (executionTime !== undefined && (!Number.isFinite(executionTime) || executionTime < 0)) {
     return null;
   }
   if (memoryUsage !== undefined && (!Number.isFinite(memoryUsage) || memoryUsage < 0)) {
     return null;
   }
+  if (memoryValue !== undefined && (!Number.isFinite(memoryValue) || memoryValue < 0)) return null;
+  if (memoryUnit !== undefined && !["KB", "KiB", "MB", "MiB", "UNKNOWN"].includes(memoryUnit)) return null;
 
   return {
     captureId,
@@ -106,6 +110,8 @@ export function createCapture(
     solvedAt,
     ...(executionTime === undefined ? {} : { executionTime }),
     ...(memoryUsage === undefined ? {} : { memoryUsage }),
+    ...(memoryValue === undefined ? {} : { memoryValue }),
+    ...(memoryUnit === undefined ? {} : { memoryUnit }),
     syncState: "PENDING"
   };
 }
@@ -135,7 +141,9 @@ export function isCaptureRecord(value: unknown): value is Capture {
     (candidate.executionTime === undefined ||
       (Number.isFinite(candidate.executionTime) && candidate.executionTime >= 0)) &&
     (candidate.memoryUsage === undefined ||
-      (Number.isFinite(candidate.memoryUsage) && candidate.memoryUsage >= 0))
+      (Number.isFinite(candidate.memoryUsage) && candidate.memoryUsage >= 0)) &&
+    (candidate.memoryValue === undefined || (Number.isFinite(candidate.memoryValue) && candidate.memoryValue >= 0)) &&
+    (candidate.memoryUnit === undefined || ["KB", "KiB", "MB", "MiB", "UNKNOWN"].includes(candidate.memoryUnit))
   );
 }
 

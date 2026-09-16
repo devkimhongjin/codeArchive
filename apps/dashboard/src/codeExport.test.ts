@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { downloadFilename, exportCode, sourceFileExtension } from './codeExport'
+import { downloadFilename, exportCode, gitPath, sourceFileExtension } from './codeExport'
 import { demoSolutions } from './demoData'
 const solution = { ...demoSolutions[0], language: 'Java', sourceCode: '// existing\nclass Main {}', title: '경로/금지:*?' }
 describe('code export', () => {
@@ -21,5 +21,10 @@ describe('code export', () => {
     expect(downloadFilename(solution, 'a'.repeat(300)).length).toBeLessThan(130)
     expect(sourceFileExtension('C++14')).toBe('cpp')
     expect(sourceFileExtension('C')).toBe('c')
+  })
+  it('uses the immutable profile context in download and Git templates', () => {
+    const profile = { name: '홍 길동', nickname: '길동', id: 42 }
+    expect(downloadFilename({ ...solution, language: 'Python3' }, '{name}-{nickname}-{id}.java', profile)).toBe('홍 길동-길동-42.py')
+    expect(gitPath({ ...solution, language: 'Python3' }, 'archive/{id}/{name}/solution.java', profile)).toBe('archive/42/홍 길동/solution.py')
   })
 })

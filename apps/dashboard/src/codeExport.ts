@@ -1,13 +1,15 @@
 import type { Solution } from './types'
 
-export type ExportSettings = { copyHeader: boolean; downloadHeader: boolean; filenameTemplate: string }
-export const DEFAULT_EXPORT_SETTINGS: ExportSettings = { copyHeader: false, downloadHeader: false, filenameTemplate: '{platform}-{number}-{title}' }
+export type ExportSettings = { copyHeader: boolean; downloadHeader: boolean; filenameTemplate: string; gitPathTemplate?: string }
+export const DEFAULT_EXPORT_SETTINGS: ExportSettings = { copyHeader: false, downloadHeader: false, filenameTemplate: '{platform}-{number}-{title}', gitPathTemplate: '{platform}/{number}-{title}' }
 export const EXPORT_SETTINGS_KEY = 'codearchive-export-settings'
+export type ExportProfile = { name?: string | null; nickname?: string | null; id?: string | number | null }
 export function readExportSettings(): ExportSettings {
   try {
     const value = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) ?? 'null')
     return { copyHeader: value?.copyHeader === true, downloadHeader: value?.downloadHeader === true,
-      filenameTemplate: typeof value?.filenameTemplate === 'string' ? value.filenameTemplate.slice(0, 160) : DEFAULT_EXPORT_SETTINGS.filenameTemplate }
+      filenameTemplate: typeof value?.filenameTemplate === 'string' ? value.filenameTemplate.slice(0, 160) : DEFAULT_EXPORT_SETTINGS.filenameTemplate,
+      gitPathTemplate: typeof value?.gitPathTemplate === 'string' ? value.gitPathTemplate.slice(0, 240) : DEFAULT_EXPORT_SETTINGS.gitPathTemplate }
   } catch { return { ...DEFAULT_EXPORT_SETTINGS } }
 }
 export function sourceFileExtension(language: string) {
@@ -24,6 +26,7 @@ export function sourceFileExtension(language: string) {
   if (name === 'go') return 'go'
   if (name.includes('rust')) return 'rs'
   if (name.includes('ruby')) return 'rb'
+  if (name.includes('scala')) return 'scala'
   if (name.includes('sql')) return 'sql'
   return 'txt'
 }
@@ -48,14 +51,25 @@ export function exportCode(solution: Solution, header: boolean): string {
   }
   return headerText + solution.sourceCode
 }
-export function downloadFilename(solution: Solution, template: string): string {
-  const values: Record<string, string> = { platform: solution.platform, number: solution.problemNumber, title: solution.title, language: solution.language }
+export function downloadFilename(solution: Solution, template: string, profile: ExportProfile = {}): string {
+  const values: Record<string, string> = { platform: solution.platform, number: solution.problemNumber, title: solution.title, language: solution.language, name: profile.name?.trim() ?? '', nickname: profile.nickname?.trim() ?? '', id: profile.id == null ? '' : String(profile.id) }
   const extension = sourceFileExtension(solution.language)
   let name = (template.trim() || DEFAULT_EXPORT_SETTINGS.filenameTemplate)
     .replace(/\{([^{}]+)\}/g, (_, token: string) => values[token] ?? '')
     .replace(/[<>:"/\\|?*\x00-\x1f\x7f]/g, '-').replace(/[. ]+$/g, '').replace(/^\.+/, '').trim()
-  if (name.toLowerCase().endsWith(`.${extension}`)) name = name.slice(0, -extension.length - 1)
+  name = name.replace(/\.(java|kt|py|js|ts|c|cpp|cs|go|rs|rb|swift|scala|sql|txt)$/i, '')
   name = name.slice(0, 120).replace(/[. ]+$/g, '') || 'solution'
   if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) name = '_' + name
   return `${name}.${extension}`
+}
+
+/** Git paths are deliberately separate from download names and always relative. */
+export function gitPath(solution: Solution, template: string, profile: ExportProfile = {}): string | null {
+  const values: Record<string, string> = { platform: solution.platform, number: solution.problemNumber, title: solution.title, language: solution.language, name: profile.name?.trim() ?? '', nickname: profile.nickname?.trim() ?? '', id: profile.id == null ? '' : String(profile.id) }
+  const raw = (template || DEFAULT_EXPORT_SETTINGS.gitPathTemplate!).replace(/\{([^{}]+)\}/g, (_, token: string) => values[token] ?? '')
+  if (!raw || /^[\\/]|^[a-z]:/i.test(raw) || raw.includes('..') || /[\x00-\x1f\x7f]/.test(raw)) return null
+  const path = raw.split('/').map(segment => segment.replace(/[<>:"\\|?*]/g, '-').replace(/[. ]+$/g, '')).filter(Boolean).join('/')
+  if (!path) return null
+  const ext = sourceFileExtension(solution.language)
+  return `${path.replace(/\.(java|kt|py|js|ts|c|cpp|cs|go|rs|rb|swift|scala|sql|txt)$/i, '')}.${ext}`
 }

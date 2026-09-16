@@ -34,6 +34,8 @@ export type Solution = {
   solvedAt?: string
   executionTime?: number | string
   memoryUsage?: number | string
+  memoryValue?: number | string
+  memoryUnit?: 'KB' | 'KiB' | 'MB' | 'MiB' | 'UNKNOWN' | string
 }
 
 export type Capture = Solution & {
@@ -56,3 +58,36 @@ export type Toast = {
   kind: 'success' | 'error' | 'info'
   message: string
 }
+
+export type AccountSettings = {
+  version: number
+  name: string | null
+  nickname: string | null
+  copyHeader: boolean
+  downloadHeader: boolean
+  downloadFilenameTemplate: string
+  gitPathTemplate: string
+  lightTheme: LightTheme
+  darkTheme: DarkTheme
+  autoSyncEnabled: boolean
+  githubAutoCommitEnabled: boolean
+  githubTargetConfigured: boolean
+  githubStatus: 'AVAILABLE' | 'TARGET_MISSING' | string
+  githubInstallationId: number | null
+  githubOwner: string | null
+  githubRepository: string | null
+  githubBranch: string | null
+  githubRootPath: string | null
+  githubSetupUrl?: string | null
+}
+/** Opaque, device-bound relay material. This is deliberately not a GitHub credential. */
+export type RelayGrant = {
+  secret: string
+  generation: number
+  endpoint: string
+  expiresAt: string
+}
+export const LIGHT_THEMES = ['github-light', 'vitesse-light', 'catppuccin-latte', 'solarized-light', 'one-light'] as const
+export const DARK_THEMES = ['github-dark', 'vitesse-dark', 'catppuccin-mocha', 'dracula', 'one-dark-pro'] as const
+export type LightTheme = typeof LIGHT_THEMES[number]
+export type DarkTheme = typeof DARK_THEMES[number]

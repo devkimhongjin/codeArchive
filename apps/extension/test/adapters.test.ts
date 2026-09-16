@@ -64,4 +64,7 @@ test('live SWEA submit anchor and language menu are recognized without treating 
   assert.equal(adapter.isSubmitControl(document.querySelector('#btnf_proposal')!), true);
   assert.equal(adapter.isSubmitControl(document.querySelector('#btnf_compile')!), false);
   assert.deepEqual(adapter.detectEditor(), { language: 'Java', sourceCode: 'class Solution {}' });
+  // The solving page has no authoritative result metric row. Never guess MB;
+  // the capture therefore retains an explicit UNKNOWN memory unit.
+  assert.equal(adapter.collectPerformance(), null);
 });

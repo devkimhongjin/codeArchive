@@ -66,6 +66,12 @@ public class Solution {
     @Column(name = "memory_usage", precision = 19, scale = 6)
     private BigDecimal memoryUsage;
 
+    @Column(name = "memory_value", precision = 19, scale = 6)
+    private BigDecimal memoryValue;
+
+    @Column(name = "memory_unit", length = 10)
+    private String memoryUnit;
+
     protected Solution() {
     }
 
@@ -149,4 +155,8 @@ public class Solution {
     public BigDecimal getMemoryUsage() {
         return memoryUsage;
     }
+
+    public BigDecimal getMemoryValue() { return memoryValue; }
+    public String getMemoryUnit() { return memoryUnit; }
+    public void setMemoryMeasurement(BigDecimal value, String unit) { this.memoryValue = value; this.memoryUnit = unit == null || unit.isBlank() ? "UNKNOWN" : unit; }
 }

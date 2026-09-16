@@ -1,6 +1,9 @@
 import { DEFAULT_CAPTURE_SETTINGS, type Capture, type CaptureSettings, type SyncState } from "./types";
 import type { SweaProblemContext } from "./sweaProblemContext";
 
+const LIGHT_THEMES = ["github-light", "vitesse-light", "catppuccin-latte", "solarized-light", "one-light"] as const;
+const DARK_THEMES = ["github-dark", "vitesse-dark", "catppuccin-mocha", "dracula", "one-dark-pro"] as const;
+
 export const DATABASE_NAME = "codearchive-local";
 export const DATABASE_VERSION = 2;
 export const CAPTURE_STORE_NAME = "captures";
@@ -12,11 +15,16 @@ export interface CaptureStore {
   putCapture(capture: Capture): Promise<{ created: boolean }>;
   /** Returns retained captures, newest first. A limit is useful for small UI previews. */
   listAll(limit?: number): Promise<Capture[]>;
+  getCapture(captureId: string): Promise<Capture | null>;
   listPending(excludedCaptureIds?: Iterable<string>, limit?: number): Promise<Capture[]>;
   countPending(): Promise<number>;
   markSynced(captureIds: Iterable<string>): Promise<string[]>;
   getSettings(): Promise<CaptureSettings>;
   updateSettings(patch: Partial<CaptureSettings>): Promise<CaptureSettings>;
+  /** Serialized atomic read/modify/write for settings-bearing background work. */
+  mutateSettings(mutator: (current: CaptureSettings) => CaptureSettings): Promise<CaptureSettings>;
+  /** Applies a relay result only when the exact relay snapshot is still current. */
+  mutateRelayIfCurrent(relay: NonNullable<CaptureSettings["relay"]>, mutator: (current: CaptureSettings) => CaptureSettings): Promise<{ settings: CaptureSettings; applied: boolean }>;
   putSweaProblemContext(context: SweaProblemContext): Promise<void>;
   getSweaProblemContext(problemUrl: string): Promise<SweaProblemContext | null>;
 }
@@ -36,10 +44,22 @@ function sortNewestFirst(left: Capture, right: Capture): number {
 }
 
 function settingsWithDefaults(value: Partial<CaptureSettings> | undefined): CaptureSettings {
+  const relay = value?.relay;
   return {
     autoSyncEnabled: value?.autoSyncEnabled === true,
     githubAutoCommitEnabled: value?.githubAutoCommitEnabled === true,
-    githubTargetConfigured: value?.githubTargetConfigured === true
+    githubTargetConfigured: value?.githubTargetConfigured === true,
+    ...(typeof value?.copyHeader === "boolean" ? { copyHeader: value.copyHeader } : {}),
+    ...(typeof value?.downloadHeader === "boolean" ? { downloadHeader: value.downloadHeader } : {}),
+    ...(typeof value?.downloadFilenameTemplate === "string" ? { downloadFilenameTemplate: value.downloadFilenameTemplate.slice(0, 160) } : {}),
+    ...(typeof value?.gitPathTemplate === "string" ? { gitPathTemplate: value.gitPathTemplate.slice(0, 240) } : {}),
+    ...(typeof value?.name === "string" ? { name: value.name.slice(0, 100) } : {}),
+    ...(typeof value?.nickname === "string" ? { nickname: value.nickname.slice(0, 100) } : {}),
+    ...(typeof value?.accountId === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(value.accountId) ? { accountId: value.accountId } : {}),
+    ...(Number.isSafeInteger(value?.accountSettingsVersion) && (value?.accountSettingsVersion as number) >= 0 ? { accountSettingsVersion: value?.accountSettingsVersion } : {}),
+    ...(LIGHT_THEMES.includes(value?.lightTheme as typeof LIGHT_THEMES[number]) ? { lightTheme: value?.lightTheme } : {}),
+    ...(DARK_THEMES.includes(value?.darkTheme as typeof DARK_THEMES[number]) ? { darkTheme: value?.darkTheme } : {}),
+    ...(relay && typeof relay.endpoint === "string" && typeof relay.secret === "string" && typeof relay.accountId === "string" && Number.isSafeInteger(relay.generation) && ["CONFIRMED", "PENDING", "OFFLINE", "AUTH_EXPIRED", "RELAY_ERROR", "REVOCATION_PENDING"].includes(relay.status) ? { relay } : {})
   };
 }
 
@@ -69,6 +89,7 @@ export class IndexedDbCaptureStore implements CaptureStore {
   private readonly databaseVersion: number;
   private readonly indexedDb: IDBFactory;
   private databasePromise: Promise<IDBDatabase> | null = null;
+  private settingsSerial: Promise<void> = Promise.resolve();
 
   constructor(options: IndexedDbCaptureStoreOptions = {}) {
     this.databaseName = options.databaseName ?? DATABASE_NAME;
@@ -99,6 +120,12 @@ export class IndexedDbCaptureStore implements CaptureStore {
     const sorted = values.sort(sortNewestFirst);
     const limited = limit === undefined ? sorted : sorted.slice(0, clampLimit(limit));
     return limited.map((capture) => structuredClone(capture));
+  }
+
+  async getCapture(captureId: string): Promise<Capture | null> {
+    const database = await this.open(); const transaction = database.transaction(CAPTURE_STORE_NAME, "readonly");
+    const capture = await requestResult(transaction.objectStore(CAPTURE_STORE_NAME).get(captureId));
+    return capture ? structuredClone(capture as Capture) : null;
   }
 
   async listPending(excludedCaptureIds: Iterable<string> = [], limit = 50): Promise<Capture[]> {
@@ -143,26 +170,43 @@ export class IndexedDbCaptureStore implements CaptureStore {
   }
 
   async getSettings(): Promise<CaptureSettings> {
-    const database = await this.open();
-    const transaction = database.transaction(SETTINGS_STORE_NAME, "readwrite");
-    const store = transaction.objectStore(SETTINGS_STORE_NAME);
-    const current = settingsWithDefaults((await requestResult(store.get(SETTINGS_KEY))) as Partial<CaptureSettings> | undefined);
-    store.put({ ...current, id: SETTINGS_KEY });
-    await transactionComplete(transaction);
-    return current;
+    return this.serializeSettings(async () => {
+      const database = await this.open();
+      const transaction = database.transaction(SETTINGS_STORE_NAME, "readwrite");
+      const store = transaction.objectStore(SETTINGS_STORE_NAME);
+      const current = settingsWithDefaults((await requestResult(store.get(SETTINGS_KEY))) as Partial<CaptureSettings> | undefined);
+      store.put({ ...current, id: SETTINGS_KEY });
+      await transactionComplete(transaction);
+      return current;
+    });
   }
 
   async updateSettings(patch: Partial<CaptureSettings>): Promise<CaptureSettings> {
-    const current = await this.getSettings();
-    const next = settingsWithDefaults({ ...current, ...patch });
-    // GitHub cannot be considered active without a server-side target. The
-    // extension has no GitHub API or token and never changes this invariant.
-    if (!next.githubTargetConfigured) next.githubAutoCommitEnabled = false;
-    const database = await this.open();
-    const transaction = database.transaction(SETTINGS_STORE_NAME, "readwrite");
-    transaction.objectStore(SETTINGS_STORE_NAME).put({ ...next, id: SETTINGS_KEY });
-    await transactionComplete(transaction);
-    return next;
+    return this.mutateSettings(current => ({ ...current, ...patch }));
+  }
+
+  async mutateSettings(mutator: (current: CaptureSettings) => CaptureSettings): Promise<CaptureSettings> {
+    return this.serializeSettings(async () => {
+      const database = await this.open();
+      const transaction = database.transaction(SETTINGS_STORE_NAME, "readwrite");
+      const store = transaction.objectStore(SETTINGS_STORE_NAME);
+      const current = settingsWithDefaults((await requestResult(store.get(SETTINGS_KEY))) as Partial<CaptureSettings> | undefined);
+      const next = settingsWithDefaults(mutator(structuredClone(current)));
+      if (!next.githubTargetConfigured) next.githubAutoCommitEnabled = false;
+      store.put({ ...next, id: SETTINGS_KEY });
+      await transactionComplete(transaction);
+      return next;
+    });
+  }
+
+  async mutateRelayIfCurrent(relay: NonNullable<CaptureSettings["relay"]>, mutator: (current: CaptureSettings) => CaptureSettings): Promise<{ settings: CaptureSettings; applied: boolean }> {
+    let applied = false;
+    const settings = await this.mutateSettings(current => {
+      if (!sameRelay(current.relay, relay)) return current;
+      applied = true;
+      return mutator(current);
+    });
+    return { settings, applied };
   }
 
   async putSweaProblemContext(context: SweaProblemContext): Promise<void> {
@@ -207,6 +251,12 @@ export class IndexedDbCaptureStore implements CaptureStore {
     });
     return this.databasePromise;
   }
+
+  private serializeSettings<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.settingsSerial.then(work, work);
+    this.settingsSerial = run.then(() => undefined, () => undefined);
+    return run;
+  }
 }
 
 /** Small deterministic store used by unit tests and non-browser callers. */
@@ -214,6 +264,7 @@ export class MemoryCaptureStore implements CaptureStore {
   private readonly captures = new Map<string, Capture>();
   private readonly sweaProblemContexts = new Map<string, SweaProblemContext>();
   private settings: CaptureSettings = { ...DEFAULT_CAPTURE_SETTINGS };
+  private settingsSerial: Promise<void> = Promise.resolve();
 
   async putCapture(capture: Capture): Promise<{ created: boolean }> {
     if (this.captures.has(capture.captureId)) return { created: false };
@@ -226,6 +277,8 @@ export class MemoryCaptureStore implements CaptureStore {
     const limited = limit === undefined ? sorted : sorted.slice(0, clampLimit(limit));
     return limited.map((capture) => structuredClone(capture));
   }
+
+  async getCapture(captureId: string): Promise<Capture | null> { const capture = this.captures.get(captureId); return capture ? structuredClone(capture) : null; }
 
   async listPending(excludedCaptureIds: Iterable<string> = [], limit = 50): Promise<Capture[]> {
     const excluded = new Set(excludedCaptureIds);
@@ -257,9 +310,25 @@ export class MemoryCaptureStore implements CaptureStore {
   }
 
   async updateSettings(patch: Partial<CaptureSettings>): Promise<CaptureSettings> {
-    this.settings = settingsWithDefaults({ ...this.settings, ...patch });
-    if (!this.settings.githubTargetConfigured) this.settings.githubAutoCommitEnabled = false;
-    return { ...this.settings };
+    return this.mutateSettings(current => ({ ...current, ...patch }));
+  }
+
+  async mutateSettings(mutator: (current: CaptureSettings) => CaptureSettings): Promise<CaptureSettings> {
+    return this.serializeSettings(async () => {
+      this.settings = settingsWithDefaults(mutator(structuredClone(this.settings)));
+      if (!this.settings.githubTargetConfigured) this.settings.githubAutoCommitEnabled = false;
+      return structuredClone(this.settings);
+    });
+  }
+
+  async mutateRelayIfCurrent(relay: NonNullable<CaptureSettings["relay"]>, mutator: (current: CaptureSettings) => CaptureSettings): Promise<{ settings: CaptureSettings; applied: boolean }> {
+    let applied = false;
+    const settings = await this.mutateSettings(current => {
+      if (!sameRelay(current.relay, relay)) return current;
+      applied = true;
+      return mutator(current);
+    });
+    return { settings, applied };
   }
 
   async putSweaProblemContext(context: SweaProblemContext): Promise<void> {
@@ -270,4 +339,14 @@ export class MemoryCaptureStore implements CaptureStore {
     const context = this.sweaProblemContexts.get(problemUrl);
     return context ? structuredClone(context) : null;
   }
+
+  private serializeSettings<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.settingsSerial.then(work, work);
+    this.settingsSerial = run.then(() => undefined, () => undefined);
+    return run;
+  }
+}
+
+function sameRelay(left: CaptureSettings["relay"], right: NonNullable<CaptureSettings["relay"]>): boolean {
+  return !!left && left.accountId === right.accountId && left.generation === right.generation && left.secret === right.secret && left.status === right.status;
 }

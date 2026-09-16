@@ -3,6 +3,7 @@ export type Platform = "SWEA" | "PROGRAMMERS";
 export const CAPTURE_RESULT = "ACCEPTED" as const;
 export type CaptureResult = typeof CAPTURE_RESULT;
 export type SyncState = "PENDING" | "SYNCED";
+export type MemoryUnit = "KB" | "KiB" | "MB" | "MiB" | "UNKNOWN";
 
 export interface Capture {
   captureId: string;
@@ -17,6 +18,8 @@ export interface Capture {
   solvedAt: string;
   executionTime?: number;
   memoryUsage?: number;
+  memoryValue?: number;
+  memoryUnit?: MemoryUnit;
   syncState: SyncState;
   syncedAt?: string;
 }
@@ -34,6 +37,8 @@ export interface CaptureDraft {
   solvedAt?: string | Date;
   executionTime?: number;
   memoryUsage?: number;
+  memoryValue?: number;
+  memoryUnit?: MemoryUnit;
 }
 
 export interface ProblemMetadata {
@@ -50,6 +55,8 @@ export interface EditorData {
 export interface PerformanceData {
   executionTime?: number;
   memoryUsage?: number;
+  memoryValue?: number;
+  memoryUnit?: MemoryUnit;
 }
 
 export interface SubmissionResultDetection {
@@ -81,6 +88,20 @@ export interface CaptureSettings {
   autoSyncEnabled: boolean;
   githubAutoCommitEnabled: boolean;
   githubTargetConfigured: boolean;
+  /** Opaque server relay data only: never GitHub/OAuth credentials. */
+  relay?: { endpoint: string; secret: string; accountId: string; generation: number; status: "CONFIRMED" | "PENDING" | "OFFLINE" | "AUTH_EXPIRED" | "RELAY_ERROR" | "REVOCATION_PENDING" };
+  copyHeader?: boolean;
+  downloadHeader?: boolean;
+  downloadFilenameTemplate?: string;
+  gitPathTemplate?: string;
+  name?: string;
+  nickname?: string;
+  /** Immutable CodeArchive account identity; never an OAuth or GitHub token. */
+  accountId?: string;
+  /** Monotonic server settings version; used only to reject stale bridge configuration. */
+  accountSettingsVersion?: number;
+  lightTheme?: "github-light" | "vitesse-light" | "catppuccin-latte" | "solarized-light" | "one-light";
+  darkTheme?: "github-dark" | "vitesse-dark" | "catppuccin-mocha" | "dracula" | "one-dark-pro";
 }
 
 export const DEFAULT_CAPTURE_SETTINGS: CaptureSettings = {

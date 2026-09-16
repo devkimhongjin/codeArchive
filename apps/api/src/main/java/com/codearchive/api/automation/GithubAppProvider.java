@@ -1,0 +1,86 @@
+package com.codearchive.api.automation;
+
+import com.codearchive.api.settings.UserSettings; import com.codearchive.api.solution.Solution; import com.fasterxml.jackson.databind.*;
+import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; import java.net.http.*; import java.nio.charset.StandardCharsets; import java.security.*; import java.security.interfaces.RSAPrivateKey; import java.security.spec.PKCS8EncodedKeySpec; import java.security.spec.RSAPrivateCrtKeySpec; import java.time.*; import java.util.*; import java.util.regex.Matcher; import java.util.regex.Pattern; import org.springframework.beans.factory.annotation.Autowired; import org.springframework.beans.factory.annotation.Value; import org.springframework.stereotype.Component;
+
+/** Server-only GitHub App write path. Every write is create-only and based on a newly read branch head. */
+@Component public class GithubAppProvider implements GithubProvider {
+ private final String appId,key,base; private final HttpClient http; private final ObjectMapper json; private final Duration requestTimeout; private final GithubProvider fallback=new FailClosedGithubProvider();
+ @Autowired public GithubAppProvider(@Value("${codearchive.github.app-id:}")String appId,@Value("${codearchive.github.app-private-key:}")String key,@Value("${codearchive.github.api-base:https://api.github.com}")String base,@Value("${codearchive.github.connect-timeout-ms:5000}")long connectTimeoutMs,@Value("${codearchive.github.request-timeout-ms:10000}")long requestTimeoutMs,ObjectMapper json){this(appId,key,base,HttpClient.newBuilder().connectTimeout(timeout(connectTimeoutMs)).build(),json,requestTimeoutMs);} 
+ GithubAppProvider(String appId,String key,String base,HttpClient http,ObjectMapper json){this(appId,key,base,http,json,10000);}
+ GithubAppProvider(String appId,String key,String base,HttpClient http,ObjectMapper json,long requestTimeoutMs){this.appId=appId;this.key=key;this.base=base.replaceAll("/$","");this.http=http;this.json=json;this.requestTimeout=timeout(requestTimeoutMs);}
+ public Result createOnly(UserSettings s,Solution solution){ return createOnly(s,solution,()->true); }
+ @Override public Result createOnly(UserSettings s,Solution solution,FinalWriteGuard finalWriteGuard){
+  if(appId.isBlank()||key.isBlank()||s.getGithubInstallationId()==null)return fallback.createOnly(s,solution);
+  final String path; try { path=path(s,solution); } catch (IllegalArgumentException e) { return Result.failed("Unsafe Git path"); }
+  boolean possibleWrite=false;
+  try {
+   String token=installationToken(s.getGithubInstallationId()); String repo=repo(s);
+   Response ref=send("GET",repo+"/git/ref/heads/"+segment(s.getGithubBranch()),token,null); if(ref.code!=200)return classify(ref,false);
+   String head=json.readTree(ref.body).path("object").path("sha").asText(); if(head.isBlank())return Result.unknown("Malformed branch reference");
+   Response commit=send("GET",repo+"/git/commits/"+segment(head),token,null); if(commit.code!=200)return classify(commit,false);
+   String tree=json.readTree(commit.body).path("tree").path("sha").asText(); if(tree.isBlank())return Result.unknown("Malformed commit");
+   // GitHub otherwise checks the repository default branch. The ref is the
+   // freshly observed target head, so create-only remains branch-correct.
+   Response exists=send("GET",repo+"/contents/"+encodedPath(path)+"?ref="+segment(head),token,null);
+   if(exists.code==200)return Result.failed("Git path already exists"); if(exists.code!=404)return classify(exists,false);
+   possibleWrite=true;
+   Response blob=send("POST",repo+"/git/blobs",token,json.writeValueAsString(Map.of("content",Base64.getEncoder().encodeToString(solution.getSourceCode().getBytes(StandardCharsets.UTF_8)),"encoding","base64"))); if(blob.code!=201)return Result.unknown("Blob creation was not confirmed");
+   String blobSha=json.readTree(blob.body).path("sha").asText();
+   Response newTree=send("POST",repo+"/git/trees",token,json.writeValueAsString(Map.of("base_tree",tree,"tree",List.of(Map.of("path",path,"mode","100644","type","blob","sha",blobSha))))); if(newTree.code!=201)return Result.unknown("Tree creation was not confirmed");
+   String treeSha=json.readTree(newTree.body).path("sha").asText();
+   Response newCommit=send("POST",repo+"/git/commits",token,json.writeValueAsString(Map.of("message","CodeArchive: "+solution.getPlatform()+" #"+solution.getProblemNumber(),"tree",treeSha,"parents",List.of(head)))); if(newCommit.code!=201)return Result.unknown("Commit creation was not confirmed");
+   String commitSha=json.readTree(newCommit.body).path("sha").asText();
+   // The durable worker re-reads consent/settings at the latest safe point.
+   // Never expose a ref update once logout, target, or automation consent changed.
+   if(!finalWriteGuard.stillAuthorized())return Result.failed("GitHub automation consent changed before final write");
+   Response freshRef=send("GET",repo+"/git/ref/heads/"+segment(s.getGithubBranch()),token,null);
+   if(freshRef.code!=200)return Result.unknown("Fresh branch reference was not confirmed");
+   String freshHead=json.readTree(freshRef.body).path("object").path("sha").asText();
+   if(!head.equals(freshHead))return Result.unknown("Branch moved before final ref update");
+   // The ref GET itself is network I/O. Recheck consent in the tiny final
+   // window before the visible mutation as logout/OFF may have happened there.
+   if(!finalWriteGuard.stillAuthorized())return Result.failed("GitHub automation consent changed before final write");
+   Response update=send("PATCH",repo+"/git/refs/heads/"+segment(s.getGithubBranch()),token,json.writeValueAsString(Map.of("sha",commitSha,"force",false)));
+   if(update.code==200)return Result.succeeded(); return Result.unknown("Final ref update was not confirmed");
+  } catch(Exception e){return possibleWrite?Result.unknown("GitHub mutation outcome is unknown"):Result.retryable("GitHub App request failed before final mutation");}
+ }
+ private String installationToken(Long id)throws Exception{Response r=send("POST","/app/installations/"+id+"/access_tokens",jwt(),"{}");if(r.code!=201)throw new IllegalStateException("installation token unavailable");return json.readTree(r.body).path("token").asText();}
+ private Response send(String method,String path,String token,String body)throws Exception{HttpRequest.Builder b=HttpRequest.newBuilder(URI.create(base+path)).timeout(requestTimeout).header("Accept","application/vnd.github+json").header("Authorization","Bearer "+token).header("X-GitHub-Api-Version","2022-11-28"); if(body==null)b.method(method,HttpRequest.BodyPublishers.noBody());else b.header("Content-Type","application/json").method(method,HttpRequest.BodyPublishers.ofString(body));HttpResponse<String> r=http.send(b.build(),HttpResponse.BodyHandlers.ofString());return new Response(r.statusCode(),r.body());}
+ private static Duration timeout(long millis){return Duration.ofMillis(Math.max(100,Math.min(30000,millis)));}
+ private Result classify(Response r,boolean finalWrite){if(r.code>=500||r.code==429)return Result.retryable("GitHub unavailable");return Result.failed("GitHub rejected request");}
+ private String jwt()throws Exception{long now=Instant.now().getEpochSecond();String h=b64("{\"alg\":\"RS256\",\"typ\":\"JWT\"}"),p=b64("{\"iat\":"+(now-30)+",\"exp\":"+(now+540)+",\"iss\":\""+appId+"\"}");Signature sig=Signature.getInstance("SHA256withRSA");sig.initSign(privateKey());sig.update((h+"."+p).getBytes(StandardCharsets.UTF_8));return h+"."+p+"."+Base64.getUrlEncoder().withoutPadding().encodeToString(sig.sign());}
+ /** GitHub provides both PKCS#8 and the older PKCS#1 RSA PEM form.  Keep this
+  * parser local so accepting the latter does not pull a crypto/provider dependency
+  * into the API. */
+ private RSAPrivateKey privateKey()throws Exception{
+  String pem=key.replace("\\n","\n"); boolean pkcs1=pem.contains("-----BEGIN RSA PRIVATE KEY-----");
+  String body=pem.replaceAll("-----[^-]+-----","").replaceAll("\\s",""); byte[] der=Base64.getDecoder().decode(body); KeyFactory factory=KeyFactory.getInstance("RSA");
+  if(!pkcs1)return (RSAPrivateKey)factory.generatePrivate(new PKCS8EncodedKeySpec(der));
+  DerReader sequence=new DerReader(der).sequence(); sequence.integer(); // version
+  return (RSAPrivateKey)factory.generatePrivate(new RSAPrivateCrtKeySpec(sequence.integer(),sequence.integer(),sequence.integer(),sequence.integer(),sequence.integer(),sequence.integer(),sequence.integer(),sequence.integer()));
+ }
+ private static final class DerReader{
+  private final byte[] data; private int cursor;
+  DerReader(byte[] data){this.data=data;}
+  DerReader sequence(){if(readByte()!=0x30)throw new IllegalArgumentException("PKCS#1 key is not a DER sequence");int length=length();if(length!=data.length-cursor)throw new IllegalArgumentException("Invalid PKCS#1 sequence length");byte[] nested=Arrays.copyOfRange(data,cursor,cursor+length);cursor+=length;return new DerReader(nested);}
+  BigInteger integer(){if(readByte()!=0x02)throw new IllegalArgumentException("Invalid PKCS#1 integer");int length=length();if(length<1||cursor+length>data.length)throw new IllegalArgumentException("Invalid PKCS#1 integer length");byte[] value=Arrays.copyOfRange(data,cursor,cursor+length);cursor+=length;return new BigInteger(1,value);}
+  private int readByte(){if(cursor>=data.length)throw new IllegalArgumentException("Truncated PKCS#1 key");return data[cursor++]&0xff;}
+  private int length(){int first=readByte();if((first&0x80)==0)return first;int count=first&0x7f;if(count<1||count>4||cursor+count>data.length)throw new IllegalArgumentException("Invalid PKCS#1 length");int result=0;for(int i=0;i<count;i++)result=(result<<8)|readByte();if(result<128||cursor+result>data.length)throw new IllegalArgumentException("Invalid PKCS#1 length");return result;}
+ }
+ private String b64(String s){return Base64.getUrlEncoder().withoutPadding().encodeToString(s.getBytes(StandardCharsets.UTF_8));}
+ private String repo(UserSettings s){return "/repos/"+segment(s.getGithubOwner())+"/"+segment(s.getGithubRepository());}
+ private static String segment(String value){if(value==null||value.isBlank())throw new IllegalArgumentException("blank path component");return URLEncoder.encode(value,StandardCharsets.UTF_8).replace("+","%20");}
+ private static String encodedPath(String path){return Arrays.stream(path.split("/",-1)).map(GithubAppProvider::segment).collect(java.util.stream.Collectors.joining("/"));}
+ private String path(UserSettings s,Solution x){
+  Map<String,String> v=new HashMap<>(); v.put("platform",x.getPlatform().name());v.put("number",x.getProblemNumber());v.put("title",clean(x.getTitle()));v.put("language",clean(x.getLanguage()));v.put("name",clean(s.getDisplayName()));v.put("nickname",clean(s.getNickname()));v.put("id",s.getUser()!=null&&s.getUser().getId()!=null?String.valueOf(s.getUser().getId()):"");
+  String p=render(s.getGitPathTemplate(),v);
+  String root=s.getGithubRootPath();if(root!=null&&!root.isBlank())p=root.replaceAll("^/+|/+$","")+"/"+p;
+  if(p.isBlank()||p.startsWith("/")||p.startsWith("\\\\")||p.matches("^[A-Za-z]:.*")||p.contains("..")||p.chars().anyMatch(c->c<32||c==127))throw new IllegalArgumentException("unsafe");
+  p=Arrays.stream(p.split("/",-1)).map(this::clean).filter(x1->!x1.isBlank()).collect(java.util.stream.Collectors.joining("/"));if(p.isBlank())throw new IllegalArgumentException("empty");
+  String ext=extension(x.getLanguage());p=p.replaceFirst("(?i)\\.(java|kt|py|js|ts|c|cpp|cs|go|rs|rb|swift|scala|sql|txt)$","");return p+"."+ext;
+ }
+ private String clean(String value){return value==null?"":value.replaceAll("[\\\\/:*?\"<>|\\x00-\\x1f\\x7f]","-").replaceAll("[. ]+$","").replaceFirst("^\\.+","").trim();}
+ private static String render(String template,Map<String,String> values){if(template==null)return "";Matcher matcher=Pattern.compile("\\{([^{}]+)\\}").matcher(template);StringBuffer out=new StringBuffer();while(matcher.find())matcher.appendReplacement(out,Matcher.quoteReplacement(values.getOrDefault(matcher.group(1),"")));matcher.appendTail(out);return out.toString();}
+ private String extension(String n){n=n==null?"":n.toLowerCase(Locale.ROOT);if(n.contains("python"))return"py";if(n.contains("typescript")||n.equals("ts"))return"ts";if(n.contains("javascript")||n.equals("js"))return"js";if(n.contains("kotlin"))return"kt";if(n.contains("java"))return"java";if(n.contains("c++")||n.contains("cpp"))return"cpp";if(n.matches("^c(?:\\s|\\d|$).*"))return"c";if(n.equals("c#")||n.contains("csharp"))return"cs";if(n.equals("go"))return"go";if(n.contains("rust"))return"rs";if(n.contains("ruby"))return"rb";if(n.contains("swift"))return"swift";if(n.contains("scala"))return"scala";if(n.contains("sql"))return"sql";return"txt";} private record Response(int code,String body){}
+}

@@ -45,12 +45,14 @@ public class SolutionService {
             solution.update(capture.platform(), capture.problemNumber(), capture.title(), capture.problemUrl(),
                     capture.language(), capture.sourceCode(), capture.result(), capture.observedAt(),
                     capture.solvedAt(), executionTime, memoryUsage);
+            if (capture.memoryValue() != null) solution.setMemoryMeasurement(capture.memoryValue(), capture.memoryUnit());
             return solutionRepository.saveAndFlush(solution);
         }
 
         Solution solution = new Solution(user, capture.captureId(), capture.platform(), capture.problemNumber(),
                 capture.title(), capture.problemUrl(), capture.language(), capture.sourceCode(), capture.result(),
                 capture.observedAt(), capture.solvedAt(), capture.executionTime(), capture.memoryUsage());
+        solution.setMemoryMeasurement(capture.memoryValue(), capture.memoryUnit());
         return solutionRepository.saveAndFlush(solution);
     }
 
@@ -101,9 +103,11 @@ public class SolutionService {
         Instant solvedAt = parseTimestamp(payload.getSolvedAt(), "solvedAt");
         validateMetric(payload.getExecutionTime(), "executionTime");
         validateMetric(payload.getMemoryUsage(), "memoryUsage");
+        validateMetric(payload.getMemoryValue(), "memoryValue");
+        String memoryUnit = normalizeMemoryUnit(payload.getMemoryUnit(), payload.getMemoryValue());
 
         return new NormalizedCapture(captureId, platform, problemNumber, title, problemUrl, language, sourceCode,
-                result, observedAt, solvedAt, payload.getExecutionTime(), payload.getMemoryUsage());
+                result, observedAt, solvedAt, payload.getExecutionTime(), payload.getMemoryUsage(), payload.getMemoryValue(), memoryUnit);
     }
 
     private String required(String value, String field, int maxLength) {
@@ -159,6 +163,24 @@ public class SolutionService {
         }
     }
 
+    private String normalizeMemoryUnit(String value, BigDecimal memoryValue) {
+        // A numeric measurement without a unit is deliberately not guessed.
+        // Keeping UNKNOWN makes new rows distinguishable from KB/MB captures.
+        if (value == null || value.isBlank()) return "UNKNOWN";
+        String normalized = value.trim();
+        String unit;
+        if (normalized.equalsIgnoreCase("KB")) unit = "KB";
+        else if (normalized.equalsIgnoreCase("KiB")) unit = "KiB";
+        else if (normalized.equalsIgnoreCase("MB")) unit = "MB";
+        else if (normalized.equalsIgnoreCase("MiB")) unit = "MiB";
+        else if (normalized.equalsIgnoreCase("UNKNOWN")) unit = "UNKNOWN";
+        else {
+            throw new CaptureValidationException("memoryUnit must be KB, KiB, MB, MiB, or UNKNOWN");
+        }
+        if (memoryValue == null && !unit.equals("UNKNOWN")) throw new CaptureValidationException("memoryValue is required with memoryUnit");
+        return unit;
+    }
+
     private boolean sameCoreData(Solution solution, NormalizedCapture capture) {
         return solution.getPlatform() == capture.platform()
                 && solution.getProblemNumber().equals(capture.problemNumber())
@@ -174,6 +196,6 @@ public class SolutionService {
     private record NormalizedCapture(String captureId, Platform platform, String problemNumber, String title,
                                      String problemUrl, String language, String sourceCode, String result,
                                      Instant observedAt, Instant solvedAt, BigDecimal executionTime,
-                                     BigDecimal memoryUsage) {
+                                     BigDecimal memoryUsage, BigDecimal memoryValue, String memoryUnit) {
     }
 }
