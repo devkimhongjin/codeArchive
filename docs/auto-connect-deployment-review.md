@@ -20,3 +20,31 @@
 - Netlify 신규 배포는 수행하지 않았습니다. UI는 기존 localhost Vite 미리보기로 확인하며, 호스팅 검증은 변경을 모아 최소 횟수로 진행합니다.
 
 실제 HTTP 확인: Render API /actuator/health와 analysis /health는 재확인 시 200 및 UP. API 첫 요청은 25초 timeout이었으므로 최초 기동 지연을 별도 고려합니다. Netlify /api/auth/providers는 404입니다.
+
+## #233 production deployment plan/status (2026-09-16)
+
+This repository now carries deployable configuration only; it does not change
+Render, Netlify, GitHub OAuth, or database settings automatically. Before
+deploying the existing Render service, confirm branch `develop`, Docker context
+`./apps/api`, Dockerfile `./apps/api/Dockerfile`, Singapore region, and health
+path `/actuator/health`. Set `SPRING_PROFILES_ACTIVE=prod`, the existing JDBC
+`DATABASE_URL`, `DB_USERNAME`, `DB_PASSWORD`, GitHub credentials,
+`DASHBOARD_ORIGIN`, `GITHUB_REDIRECT_URI`, and exact `CORS_ALLOWED_ORIGINS` in
+the deployment environment. The prod profile uses forwarded headers and secure
+session cookies for the Netlify-to-Render proxy chain.
+
+Production Flyway creates and tracks only `codearchive_v2`; it must never
+baseline, repair, clean, or mutate `public.flyway_schema_history`. V4 imports
+only the recognized legacy public shape transactionally. The PostgreSQL tests
+that construct public fixtures require an explicit disposable-environment
+opt-in.
+
+Before publishing the existing Netlify site, confirm its build publishes
+`apps/dashboard/dist`. The first redirect proxies `/api/*` to
+`https://codearchive-api.onrender.com`, before the SPA fallback. Register the
+callback exactly as
+`https://codearchive-dashboard-beta.netlify.app/api/login/oauth2/code/github`.
+After deployment request `https://codearchive-api.onrender.com/actuator/health`
+and complete one GitHub login. Verify same-origin session behavior, fixed
+extension ID `oohlcmihldmfninmdcmanddfmhoonmdl`, both permitted dashboard
+origins, and rejection of lookalike or mixed sender/tab origins.

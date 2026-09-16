@@ -56,7 +56,18 @@ $env:DASHBOARD_ORIGIN = 'http://localhost:5173'
 4. GitHub로 로그인하면 고정 ID의 확장 프로그램에 자동 연결합니다.
 5. 지금 동기화를 눌러 저장된 Capture를 가져옵니다. 이전 개발 ID의 기록은 설정의 이전 개발 기록 확인에서 가져올 수 있습니다.
 
-개발 환경의 연결 허용 origin은 정확히 http://localhost:5173 입니다. 127.0.0.1, 다른 포트나 운영 주소는 별도 허용 설정 없이 연결되지 않습니다.
+확장 프로그램 연결 허용 origin은 정확히 `http://localhost:5173`와 운영
+`https://codearchive-dashboard-beta.netlify.app`입니다. 127.0.0.1, 다른 포트,
+lookalike 도메인, 또는 로컬/운영 sender-tab 혼합은 연결되지 않습니다.
+
+### 운영 배포
+
+Render API는 `apps/api/Dockerfile`을 Docker context `apps/api`로 빌드합니다.
+`prod` 프로필은 `$PORT`(기본 8080)로 실행하고 `/actuator/health`를 제공합니다.
+`DATABASE_URL`(JDBC PostgreSQL URL), `DB_USERNAME`, `DB_PASSWORD`, GitHub OAuth
+값과 정확한 production origin 값은 배포 환경에서 설정합니다. Netlify는
+`apps/dashboard/dist`를 배포하며 `/api/*`를 Render API로 same-origin 프록시하므로
+OAuth callback은 `https://codearchive-dashboard-beta.netlify.app/api/login/oauth2/code/github`입니다.
 
 ### PostgreSQL
 

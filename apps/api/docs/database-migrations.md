@@ -14,6 +14,7 @@ Hibernate schema generation, and the H2-only `LegacyUserSchemaMigration`.
 | `V1__create_legacy_schema.sql` | Creates the pre-GitHub `users` and `solutions` tables. `email` and `password_hash` are required, matching the legacy Hibernate schema. |
 | `V2__add_github_identity.sql` | Adds nullable GitHub profile columns, makes the legacy credential columns nullable, and adds the unique `github_id` constraint. |
 | `V3__add_solution_ordering_index.sql` | Adds the `(user_id, solved_at DESC)` index used by the per-user solution listing query. |
+| `V4__import_legacy_codearchive.sql` | In the `prod` profile only, validates and imports the known UUID/GitHub legacy public tables into the isolated `codearchive_v2` schema. |
 
 `V2` is intentionally a narrow upgrade. It does not rewrite existing rows or
 discard legacy credentials. PostgreSQL's unique constraint permits multiple
@@ -23,9 +24,19 @@ GitHub id remains unique.
 ## Fresh PostgreSQL database
 
 For an empty database, set the normal PostgreSQL connection variables and
-start the application with the `prod` profile. Flyway runs V1, V2, and V3 in order;
-Hibernate then validates the resulting schema. A later startup sees the three
-recorded versions and performs no schema changes.
+start the application with the `prod` profile. Production Flyway creates and
+uses `codearchive_v2.flyway_schema_history`, runs V1 through V4 there, and
+Hibernate validates `codearchive_v2`. It never reads, baselines, repairs, or
+changes `public.flyway_schema_history`.
+
+When the recognized legacy source tables exist in `public`, V4 first validates
+their complete shape and all import-critical values, then imports GitHub users
+and solutions in the same transaction. Numeric performance strings are parsed
+without punctuation; absent or malformed optional values remain NULL.
+Programmers URLs are rebuilt from their problem number and SWEA uses the stable
+problem-list fallback. An absent public source or an already rebuilt public
+shape is a no-op. Any other public shape fails V4 before inserts, so investigate
+instead of baselining or editing the legacy schema.
 
 ## Adopting an existing Hibernate schema
 
@@ -124,6 +135,8 @@ This runner uses an isolated PostgreSQL 17 container on a random loopback port,
 generates transient credentials, runs `PostgreSqlMigrationTest`, and stops its
 container on success or failure. It never attaches an existing volume. Tests
 cover new schemas, repeat migration, explicit V1/V2 adoption, retained rows,
-rejection of automatic adoption, and Hibernate schema validation. The regular
+rejection of automatic adoption, isolated `codearchive_v2` imports from a
+legacy public fixture, preserved public row/history counts, safe rebuilt-public
+no-op behavior, and Hibernate schema validation. The regular
 H2 API tests still run with `./mvnw.cmd test`; migration tests skip unless all
 `PG_TEST_URL`, `PG_TEST_USER`, and `PG_TEST_PASSWORD` variables are set.

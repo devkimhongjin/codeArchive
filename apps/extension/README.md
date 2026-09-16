@@ -17,8 +17,14 @@ this package does not require a root workspace or root package script.
 
 ## Dashboard bridge
 
-Only `http://localhost:5173` is accepted as the dashboard origin. A dashboard
-document must provide the exact sender tab URL, tab ID, and Chrome document ID.
+Only `https://codearchive-dashboard-beta.netlify.app` and
+`http://localhost:5173` are accepted as dashboard origins. A dashboard document
+must provide one exact sender origin, the same exact tab origin, a tab ID, and
+Chrome document ID; lookalikes and mixed production/local sender-tab pairs are
+rejected. The manifest key remains pinned to extension ID
+`oohlcmihldmfninmdcmanddfmhoonmdl`.
+Those same two exact dashboard URL patterns are host permissions so Chrome can
+provide the external sender's tab URL; a missing tab URL remains fail-closed.
 The bridge issues a short lived capability (five minute idle TTL, fifteen
 minute absolute TTL) bound to that document and tab.
 

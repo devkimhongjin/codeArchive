@@ -2,7 +2,11 @@ import { createUuid } from "./capture";
 import type { Capture } from "./types";
 import type { CaptureStore } from "./storage";
 
-export const DASHBOARD_ORIGIN = "http://localhost:5173";
+export const DASHBOARD_ORIGIN = "https://codearchive-dashboard-beta.netlify.app";
+export const DASHBOARD_ORIGINS = [
+  DASHBOARD_ORIGIN,
+  "http://localhost:5173"
+] as const;
 export const SESSION_IDLE_TTL_MS = 5 * 60 * 1_000;
 export const SESSION_ABSOLUTE_TTL_MS = 15 * 60 * 1_000;
 export const MAX_PENDING_PAGE_SIZE = 50;
@@ -49,11 +53,11 @@ export interface DashboardBridgeOptions {
 }
 
 function exactDashboardSender(sender: DashboardSender): boolean {
-  if (typeof sender.url !== "string") return false;
+  if (typeof sender.url !== "string" || typeof sender.tab?.url !== "string") return false;
   try {
-    if (new URL(sender.url).origin !== DASHBOARD_ORIGIN) return false;
-    if (sender.tab?.url && new URL(sender.tab.url).origin !== DASHBOARD_ORIGIN) return false;
-    return true;
+    const senderOrigin = new URL(sender.url).origin;
+    const tabOrigin = new URL(sender.tab.url).origin;
+    return senderOrigin === tabOrigin && DASHBOARD_ORIGINS.includes(senderOrigin as typeof DASHBOARD_ORIGINS[number]);
   } catch {
     return false;
   }

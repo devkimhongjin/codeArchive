@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DashboardBridge, DASHBOARD_ORIGIN } from "../src/bridge";
+import { DashboardBridge, DASHBOARD_ORIGIN, DASHBOARD_ORIGINS } from "../src/bridge";
 import { createCapture } from "../src/capture";
 import { MemoryCaptureStore } from "../src/storage";
 
@@ -120,4 +120,37 @@ test("bridge rejects a dashboard tab whose tab URL is not the registered origin"
     }
   );
   assert.deepEqual(result, { error: "UNAUTHORIZED" });
+});
+
+test("bridge fails closed when Chrome omits the external sender tab URL", async () => {
+  const bridge = new DashboardBridge(new MemoryCaptureStore());
+  const result = await bridge.handleMessage({ type: "CONNECT" }, {
+    url: `${DASHBOARD_ORIGIN}/app`,
+    documentId: "doc-without-tab-url",
+    frameId: 0,
+    tab: { id: 7 }
+  });
+  assert.deepEqual(result, { error: "UNAUTHORIZED" });
+});
+
+test("bridge accepts both exact dashboard origins and rejects lookalikes or mixed origins", async () => {
+  let capabilityCounter = 0;
+  const bridge = new DashboardBridge(new MemoryCaptureStore(), {
+    capabilityFactory: () => `capability-origin-${++capabilityCounter}`
+  });
+  for (const origin of DASHBOARD_ORIGINS) {
+    const result = await bridge.handleMessage({ type: "CONNECT" }, {
+      url: `${origin}/app`, documentId: `doc-${origin}`, frameId: 0, tab: { id: 7, url: `${origin}/app` }
+    });
+    assert.ok("capability" in result, origin);
+  }
+  assert.deepEqual(await bridge.handleMessage({ type: "CONNECT" }, {
+    url: "https://codearchive-dashboard-beta.netlify.app.evil.example/app",
+    documentId: "lookalike", frameId: 0,
+    tab: { id: 7, url: "https://codearchive-dashboard-beta.netlify.app.evil.example/app" }
+  }), { error: "UNAUTHORIZED" });
+  assert.deepEqual(await bridge.handleMessage({ type: "CONNECT" }, {
+    url: "https://codearchive-dashboard-beta.netlify.app/app",
+    documentId: "mixed", frameId: 0, tab: { id: 7, url: "http://localhost:5173/app" }
+  }), { error: "UNAUTHORIZED" });
 });

@@ -7,7 +7,9 @@
   "permissions": [],
   "host_permissions": [
     "https://swexpertacademy.com/*",
-    "https://school.programmers.co.kr/*"
+    "https://school.programmers.co.kr/*",
+    "https://codearchive-dashboard-beta.netlify.app/*",
+    "http://localhost:5173/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -45,6 +47,7 @@
   ],
   "externally_connectable": {
     "matches": [
+      "https://codearchive-dashboard-beta.netlify.app/*",
       "http://localhost:5173/*"
     ]
   },

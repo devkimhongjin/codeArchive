@@ -41,12 +41,12 @@ class PostgreSqlMigrationTest {
             Flyway flyway = database.flyway();
 
             MigrateResult first = flyway.migrate();
-            assertEquals(3, first.migrationsExecuted);
-            assertEquals(3, database.historyCount());
+            assertEquals(4, first.migrationsExecuted);
+            assertEquals(4, database.historyCount());
 
             MigrateResult second = flyway.migrate();
             assertEquals(0, second.migrationsExecuted);
-            assertEquals(3, database.historyCount());
+            assertEquals(4, database.historyCount());
 
             database.assertFinalSchema();
             validateWithHibernate(database);
@@ -69,7 +69,7 @@ class PostgreSqlMigrationTest {
             assertThrows(FlywayException.class, adopted::migrate);
             adopted.baseline();
             assertEquals(1, database.historyCount());
-            assertEquals(2, adopted.migrate().migrationsExecuted);
+            assertEquals(3, adopted.migrate().migrationsExecuted);
 
             assertEquals("legacy@example.com", database.scalar(
                     "SELECT email FROM users WHERE id = ?", userId));
@@ -96,7 +96,7 @@ class PostgreSqlMigrationTest {
             Flyway adopted = database.flywayAtBaseline(MigrationVersion.fromVersion("2"));
             adopted.baseline();
             assertEquals(1, database.historyCount());
-            assertEquals(1, adopted.migrate().migrationsExecuted);
+            assertEquals(2, adopted.migrate().migrationsExecuted);
 
             assertEquals("9001", database.scalar(
                     "SELECT github_id FROM users WHERE id = ?", userId));
@@ -105,6 +105,56 @@ class PostgreSqlMigrationTest {
                             + "AND indexname = 'idx_solutions_user_solved_at'", database.schema)).longValue());
             validateWithHibernate(database);
         } finally {
+            database.drop();
+        }
+    }
+
+    @Test
+    void prodSchemaImportsLegacyPublicRowsWithoutChangingThePublicSource() throws Exception {
+        requirePublicSchemaMutation();
+        TestDatabase database = TestDatabase.create();
+        try {
+            database.createLegacyProductionSource();
+            assertEquals(1L, database.publicCount("flyway_schema_history"));
+            assertEquals(2L, database.publicCount("users"));
+            assertEquals(57L, database.publicCount("solutions"));
+
+            assertEquals(4, database.prodFlyway().migrate().migrationsExecuted);
+            assertEquals(4L, database.versionedHistoryCount("codearchive_v2"));
+            assertEquals(2L, database.countInSchema("codearchive_v2", "users"));
+            assertEquals(57L, database.countInSchema("codearchive_v2", "solutions"));
+            assertEquals("101.000000", database.scalarInSchema("codearchive_v2",
+                    "SELECT execution_time::text FROM solutions WHERE problem_number = '1000'"));
+            assertEquals("101164.000000", database.scalarInSchema("codearchive_v2",
+                    "SELECT memory_usage::text FROM solutions WHERE problem_number = '1000'"));
+            assertEquals("https://school.programmers.co.kr/learn/courses/30/lessons/1000",
+                    database.scalarInSchema("codearchive_v2",
+                            "SELECT problem_url FROM solutions WHERE problem_number = '1000'"));
+            assertEquals("https://swexpertacademy.com/main/code/problem/problemList.do",
+                    database.scalarInSchema("codearchive_v2",
+                            "SELECT problem_url FROM solutions WHERE problem_number = '1001'"));
+            assertEquals(1L, database.publicCount("flyway_schema_history"));
+            assertEquals(2L, database.publicCount("users"));
+            assertEquals(57L, database.publicCount("solutions"));
+            assertEquals(0, database.prodFlyway().migrate().migrationsExecuted);
+        } finally {
+            database.dropProductionSchemas();
+            database.drop();
+        }
+    }
+
+    @Test
+    void prodSchemaSkipsAnAlreadyRebuiltPublicShape() throws Exception {
+        requirePublicSchemaMutation();
+        TestDatabase database = TestDatabase.create();
+        try {
+            database.createRebuiltPublicSource();
+            assertEquals(4, database.prodFlyway().migrate().migrationsExecuted);
+            assertEquals(0L, database.countInSchema("codearchive_v2", "users"));
+            assertEquals(0L, database.countInSchema("codearchive_v2", "solutions"));
+            assertEquals(0, database.prodFlyway().migrate().migrationsExecuted);
+        } finally {
+            database.dropProductionSchemas();
             database.drop();
         }
     }
@@ -133,6 +183,11 @@ class PostgreSqlMigrationTest {
         } finally {
             entityManagerFactory.destroy();
         }
+    }
+
+    private static void requirePublicSchemaMutation() {
+        Assumptions.assumeTrue("true".equals(System.getenv("PG_TEST_ALLOW_PUBLIC_SCHEMA_MUTATION")),
+                "Set PG_TEST_ALLOW_PUBLIC_SCHEMA_MUTATION=true to run tests that mutate public");
     }
 
     private static final class TestDatabase {
@@ -198,15 +253,115 @@ class PostgreSqlMigrationTest {
             return configuration.load();
         }
 
+        private Flyway prodFlyway() {
+            return Flyway.configure()
+                    .dataSource(url, user, password)
+                    .locations("classpath:db/migration")
+                    .schemas("codearchive_v2")
+                    .defaultSchema("codearchive_v2")
+                    .createSchemas(true)
+                    .baselineOnMigrate(false)
+                    .cleanDisabled(true)
+                    .validateOnMigrate(true)
+                    .load();
+        }
+
         private Connection connection() throws SQLException {
+            return connection(schema);
+        }
+
+        private Connection connection(String targetSchema) throws SQLException {
             Connection connection = DriverManager.getConnection(url, user, password);
-            connection.setSchema(schema);
+            connection.setSchema(targetSchema);
             return connection;
+        }
+
+        private void createLegacyProductionSource() throws SQLException {
+            try (Connection connection = connection("public"); Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE flyway_schema_history (installed_rank INT PRIMARY KEY, version VARCHAR(50), description VARCHAR(200), type VARCHAR(20), script VARCHAR(1000), checksum INT, installed_by VARCHAR(100), installed_on TIMESTAMPTZ DEFAULT now(), execution_time INT, success BOOLEAN)");
+                statement.execute("INSERT INTO flyway_schema_history (installed_rank, version, description, type, script, execution_time, success) VALUES (1, '12', 'legacy history', 'SQL', 'V12__legacy.sql', 1, true)");
+                statement.execute("CREATE TABLE users (id UUID PRIMARY KEY, github_user_id BIGINT NOT NULL, github_login VARCHAR(39) NOT NULL, display_name VARCHAR(255), created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL)");
+                statement.execute("CREATE TABLE solutions (id UUID PRIMARY KEY, user_id UUID NOT NULL, client_record_id VARCHAR(36) NOT NULL, platform VARCHAR(20) NOT NULL, problem_number VARCHAR(100) NOT NULL, title VARCHAR(500) NOT NULL, language VARCHAR(100) NOT NULL, code TEXT NOT NULL, result VARCHAR(20) NOT NULL, observed_at TIMESTAMPTZ NOT NULL, solved_at TIMESTAMPTZ NOT NULL, execution_time VARCHAR(50), memory_usage VARCHAR(50))");
+            }
+            UUID firstUser = UUID.randomUUID();
+            UUID secondUser = UUID.randomUUID();
+            try (Connection connection = connection("public");
+                    PreparedStatement users = connection.prepareStatement("INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)");
+                    PreparedStatement solutions = connection.prepareStatement("INSERT INTO solutions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+                insertLegacyUser(users, firstUser, 10001L, "first-user", "First User");
+                insertLegacyUser(users, secondUser, 10002L, "second-user", null);
+                for (int index = 0; index < 57; index++) {
+                    solutions.setObject(1, UUID.randomUUID());
+                    solutions.setObject(2, index % 2 == 0 ? firstUser : secondUser);
+                    solutions.setString(3, UUID.randomUUID().toString());
+                    solutions.setString(4, index == 0 ? "PROGRAMMERS" : "SWEA");
+                    solutions.setString(5, Integer.toString(1000 + index));
+                    solutions.setString(6, "Legacy problem " + index);
+                    solutions.setString(7, "JAVA");
+                    solutions.setString(8, "class Solution {}");
+                    solutions.setString(9, "ACCEPTED");
+                    solutions.setObject(10, utc("2025-01-02T03:04:05Z"));
+                    solutions.setObject(11, utc("2025-01-02T03:04:05Z"));
+                    solutions.setString(12, index == 0 ? "101 ms" : null);
+                    solutions.setString(13, index == 0 ? "101,164 kb" : null);
+                    solutions.executeUpdate();
+                }
+            }
+        }
+
+        private void insertLegacyUser(PreparedStatement statement, UUID id, long githubUserId, String login, String name)
+                throws SQLException {
+            statement.setObject(1, id);
+            statement.setLong(2, githubUserId);
+            statement.setString(3, login);
+            statement.setString(4, name);
+            statement.setObject(5, utc("2025-01-02T03:04:05Z"));
+            statement.setObject(6, utc("2025-01-03T03:04:05Z"));
+            statement.executeUpdate();
+        }
+
+        private void createRebuiltPublicSource() throws SQLException {
+            try (Connection connection = connection("public"); Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE users (id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, github_id VARCHAR(64))");
+                statement.execute("CREATE TABLE solutions (id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, capture_id VARCHAR(36))");
+            }
+        }
+
+        private void dropProductionSchemas() throws SQLException {
+            try (Connection connection = DriverManager.getConnection(url, user, password); Statement statement = connection.createStatement()) {
+                statement.execute("DROP SCHEMA IF EXISTS codearchive_v2 CASCADE");
+                statement.execute("DROP TABLE IF EXISTS public.solutions");
+                statement.execute("DROP TABLE IF EXISTS public.users");
+                statement.execute("DROP TABLE IF EXISTS public.flyway_schema_history");
+            }
         }
 
         private long historyCount() throws SQLException {
             Number count = scalar("SELECT COUNT(*) FROM flyway_schema_history");
             return count.longValue();
+        }
+
+        private long publicCount(String table) throws SQLException {
+            return ((Number) scalarInSchema("public", "SELECT COUNT(*) FROM " + quoteIdentifier(table))).longValue();
+        }
+
+        private long countInSchema(String targetSchema, String table) throws SQLException {
+            return ((Number) scalarInSchema(targetSchema, "SELECT COUNT(*) FROM " + quoteIdentifier(table))).longValue();
+        }
+
+        private long versionedHistoryCount(String targetSchema) throws SQLException {
+            return ((Number) scalarInSchema(targetSchema,
+                    "SELECT COUNT(*) FROM flyway_schema_history WHERE version IS NOT NULL")).longValue();
+        }
+
+        private <T> T scalarInSchema(String targetSchema, String sql) throws SQLException {
+            try (Connection connection = connection(targetSchema); PreparedStatement statement = connection.prepareStatement(sql);
+                    ResultSet resultSet = statement.executeQuery()) {
+                assertTrue(resultSet.next(), "Expected a row for: " + sql);
+                @SuppressWarnings("unchecked")
+                T value = (T) resultSet.getObject(1);
+                return value;
+            }
         }
 
         private long insertLegacyRows() throws SQLException {
