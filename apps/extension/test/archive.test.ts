@@ -6,6 +6,13 @@ import { mountArchive } from '../src/archiveView';
 
 const html = readFileSync(new URL('../src/archive.html', import.meta.url), 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
+async function waitFor(condition: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error(`Condition was not met within ${timeoutMs}ms`);
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+}
 
 function capture(captureId: string, syncState: 'PENDING' | 'SYNCED', sourceCode: string) {
   return {
@@ -73,10 +80,14 @@ test('archive theme changes call the local updater and re-render with the select
   select.querySelector('option[value="solarized-light"]')!.setAttribute('selected', '');
   select.dispatchEvent(new document.defaultView!.Event('change'));
   for (let i = 0; i < 12; i += 1) await settle();
-  await new Promise(resolve => setTimeout(resolve, 100));
   assert.deepEqual(updates, [['solarized-light', 'github-dark']]);
   assert.equal(select.value, 'solarized-light');
   assert.equal(document.querySelectorAll('.capture-card').length, 1);
-  assert.equal(document.querySelector<HTMLElement>('.source-code')!.dataset.shikiTheme, 'solarized-light');
-  assert.notEqual(document.querySelector<HTMLElement>('.source-code')!.style.backgroundColor, '');
+  const source = document.querySelector<HTMLElement>('.source-code')!;
+  // Shiki initializes its WASM engine asynchronously. Await the observable
+  // render completion instead of assuming a fixed wall-clock delay is enough
+  // on every CI host.
+  await waitFor(() => source.dataset.shikiTheme === 'solarized-light');
+  assert.equal(source.dataset.shikiTheme, 'solarized-light');
+  assert.notEqual(source.style.backgroundColor, '');
 });
