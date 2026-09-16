@@ -1,6 +1,0 @@
-interface:
-  display_name: "CodeArchive Astra Explorer"
-  short_description: "Map repository structure and execution paths read-only"
-  default_prompt: "Use $codearchive-astra-explorer to inspect the relevant CodeArchive paths before implementation."
-policy:
-  allow_implicit_invocation: false

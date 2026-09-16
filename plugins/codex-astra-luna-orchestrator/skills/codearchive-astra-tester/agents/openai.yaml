@@ -1,6 +1,0 @@
-interface:
-  display_name: "CodeArchive Astra Tester"
-  short_description: "Run focused validation and report evidence"
-  default_prompt: "Use $codearchive-astra-tester to verify the delegated behavior and report exact evidence."
-policy:
-  allow_implicit_invocation: false

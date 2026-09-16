@@ -1,6 +1,0 @@
-interface:
-  display_name: "CodeArchive Astra Researcher"
-  short_description: "Verify technical facts with primary sources"
-  default_prompt: "Use $codearchive-astra-researcher to verify the delegated technical question."
-policy:
-  allow_implicit_invocation: false
