@@ -1,16 +1,46 @@
 import { createAdapter } from "./adapters";
 import { collectAcceptedCaptureAttempt } from "./capture";
 import type { Capture, PlatformAdapter } from "./types";
-
-const adapter: PlatformAdapter | null =
-  typeof document !== "undefined" && typeof window !== "undefined"
-    ? createAdapter(document, window.location)
-    : null;
+import {
+  createSweaProblemContext,
+  resolveSweaProblemUrl,
+  type SweaProblemContext
+} from "./sweaProblemContext";
+import { SWEA_ORIGIN, SWEA_SOLVING_PATH } from "./adapters/sweaSelectors";
 
 const STORE_CAPTURE_RETRY_DELAYS_MS = [50, 150, 500] as const;
 
 type SendRuntimeMessage = (message: unknown) => Promise<unknown>;
 type Sleep = (delayMs: number) => Promise<void>;
+
+export async function storeSweaProblemContext(
+  document: Document,
+  location: Location,
+  send: SendRuntimeMessage = (message) => chrome.runtime.sendMessage(message),
+  observedAt = Date.now()
+): Promise<boolean> {
+  const context = createSweaProblemContext(document, location, observedAt);
+  if (!context) return false;
+  try {
+    const response = await send({ type: "STORE_SWEA_PROBLEM_CONTEXT", context });
+    return (response as { ok?: unknown } | null)?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function loadSweaProblemContext(
+  sourceUrl: string,
+  send: SendRuntimeMessage = (message) => chrome.runtime.sendMessage(message)
+): Promise<SweaProblemContext | null> {
+  try {
+    const response = await send({ type: "GET_SWEA_PROBLEM_CONTEXT", sourceUrl });
+    const context = (response as { context?: unknown } | null)?.context;
+    return context && typeof context === "object" ? context as SweaProblemContext : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * The service worker can be starting up when the result popup first appears.
@@ -37,7 +67,7 @@ export async function storeCaptureWithRetry(
   return response;
 }
 
-if (adapter) {
+function startCapture(adapter: PlatformAdapter, document: Document): void {
   let processing = false;
   let checkScheduled = false;
   let checkAfterProcessing = false;
@@ -113,4 +143,30 @@ if (adapter) {
       attributeFilter: ["class", "style", "hidden", "aria-hidden", "aria-modal"]
     });
   }
+}
+
+export async function bootstrapContent(
+  document: Document,
+  location: Location,
+  referrer: string,
+  send: SendRuntimeMessage = (message) => chrome.runtime.sendMessage(message)
+): Promise<void> {
+  const detailContext = createSweaProblemContext(document, location);
+  if (detailContext) {
+    await storeSweaProblemContext(document, location, send, detailContext.observedAt);
+    return;
+  }
+
+  let sweaProblemUrl: string | null = null;
+  if (location.origin === SWEA_ORIGIN && location.pathname === SWEA_SOLVING_PATH) {
+    const storedContext = await loadSweaProblemContext(referrer, send);
+    sweaProblemUrl = resolveSweaProblemUrl(document, location, referrer, storedContext);
+  }
+
+  const adapter = createAdapter(document, location, sweaProblemUrl);
+  if (adapter) startCapture(adapter, document);
+}
+
+if (typeof document !== "undefined" && typeof window !== "undefined") {
+  void bootstrapContent(document, window.location, document.referrer);
 }

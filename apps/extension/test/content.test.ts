@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { parseHTML } from "linkedom";
 import { createCapture } from "../src/capture";
-import { storeCaptureWithRetry } from "../src/content";
+import { loadSweaProblemContext, storeCaptureWithRetry, storeSweaProblemContext } from "../src/content";
+
+function locationFor(href: string): Location {
+  return new URL(href) as unknown as Location;
+}
 
 function capture() {
   const result = createCapture({
@@ -54,4 +59,52 @@ test("content capture stops after the bounded retry budget", async () => {
   assert.deepEqual(result, { ok: false, error: "STORAGE_ERROR" });
   assert.equal(calls, 4);
   assert.deepEqual(delays, [50, 150, 500]);
+});
+
+test("detail-page content sends only a verified SWEA problem context", async () => {
+  const { document } = parseHTML('<input id="contestProbId" value="A">');
+  const messages: unknown[] = [];
+  const stored = await storeSweaProblemContext(
+    document,
+    locationFor("https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=A"),
+    async (message) => {
+      messages.push(message);
+      return { ok: true };
+    },
+    1_000
+  );
+  assert.equal(stored, true);
+  assert.deepEqual(messages, [{
+    type: "STORE_SWEA_PROBLEM_CONTEXT",
+    context: {
+      contestProbId: "A",
+      problemUrl: "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=A",
+      sourcePath: "/main/code/problem/problemDetail.do",
+      observedAt: 1_000
+    }
+  }]);
+
+  let calls = 0;
+  assert.equal(await storeSweaProblemContext(
+    document,
+    locationFor("https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=B"),
+    async () => { calls += 1; return { ok: true }; }
+  ), false);
+  assert.equal(calls, 0);
+});
+
+test("solving-page content requests context by exact referrer", async () => {
+  const sourceUrl = "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do?contestProbId=U1";
+  const context = {
+    contestProbId: "U1",
+    problemUrl: sourceUrl,
+    sourcePath: "/main/code/userProblem/userProblemDetail.do" as const,
+    observedAt: 1_000
+  };
+  const messages: unknown[] = [];
+  assert.deepEqual(await loadSweaProblemContext(sourceUrl, async (message) => {
+    messages.push(message);
+    return { context };
+  }), context);
+  assert.deepEqual(messages, [{ type: "GET_SWEA_PROBLEM_CONTEXT", sourceUrl }]);
 });

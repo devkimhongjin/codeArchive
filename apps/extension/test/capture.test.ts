@@ -59,7 +59,13 @@ test('a lost storage reply keeps the same capture ID across later observer check
 
 test('SWEA captures the observed live success popup with br-separated sentences', () => {
   const { document } = sweaDocument();
-  const adapter = new SweaAdapter(document, locationFor('https://swexpertacademy.com/main/solvingProblem/solvingProblem.do'));
+  const adapter = new SweaAdapter(
+    document,
+    locationFor('https://swexpertacademy.com/main/solvingProblem/solvingProblem.do'),
+    undefined,
+    undefined,
+    'https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=AV1234'
+  );
   adapter.beginSubmissionAttempt();
   const popup = document.querySelector('.popup_layer')!;
   popup.classList.add('show');
@@ -67,6 +73,7 @@ test('SWEA captures the observed live success popup with br-separated sentences'
   const captured = collectAcceptedCaptureAttempt(adapter);
   assert.ok(captured);
   assert.equal(captured.capture.problemNumber, '5678');
+  assert.equal(captured.capture.problemUrl, 'https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=AV1234');
   assert.equal(captured.capture.sourceCode, 'class Solution {}');
   adapter.consumeSubmissionResult(captured.detection);
   assert.equal(collectAcceptedCaptureAttempt(adapter), null);

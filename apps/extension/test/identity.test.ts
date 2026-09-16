@@ -10,4 +10,8 @@ test('public manifest key pins the same ID used by the dashboard', () => {
   const id = [...hex].map(digit => String.fromCharCode(97 + parseInt(digit, 16))).join('');
   assert.equal(id, EXTENSION_ID);
   assert.deepEqual(manifest.externally_connectable.matches, ['http://localhost:5173/*']);
+  const isolated = manifest.content_scripts.find((script: { world?: string }) => script.world === 'ISOLATED');
+  assert.ok(isolated);
+  assert.ok(isolated.matches.includes('https://swexpertacademy.com/main/code/problem/problemDetail.do*'));
+  assert.ok(isolated.matches.includes('https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do*'));
 });
