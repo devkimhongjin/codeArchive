@@ -3,6 +3,8 @@ package com.codearchive.api.common;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.stream.Collectors;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import jakarta.persistence.OptimisticLockException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -30,6 +32,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<ApiError> handleDataIntegrity(DataIntegrityViolationException exception) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(new ApiError("Request conflicts with existing data"));
+    }
+
+    @ExceptionHandler({OptimisticLockException.class, ObjectOptimisticLockingFailureException.class})
+    ResponseEntity<ApiError> handleOptimisticConflict(Exception exception) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new ApiError("Settings changed; refresh and retry"));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

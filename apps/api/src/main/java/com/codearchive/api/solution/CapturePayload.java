@@ -16,6 +16,9 @@ public class CapturePayload {
     private String solvedAt;
     private BigDecimal executionTime;
     private BigDecimal memoryUsage;
+    /** The value is deliberately separate from its unit: old captures are ambiguous. */
+    private BigDecimal memoryValue;
+    private String memoryUnit;
 
     public String getCaptureId() { return captureId; }
     public void setCaptureId(String captureId) { this.captureId = captureId; }
@@ -41,4 +44,8 @@ public class CapturePayload {
     public void setExecutionTime(BigDecimal executionTime) { this.executionTime = executionTime; }
     public BigDecimal getMemoryUsage() { return memoryUsage; }
     public void setMemoryUsage(BigDecimal memoryUsage) { this.memoryUsage = memoryUsage; }
+    public BigDecimal getMemoryValue() { return memoryValue; }
+    public void setMemoryValue(BigDecimal memoryValue) { this.memoryValue = memoryValue; }
+    public String getMemoryUnit() { return memoryUnit; }
+    public void setMemoryUnit(String memoryUnit) { this.memoryUnit = memoryUnit; }
 }

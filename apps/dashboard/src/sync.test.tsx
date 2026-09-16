@@ -44,7 +44,7 @@ async function openConnectedSettings() {
   render(<App />)
   await screen.findByRole('button', { name: '로그아웃' })
   fireEvent.click(screen.getByRole('button', { name: '설정' }))
-  await waitFor(() => expect(screen.getByText('연결됨')).toBeTruthy())
+  await waitFor(() => expect(bridgeCalls('CONNECT').length).toBeGreaterThan(0))
 }
 
 afterEach(() => {
@@ -66,9 +66,8 @@ it('auto-connects only known IDs, falls back for migration and transfers no code
   expect(bridgeCalls('CONNECT').map(([id]) => id)).toEqual([EXTENSION_ID, LEGACY_EXTENSION_ID])
   expect(bridgeCalls('GET_PENDING')).toHaveLength(0)
   expect(screen.queryByLabelText('확장 프로그램 ID')).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: '연결 해제' }))
-  await waitFor(() => expect(screen.getByText('연결 안 됨')).toBeTruthy())
-  expect(bridgeCalls('CONNECT')).toHaveLength(2)
+  // Ordinary connect/disconnect controls deliberately do not live in Settings.
+  expect(screen.queryByText('연결 안 됨')).toBeNull()
 })
 
 it('does not connect for an unauthenticated demo', async () => {
@@ -92,11 +91,10 @@ it('renews an expired capability within the same explicit sync without uploading
     return Promise.resolve({ ok: true })
   })
   await openConnectedSettings()
-  fireEvent.click(screen.getByRole('button', { name: '지금 동기화' }))
+  fireEvent.click(screen.getByRole('button', { name: '동기화' }))
   await waitFor(() => expect(bridgeCalls('ACK')).toHaveLength(1))
   expect(bridgeCalls('CONNECT')).toHaveLength(2)
   expect(mocks.bulk).toHaveBeenCalledOnce()
-  expect(screen.getByText('연결됨')).toBeTruthy()
 })
 
 it('keeps the bridge connected after an empty sync and reuses it for the next sync', async () => {
@@ -111,16 +109,14 @@ it('keeps the bridge connected after an empty sync and reuses it for the next sy
   })
 
   await openConnectedSettings()
-  fireEvent.click(screen.getByRole('button', { name: '지금 동기화' }))
+  fireEvent.click(screen.getByRole('button', { name: '동기화' }))
   await waitFor(() => expect(bridgeCalls('GET_PENDING')).toHaveLength(1))
-  await waitFor(() => expect(screen.getByText('연결됨')).toBeTruthy())
   expect(bridgeCalls('DISCONNECT')).toHaveLength(0)
 
-  fireEvent.click(screen.getByRole('button', { name: '지금 동기화' }))
+  fireEvent.click(screen.getByRole('button', { name: '동기화' }))
   await waitFor(() => expect(bridgeCalls('GET_PENDING')).toHaveLength(2))
   expect(bridgeCalls('CONNECT')).toHaveLength(1)
   expect(bridgeCalls('DISCONNECT')).toHaveLength(0)
-  expect(screen.getByText('연결됨')).toBeTruthy()
 })
 
 it('keeps the bridge connected after a successful sync and supports a second page', async () => {
@@ -139,16 +135,14 @@ it('keeps the bridge connected after a successful sync and supports a second pag
   })
 
   await openConnectedSettings()
-  fireEvent.click(screen.getByRole('button', { name: '지금 동기화' }))
+  fireEvent.click(screen.getByRole('button', { name: '동기화' }))
   await waitFor(() => expect(bridgeCalls('ACK')).toHaveLength(1))
-  await waitFor(() => expect(screen.getByText('연결됨')).toBeTruthy())
   expect(bridgeCalls('DISCONNECT')).toHaveLength(0)
 
-  fireEvent.click(screen.getByRole('button', { name: '지금 동기화' }))
+  fireEvent.click(screen.getByRole('button', { name: '동기화' }))
   await waitFor(() => expect(bridgeCalls('GET_PENDING')).toHaveLength(2))
   expect(bridgeCalls('CONNECT')).toHaveLength(1)
   expect(bridgeCalls('DISCONNECT')).toHaveLength(0)
-  expect(screen.getByText('연결됨')).toBeTruthy()
 })
 
 it('retires a failed capability so the next sync reconnects and can retry', async () => {
@@ -165,12 +159,10 @@ it('retires a failed capability so the next sync reconnects and can retry', asyn
   })
 
   await openConnectedSettings()
-  fireEvent.click(screen.getByRole('button', { name: '지금 동기화' }))
+  fireEvent.click(screen.getByRole('button', { name: '동기화' }))
   await waitFor(() => expect(bridgeCalls('DISCONNECT')).toHaveLength(1))
-  await waitFor(() => expect(screen.getByText('연결 안 됨')).toBeTruthy())
 
   fireEvent.click(screen.getByRole('button', { name: '동기화' }))
   await waitFor(() => expect(bridgeCalls('ACK')).toHaveLength(1))
   expect(bridgeCalls('CONNECT')).toHaveLength(2)
-  expect(screen.getByText('연결됨')).toBeTruthy()
 })

@@ -20,15 +20,15 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { ApiError, bulkUpload, getAuthProviders, getMe, getSolutions, logout } from './api'
+import { ApiError, bulkUpload, getAccountSettings, getAuthProviders, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings } from './api'
 import { BridgeError, parseAckResponse, parseConnectResponse, parsePendingResponse, requestBridge } from './bridge'
 import { demoSolutions } from './demoData'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
-import { GITHUB_LOGIN_URL, type AuthProviders, type BulkResponse, type Solution, type Toast, type User, type ViewName } from './types'
+import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type AuthProviders, type BulkResponse, type Solution, type Toast, type User, type ViewName } from './types'
 import { CodeBlock } from './CodeBlock'
 import { EXTENSION_ID, LEGACY_EXTENSION_ID, EXTENSION_CANDIDATES } from './extensionConfig'
-import { readExportSettings, EXPORT_SETTINGS_KEY, exportCode, downloadFilename, sourceFileExtension, type ExportSettings } from './codeExport'
+import { readExportSettings, EXPORT_SETTINGS_KEY, exportCode, downloadFilename, gitPath, sourceFileExtension, type ExportSettings } from './codeExport'
 import './styles.css'
 
 type IconName =
@@ -104,6 +104,8 @@ function normalizeSolution(value: unknown, index = 0): Solution {
     solvedAt: read('solvedAt', 'solved_at') as string | undefined,
     executionTime: read('executionTime', 'execution_time') as number | string | undefined,
     memoryUsage: read('memoryUsage', 'memory_usage') as number | string | undefined,
+    memoryValue: read('memoryValue', 'memory_value') as number | string | undefined,
+    memoryUnit: read('memoryUnit', 'memory_unit') as Solution['memoryUnit'],
   }
 }
 
@@ -119,6 +121,12 @@ function formatMetric(value: number | string | undefined, suffix: string) {
   return `${value}${suffix}`
 }
 
+function formatMemory(solution: Solution) {
+  if (solution.memoryValue !== undefined && solution.memoryUnit && solution.memoryUnit !== 'UNKNOWN') return `${solution.memoryValue} ${solution.memoryUnit}`
+  if (solution.memoryUsage !== undefined) return `${solution.memoryUsage} · 단위 미확인`
+  return '—'
+}
+
 function formatObservedTime(value?: string) {
   if (!value) return '기록 없음'
   const date = new Date(value)
@@ -131,6 +139,19 @@ function formatObservedTime(value?: string) {
 function displayUser(user: User) {
   const name = user.name?.trim()
   return name ? `${name} (@${user.githubLogin})` : `@${user.githubLogin}`
+}
+
+const defaultAccountSettings = (): AccountSettings => ({ version: 0, name: null, nickname: null, copyHeader: false, downloadHeader: false, downloadFilenameTemplate: '{platform}-{number}-{title}', gitPathTemplate: '{platform}/{number}-{title}', lightTheme: 'github-light', darkTheme: 'github-dark', autoSyncEnabled: false, githubAutoCommitEnabled: false, githubTargetConfigured: false, githubStatus: 'TARGET_MISSING', githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null })
+const RELAY_DEVICE_KEY = 'codearchive-relay-device-id'
+
+function relayDeviceId() {
+  const existing = localStorage.getItem(RELAY_DEVICE_KEY)
+  if (existing && /^[A-Za-z0-9_-]{16,100}$/.test(existing)) return existing
+  const generated = typeof crypto?.randomUUID === 'function'
+    ? crypto.randomUUID().replace(/-/g, '')
+    : `dashboard${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`
+  localStorage.setItem(RELAY_DEVICE_KEY, generated)
+  return generated
 }
 
 export default function App() {
@@ -155,6 +176,9 @@ export default function App() {
   const [autoConnect, setAutoConnect] = useState(true)
   const connectInFlight = useRef(false)
   const [exportSettings, setExportSettings] = useState(readExportSettings)
+  const [accountSettings, setAccountSettings] = useState<AccountSettings>(defaultAccountSettings)
+  const [settingsBusy, setSettingsBusy] = useState(false)
+  const [settingsError, setSettingsError] = useState<string | null>(null)
   const [bridgeStatus, setBridgeStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
   const [bridgeCapability, setBridgeCapability] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -167,6 +191,23 @@ export default function App() {
   const githubProviderOperation = useRef(0)
   const logoutOperation = useRef(0)
   const authMutationInFlight = useRef<number | null>(null)
+  // A bridge can connect before /api/settings resolves.  Keep the server-loaded
+  // draft separate from React's render timing so a connection never receives
+  // defaults as if they were acknowledged account settings.
+  const accountSettingsRef = useRef<AccountSettings>(accountSettings)
+  const settingsLoadedRef = useRef<{ accountId: number; generation: number; version: number } | null>(null)
+  const relayHandoffRef = useRef<string | null>(null)
+  const relayHandoffInFlight = useRef(new Set<string>())
+  const relayHandoffOperation = useRef(0)
+
+  const updateAccountSettingsDraft = (next: AccountSettings) => {
+    // A draft change (especially an immediate local OFF) invalidates any
+    // grant request that was started for the preceding server version.
+    relayHandoffOperation.current += 1
+    accountSettingsRef.current = next
+    relayHandoffRef.current = null
+    setAccountSettings(next)
+  }
 
   const showToast = (kind: Toast['kind'], message: string) => {
     toastId.current += 1
@@ -222,6 +263,31 @@ export default function App() {
       active = false
     }
   }, [])
+
+  useEffect(() => {
+    if (!user) { settingsLoadedRef.current = null; updateAccountSettingsDraft(defaultAccountSettings()); return }
+    let active = true
+    const generation = accountGeneration.current
+    settingsLoadedRef.current = null
+    void getAccountSettings().then(server => {
+      if (!active || generation !== accountGeneration.current) return
+      // One-way migration: old browser-only export choices only seed the first
+      // server version, and never overwrite an existing account preference.
+      const migrated = server.version === 0 && !server.copyHeader && !server.downloadHeader && server.downloadFilenameTemplate === '{platform}-{number}-{title}'
+        ? { ...server, copyHeader: exportSettings.copyHeader, downloadHeader: exportSettings.downloadHeader, downloadFilenameTemplate: exportSettings.filenameTemplate, gitPathTemplate: exportSettings.gitPathTemplate ?? server.gitPathTemplate }
+        : server
+      relayHandoffOperation.current += 1
+      accountSettingsRef.current = migrated
+      setAccountSettings(migrated)
+      setExportSettings({ copyHeader: migrated.copyHeader, downloadHeader: migrated.downloadHeader, filenameTemplate: migrated.downloadFilenameTemplate, gitPathTemplate: migrated.gitPathTemplate })
+      settingsLoadedRef.current = { accountId: user.id, generation, version: migrated.version }
+      // If automatic connection won the race against settings loading, now send
+      // the authoritative settings. configureRelay is declared below but is
+      // invoked asynchronously after the component has finished initialization.
+      if (bridgeCapabilityRef.current) void configureRelay(migrated, user, generation, bridgeCapabilityRef.current, true)
+    }).catch(error => { if (active) setSettingsError(error instanceof Error ? error.message : '계정 설정을 불러오지 못했습니다.') })
+    return () => { active = false }
+  }, [user?.id])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -333,10 +399,18 @@ export default function App() {
     // Every account or bridge change therefore fences both the upload and ACK step.
     accountGeneration.current += 1
     solutionOperation.current += 1
+    relayHandoffOperation.current += 1
     const resetOperation = ++bridgeOperation.current
     setLoading(false)
     const capability = bridgeCapabilityRef.current
     const disconnectExtensionId = currentExtensionId.current
+    // Stop the extension before the asynchronous server revocation. This is
+    // intentionally fail-closed during offline logout/account switching.
+    if (disconnectExtensionId && capability) {
+      void requestBridge(disconnectExtensionId, { type: 'CONFIGURE_RELAY', capability, relay: null }).catch(() => undefined)
+    }
+    const deviceId = localStorage.getItem(RELAY_DEVICE_KEY)
+    if (deviceId) void revokeRelayGrant(deviceId).catch(() => undefined)
     const shouldDisconnect = Boolean(disconnectExtensionId && capability)
     if (shouldDisconnect) {
       try {
@@ -425,6 +499,10 @@ export default function App() {
           bridgeCapabilityRef.current = capability
           setBridgeCapability(capability)
           setBridgeStatus('connected')
+          const loaded = settingsLoadedRef.current
+          if (loaded && loaded.accountId === user.id && loaded.generation === fence.generation) {
+            void configureRelay(accountSettingsRef.current, user, fence.generation, capability, true)
+          }
           if (!silent) showToast('success', '확장 프로그램을 연결했습니다.')
           return capability
         } catch { /* Only the two known installation identities are eligible. */ }
@@ -473,10 +551,104 @@ export default function App() {
     }
   }, [user?.githubId, mode, autoConnect])
 
+  const relayConfiguration = (capability: string, saved: AccountSettings, account: User, relay: { endpoint: string; secret: string; generation: number } | null) => ({
+    type: 'CONFIGURE_RELAY' as const,
+    capability,
+    relay: relay && { endpoint: relay.endpoint, secret: relay.secret, accountId: String(account.id), generation: relay.generation },
+    settingsVersion: saved.version,
+    // These are deliberately present for relay:null as well: the extension
+    // owns no server profile/export/theme data and must refresh them while OFF.
+    accountId: String(account.id),
+    autoSyncEnabled: relay !== null,
+    githubAutoCommitEnabled: relay !== null && saved.githubAutoCommitEnabled,
+    githubTargetConfigured: saved.githubTargetConfigured,
+    copyHeader: saved.copyHeader,
+    downloadHeader: saved.downloadHeader,
+    downloadFilenameTemplate: saved.downloadFilenameTemplate,
+    gitPathTemplate: saved.gitPathTemplate,
+    name: saved.name,
+    nickname: saved.nickname,
+    lightTheme: saved.lightTheme,
+    darkTheme: saved.darkTheme,
+  })
+
+  const clearRelay = () => {
+    const capability = bridgeCapabilityRef.current
+    if (capability && user) {
+      // The extension treats a null relay as an immediate durable OFF. Do this
+      // before revocation so an unreachable dashboard cannot leave it running.
+      void requestBridge(currentExtensionId.current, relayConfiguration(capability, accountSettingsRef.current, user, null)).catch(() => undefined)
+    }
+    const deviceId = localStorage.getItem(RELAY_DEVICE_KEY)
+    if (deviceId) void revokeRelayGrant(deviceId).catch(() => undefined)
+  }
+
+  const configureRelay = async (saved: AccountSettings, account: User, generation: number, requestedCapability = bridgeCapabilityRef.current, silent = false) => {
+    const capability = requestedCapability
+    if (!capability) {
+      if (!silent && saved.autoSyncEnabled) showToast('info', '자동 동기화는 확장 프로그램이 연결되면 적용됩니다.')
+      return
+    }
+    if (generation !== accountGeneration.current || settingsLoadedRef.current?.accountId !== account.id || settingsLoadedRef.current?.generation !== generation) return
+    const handoffKey = `${capability}:${account.id}:${saved.version}:${saved.autoSyncEnabled ? 'on' : 'off'}`
+    if (relayHandoffRef.current === handoffKey || relayHandoffInFlight.current.has(handoffKey)) return
+    const operation = ++relayHandoffOperation.current
+    const stillCurrent = () =>
+      operation === relayHandoffOperation.current &&
+      generation === accountGeneration.current &&
+      bridgeCapabilityRef.current === capability &&
+      settingsLoadedRef.current?.accountId === account.id &&
+      settingsLoadedRef.current?.generation === generation &&
+      settingsLoadedRef.current?.version === saved.version
+    if (!stillCurrent()) return
+    relayHandoffInFlight.current.add(handoffKey)
+    try {
+      if (!saved.autoSyncEnabled) {
+        await requestBridge(currentExtensionId.current, relayConfiguration(capability, saved, account, null))
+        if (stillCurrent()) relayHandoffRef.current = handoffKey
+        return
+      }
+      const grant = await issueRelayGrant(relayDeviceId(), saved.version)
+      if (!stillCurrent()) return
+      await requestBridge(currentExtensionId.current, relayConfiguration(capability, saved, account, grant))
+      if (stillCurrent()) relayHandoffRef.current = handoffKey
+    } catch (error) {
+      if (stillCurrent()) {
+        if (saved.autoSyncEnabled) clearRelay()
+        setSettingsError(error instanceof Error ? `자동 동기화 설정에 실패했습니다: ${error.message}` : '자동 동기화 설정에 실패했습니다.')
+      }
+    } finally {
+      relayHandoffInFlight.current.delete(handoffKey)
+    }
+  }
+
   const updateExportSettings = (next: ExportSettings) => {
     setExportSettings(next)
     try { localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify(next)) }
     catch { showToast('info', '설정은 현재 화면에 적용됐지만 브라우저에 저장하지 못했습니다.') }
+  }
+
+  const saveAccountSettings = async () => {
+    if (!user || settingsBusy) return
+    const generation = accountGeneration.current
+    const savingFor = user
+    setSettingsBusy(true); setSettingsError(null)
+    try {
+      const saved = await updateAccountSettings(accountSettings)
+      if (generation === accountGeneration.current) {
+        relayHandoffOperation.current += 1
+        accountSettingsRef.current = saved
+        settingsLoadedRef.current = { accountId: savingFor.id, generation, version: saved.version }
+        relayHandoffRef.current = null
+        setAccountSettings(saved)
+        updateExportSettings({ copyHeader: saved.copyHeader, downloadHeader: saved.downloadHeader, filenameTemplate: saved.downloadFilenameTemplate, gitPathTemplate: saved.gitPathTemplate })
+        await configureRelay(saved, savingFor, generation)
+        showToast('success', '계정 설정을 저장했습니다.')
+      }
+    } catch (error) {
+      const message = error instanceof ApiError && error.status === 409 ? '다른 창에서 설정이 변경되었습니다. 새로고침 후 다시 저장해 주세요.' : error instanceof Error ? error.message : '설정을 저장하지 못했습니다.'
+      setSettingsError(message)
+    } finally { setSettingsBusy(false) }
   }
 
   const syncPending = async () => {
@@ -642,7 +814,7 @@ export default function App() {
     const objectUrl = URL.createObjectURL(new Blob([exportCode(selectedSolution, exportSettings.downloadHeader)], { type: 'text/plain;charset=utf-8' }))
     const anchor = document.createElement('a')
     anchor.href = objectUrl
-    anchor.download = downloadFilename(selectedSolution, exportSettings.filenameTemplate)
+    anchor.download = downloadFilename(selectedSolution, exportSettings.filenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })
     anchor.click()
     URL.revokeObjectURL(objectUrl)
     showToast('success', '소스 파일을 다운로드했습니다.')
@@ -737,6 +909,8 @@ export default function App() {
             setSelectedId={setSelectedId}
             onCopy={copyCode}
             onDownload={downloadCode}
+            lightTheme={accountSettings.lightTheme}
+            darkTheme={accountSettings.darkTheme}
           />
         )}
         {view === 'guide' && (
@@ -747,13 +921,16 @@ export default function App() {
             user={user}
             exportSettings={exportSettings}
             updateExportSettings={updateExportSettings}
+            accountSettings={accountSettings}
+            updateAccountSettings={updateAccountSettingsDraft}
+            settingsBusy={settingsBusy}
+            settingsError={settingsError}
+            onSaveSettings={() => void saveAccountSettings()}
+            onAutoSyncDisabled={clearRelay}
             previewSolution={selectedSolution ?? demoSolutions[0]}
             extensionId={extensionId}
             bridgeStatus={bridgeStatus}
-            onConnect={() => { setAutoConnect(true); void connectBridge() }}
             onConnectLegacy={() => { setAutoConnect(true); void connectBridge(false, true) }}
-            onDisconnect={() => { setAutoConnect(false); void resetBridge() }}
-            onSync={() => void syncPending()}
             onLogin={() => setGithubLoginOpen(true)}
             onLogout={() => void handleLogout()}
           />
@@ -801,6 +978,8 @@ function SolutionsView({
   setSelectedId,
   onCopy,
   onDownload,
+  lightTheme,
+  darkTheme,
 }: {
   solutions: Solution[]
   filteredSolutions: Solution[]
@@ -818,6 +997,8 @@ function SolutionsView({
   setSelectedId: (value: string) => void
   onCopy: () => void
   onDownload: () => void
+  lightTheme: AccountSettings['lightTheme']
+  darkTheme: AccountSettings['darkTheme']
 }) {
   return (
     <section className="solutions-layout" aria-label="풀이 아카이브">
@@ -863,7 +1044,7 @@ function SolutionsView({
           </div>
           <div className="list-footer"><span><span className="status-dot" /> {mode === 'demo' ? '예시 데이터' : '서버와 연결됨'}</span><span>{filteredSolutions.length} / {solutions.length}</span></div>
         </section>
-        <SolutionDetail solution={selectedSolution} mode={mode} onCopy={onCopy} onDownload={onDownload} />
+        <SolutionDetail solution={selectedSolution} mode={mode} onCopy={onCopy} onDownload={onDownload} lightTheme={lightTheme} darkTheme={darkTheme} />
       </div>
     </section>
   )
@@ -883,7 +1064,7 @@ function SolutionRow({ solution, selected, onSelect }: { solution: Solution; sel
   )
 }
 
-function SolutionDetail({ solution, mode, onCopy, onDownload }: { solution: Solution | null; mode: 'demo' | 'live'; onCopy: () => void; onDownload: () => void }) {
+function SolutionDetail({ solution, mode, onCopy, onDownload, lightTheme, darkTheme }: { solution: Solution | null; mode: 'demo' | 'live'; onCopy: () => void; onDownload: () => void; lightTheme: AccountSettings['lightTheme']; darkTheme: AccountSettings['darkTheme'] }) {
   return (
     <section className="solution-detail" aria-label="선택한 풀이 상세">
       {!solution ? (
@@ -900,11 +1081,11 @@ function SolutionDetail({ solution, mode, onCopy, onDownload }: { solution: Solu
           </div>
           <div className="metrics-row">
             <MetricCard label="실행 시간" value={formatMetric(solution.executionTime, typeof solution.executionTime === 'number' && solution.executionTime < 10 ? ' s' : ' ms')} icon="clock" />
-            <MetricCard label="메모리 사용량" value={formatMetric(solution.memoryUsage, ' MB')} icon="spark" />
+            <MetricCard label="메모리 사용량" value={formatMemory(solution)} icon="spark" />
             <MetricCard label="관측 시각" value={formatObservedTime(solution.observedAt ?? solution.solvedAt)} icon="check" />
           </div>
           <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
-          <CodeBlock code={solution.sourceCode} language={solution.language} />
+          <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} />
           <div className="detail-note"><Icon name="spark" size={14} /><span>{mode === 'demo' ? '데모 예시 데이터입니다. 로그인하면 실제 확장 프로그램 기록으로 바뀝니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
         </>
       )}
@@ -930,7 +1111,7 @@ function GuideView({ onSettings }: { onSettings: () => void }) {
     <section className="guide-page">
       <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> GET STARTED / BRIDGE</p><h1>연동 가이드</h1><p>Chrome 확장 프로그램에서 저장한 제출 기록을 CodeArchive로 가져옵니다.</p></div>
       <div className="guide-grid">
-        <article className="guide-card guide-hero"><div className="guide-hero-icon"><Icon name="link" size={25} /></div><div><span className="card-kicker">CODEARCHIVE BRIDGE</span><h2>3분 안에 첫 풀이를 모아보세요</h2><p>확장 프로그램이 문제 페이지의 제출 코드를 관측하고, 동기화할 때만 서버로 전송합니다.</p></div><button className="primary-button" onClick={onSettings}>브리지 설정하기 <Icon name="chevron" size={14} /></button></article>
+        <article className="guide-card guide-hero"><div className="guide-hero-icon"><Icon name="link" size={25} /></div><div><span className="card-kicker">CODEARCHIVE BRIDGE</span><h2>3분 안에 첫 풀이를 모아보세요</h2><p>자동 동기화가 꺼져 있으면 수동 동기화 때만 전송하고, 켜면 새 캡처를 안전한 릴레이로 전송합니다.</p></div><button className="primary-button" onClick={onSettings}>브리지 설정하기 <Icon name="chevron" size={14} /></button></article>
         <GuideStep number="01" title="확장 프로그램 설치" text="CodeArchive Extension을 Chrome에 설치하고, SWEA 또는 프로그래머스 문제를 한 번 제출해 주세요." action="chrome://extensions" />
         <GuideStep number="02" title="GitHub 로그인 · 자동 연결" text="로그인하면 설치된 CodeArchive에 자동 연결합니다. ID를 복사하거나 붙여 넣을 필요가 없습니다." action="연결 상태 확인" onAction={onSettings} />
         <GuideStep number="03" title="지금 동기화" text="동기화를 누르면 대기 중인 풀이를 가져옵니다. 서버가 저장한 항목만 확장 프로그램에서 확인 처리합니다." action="동기화 시작" onAction={onSettings} />
@@ -948,43 +1129,50 @@ function SettingsView({
   user,
   exportSettings,
   updateExportSettings,
+  accountSettings,
+  updateAccountSettings,
+  settingsBusy,
+  settingsError,
+  onSaveSettings,
+  onAutoSyncDisabled,
   previewSolution,
   extensionId,
   bridgeStatus,
-  onConnect,
   onConnectLegacy,
-  onDisconnect,
-  onSync,
   onLogin,
   onLogout,
 }: {
   user: User | null
   exportSettings: ExportSettings
   updateExportSettings: (settings: ExportSettings) => void
+  accountSettings: AccountSettings
+  updateAccountSettings: (settings: AccountSettings) => void
+  settingsBusy: boolean
+  settingsError: string | null
+  onSaveSettings: () => void
+  onAutoSyncDisabled: () => void
   previewSolution: Solution
   extensionId: string
   bridgeStatus: 'disconnected' | 'connecting' | 'connected'
-  onConnect: () => void
   onConnectLegacy: () => void
-  onDisconnect: () => void
-  onSync: () => void
   onLogin: () => void
   onLogout: () => void
 }) {
+  const draftTargetConfigured = Boolean(accountSettings.githubInstallationId && accountSettings.githubOwner?.trim() && accountSettings.githubRepository?.trim() && accountSettings.githubBranch?.trim())
+  const providerUnavailable = accountSettings.githubStatus === 'PROVIDER_UNAVAILABLE'
+  const githubStatusText = providerUnavailable ? 'GitHub App 서버 설정이 아직 없습니다. 관리자에게 App ID와 개인 키 설정을 요청하세요.' : draftTargetConfigured ? '저장 시 GitHub 자동 커밋 대상을 확인합니다.' : 'GitHub App 설치와 저장소 대상을 지정하세요.'
   return (
     <section className="settings-page">
       <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> WORKSPACE / SETTINGS</p><h1>설정</h1><p>CodeArchive가 문제 풀이를 가져오는 방법을 관리합니다.</p></div>
       <div className="settings-layout">
         <div className="settings-column">
-          <article className="settings-card"><div className="settings-card-heading"><div className="settings-card-icon purple"><Icon name="link" size={18} /></div><div><h2>Chrome 확장 프로그램</h2><p>SWEA·프로그래머스 캡처 브리지</p></div><span className={`connection-state ${bridgeStatus}`}><i /> {bridgeStatus === 'connected' ? '연결됨' : bridgeStatus === 'connecting' ? '연결 중' : '연결 안 됨'}</span></div><div className="setting-field"><p>로그인하면 설치된 CodeArchive에 자동 연결합니다. 풀이 전송은 지금 동기화를 누를 때만 시작합니다.</p>{extensionId === LEGACY_EXTENSION_ID && <p role="status">이전 개발 확장에 연결됐습니다. 대기 풀이를 동기화한 뒤 고정 ID 버전으로 전환하세요. 기존 확장은 먼저 삭제하지 마세요.</p>}</div><div className="settings-actions"><button className="primary-button" onClick={onConnect} disabled={!user || bridgeStatus === 'connecting'}><Icon name="link" size={14} /> {bridgeStatus === 'connected' ? '다시 연결' : '연결 재시도'}</button>{bridgeStatus === 'connected' && <button className="ghost-button" onClick={onDisconnect}>연결 해제</button>}<button className="ghost-button" onClick={onSync} disabled={bridgeStatus !== 'connected'}><Icon name="sync" size={14} /> 지금 동기화</button></div></article>
-          <details className="settings-card"><summary>이전 개발 확장에 남은 기록</summary><p>고정 ID 버전을 설치하기 전의 기록은 별도 저장소에 남습니다. 이전 확장을 삭제하지 않은 상태에서 연결한 뒤 지금 동기화를 눌러 가져오세요.</p><button className="secondary-button" onClick={onConnectLegacy} disabled={!user || bridgeStatus === 'connecting'}>이전 개발 기록 확인</button></details><article className="settings-card export-settings"><h2>코드 복사 · 다운로드</h2><p>문제 정보 주석을 추가합니다. 원본 코드의 주석은 유지합니다.</p>
-            <label><input type="checkbox" checked={exportSettings.copyHeader} onChange={event => updateExportSettings({ ...exportSettings, copyHeader: event.target.checked })} /> 복사할 때 문제 정보 주석 포함</label>
-            <label><input type="checkbox" checked={exportSettings.downloadHeader} onChange={event => updateExportSettings({ ...exportSettings, downloadHeader: event.target.checked })} /> 다운로드할 때 문제 정보 주석 포함</label>
-            <div className="setting-field"><label htmlFor="filename-template">다운로드 파일명</label><input id="filename-template" maxLength={160} value={exportSettings.filenameTemplate} onChange={event => updateExportSettings({ ...exportSettings, filenameTemplate: event.target.value })} /><span className="field-help">{'{platform} · {number} · {title} · {language} 사용 가능. 확장자는 자동으로 붙습니다.'}</span><p>미리보기: <output>{downloadFilename(previewSolution, exportSettings.filenameTemplate)}</output></p></div>
+          <details className="settings-card"><summary>이전 개발 확장에 남은 기록</summary><p>고정 ID 버전을 설치하기 전의 기록은 별도 저장소에 남습니다. 이전 확장을 삭제하지 않은 상태에서 연결한 뒤 지금 동기화를 눌러 가져오세요.</p><button className="secondary-button" onClick={onConnectLegacy} disabled={!user || bridgeStatus === 'connecting'}>이전 개발 기록 확인</button></details><article className="settings-card export-settings"><h2>계정 · 코드 저장</h2>{settingsError && <p role="alert">{settingsError}</p>}<div className="setting-field"><label htmlFor="profile-name">이름</label><input id="profile-name" value={accountSettings.name ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, name: e.target.value || null })} /><label htmlFor="profile-nickname">닉네임</label><input id="profile-nickname" value={accountSettings.nickname ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, nickname: e.target.value || null })} /></div><p>문제 정보 주석을 추가합니다. 원본 코드는 유지합니다.</p>
+            <label><input type="checkbox" checked={accountSettings.copyHeader} onChange={e => updateAccountSettings({ ...accountSettings, copyHeader: e.target.checked })} /> 복사할 때 문제 정보 주석 포함</label><label><input type="checkbox" checked={accountSettings.downloadHeader} onChange={e => updateAccountSettings({ ...accountSettings, downloadHeader: e.target.checked })} /> 다운로드할 때 문제 정보 주석 포함</label>
+            <div className="setting-field"><label htmlFor="filename-template">다운로드 파일명</label><input id="filename-template" maxLength={160} value={accountSettings.downloadFilenameTemplate} onChange={e => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate: e.target.value })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="git-path-template">Git 저장 경로</label><input id="git-path-template" value={accountSettings.gitPathTemplate} onChange={e => updateAccountSettings({ ...accountSettings, gitPathTemplate: e.target.value })} /><p>Git 미리보기: <output>{gitPath(previewSolution, accountSettings.gitPathTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id }) ?? '유효하지 않은 상대 경로'}</output></p><label htmlFor="light-theme">밝은 테마</label><select id="light-theme" value={accountSettings.lightTheme} onChange={e => updateAccountSettings({ ...accountSettings, lightTheme: e.target.value as AccountSettings['lightTheme'] })}>{LIGHT_THEMES.map(x => <option key={x}>{x}</option>)}</select><label htmlFor="dark-theme">어두운 테마</label><select id="dark-theme" value={accountSettings.darkTheme} onChange={e => updateAccountSettings({ ...accountSettings, darkTheme: e.target.value as AccountSettings['darkTheme'] })}>{DARK_THEMES.map(x => <option key={x}>{x}</option>)}</select></div><label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label><label><input type="checkbox" disabled={!draftTargetConfigured || providerUnavailable} checked={accountSettings.githubAutoCommitEnabled} onChange={e => updateAccountSettings({ ...accountSettings, githubAutoCommitEnabled: e.target.checked })} /> GitHub 자동 커밋</label><button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
           </article>
-          <article className="settings-card github-card"><div className="settings-card-heading"><div className="settings-card-icon dark"><Icon name="github" size={19} /></div><div><h2>GitHub 연동</h2><p>풀이 파일과 README 자동 커밋</p></div><span className="coming-soon">UPCOMING</span></div><div className="disabled-integration"><span>저장소 선택과 커밋 범위 설정을 준비 중입니다.</span><button disabled>연동 시작</button></div></article>
+          <article className="settings-card github-card"><h2>GitHub 대상</h2><p role="status">{githubStatusText}</p>{accountSettings.githubSetupUrl && <a href={accountSettings.githubSetupUrl} target="_blank" rel="noreferrer">GitHub App 설치/저장소 선택 열기</a>}<label htmlFor="github-installation">설치 ID</label><input id="github-installation" value={accountSettings.githubInstallationId ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, githubInstallationId: e.target.value ? Number(e.target.value) : null })} /><label htmlFor="github-owner">소유자</label><input id="github-owner" value={accountSettings.githubOwner ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, githubOwner: e.target.value || null })} /><label htmlFor="github-repository">저장소</label><input id="github-repository" value={accountSettings.githubRepository ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, githubRepository: e.target.value || null })} /><label htmlFor="github-branch">브랜치</label><input id="github-branch" value={accountSettings.githubBranch ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, githubBranch: e.target.value || null })} /><label htmlFor="github-root">루트 경로</label><input id="github-root" value={accountSettings.githubRootPath ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, githubRootPath: e.target.value || null })} /></article>
         </div>
-        <aside className="settings-sidebar"><article className="account-card"><span className="card-kicker">ACCOUNT</span>{user ? <><div className="account-large"><span className="account-avatar large"><Icon name="user" size={18} /></span><div><strong>{displayUser(user)}</strong><span>@{user.githubLogin} · CodeArchive 계정</span></div></div><button className="wide-ghost-button" onClick={onLogout}><Icon name="logout" size={14} /> 로그아웃</button></> : <><div className="account-logged-out"><div className="logged-out-icon"><Icon name="user" size={18} /></div><strong>로그인이 필요합니다</strong><span>내 풀이를 저장하고 동기화하세요.</span></div><button className="primary-button wide" onClick={onLogin}>GitHub로 로그인 <Icon name="github" size={14} /></button></>}</article><article className="privacy-card"><Icon name="check" size={16} /><div><strong>데이터를 직접 통제하세요</strong><p>자동 전송하지 않습니다. 동기화를 누른 순간에만 대기 중인 캡처를 확인합니다.</p></div></article></aside>
+        <aside className="settings-sidebar"><article className="account-card"><span className="card-kicker">ACCOUNT</span>{user ? <><div className="account-large"><span className="account-avatar large"><Icon name="user" size={18} /></span><div><strong>{displayUser(user)}</strong><span>@{user.githubLogin} · CodeArchive 계정</span></div></div><button className="wide-ghost-button" onClick={onLogout}><Icon name="logout" size={14} /> 로그아웃</button></> : <><div className="account-logged-out"><div className="logged-out-icon"><Icon name="user" size={18} /></div><strong>로그인이 필요합니다</strong><span>내 풀이를 저장하고 동기화하세요.</span></div><button className="primary-button wide" onClick={onLogin}>GitHub로 로그인 <Icon name="github" size={14} /></button></>}</article><article className="privacy-card"><Icon name="check" size={16} /><div><strong>데이터를 직접 통제하세요</strong><p>자동 동기화를 켜면 새 캡처가 안전한 릴레이로 전송됩니다. 끄면 수동 동기화만 사용합니다.</p></div></article></aside>
       </div>
     </section>
   )

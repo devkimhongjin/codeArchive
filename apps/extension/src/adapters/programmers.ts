@@ -96,13 +96,15 @@ function parseResultGroup(group: Element): PerformanceData | null {
     if (!match?.[1] || !match[2]) return null;
     const executionTime = parseFiniteNonNegative(match[1]);
     const memoryUsage = parseFiniteNonNegative(match[2]);
-    return executionTime === null || memoryUsage === null ? null : { executionTime, memoryUsage };
+    return executionTime === null || memoryUsage === null ? null : { executionTime, memoryUsage, memoryValue: memoryUsage, memoryUnit: "MB" as const };
   });
   if (metrics.some((metric) => metric === null)) return null;
-  const valid = metrics as Array<{ executionTime: number; memoryUsage: number }>;
+  const valid = metrics as Array<{ executionTime: number; memoryUsage: number; memoryValue: number; memoryUnit: "MB" }>;
   return {
     executionTime: valid.reduce((sum, metric) => sum + metric.executionTime, 0),
-    memoryUsage: valid.reduce((sum, metric) => sum + metric.memoryUsage, 0) / valid.length
+    memoryUsage: valid.reduce((sum, metric) => sum + metric.memoryUsage, 0) / valid.length,
+    memoryValue: valid.reduce((sum, metric) => sum + metric.memoryValue, 0) / valid.length,
+    memoryUnit: "MB"
   };
 }
 

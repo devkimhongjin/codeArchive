@@ -73,3 +73,19 @@ test('popup renders at most the newest preview records and links them to the loc
   assert.equal(document.querySelector('.recent-title')!.getAttribute('href'), 'archive.html#11111111-1111-4111-8111-111111111111');
   assert.equal(document.querySelector('.archive-link')!.textContent?.trim(), '로컬 저장 전체보기 ↗');
 });
+
+test('popup recent actions use a capture-specific privileged request without source in state', async () => {
+  const { document } = parseHTML(html); const copied: string[] = []; const actions: string[] = [];
+  mountPopup(document, {
+    extensionId: 'a'.repeat(32), copy: async value => { copied.push(value); },
+    copyCapture: async id => { actions.push(`copy:${id}`); return { ok: true, text: 'private source' }; },
+    downloadCapture: async id => { actions.push(`download:${id}`); return { ok: true }; },
+    load: async () => ({ pendingCount: 0, settings: {}, recentCaptures: [{ captureId: '11111111-1111-4111-8111-111111111111', platform: 'SWEA', problemNumber: '1', title: 'one', problemUrl: 'https://example.test', language: 'Java', result: 'ACCEPTED', observedAt: '2026-01-01T00:00:00.000Z', solvedAt: '2026-01-01T00:00:00.000Z', syncState: 'PENDING' }] })
+  });
+  await settle();
+  assert.equal(document.querySelector('.recent-list')!.textContent!.includes('private source'), false);
+  (document.querySelector('[aria-label="one 코드 복사"]') as HTMLButtonElement).click(); await settle();
+  (document.querySelector('[aria-label="one 코드 다운로드"]') as HTMLButtonElement).click(); await settle();
+  assert.deepEqual(actions, ['copy:11111111-1111-4111-8111-111111111111', 'download:11111111-1111-4111-8111-111111111111']);
+  assert.deepEqual(copied, ['private source']);
+});

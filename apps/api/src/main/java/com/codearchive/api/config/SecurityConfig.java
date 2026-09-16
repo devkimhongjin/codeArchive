@@ -21,6 +21,9 @@ import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import com.codearchive.api.auth.GithubAuthentication;
+import com.codearchive.api.auth.UserRepository;
+import com.codearchive.api.relay.RelayGrantService;
 
 @Configuration
 @EnableWebSecurity
@@ -33,6 +36,8 @@ public class SecurityConfig {
             GithubOAuth2SuccessHandler githubOAuth2SuccessHandler,
             GithubOAuth2FailureHandler githubOAuth2FailureHandler,
             GithubOAuth2Properties githubProperties,
+            UserRepository users,
+            RelayGrantService relayGrants,
             AuthenticationEntryPoint authenticationEntryPoint,
             AccessDeniedHandler accessDeniedHandler) throws Exception {
         CookieCsrfTokenRepository csrfTokenRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
@@ -42,7 +47,9 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(csrfTokenRepository)
-                        .csrfTokenRequestHandler(csrfRequestHandler))
+                        .csrfTokenRequestHandler(csrfRequestHandler)
+                        // Relay is bearer-authenticated and deliberately has no browser session.
+                        .ignoringRequestMatchers("/api/relay/captures", "/api/relay/grants/self"))
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler))
@@ -53,6 +60,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/health", "/api/auth/csrf", "/api/auth/providers").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/relay/captures").permitAll()
+                        .requestMatchers(HttpMethod.DELETE, "/api/relay/grants/self").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/oauth2/authorization/github",
                                 "/api/login/oauth2/code/github").permitAll()
                         .requestMatchers("/error").permitAll()
@@ -70,8 +79,13 @@ public class SecurityConfig {
                         .invalidateHttpSession(true)
                         .clearAuthentication(true)
                         .deleteCookies("JSESSIONID")
-                        .logoutSuccessHandler((request, response, authentication) ->
-                                response.setStatus(HttpServletResponse.SC_NO_CONTENT)))
+                        .logoutSuccessHandler((request, response, authentication) -> {
+                            // Session logout is an account boundary: invalidate all
+                            // outstanding opaque relay grants before clearing it.
+                            GithubAuthentication.identity(authentication).flatMap(i -> users.findByGithubId(i.githubId()))
+                                    .ifPresent(account -> relayGrants.revokeForLogout(account.getId()));
+                            response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+                        }))
                 .addFilterBefore(new GithubOAuth2AvailabilityFilter(githubProperties),
                         OAuth2AuthorizationRequestRedirectFilter.class);
 

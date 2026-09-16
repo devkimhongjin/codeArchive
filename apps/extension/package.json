@@ -9,7 +9,9 @@
     "build": "node build.mjs",
     "test": "npm run typecheck && node --import tsx --test test/*.test.ts"
   },
-  "dependencies": {},
+  "dependencies": {
+    "shiki": "^4.4.3"
+  },
   "devDependencies": {
     "@types/chrome": "^0.2.9",
     "@types/node": "^26.5.1",

@@ -1,5 +1,5 @@
 import { createUuid } from "./capture";
-import type { Capture } from "./types";
+import type { Capture, CaptureSettings } from "./types";
 import type { CaptureStore } from "./storage";
 
 export const DASHBOARD_ORIGIN = "https://codearchive-dashboard-beta.netlify.app";
@@ -16,6 +16,7 @@ export type DashboardMessage =
   | { type: "PING"; capability: string }
   | { type: "GET_PENDING"; capability: string; limit?: number }
   | { type: "ACK"; capability: string; captureIds: string[] }
+  | { type: "CONFIGURE_RELAY"; capability: string; relay: { endpoint: string; secret: string; accountId: string; generation: number } | null; accountId?: string; settingsVersion?: number; autoSyncEnabled?: boolean; githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; copyHeader?: boolean; downloadHeader?: boolean; downloadFilenameTemplate?: string; gitPathTemplate?: string; name?: string | null; nickname?: string | null; lightTheme?: string; darkTheme?: string }
   | { type: "DISCONNECT"; capability: string };
 
 export interface DashboardSender {
@@ -29,7 +30,7 @@ export type BridgeResponse =
   | { capability: string; expiresAt: number }
   | { captures: Capture[]; hasMore: boolean }
   | { ok: true }
-  | { error: "UNAUTHORIZED" | "BAD_REQUEST" };
+  | { error: "UNAUTHORIZED" | "BAD_REQUEST" | "STALE_CONFIGURATION" };
 
 interface SenderIdentity {
   tabId: number;
@@ -85,7 +86,7 @@ function asObject(value: unknown): Record<string, unknown> | null {
 }
 
 function isMessageType(value: unknown): value is DashboardMessage["type"] {
-  return value === "CONNECT" || value === "PING" || value === "GET_PENDING" || value === "ACK" || value === "DISCONNECT";
+  return value === "CONNECT" || value === "PING" || value === "GET_PENDING" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
 }
 
 export class DashboardBridge {
@@ -121,6 +122,45 @@ export class DashboardBridge {
     if (!session) return { error: "UNAUTHORIZED" };
 
     if (type === "PING") return { ok: true };
+
+    if (type === "CONFIGURE_RELAY") {
+      const relay = object?.relay;
+      const automatic = object ?? {};
+      const accountId = typeof automatic.accountId === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(automatic.accountId) ? automatic.accountId : undefined;
+      const settingsVersion = typeof automatic.settingsVersion === "number" && Number.isSafeInteger(automatic.settingsVersion) && automatic.settingsVersion >= 0 ? automatic.settingsVersion : undefined;
+      const shared = {
+        ...(accountId ? { accountId } : {}),
+        ...(settingsVersion !== undefined ? { accountSettingsVersion: settingsVersion } : {}),
+        ...(typeof automatic.copyHeader === "boolean" ? { copyHeader: automatic.copyHeader } : {}),
+        ...(typeof automatic.downloadHeader === "boolean" ? { downloadHeader: automatic.downloadHeader } : {}),
+        ...(typeof automatic.downloadFilenameTemplate === "string" ? { downloadFilenameTemplate: automatic.downloadFilenameTemplate } : {}),
+        ...(typeof automatic.gitPathTemplate === "string" ? { gitPathTemplate: automatic.gitPathTemplate } : {}),
+        ...(automatic.name === null ? { name: undefined } : typeof automatic.name === "string" ? { name: automatic.name } : {}),
+        ...(automatic.nickname === null ? { nickname: undefined } : typeof automatic.nickname === "string" ? { nickname: automatic.nickname } : {}),
+        ...(typeof automatic.lightTheme === "string" ? { lightTheme: automatic.lightTheme as never } : {}),
+        ...(typeof automatic.darkTheme === "string" ? { darkTheme: automatic.darkTheme as never } : {})
+      };
+      // relay:null is not an absence of settings. It is a durable local OFF
+      // plus a profile/export/theme refresh for a signed-in dashboard account.
+      const apply = async (next: (current: CaptureSettings) => CaptureSettings) => {
+        let stale = false;
+        await this.store.mutateSettings(current => {
+          // Account settings version is monotonic inside an account. A delayed
+          // dashboard message must not resurrect an older relay or flags.
+          if (accountId && current.accountId === accountId && settingsVersion !== undefined && current.accountSettingsVersion !== undefined && settingsVersion < current.accountSettingsVersion) { stale = true; return current; }
+          return next(current);
+        });
+        return stale;
+      };
+      if (relay === null) { const stale=await apply(current => ({ ...current, ...shared, autoSyncEnabled: false, githubAutoCommitEnabled: false, githubTargetConfigured: automatic.githubTargetConfigured === true, relay: undefined })); return stale ? { error: "STALE_CONFIGURATION" } : { ok: true }; }
+      const candidate = relay as { endpoint?: unknown; secret?: unknown; accountId?: unknown; generation?: unknown } | null;
+      if (!candidate || typeof candidate.endpoint !== "string" || typeof candidate.secret !== "string" || typeof candidate.accountId !== "string" || typeof candidate.generation !== "number" || !Number.isSafeInteger(candidate.generation)) return { error: "BAD_REQUEST" };
+      const endpointValue = candidate.endpoint, secret = candidate.secret, candidateAccountId = candidate.accountId, generation = candidate.generation;
+      let endpoint: URL; try { endpoint = new URL(endpointValue, DASHBOARD_ORIGIN); } catch { return { error: "BAD_REQUEST" }; }
+      if (!DASHBOARD_ORIGINS.includes(endpoint.origin as typeof DASHBOARD_ORIGINS[number]) || !endpoint.pathname.startsWith("/api/relay/")) return { error: "BAD_REQUEST" };
+      const stale=await apply(current => ({ ...current, ...shared, relay: { endpoint: endpointValue, secret, accountId: candidateAccountId, generation, status: "CONFIRMED" }, accountId: candidateAccountId, autoSyncEnabled: automatic.autoSyncEnabled === true, githubAutoCommitEnabled: automatic.githubAutoCommitEnabled === true, githubTargetConfigured: automatic.githubTargetConfigured === true }));
+      return stale ? { error: "STALE_CONFIGURATION" } : { ok: true };
+    }
 
     if (type === "GET_PENDING") {
       const rawLimit = object?.limit;

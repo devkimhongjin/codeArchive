@@ -6,6 +6,8 @@ interface PopupServices {
   load: () => Promise<unknown>;
   extensionId: string;
   copy: (text: string) => Promise<void>;
+  copyCapture?: (captureId: string) => Promise<{ ok?: boolean; text?: string }>;
+  downloadCapture?: (captureId: string) => Promise<{ ok?: boolean }>;
 }
 
 function asDisplayCapture(value: unknown): CapturePreview | null {
@@ -52,7 +54,7 @@ function appendCaptureTitle(document: Document, item: HTMLElement, capture: Capt
   item.append(title);
 }
 
-function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement, captures: CapturePreview[]): void {
+function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement, captures: CapturePreview[], services: PopupServices): void {
   list.replaceChildren();
   empty.hidden = captures.length !== 0;
   for (const capture of captures) {
@@ -75,6 +77,17 @@ function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement,
     metadata.className = "recent-meta";
     metadata.textContent = `${capture.language} · ${formatObservedAt(capture.observedAt)}`;
     item.append(metadata);
+    const actions = document.createElement("div");
+    actions.className = "recent-actions";
+    const copy = document.createElement("button"); copy.type = "button"; copy.textContent = "복사"; copy.setAttribute("aria-label", `${capture.title} 코드 복사`);
+    copy.addEventListener("click", () => void services.copyCapture?.(capture.captureId).then(async response => {
+      if (response?.ok && typeof response.text === "string") { await services.copy(response.text); copy.textContent = "복사됨"; setTimeout(() => { copy.textContent = "복사"; }, 1200); }
+    }));
+    const download = document.createElement("button"); download.type = "button"; download.textContent = "다운로드"; download.setAttribute("aria-label", `${capture.title} 코드 다운로드`);
+    download.addEventListener("click", () => void services.downloadCapture?.(capture.captureId).then(response => {
+      if (response?.ok) { download.textContent = "완료"; setTimeout(() => { download.textContent = "다운로드"; }, 1200); }
+    }));
+    actions.append(copy, download); item.append(actions);
     list.append(item);
   }
 }
@@ -93,6 +106,10 @@ export function mountPopup(document: Document, services: PopupServices): void {
   const recentError = document.querySelector<HTMLElement>("#recent-error")!;
   const copy = document.querySelector<HTMLButtonElement>("#copy-id")!;
   const copyStatus = document.querySelector<HTMLElement>("#copy-status")!;
+  const autoSync = document.querySelector<HTMLInputElement>("#auto-sync");
+  const githubAuto = document.querySelector<HTMLInputElement>("#github-auto");
+  const automationStatus = document.querySelector<HTMLElement>("#automation-status");
+  const automationHelp = document.querySelector<HTMLElement>("#automation-help");
   let loading = false;
 
   function resetRecent(): void {
@@ -125,6 +142,18 @@ export function mountPopup(document: Document, services: PopupServices): void {
         ? state.recentCaptures.map(asDisplayCapture).filter((capture): capture is CapturePreview => capture !== null).slice(0, 3)
         : [];
       count.textContent = String(state.pendingCount);
+      const settings = state.settings as { autoSyncEnabled?: boolean; githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; relay?: { status?: string } };
+      if (autoSync && githubAuto && automationStatus && automationHelp) {
+        autoSync.checked = settings.autoSyncEnabled === true; githubAuto.checked = settings.githubAutoCommitEnabled === true;
+        // ON grants are dashboard-confirmed. The popup can only turn an
+        // existing confirmed setting OFF, never pretend an ON was accepted.
+        autoSync.disabled = settings.autoSyncEnabled !== true;
+        githubAuto.disabled = true;
+        githubAuto.title = "GitHub 자동 커밋은 대시보드에서만 변경할 수 있습니다.";
+        const relayStatus = settings.relay?.status;
+        automationStatus.textContent = relayStatus === "PENDING" ? "확인 대기" : relayStatus === "OFFLINE" ? "오프라인" : relayStatus === "AUTH_EXPIRED" ? "인증 만료" : relayStatus === "RELAY_ERROR" ? "릴레이 오류" : relayStatus === "REVOCATION_PENDING" ? "서버 폐기 대기" : relayStatus === "CONFIRMED" ? "연결 확인됨" : settings.githubTargetConfigured ? "릴레이 설정 필요" : "대상 필요";
+        automationHelp.textContent = relayStatus === "REVOCATION_PENDING" ? "자동 전송은 이미 중지했습니다. 네트워크가 복구되면 서버의 릴레이 권한을 폐기합니다." : relayStatus === "CONFIRMED" ? "자동 동기화는 여기서 끌 수 있습니다. GitHub 자동 커밋은 대시보드에서 변경합니다." : settings.githubTargetConfigured ? "자동 동기화를 켜거나 GitHub 자동 커밋을 바꾸려면 대시보드에서 이 브라우저를 확인하세요." : "GitHub 자동 커밋에는 대시보드에서 저장소 대상을 지정해야 합니다.";
+      }
       status.textContent = "로컬 보관";
       description.textContent = state.pendingCount
         ? "통과한 풀이가 기다리고 있어요. 대시보드로 가져가세요."
@@ -132,7 +161,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
           ? "대기 중인 풀이는 없어요. 저장한 풀이는 아래에서 확인하세요."
           : "아직 저장된 풀이가 없어요. 첫 통과 풀이를 모아보세요.";
       recentCount.textContent = recentCaptures.length ? `${recentCaptures.length}개` : "없음";
-      renderRecent(document, recentList, recentEmpty, recentCaptures);
+      renderRecent(document, recentList, recentEmpty, recentCaptures, services);
     } catch {
       count.textContent = "—";
       status.textContent = "확인 필요";
@@ -149,6 +178,8 @@ export function mountPopup(document: Document, services: PopupServices): void {
   }
 
   refresh.addEventListener("click", () => void load());
+  const updateAutomation = (patch: Record<string, boolean>) => void chrome.runtime.sendMessage({ type: "UPDATE_SETTINGS", patch }).then(() => void load()).catch(() => void load());
+  autoSync?.addEventListener("change", () => updateAutomation({ autoSyncEnabled: autoSync.checked }));
   copy.disabled = !/^[a-p]{32}$/.test(services.extensionId);
   copy.addEventListener("click", () => {
     copy.disabled = true;

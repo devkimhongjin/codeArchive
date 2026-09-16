@@ -6,7 +6,9 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oauth2Login;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
@@ -62,6 +64,12 @@ class CodeArchiveApiIntegrationTest {
     com.codearchive.api.solution.SolutionRepository solutionRepository;
 
     @Autowired
+    com.codearchive.api.relay.RelayGrantRepository relayGrantRepository;
+
+    @Autowired
+    com.codearchive.api.settings.UserSettingsRepository userSettingsRepository;
+
+    @Autowired
     GithubAccountService githubAccountService;
 
     @Autowired
@@ -69,6 +77,8 @@ class CodeArchiveApiIntegrationTest {
 
     @BeforeEach
     void clearUsers() {
+        relayGrantRepository.deleteAll();
+        userSettingsRepository.deleteAll();
         solutionRepository.deleteAll();
         userRepository.deleteAll();
     }
@@ -145,6 +155,13 @@ class CodeArchiveApiIntegrationTest {
     @Test
     void logoutInvalidatesGithubSession() throws Exception {
         githubAccountService.upsert(principal("1003", "logout-user", "Logout", null));
+        enableRelay("1003", "logout-user", "Logout");
+        String device="dashboardrelaylogout01";
+        MvcResult issued=mockMvc.perform(post("/api/relay/grants").with(csrf().asHeader())
+                        .with(githubLogin("1003", "logout-user", "Logout", null)).contentType("application/json")
+                        .content("{\"deviceId\":\""+device+"\",\"generation\":1}"))
+                .andExpect(status().isOk()).andReturn();
+        String secret=objectMapper.readTree(issued.getResponse().getContentAsString()).path("secret").asText();
         MockHttpSession session = new MockHttpSession();
         mockMvc.perform(get("/api/auth/me").session(session)
                         .with(githubLogin("1003", "logout-user", "Logout", null)))
@@ -154,6 +171,14 @@ class CodeArchiveApiIntegrationTest {
                 .andExpect(status().isNoContent());
         mockMvc.perform(get("/api/auth/me").session(session))
                 .andExpect(status().isUnauthorized());
+        // This is a separate request/transaction, proving logout persisted the
+        // revocation instead of mutating only a detached grant entity.
+        mockMvc.perform(post("/api/relay/captures").header("Authorization", "Bearer "+secret)
+                        .contentType("application/json").content(capture(UUID.randomUUID().toString(), "after logout")))
+                .andExpect(status().isUnauthorized());
+        var afterLogout=userSettingsRepository.findByUserId(userRepository.findByGithubId("1003").orElseThrow().getId()).orElseThrow();
+        org.assertj.core.api.Assertions.assertThat(afterLogout.isAutoSyncEnabled()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(afterLogout.isGithubAutoCommitEnabled()).isFalse();
     }
 
     @Test
@@ -242,6 +267,102 @@ class CodeArchiveApiIntegrationTest {
     }
 
     @Test
+    void relayGrantDeleteIsCsrfFencedUserScopedAndIdempotent() throws Exception {
+        githubAccountService.upsert(principal("501", "first-relay", "First", null));
+        githubAccountService.upsert(principal("502", "second-relay", "Second", null));
+        enableRelay("501", "first-relay", "First");
+        String device = "dashboardrelay0001";
+        MvcResult issued = mockMvc.perform(post("/api/relay/grants").with(csrf().asHeader())
+                        .with(githubLogin("501", "first-relay", "First", null)).contentType("application/json")
+                        .content("{\"deviceId\":\"" + device + "\",\"generation\":1}"))
+                .andExpect(status().isOk()).andReturn();
+        String secret = objectMapper.readTree(issued.getResponse().getContentAsString()).path("secret").asText();
+        mockMvc.perform(delete("/api/relay/grants/{deviceId}", device)
+                        .with(githubLogin("502", "second-relay", "Second", null)).with(csrf().asHeader()))
+                .andExpect(status().isNoContent());
+        // Cross-account delete neither reveals nor changes the owning grant.
+        mockMvc.perform(post("/api/relay/captures").header("Authorization", "Bearer " + secret)
+                        .contentType("application/json").content(capture(UUID.randomUUID().toString(), "relay source")))
+                .andExpect(status().isOk());
+        mockMvc.perform(delete("/api/relay/grants/{deviceId}", device)
+                        .with(githubLogin("501", "first-relay", "First", null)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/api/relay/grants/{deviceId}", device)
+                        .with(githubLogin("501", "first-relay", "First", null)).with(csrf().asHeader()))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(post("/api/relay/captures").header("Authorization", "Bearer " + secret)
+                        .contentType("application/json").content(capture(UUID.randomUUID().toString(), "relay source")))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void relayStoresOnlyHashRejectsBearerOnNormalRoutesAndValidatesPayload() throws Exception {
+        githubAccountService.upsert(principal("551", "relay-hash", "Relay", null)); String device="dashboardrelay0003";
+        enableRelay("551", "relay-hash", "Relay");
+        MvcResult issued=mockMvc.perform(post("/api/relay/grants").with(csrf().asHeader()).with(githubLogin("551","relay-hash","Relay",null)).contentType("application/json").content("{\"deviceId\":\""+device+"\",\"generation\":1}"))
+                .andExpect(status().isOk()).andReturn();
+        String secret=objectMapper.readTree(issued.getResponse().getContentAsString()).path("secret").asText();
+        org.assertj.core.api.Assertions.assertThat(relayGrantRepository.findByUserIdAndDeviceIdAndRevokedAtIsNull(userRepository.findByGithubId("551").orElseThrow().getId(),device).get(0).getTokenHash()).isNotEqualTo(secret).hasSize(64);
+        mockMvc.perform(get("/api/settings").header("Authorization","Bearer "+secret)).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/relay/captures").header("Authorization","Bearer "+secret).contentType("application/json").content("{\"captureId\":\"bad\"}"))
+                .andExpect(status().isBadRequest());
+        String huge="x".repeat(1_000_001); String body=capture(UUID.randomUUID().toString(),huge);
+        mockMvc.perform(post("/api/relay/captures").header("Authorization","Bearer "+secret).contentType("application/json").content(body)).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void settingsAreVersionedValidatedAndForceGithubAutomationOffWithoutTarget() throws Exception {
+        githubAccountService.upsert(principal("601", "settings", "Settings", null));
+        mockMvc.perform(get("/api/settings").with(githubLogin("601", "settings", "Settings", null)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.version", is(0)))
+                .andExpect(jsonPath("$.githubAutoCommitEnabled", is(false)));
+        String valid = settingsJson(0, "홍길동", "별명", "{platform}-{number}", "archive/{language}/{number}", "one-light", "dracula", true, true, null, null, null, null, null);
+        mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("601", "settings", "Settings", null)).contentType("application/json").content(valid))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.name", is("홍길동"))).andExpect(jsonPath("$.nickname", is("별명")))
+                .andExpect(jsonPath("$.githubAutoCommitEnabled", is(false)));
+        mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("601", "settings", "Settings", null)).contentType("application/json").content(valid))
+                .andExpect(status().isConflict());
+        mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("601", "settings", "Settings", null)).contentType("application/json")
+                        .content(settingsJson(1,"n","n","bad/name","../escape","not-a-theme","dracula",false,false,null,null,null,null,null)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void settingsAllowNullProfileButRejectUnsafeTargetConfiguration() throws Exception {
+        githubAccountService.upsert(principal("602", "optional-profile", "Optional", null));
+        mockMvc.perform(get("/api/settings").with(githubLogin("602", "optional-profile", "Optional", null))).andExpect(status().isOk());
+        mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("602", "optional-profile", "Optional", null)).contentType("application/json")
+                        .content(settingsJson(0,null,null,"{number}","archive/{number}","github-light","github-dark",false,false,null,null,null,null,null)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.name").doesNotExist()).andExpect(jsonPath("$.nickname").doesNotExist());
+        mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("602", "optional-profile", "Optional", null)).contentType("application/json")
+                        .content(settingsJson(1,null,null,"CON","../escape","github-light","github-dark",false,false,-1L,"x".repeat(101),"repo","main","C:/bad")))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("602", "optional-profile", "Optional", null)).contentType("application/json")
+                        .content(settingsJson(1,null,null,"{number}","archive/{number}","github-light","github-dark",false,false,7L,"another-owner","repo","main",null)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void memoryMeasurementsAreExplicitAndLegacyNumbersRemainUnknown() throws Exception {
+        githubAccountService.upsert(principal("701", "memory", "Memory", null));
+        String idOne=UUID.randomUUID().toString(), idTwo=UUID.randomUUID().toString(), idThree=UUID.randomUUID().toString(), idFour=UUID.randomUUID().toString(), idFive=UUID.randomUUID().toString();
+        String kb=capture(idOne,"kb").replace("\"memoryUsage\":64", "\"memoryUsage\":64,\"memoryValue\":64,\"memoryUnit\":\"KB\"");
+        String legacy=capture(idTwo,"legacy");
+        String noUnit=capture(idThree,"no-unit").replace("\"memoryUsage\":64", "\"memoryUsage\":64,\"memoryValue\":64");
+        String kib=capture(idFour,"kib").replace("\"memoryUsage\":64", "\"memoryUsage\":64,\"memoryValue\":64,\"memoryUnit\":\"kIb\"");
+        String mib=capture(idFive,"mib").replace("\"memoryUsage\":64", "\"memoryUsage\":64,\"memoryValue\":64,\"memoryUnit\":\"mIb\"");
+        mockMvc.perform(post("/api/solutions/bulk").with(csrf().asHeader()).with(githubLogin("701","memory","Memory",null)).contentType("application/json").content("{\"captures\":["+kb+","+legacy+","+noUnit+","+kib+","+mib+"]}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/solutions").with(githubLogin("701","memory","Memory",null)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[?(@.captureId=='"+idOne+"')].memoryValue", Matchers.hasItem(64.0)))
+                .andExpect(jsonPath("$[?(@.captureId=='"+idOne+"')].memoryUnit", Matchers.hasItem("KB")))
+                .andExpect(jsonPath("$[?(@.captureId=='"+idTwo+"')].memoryUnit", Matchers.hasItem("UNKNOWN")))
+                .andExpect(jsonPath("$[?(@.captureId=='"+idThree+"')].memoryUnit", Matchers.hasItem("UNKNOWN")))
+                .andExpect(jsonPath("$[?(@.captureId=='"+idFour+"')].memoryUnit", Matchers.hasItem("KiB")))
+                .andExpect(jsonPath("$[?(@.captureId=='"+idFive+"')].memoryUnit", Matchers.hasItem("MiB")));
+    }
+
+    @Test
     void oauthCallbackWithInvalidStateIsRejectedByTheRealFilter() throws Exception {
         mockMvc.perform(get("/api/login/oauth2/code/github")
                         .param("code", "untrusted")
@@ -314,4 +435,9 @@ class CodeArchiveApiIntegrationTest {
             put("memoryUsage", 64);
         }});
     }
+
+    private String settingsJson(long version, String name, String nickname, String filename, String git, String light, String dark, boolean auto, boolean githubAuto, Long installation, String owner, String repo, String branch, String root) throws Exception {
+        Map<String,Object> value=new HashMap<>(); value.put("version",version); value.put("name",name); value.put("nickname",nickname); value.put("copyHeader",true); value.put("downloadHeader",true); value.put("downloadFilenameTemplate",filename); value.put("gitPathTemplate",git); value.put("lightTheme",light); value.put("darkTheme",dark); value.put("autoSyncEnabled",auto); value.put("githubAutoCommitEnabled",githubAuto); value.put("githubInstallationId",installation); value.put("githubOwner",owner); value.put("githubRepository",repo); value.put("githubBranch",branch); value.put("githubRootPath",root); return objectMapper.writeValueAsString(value);
+    }
+    private void enableRelay(String id,String login,String name) throws Exception { mockMvc.perform(get("/api/settings").with(githubLogin(id,login,name,null))).andExpect(status().isOk()); mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin(id,login,name,null)).contentType("application/json").content(settingsJson(0,"n","n","{number}","{number}","github-light","github-dark",true,false,null,null,null,null,null))).andExpect(status().isOk()); }
 }
