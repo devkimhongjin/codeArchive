@@ -41,12 +41,12 @@ class PostgreSqlMigrationTest {
             Flyway flyway = database.flyway();
 
             MigrateResult first = flyway.migrate();
-            assertEquals(6, first.migrationsExecuted);
-            assertEquals(6, database.historyCount());
+            assertEquals(7, first.migrationsExecuted);
+            assertEquals(7, database.historyCount());
 
             MigrateResult second = flyway.migrate();
             assertEquals(0, second.migrationsExecuted);
-            assertEquals(6, database.historyCount());
+            assertEquals(7, database.historyCount());
 
             database.assertFinalSchema();
             validateWithHibernate(database);
@@ -69,7 +69,7 @@ class PostgreSqlMigrationTest {
             assertThrows(FlywayException.class, adopted::migrate);
             adopted.baseline();
             assertEquals(1, database.historyCount());
-            assertEquals(5, adopted.migrate().migrationsExecuted);
+            assertEquals(6, adopted.migrate().migrationsExecuted);
 
             assertEquals("legacy@example.com", database.scalar(
                     "SELECT email FROM users WHERE id = ?", userId));
@@ -96,7 +96,7 @@ class PostgreSqlMigrationTest {
             Flyway adopted = database.flywayAtBaseline(MigrationVersion.fromVersion("2"));
             adopted.baseline();
             assertEquals(1, database.historyCount());
-            assertEquals(4, adopted.migrate().migrationsExecuted);
+            assertEquals(5, adopted.migrate().migrationsExecuted);
 
             assertEquals("9001", database.scalar(
                     "SELECT github_id FROM users WHERE id = ?", userId));
@@ -119,8 +119,8 @@ class PostgreSqlMigrationTest {
             assertEquals(2L, database.publicCount("users"));
             assertEquals(57L, database.publicCount("solutions"));
 
-            assertEquals(6, database.prodFlyway().migrate().migrationsExecuted);
-            assertEquals(6L, database.versionedHistoryCount("codearchive_v2"));
+            assertEquals(7, database.prodFlyway().migrate().migrationsExecuted);
+            assertEquals(7L, database.versionedHistoryCount("codearchive_v2"));
             assertEquals(2L, database.countInSchema("codearchive_v2", "users"));
             assertEquals(57L, database.countInSchema("codearchive_v2", "solutions"));
             assertEquals("101.000000", database.scalarInSchema("codearchive_v2",
@@ -149,7 +149,7 @@ class PostgreSqlMigrationTest {
         TestDatabase database = TestDatabase.create();
         try {
             database.createRebuiltPublicSource();
-            assertEquals(6, database.prodFlyway().migrate().migrationsExecuted);
+            assertEquals(7, database.prodFlyway().migrate().migrationsExecuted);
             assertEquals(0L, database.countInSchema("codearchive_v2", "users"));
             assertEquals(0L, database.countInSchema("codearchive_v2", "solutions"));
             assertEquals(0, database.prodFlyway().migrate().migrationsExecuted);
@@ -447,6 +447,7 @@ class PostgreSqlMigrationTest {
             assertEquals("YES", nullable("solutions", "memory_value"));
             assertEquals("YES", nullable("solutions", "memory_unit"));
             assertEquals("user_settings", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'user_settings'", schema));
+            assertEquals("NO", nullable("user_settings", "github_commit_message_template"));
             assertEquals("relay_grants", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'relay_grants'", schema));
             assertEquals("github_commit_jobs", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'github_commit_jobs'", schema));
             assertEquals("spring_session", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'spring_session'", schema));

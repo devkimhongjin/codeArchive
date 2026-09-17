@@ -7,5 +7,6 @@ test("download data URLs are MV3-worker-safe UTF-8 and bounded", () => {
   assert.ok(url?.startsWith("data:text/plain;charset=utf-8;base64,"));
   const encoded = url!.split(",", 2)[1]!;
   assert.equal(new TextDecoder().decode(Uint8Array.from(atob(encoded), c => c.charCodeAt(0))), "한글\ncode");
+  assert.ok(textDownloadUrl("class Main {}", "java")?.startsWith("data:application/octet-stream;base64,"));
   assert.equal(textDownloadUrl("x".repeat(MAX_DOWNLOAD_BYTES + 1)), null);
 });

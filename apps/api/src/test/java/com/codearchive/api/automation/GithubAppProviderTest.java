@@ -51,6 +51,7 @@ class GithubAppProviderTest {
     assertThat(requests.get(0).authorization()).startsWith("Bearer ").doesNotContain("private");
     assertThat(requests.get(4).body()).contains("Y2xhc3MgU29sdXRpb24ge30=");
     assertThat(requests.get(6).body()).contains("head-sha");
+    assertThat(requests.get(6).body()).contains("\"message\":\"Add SWEA 123 solution\"");
     assertThat(requests.get(8).body()).contains("\"force\":false");
   }
 
@@ -92,6 +93,12 @@ class GithubAppProviderTest {
     assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.FAILED);
     assertThat(requests).extracting(Request::path).noneMatch(path->path.contains("/git/blobs")||path.contains("/git/trees")||path.contains("/git/commits")&&path.endsWith("commit"));
     assertThat(requests).hasSize(4);
+  }
+
+  @Test void rendersAConfiguredSingleLineCommitMessage() throws Exception {
+    GithubProvider.Result result=provider().createOnly(settings("main","Solve {platform} #{number}: {title} by {nickname}"),solution());
+    assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(requests.get(6).body()).contains("\"message\":\"Solve SWEA #123: Title by n\"");
   }
 
   @Test void existingPathWithDifferentContentCreatesAConditionalUpdateCommit() throws Exception {
@@ -171,7 +178,8 @@ class GithubAppProviderTest {
   private GithubAppProvider provider(String privateKey) { return new GithubAppProvider("99",privateKey,"http://127.0.0.1:"+server.getAddress().getPort(),HttpClient.newHttpClient(),new ObjectMapper()); }
   private GithubAppProvider providerWithTimeout(long timeoutMs) throws Exception { return new GithubAppProvider("99",pem(),"http://127.0.0.1:"+server.getAddress().getPort(),HttpClient.newHttpClient(),new ObjectMapper(),timeoutMs); }
   private UserSettings settings(){ return settings("main"); }
-  private UserSettings settings(String branch){ UserSettings s=new UserSettings(AppUser.fromGithub("1","owner","Owner",null)); s.apply(new SettingsRequest(0,"n","n",false,false,"{number}","{platform}/{number}-{title}","github-light","github-dark",true,true,44L,"owner","repo",branch,null)); return s; }
+  private UserSettings settings(String branch){ return settings(branch,"Add {platform} {number} solution"); }
+  private UserSettings settings(String branch,String commitMessage){ UserSettings s=new UserSettings(AppUser.fromGithub("1","owner","Owner",null)); s.apply(new SettingsRequest(0,"n","n",false,false,"{number}","{platform}/{number}-{title}",commitMessage,"github-light","github-dark",true,true,44L,"owner","repo",branch,null)); return s; }
   private Solution solution(){ return new Solution(AppUser.fromGithub("1","owner","Owner",null),"11111111-1111-4111-8111-111111111111",Platform.SWEA,"123","Title","https://example.test/123","Java 21","class Solution {}","ACCEPTED",Instant.now(),Instant.now(),null,null); }
   private String pem() throws Exception { KeyPairGenerator g=KeyPairGenerator.getInstance("RSA"); g.initialize(2048); PrivateKey key=g.generateKeyPair().getPrivate(); return "-----BEGIN PRIVATE KEY-----\n"+Base64.getMimeEncoder(64,new byte[]{'\n'}).encodeToString(key.getEncoded())+"\n-----END PRIVATE KEY-----"; }
   /** Same ASN.1 form GitHub's \"BEGIN RSA PRIVATE KEY\" downloads use. */

@@ -137,9 +137,10 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       if (!capture) return sendResponse({ ok: false, error: "NOT_FOUND" });
       const settings = await store.getSettings(); const text = exportCode(capture, settings.copyHeader === true);
       if (object.type === "COPY_RECENT_CAPTURE") return sendResponse({ ok: true, text });
-      const url = textDownloadUrl(exportCode(capture, settings.downloadHeader === true));
+      const filename = downloadFilename(capture, settings.downloadFilenameTemplate, { name: settings.name, nickname: settings.nickname, id: settings.accountId });
+      const url = textDownloadUrl(exportCode(capture, settings.downloadHeader === true), filename.split(".").pop() ?? "txt");
       if (!url) return sendResponse({ ok: false, error: "DOWNLOAD_TOO_LARGE" });
-      try { await chrome.downloads.download({ url, filename: downloadFilename(capture, settings.downloadFilenameTemplate, { name: settings.name, nickname: settings.nickname, id: settings.accountId }), saveAs: false }); sendResponse({ ok: true }); }
+      try { await chrome.downloads.download({ url, filename, conflictAction: "uniquify", saveAs: false }); sendResponse({ ok: true }); }
       catch { sendResponse({ ok: false, error: "DOWNLOAD_FAILED" }); }
     }).catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;

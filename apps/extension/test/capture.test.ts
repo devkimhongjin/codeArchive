@@ -251,6 +251,68 @@ test("IndexedDB store keeps captures pending until an issued ACK marks them sync
   }
 });
 
+test("local stores skip a repeated submission only when problem, language, and source are identical", async () => {
+  const { indexedDB, IDBKeyRange } = await import("fake-indexeddb");
+  const stores = [
+    new MemoryCaptureStore(),
+    new IndexedDbCaptureStore({
+      databaseName: `codearchive-dedup-${Date.now()}-${Math.random()}`,
+      indexedDb: indexedDB
+    })
+  ];
+  const previous = globalThis.IDBKeyRange;
+  (globalThis as typeof globalThis & { IDBKeyRange: typeof IDBKeyRange }).IDBKeyRange = IDBKeyRange;
+  try {
+    for (const store of stores) {
+      const capture = createCapture({
+        captureId: "11111111-1111-4111-8111-111111111111",
+        platform: "SWEA",
+        problemNumber: "1206",
+        title: "View",
+        problemUrl: "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=A",
+        language: "Java",
+        sourceCode: "class Solution {}",
+        result: "ACCEPTED",
+        observedAt: "2026-09-17T01:00:00.000Z",
+        solvedAt: "2026-09-17T01:00:00.000Z"
+      });
+      assert.ok(capture);
+      assert.deepEqual(await store.putCapture(capture), { created: true });
+      await store.markSynced([capture.captureId]);
+
+      assert.deepEqual(await store.putCapture({
+        ...capture,
+        captureId: "22222222-2222-4222-8222-222222222222",
+        observedAt: "2026-09-17T02:00:00.000Z",
+        solvedAt: "2026-09-17T02:00:00.000Z",
+        executionTime: 999,
+        syncState: "PENDING"
+      }), { created: false });
+      assert.deepEqual(await store.putCapture({
+        ...capture,
+        captureId: "33333333-3333-4333-8333-333333333333",
+        sourceCode: "class Solution { /* changed */ }",
+        syncState: "PENDING"
+      }), { created: true });
+      assert.deepEqual(await store.putCapture({
+        ...capture,
+        captureId: "44444444-4444-4444-8444-444444444444",
+        problemNumber: "1207",
+        syncState: "PENDING"
+      }), { created: true });
+      assert.deepEqual(await store.putCapture({
+        ...capture,
+        captureId: "55555555-5555-4555-8555-555555555555",
+        language: "Kotlin",
+        syncState: "PENDING"
+      }), { created: true });
+      assert.equal((await store.listAll()).length, 4);
+    }
+  } finally {
+    (globalThis as typeof globalThis & { IDBKeyRange?: typeof IDBKeyRange }).IDBKeyRange = previous;
+  }
+});
+
 test("local archive lists retained captures newest first, including synced records", async () => {
   const store = new MemoryCaptureStore();
   const older = createCapture({

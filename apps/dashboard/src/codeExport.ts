@@ -2,6 +2,7 @@ import type { Solution } from './types'
 
 export type ExportSettings = { copyHeader: boolean; downloadHeader: boolean; filenameTemplate: string; gitPathTemplate?: string }
 export const DEFAULT_EXPORT_SETTINGS: ExportSettings = { copyHeader: false, downloadHeader: false, filenameTemplate: '{platform}-{number}-{title}', gitPathTemplate: '{platform}/{number}-{title}' }
+export const DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE = 'Add {platform} {number} solution'
 export const EXPORT_SETTINGS_KEY = 'codearchive-export-settings'
 export type ExportProfile = { name?: string | null; nickname?: string | null; id?: string | number | null }
 export function readExportSettings(): ExportSettings {
@@ -14,16 +15,16 @@ export function readExportSettings(): ExportSettings {
 }
 export function sourceFileExtension(language: string) {
   const name = language.toLowerCase()
-  if (name.includes('python')) return 'py'
+  if (name.includes('python') || name.includes('pypy')) return 'py'
   if (name.includes('javascript') || name === 'js') return 'js'
   if (name.includes('typescript') || name === 'ts') return 'ts'
   if (name.includes('kotlin')) return 'kt'
   if (name.includes('java')) return 'java'
   if (name.includes('c++') || name === 'cpp') return 'cpp'
   if (/^c(?:\s|\d|$)/.test(name)) return 'c'
-  if (name === 'c#' || name.includes('csharp')) return 'cs'
+  if (name === 'c#' || name.startsWith('c# ') || name.includes('csharp')) return 'cs'
   if (name.includes('swift')) return 'swift'
-  if (name === 'go') return 'go'
+  if (name === 'go' || name.startsWith('go ')) return 'go'
   if (name.includes('rust')) return 'rs'
   if (name.includes('ruby')) return 'rb'
   if (name.includes('scala')) return 'scala'
@@ -43,6 +44,12 @@ export function exportCode(solution: Solution, header: boolean): string {
     return ext === 'java' ? line.replace(/\\/g, '/') : line
   }
   const lines = [`${solution.platform} #${solution.problemNumber} · ${solution.title}`, solution.problemUrl, `Language: ${solution.language}`]
+  if (solution.executionTime !== undefined) lines.push(`Execution Time: ${solution.executionTime} ms`)
+  if (solution.memoryValue !== undefined && solution.memoryUnit && solution.memoryUnit !== 'UNKNOWN') {
+    lines.push(`Memory: ${solution.memoryValue} ${solution.memoryUnit}`)
+  } else if (solution.memoryUsage !== undefined) {
+    lines.push(`Memory: ${solution.memoryUsage} (unit unknown)`)
+  }
   const headerText = lines.map(line => `${prefix} ${clean(line)}`).join('\n') + '\n\n'
   // Preserve interpreter directives at the first line.
   if (solution.sourceCode.startsWith('#!')) {
@@ -72,4 +79,23 @@ export function gitPath(solution: Solution, template: string, profile: ExportPro
   if (!path) return null
   const ext = sourceFileExtension(solution.language)
   return `${path.replace(/\.(java|kt|py|js|ts|c|cpp|cs|go|rs|rb|swift|scala|sql|txt)$/i, '')}.${ext}`
+}
+
+export function githubCommitMessage(solution: Solution, template: string, profile: ExportProfile = {}): string {
+  const values: Record<string, string> = {
+    Platform: solution.platform,
+    platform: solution.platform,
+    number: solution.problemNumber,
+    title: solution.title,
+    language: solution.language,
+    name: profile.name?.trim() ?? '',
+    nickname: profile.nickname?.trim() ?? '',
+    id: profile.id == null ? '' : String(profile.id),
+  }
+  const rendered = (template || DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE)
+    .replace(/\{([^{}]+)\}/g, (_, token: string) => values[token] ?? '')
+    .replace(/[\r\n\u2028\u2029\x00-\x1f\x7f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return (rendered || `Add ${solution.platform} ${solution.problemNumber} solution`).slice(0, 200).trim()
 }

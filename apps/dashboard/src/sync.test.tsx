@@ -41,7 +41,7 @@ const capture = {
 }
 const liveSettings = {
   version: 4, name: '연결 사용자', nickname: null, copyHeader: false, downloadHeader: false,
-  downloadFilenameTemplate: '{platform}-{number}-{title}', gitPathTemplate: '{platform}/{number}-{title}',
+  downloadFilenameTemplate: '{platform}-{number}-{title}', gitPathTemplate: '{platform}/{number}-{title}', githubCommitMessageTemplate: 'Add {platform} {number} solution',
   lightTheme: 'github-light' as const, darkTheme: 'github-dark' as const, autoSyncEnabled: true, githubAutoCommitEnabled: true,
   githubTargetConfigured: true, githubStatus: 'AVAILABLE' as const, githubInstallationId: 44, githubOwner: 'private-account', githubRepository: 'archive', githubBranch: 'main', githubRootPath: null,
 }

@@ -64,7 +64,7 @@ class SettingsGithubTargetValidationTest {
   }
 
   private static SettingsRequest request() {
-    return new SettingsRequest(0, "Name", "nick", false, false, "{number}", "archive/{number}",
+    return new SettingsRequest(0, "Name", "nick", false, false, "{number}", "archive/{number}", "Add {platform} {number} solution",
         "github-light", "github-dark", false, false, 44L, "owner", "repo", "release/v1", "src");
   }
 

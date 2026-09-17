@@ -67,6 +67,7 @@ export type AccountSettings = {
   downloadHeader: boolean
   downloadFilenameTemplate: string
   gitPathTemplate: string
+  githubCommitMessageTemplate: string
   lightTheme: LightTheme
   darkTheme: DarkTheme
   autoSyncEnabled: boolean

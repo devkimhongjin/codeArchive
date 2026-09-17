@@ -5,10 +5,11 @@ const LIGHT_THEMES = ["github-light", "vitesse-light", "catppuccin-latte", "sola
 const DARK_THEMES = ["github-dark", "vitesse-dark", "catppuccin-mocha", "dracula", "one-dark-pro"] as const;
 
 export const DATABASE_NAME = "codearchive-local";
-export const DATABASE_VERSION = 2;
+export const DATABASE_VERSION = 3;
 export const CAPTURE_STORE_NAME = "captures";
 export const SETTINGS_STORE_NAME = "settings";
 export const SWEA_PROBLEM_CONTEXT_STORE_NAME = "sweaProblemContexts";
+const CAPTURE_IDENTITY_INDEX_NAME = "byProblemLanguage";
 const SETTINGS_KEY = "settings";
 
 export interface CaptureStore {
@@ -41,6 +42,13 @@ function clampLimit(limit: number | undefined): number {
 function sortNewestFirst(left: Capture, right: Capture): number {
   const byObservedAt = right.observedAt.localeCompare(left.observedAt);
   return byObservedAt === 0 ? right.captureId.localeCompare(left.captureId) : byObservedAt;
+}
+
+function hasSameSubmittedCode(left: Capture, right: Capture): boolean {
+  return left.platform === right.platform &&
+    left.problemNumber === right.problemNumber &&
+    left.language === right.language &&
+    left.sourceCode === right.sourceCode;
 }
 
 function settingsWithDefaults(value: Partial<CaptureSettings> | undefined): CaptureSettings {
@@ -105,6 +113,15 @@ export class IndexedDbCaptureStore implements CaptureStore {
     const store = transaction.objectStore(CAPTURE_STORE_NAME);
     const existing = await requestResult(store.get(capture.captureId));
     if (existing) {
+      transaction.abort();
+      return { created: false };
+    }
+    const sameProblem = await requestResult(store.index(CAPTURE_IDENTITY_INDEX_NAME).getAll([
+      capture.platform,
+      capture.problemNumber,
+      capture.language
+    ]));
+    if ((sameProblem as StoredCapture[]).some(stored => hasSameSubmittedCode(stored, capture))) {
       transaction.abort();
       return { created: false };
     }
@@ -235,6 +252,9 @@ export class IndexedDbCaptureStore implements CaptureStore {
         if (captures && !captures.indexNames.contains("bySyncState")) {
           captures.createIndex("bySyncState", "syncState", { unique: false });
         }
+        if (captures && !captures.indexNames.contains(CAPTURE_IDENTITY_INDEX_NAME)) {
+          captures.createIndex(CAPTURE_IDENTITY_INDEX_NAME, ["platform", "problemNumber", "language"], { unique: false });
+        }
         if (!database.objectStoreNames.contains(SETTINGS_STORE_NAME)) {
           database.createObjectStore(SETTINGS_STORE_NAME, { keyPath: "id" });
         }
@@ -268,6 +288,7 @@ export class MemoryCaptureStore implements CaptureStore {
 
   async putCapture(capture: Capture): Promise<{ created: boolean }> {
     if (this.captures.has(capture.captureId)) return { created: false };
+    if ([...this.captures.values()].some(stored => hasSameSubmittedCode(stored, capture))) return { created: false };
     this.captures.set(capture.captureId, structuredClone(capture));
     return { created: true };
   }

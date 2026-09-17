@@ -60,10 +60,11 @@ public class SettingsController {
   }
   private long findRepositoryId(String githubId,long installation,String owner,String repository) throws Exception { for(int page=1;page<=100;page++){ var result=github.repositoriesPage(githubId,installation,page);var found=result.items().stream().filter(r->r.owner().equals(owner)&&r.name().equals(repository)).findFirst();if(found.isPresent())return found.get().id();if(!result.hasMore())break; } throw new SecurityException("repository mismatch"); }
   private static String validate(SettingsRequest r) {
-    if (r == null || overOptional(r.name(),255) || overOptional(r.nickname(),80) || requiredOver(r.downloadFilenameTemplate(),160) || requiredOver(r.gitPathTemplate(),240)) return "Invalid settings";
+    if (r == null || overOptional(r.name(),255) || overOptional(r.nickname(),80) || requiredOver(r.downloadFilenameTemplate(),160) || requiredOver(r.gitPathTemplate(),240) || (r.githubCommitMessageTemplate()!=null && requiredOver(r.githubCommitMessageTemplate(),200))) return "Invalid settings";
     if (!LIGHT.contains(r.lightTheme()) || !DARK.contains(r.darkTheme())) return "Unsupported Shiki theme";
     if (r.downloadFilenameTemplate().contains("/") || r.downloadFilenameTemplate().contains("\\") || control(r.downloadFilenameTemplate()) || reserved(r.downloadFilenameTemplate())) return "Download filename is unsafe";
     String path = r.gitPathTemplate(); if (!safeRelative(path,240)) return "Git path must stay beneath the configured root";
+    if (r.githubCommitMessageTemplate()!=null && control(r.githubCommitMessageTemplate())) return "Git commit message is unsafe";
     if (r.githubInstallationId()!=null && r.githubInstallationId()<=0) return "GitHub installation ID must be positive";
     if (overOptional(r.githubOwner(),100) || overOptional(r.githubRepository(),100) || overOptional(r.githubBranch(),255) || !safeOptionalRoot(r.githubRootPath())) return "GitHub target is invalid";
     return null;

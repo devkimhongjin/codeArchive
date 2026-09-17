@@ -41,7 +41,7 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
    String blobSha=json.readTree(blob.body).path("sha").asText();
    Response newTree=send("POST",repo+"/git/trees",token,json.writeValueAsString(Map.of("base_tree",tree,"tree",List.of(Map.of("path",path,"mode","100644","type","blob","sha",blobSha))))); if(newTree.code!=201)return Result.unknown("Tree creation was not confirmed");
    String treeSha=json.readTree(newTree.body).path("sha").asText();
-   Response newCommit=send("POST",repo+"/git/commits",token,json.writeValueAsString(Map.of("message","CodeArchive: "+solution.getPlatform()+" #"+solution.getProblemNumber(),"tree",treeSha,"parents",List.of(head)))); if(newCommit.code!=201)return Result.unknown("Commit creation was not confirmed");
+   Response newCommit=send("POST",repo+"/git/commits",token,json.writeValueAsString(Map.of("message",commitMessage(s,solution),"tree",treeSha,"parents",List.of(head)))); if(newCommit.code!=201)return Result.unknown("Commit creation was not confirmed");
    String commitSha=json.readTree(newCommit.body).path("sha").asText();
    // The durable worker re-reads consent/settings at the latest safe point.
    // Never expose a ref update once logout, target, or automation consent changed.
@@ -102,7 +102,13 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
   p=Arrays.stream(p.split("/",-1)).map(this::clean).filter(x1->!x1.isBlank()).collect(java.util.stream.Collectors.joining("/"));if(p.isBlank())throw new IllegalArgumentException("empty");
   String ext=extension(x.getLanguage());p=p.replaceFirst("(?i)\\.(java|kt|py|js|ts|c|cpp|cs|go|rs|rb|swift|scala|sql|txt)$","");return p+"."+ext;
  }
+ private String commitMessage(UserSettings s,Solution x){
+  Map<String,String> v=new HashMap<>();String platform=x.getPlatform().name();v.put("Platform",platform);v.put("platform",platform);v.put("number",x.getProblemNumber());v.put("title",x.getTitle());v.put("language",x.getLanguage());v.put("name",s.getDisplayName()==null?"":s.getDisplayName().trim());v.put("nickname",s.getNickname()==null?"":s.getNickname().trim());v.put("id",s.getUser()!=null&&s.getUser().getId()!=null?String.valueOf(s.getUser().getId()):"");
+  String message=render(s.getGithubCommitMessageTemplate(),v).replaceAll("[\\r\\n\\u2028\\u2029\\x00-\\x1f\\x7f]+"," ").replaceAll("\\s+"," ").trim();
+  if(message.isBlank())message="Add "+platform+" "+x.getProblemNumber()+" solution";
+  return message.length()>200?message.substring(0,200).trim():message;
+ }
  private String clean(String value){return value==null?"":value.replaceAll("[\\\\/:*?\"<>|\\x00-\\x1f\\x7f]","-").replaceAll("[. ]+$","").replaceFirst("^\\.+","").trim();}
  private static String render(String template,Map<String,String> values){if(template==null)return "";Matcher matcher=Pattern.compile("\\{([^{}]+)\\}").matcher(template);StringBuffer out=new StringBuffer();while(matcher.find())matcher.appendReplacement(out,Matcher.quoteReplacement(values.getOrDefault(matcher.group(1),"")));matcher.appendTail(out);return out.toString();}
- private String extension(String n){n=n==null?"":n.toLowerCase(Locale.ROOT);if(n.contains("python"))return"py";if(n.contains("typescript")||n.equals("ts"))return"ts";if(n.contains("javascript")||n.equals("js"))return"js";if(n.contains("kotlin"))return"kt";if(n.contains("java"))return"java";if(n.contains("c++")||n.contains("cpp"))return"cpp";if(n.matches("^c(?:\\s|\\d|$).*"))return"c";if(n.equals("c#")||n.contains("csharp"))return"cs";if(n.equals("go"))return"go";if(n.contains("rust"))return"rs";if(n.contains("ruby"))return"rb";if(n.contains("swift"))return"swift";if(n.contains("scala"))return"scala";if(n.contains("sql"))return"sql";return"txt";} private enum ExistingFileState{IDENTICAL,DIFFERENT,CONFLICT} private record Response(int code,String body){}
+ private String extension(String n){n=n==null?"":n.toLowerCase(Locale.ROOT);if(n.contains("python")||n.contains("pypy"))return"py";if(n.contains("typescript")||n.equals("ts"))return"ts";if(n.contains("javascript")||n.equals("js"))return"js";if(n.contains("kotlin"))return"kt";if(n.contains("java"))return"java";if(n.contains("c++")||n.contains("cpp"))return"cpp";if(n.matches("^c(?:\\s|\\d|$).*"))return"c";if(n.equals("c#")||n.startsWith("c# ")||n.contains("csharp"))return"cs";if(n.equals("go")||n.startsWith("go "))return"go";if(n.contains("rust"))return"rs";if(n.contains("ruby"))return"rb";if(n.contains("swift"))return"swift";if(n.contains("scala"))return"scala";if(n.contains("sql"))return"sql";return"txt";} private enum ExistingFileState{IDENTICAL,DIFFERENT,CONFLICT} private record Response(int code,String body){}
 }
