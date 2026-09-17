@@ -78,6 +78,22 @@ Each capture must include a UUID `captureId`, `platform` (`SWEA` or `PROGRAMMERS
 
 The `(user_id, capture_id)` database constraint makes retries idempotent and prevents one user from reading another user's captures. A replay with changed core solution data is rejected; a replay can enrich missing performance fields.
 
+## GitHub App installation callback
+
+Configure the GitHub App **Setup URL** to the public dashboard origin followed by
+`/api/github/installations/callback`. For the beta deployment this is:
+
+```text
+https://codearchive-dashboard-beta.netlify.app/api/github/installations/callback
+```
+
+The dashboard starts installation with an authenticated, CSRF-protected `POST`.
+The API signs a short-lived state, binds it to the current browser session, and
+validates both that state and the immutable GitHub account before accepting the
+returned `installation_id`. The GitHub App ID, private key, and slug must all be
+configured server-side; the private key and installation tokens are never sent
+to the dashboard or extension.
+
 ## Tests
 
 Tests use the in-memory H2 `test` profile and mock the OAuth principal, so no

@@ -49,7 +49,7 @@ public class SettingsController {
   private UserSettings findOrCreate(AppUser user) { return settings.findByUserId(user.getId()).orElseGet(() -> settings.save(new UserSettings(user))); }
   private static ResponseEntity<ApiError> unauthorized() { return ResponseEntity.status(401).body(new ApiError("Authentication is required")); }
   private SettingsResponse response(UserSettings s) { return SettingsResponse.from(s,providerReady(),appSlug); }
-  private boolean providerReady() { return !appId.isBlank() && !privateKey.isBlank(); }
+  private boolean providerReady() { return !appId.isBlank() && !privateKey.isBlank() && appSlug != null && appSlug.matches("[A-Za-z0-9](?:[A-Za-z0-9-]{0,98}[A-Za-z0-9])?"); }
   private static boolean requestedTarget(SettingsRequest r) { return r.githubInstallationId()!=null && r.githubOwner()!=null && !r.githubOwner().isBlank() && r.githubRepository()!=null && !r.githubRepository().isBlank() && r.githubBranch()!=null && !r.githubBranch().isBlank(); }
   private static boolean targetChanged(UserSettings current, SettingsRequest request) {
     return !java.util.Objects.equals(current.getGithubInstallationId(), request.githubInstallationId())
