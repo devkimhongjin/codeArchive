@@ -42,6 +42,9 @@ public class AppUser {
     @Column(name = "github_email", length = 320)
     private String githubEmail;
 
+    @Column(name = "github_avatar_url", length = 2048)
+    private String githubAvatarUrl;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -55,16 +58,22 @@ public class AppUser {
     }
 
     private AppUser(String githubId, String githubLogin, String githubName, String githubEmail,
-                    boolean githubAccount) {
+                    String githubAvatarUrl, boolean githubAccount) {
         this.githubId = githubId;
         this.githubLogin = githubLogin;
         this.githubName = githubName;
         this.githubEmail = githubEmail;
+        this.githubAvatarUrl = githubAvatarUrl;
         this.createdAt = Instant.now();
     }
 
     public static AppUser fromGithub(String githubId, String githubLogin, String githubName, String githubEmail) {
-        return new AppUser(githubId, githubLogin, githubName, githubEmail, true);
+        return fromGithub(githubId, githubLogin, githubName, githubEmail, null);
+    }
+
+    public static AppUser fromGithub(String githubId, String githubLogin, String githubName, String githubEmail,
+                                     String githubAvatarUrl) {
+        return new AppUser(githubId, githubLogin, githubName, githubEmail, githubAvatarUrl, true);
     }
 
     public Long getId() {
@@ -95,14 +104,21 @@ public class AppUser {
         return githubEmail;
     }
 
+    public String getGithubAvatarUrl() { return githubAvatarUrl; }
+
     /**
      * Refresh mutable profile fields after a successful GitHub login.  There
      * is intentionally no githubId setter: account identity is immutable.
      */
     public void updateGithubProfile(String githubLogin, String githubName, String githubEmail) {
+        updateGithubProfile(githubLogin, githubName, githubEmail, null);
+    }
+
+    public void updateGithubProfile(String githubLogin, String githubName, String githubEmail, String githubAvatarUrl) {
         this.githubLogin = githubLogin;
         this.githubName = githubName;
         this.githubEmail = githubEmail;
+        this.githubAvatarUrl = githubAvatarUrl;
     }
 
     public Instant getCreatedAt() {

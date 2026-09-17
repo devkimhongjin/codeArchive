@@ -1,5 +1,6 @@
 package com.codearchive.api.auth;
 
+import java.net.URI;
 import java.util.Map;
 import java.util.Optional;
 import org.springframework.security.oauth2.core.user.OAuth2User;
@@ -10,7 +11,11 @@ import org.springframework.security.oauth2.core.user.OAuth2User;
  * GitHub's numeric {@code id} is the only account key.  Login, display name,
  * and email are profile fields and can change or be unavailable.
  */
-public record GithubIdentity(String githubId, String githubLogin, String name, String email) {
+public record GithubIdentity(String githubId, String githubLogin, String name, String email, String avatarUrl) {
+
+    public GithubIdentity(String githubId, String githubLogin, String name, String email) {
+        this(githubId, githubLogin, name, email, null);
+    }
 
     public static Optional<GithubIdentity> from(OAuth2User principal) {
         if (principal == null) {
@@ -32,7 +37,8 @@ public record GithubIdentity(String githubId, String githubLogin, String name, S
                 githubId,
                 login,
                 optionalText(attributes.get("name")),
-                optionalText(attributes.get("email"))));
+                optionalText(attributes.get("email")),
+                githubAvatarUrl(attributes.get("avatar_url"))));
     }
 
     private static String numericId(Object value) {
@@ -54,5 +60,17 @@ public record GithubIdentity(String githubId, String githubLogin, String name, S
         }
         String text = String.valueOf(value).trim();
         return text.isEmpty() ? null : text;
+    }
+
+    private static String githubAvatarUrl(Object value) {
+        String text = optionalText(value);
+        if (text == null || text.length() > 2048) return null;
+        try {
+            URI uri = URI.create(text);
+            return "https".equalsIgnoreCase(uri.getScheme())
+                    && "avatars.githubusercontent.com".equalsIgnoreCase(uri.getHost()) ? text : null;
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 }

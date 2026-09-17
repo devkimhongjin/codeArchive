@@ -53,6 +53,7 @@ a { color: inherit; }
 .login-button:hover, .primary-button:hover { background: var(--purple-deep); }
 .account-menu { height: 34px; display: flex; align-items: center; gap: 7px; padding-left: 9px; border-left: 1px solid var(--line); }
 .account-avatar { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; color: var(--purple); background: var(--purple-soft); border-radius: 50%; }
+.account-avatar img { width: 100%; height: 100%; display: block; border-radius: inherit; object-fit: cover; }
 .account-identity { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; color: #5f5b72; }
 .logout-button, .modal-close { color: #9390a3; background: transparent; display: inline-flex; padding: 5px; }
 .logout-button:hover, .modal-close:hover { color: var(--purple); }

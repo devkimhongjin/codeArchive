@@ -153,7 +153,8 @@ class CodeArchiveApiIntegrationTest {
                 .andExpect(jsonPath("$.githubId", is("1001")))
                 .andExpect(jsonPath("$.githubLogin", is("new-login")))
                 .andExpect(jsonPath("$.name", is("New Name")))
-                .andExpect(jsonPath("$.email", is("new@example.com")));
+                .andExpect(jsonPath("$.email", is("new@example.com")))
+                .andExpect(jsonPath("$.avatarUrl", is("https://avatars.githubusercontent.com/u/1001?v=4")));
     }
 
     @Test
@@ -541,6 +542,7 @@ class CodeArchiveApiIntegrationTest {
         Map<String, Object> attributes = new HashMap<>();
         attributes.put("id", id);
         attributes.put("login", login);
+        attributes.put("avatar_url", "https://avatars.githubusercontent.com/u/" + id + "?v=4");
         if (name != null) {
             attributes.put("name", name);
         }
@@ -559,6 +561,7 @@ class CodeArchiveApiIntegrationTest {
         Map<String, Object> attributes = new HashMap<>();
         attributes.put("id", id);
         attributes.put("login", login);
+        attributes.put("avatar_url", "https://avatars.githubusercontent.com/u/" + id + "?v=4");
         if (name != null) {
             attributes.put("name", name);
         }

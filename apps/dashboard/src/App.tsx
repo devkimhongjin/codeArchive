@@ -89,6 +89,16 @@ function Icon({ name, size = 18, strokeWidth = 1.8 }: { name: IconName; size?: n
   return <IconComponent size={size} strokeWidth={strokeWidth} aria-hidden="true" />
 }
 
+function ProfileAvatar({ user, large = false }: { user: User; large?: boolean }) {
+  const [failed, setFailed] = useState(false)
+  useEffect(() => setFailed(false), [user.avatarUrl])
+  return <span className={`account-avatar ${large ? 'large' : ''}`}>
+    {user.avatarUrl && !failed
+      ? <img src={user.avatarUrl} alt={`${displayUser(user)} GitHub 프로필`} referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+      : <Icon name="user" size={large ? 18 : 15} />}
+  </span>
+}
+
 function normalizeSolution(value: unknown, index = 0): Solution {
   const raw = (value ?? {}) as Record<string, unknown>
   const read = (...keys: string[]) => keys.map((key) => raw[key]).find((item) => item !== undefined && item !== null)
@@ -1093,7 +1103,7 @@ export default function App() {
             </button>
             {user ? (
               <div className="account-menu">
-                <span className="account-avatar"><Icon name="user" size={15} /></span>
+                <ProfileAvatar user={user} />
                 <span className="account-identity">{displayUser(user)}</span>
                 <button className="logout-button" onClick={() => void handleLogout()} aria-label="로그아웃">
                   <Icon name="logout" size={16} />
@@ -1449,7 +1459,7 @@ function SettingsView({
           </article>
           <article className="settings-card github-card"><h2>GitHub 대상</h2><p role="status">{githubStatusText}</p><button type="button" className="secondary-button" onClick={()=>void beginGithubConnection()} disabled={!user||targetBusy||providerUnavailable}>{targetBusy?'확인 중…':draftTargetConfigured?'저장 위치 다시 선택':'GitHub 연결 및 저장 위치 선택'}</button>{targetError&&<p role="alert">{targetError}</p>}<label>GitHub 설치<select aria-label="GitHub 설치" value={accountSettings.githubInstallationId??''} onChange={e=>void chooseInstallation(e.target.value ? Number(e.target.value) : null)}><option value="">선택하세요</option>{installations.map(x=><option key={x.id} value={x.id}>{x.accountLogin}</option>)}</select></label><label>저장소<select aria-label="저장소" disabled={!accountSettings.githubInstallationId||targetBusy} value={repositoryId??''} onChange={e=>void chooseRepository(e.target.value ? Number(e.target.value) : null)}><option value="">선택하세요</option>{repositories.map(x=><option key={x.id} value={x.id}>{x.fullName}</option>)}</select></label><label>브랜치<select aria-label="브랜치" disabled={!repositoryId||targetBusy} value={accountSettings.githubBranch??''} onChange={e=>void chooseBranch(e.target.value)}><option value="">선택하세요</option>{branches.map(x=><option key={x.name} value={x.name}>{x.name}{x.protectedBranch?' (보호됨)':''}</option>)}</select></label>{directory&&<div><p>폴더: <strong>{directory.currentPath||'/'}</strong></p>{directory.currentPath&&<button type="button" onClick={()=>void chooseBranch(accountSettings.githubBranch!,directory.parentPath)}>상위 폴더</button>}{directory.directories.map(name=><button type="button" key={name} onClick={()=>void chooseBranch(accountSettings.githubBranch!,directory.currentPath?`${directory.currentPath}/${name}`:name)}>{name}/</button>)}</div>}{draftTargetConfigured&&<p><strong>현재 대상:</strong> {accountSettings.githubOwner}/{accountSettings.githubRepository} · {accountSettings.githubBranch}{accountSettings.githubRootPath ? `/${accountSettings.githubRootPath}` : ''}</p>}</article>
         </div>
-        <aside className="settings-sidebar"><article className="account-card"><span className="card-kicker">ACCOUNT</span>{user ? <><div className="account-large"><span className="account-avatar large"><Icon name="user" size={18} /></span><div><strong>{displayUser(user)}</strong><span>@{user.githubLogin} · CodeArchive 계정</span></div></div><button className="wide-ghost-button" onClick={onLogout}><Icon name="logout" size={14} /> 로그아웃</button></> : <><div className="account-logged-out"><div className="logged-out-icon"><Icon name="user" size={18} /></div><strong>로그인이 필요합니다</strong><span>내 풀이를 저장하고 동기화하세요.</span></div><button className="primary-button wide" onClick={onLogin}>GitHub로 로그인 <Icon name="github" size={14} /></button></>}</article><article className="privacy-card"><Icon name="check" size={16} /><div><strong>데이터를 직접 통제하세요</strong><p>자동 동기화를 켜면 새 캡처가 안전한 릴레이로 전송됩니다. 끄면 수동 동기화만 사용합니다.</p></div></article></aside>
+        <aside className="settings-sidebar"><article className="account-card"><span className="card-kicker">ACCOUNT</span>{user ? <><div className="account-large"><ProfileAvatar user={user} large /><div><strong>{displayUser(user)}</strong><span>@{user.githubLogin} · CodeArchive 계정</span></div></div><button className="wide-ghost-button" onClick={onLogout}><Icon name="logout" size={14} /> 로그아웃</button></> : <><div className="account-logged-out"><div className="logged-out-icon"><Icon name="user" size={18} /></div><strong>로그인이 필요합니다</strong><span>내 풀이를 저장하고 동기화하세요.</span></div><button className="primary-button wide" onClick={onLogin}>GitHub로 로그인 <Icon name="github" size={14} /></button></>}</article><article className="privacy-card"><Icon name="check" size={16} /><div><strong>데이터를 직접 통제하세요</strong><p>자동 동기화를 켜면 새 캡처가 안전한 릴레이로 전송됩니다. 끄면 수동 동기화만 사용합니다.</p></div></article></aside>
       </div>
     </section>
   )

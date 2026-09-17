@@ -19,11 +19,11 @@ public class GithubAccountService {
         GithubIdentity identity = GithubIdentity.from(principal)
                 .orElseThrow(() -> new IllegalArgumentException("GitHub identity is incomplete"));
         AppUser user = userRepository.findByGithubId(identity.githubId())
-                .orElseGet(() -> AppUser.fromGithub(identity.githubId(), identity.githubLogin(), identity.name(), identity.email()));
+                .orElseGet(() -> AppUser.fromGithub(identity.githubId(), identity.githubLogin(), identity.name(), identity.email(), identity.avatarUrl()));
         if (user.getGithubId() == null || !user.getGithubId().equals(identity.githubId())) {
             throw new IllegalStateException("GitHub identity cannot be changed");
         }
-        user.updateGithubProfile(identity.githubLogin(), identity.name(), identity.email());
+        user.updateGithubProfile(identity.githubLogin(), identity.name(), identity.email(), identity.avatarUrl());
         return userRepository.save(user);
     }
 

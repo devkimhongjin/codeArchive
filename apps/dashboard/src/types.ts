@@ -8,6 +8,7 @@ export type User = {
   githubLogin: string
   name?: string
   email?: string
+  avatarUrl?: string
 }
 
 export const GITHUB_LOGIN_URL = '/api/oauth2/authorization/github' as const
