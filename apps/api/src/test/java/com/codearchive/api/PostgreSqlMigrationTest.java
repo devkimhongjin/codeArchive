@@ -41,12 +41,12 @@ class PostgreSqlMigrationTest {
             Flyway flyway = database.flyway();
 
             MigrateResult first = flyway.migrate();
-            assertEquals(5, first.migrationsExecuted);
-            assertEquals(5, database.historyCount());
+            assertEquals(6, first.migrationsExecuted);
+            assertEquals(6, database.historyCount());
 
             MigrateResult second = flyway.migrate();
             assertEquals(0, second.migrationsExecuted);
-            assertEquals(5, database.historyCount());
+            assertEquals(6, database.historyCount());
 
             database.assertFinalSchema();
             validateWithHibernate(database);
@@ -69,7 +69,7 @@ class PostgreSqlMigrationTest {
             assertThrows(FlywayException.class, adopted::migrate);
             adopted.baseline();
             assertEquals(1, database.historyCount());
-            assertEquals(4, adopted.migrate().migrationsExecuted);
+            assertEquals(5, adopted.migrate().migrationsExecuted);
 
             assertEquals("legacy@example.com", database.scalar(
                     "SELECT email FROM users WHERE id = ?", userId));
@@ -96,7 +96,7 @@ class PostgreSqlMigrationTest {
             Flyway adopted = database.flywayAtBaseline(MigrationVersion.fromVersion("2"));
             adopted.baseline();
             assertEquals(1, database.historyCount());
-            assertEquals(3, adopted.migrate().migrationsExecuted);
+            assertEquals(4, adopted.migrate().migrationsExecuted);
 
             assertEquals("9001", database.scalar(
                     "SELECT github_id FROM users WHERE id = ?", userId));
@@ -119,8 +119,8 @@ class PostgreSqlMigrationTest {
             assertEquals(2L, database.publicCount("users"));
             assertEquals(57L, database.publicCount("solutions"));
 
-            assertEquals(5, database.prodFlyway().migrate().migrationsExecuted);
-            assertEquals(5L, database.versionedHistoryCount("codearchive_v2"));
+            assertEquals(6, database.prodFlyway().migrate().migrationsExecuted);
+            assertEquals(6L, database.versionedHistoryCount("codearchive_v2"));
             assertEquals(2L, database.countInSchema("codearchive_v2", "users"));
             assertEquals(57L, database.countInSchema("codearchive_v2", "solutions"));
             assertEquals("101.000000", database.scalarInSchema("codearchive_v2",
@@ -149,7 +149,7 @@ class PostgreSqlMigrationTest {
         TestDatabase database = TestDatabase.create();
         try {
             database.createRebuiltPublicSource();
-            assertEquals(5, database.prodFlyway().migrate().migrationsExecuted);
+            assertEquals(6, database.prodFlyway().migrate().migrationsExecuted);
             assertEquals(0L, database.countInSchema("codearchive_v2", "users"));
             assertEquals(0L, database.countInSchema("codearchive_v2", "solutions"));
             assertEquals(0, database.prodFlyway().migrate().migrationsExecuted);
@@ -449,9 +449,14 @@ class PostgreSqlMigrationTest {
             assertEquals("user_settings", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'user_settings'", schema));
             assertEquals("relay_grants", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'relay_grants'", schema));
             assertEquals("github_commit_jobs", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'github_commit_jobs'", schema));
+            assertEquals("spring_session", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'spring_session'", schema));
+            assertEquals("spring_session_attributes", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'spring_session_attributes'", schema));
             assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = ? AND indexname = 'idx_relay_grants_user_device_active'", schema)).longValue());
             assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = ? AND indexname = 'idx_github_commit_jobs_state_created'", schema)).longValue());
             assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = ? AND indexname = 'idx_github_commit_jobs_state_updated'", schema)).longValue());
+            assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = ? AND indexname = 'spring_session_ix1'", schema)).longValue());
+            assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = ? AND indexname = 'spring_session_ix2'", schema)).longValue());
+            assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = ? AND indexname = 'spring_session_ix3'", schema)).longValue());
         }
 
         private String nullable(String table, String column) throws SQLException {

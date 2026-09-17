@@ -1,142 +1,58 @@
 # Production database migrations
 
-The default and `prod` profiles use PostgreSQL, Flyway, and Hibernate schema
-validation. Flyway is enabled for those profiles with
-`baseline-on-migrate=false` and `clean-disabled=true`; startup never guesses
-that an existing schema should be adopted and never drops production data.
-The `local` and `test` profiles continue to use their existing H2 settings,
-Hibernate schema generation, and the H2-only `LegacyUserSchemaMigration`.
+Production uses PostgreSQL, Flyway, and Hibernate validation. With the `prod`
+profile, Flyway uses the isolated `codearchive_v2` schema and records exactly six
+versioned migrations in `codearchive_v2.flyway_schema_history`. It has
+`baseline-on-migrate=false`, `clean-disabled=true`, and `create-schemas=true`.
+Startup never adopts, repairs, or drops an unknown database history.
+
+The local and test profiles are self-contained H2 configurations. Flyway is disabled
+there; Hibernate creates application tables and Spring Session JDBC initializes its
+H2 session tables. Production Spring Session schema initialization is disabled:
+Flyway owns it through V6.
 
 ## Version history
 
 | Version | Purpose |
 | --- | --- |
-| `V1__create_legacy_schema.sql` | Creates the pre-GitHub `users` and `solutions` tables. `email` and `password_hash` are required, matching the legacy Hibernate schema. |
-| `V2__add_github_identity.sql` | Adds nullable GitHub profile columns, makes the legacy credential columns nullable, and adds the unique `github_id` constraint. |
-| `V3__add_solution_ordering_index.sql` | Adds the `(user_id, solved_at DESC)` index used by the per-user solution listing query. |
-| `V4__import_legacy_codearchive.sql` | In the `prod` profile only, validates and imports the known UUID/GitHub legacy public tables into the isolated `codearchive_v2` schema. |
+| `V1__create_legacy_schema.sql` | Creates the original `users` and `solutions` schema with legacy credential columns. |
+| `V2__add_github_identity.sql` | Adds nullable GitHub identity/profile columns, permits legacy credential nulls, and adds the unique GitHub-id constraint. |
+| `V3__add_solution_ordering_index.sql` | Adds `(user_id, solved_at DESC)` for per-user solution listing. |
+| `V4__import_legacy_codearchive.sql` | Validates and imports the recognized legacy public GitHub/UUID source into `codearchive_v2`; absent or rebuilt sources are no-ops. |
+| `V5__issue_241_settings_and_memory.sql` | Adds explicit memory fields, account settings, opaque relay grants, and durable GitHub commit jobs plus their indexes. |
+| `V6__cloud_run_readiness.sql` | Adds Spring Session JDBC `spring_session` and `spring_session_attributes` tables and session-id, expiry-time, and principal-name indexes. |
 
-`V2` is intentionally a narrow upgrade. It does not rewrite existing rows or
-discard legacy credentials. PostgreSQL's unique constraint permits multiple
-`NULL` values, so users without a GitHub id are allowed while every populated
-GitHub id remains unique.
+V5 retains the legacy `solutions.memory_usage` value without inventing a unit. New
+captures use `memory_value` and `memory_unit`. Its relay grants are opaque hashes,
+and `github_commit_jobs` has the `(user_id, capture_id)` idempotency constraint with
+state/creation and state/update indexes.
 
-## Fresh PostgreSQL database
+V6 creates the standard Spring Session JDBC tables additively. In production the
+application accesses them in `codearchive_v2`; the session cleanup job is hourly,
+which avoids repeatedly waking a scale-to-zero database.
 
-For an empty database, set the normal PostgreSQL connection variables and
-start the application with the `prod` profile. Production Flyway creates and
-uses `codearchive_v2.flyway_schema_history`, runs V1 through V4 there, and
-Hibernate validates `codearchive_v2`. It never reads, baselines, repairs, or
-changes `public.flyway_schema_history`.
+## Current history expectations
 
-When the recognized legacy source tables exist in `public`, V4 first validates
-their complete shape and all import-critical values, then imports GitHub users
-and solutions in the same transaction. Numeric performance strings are parsed
-without punctuation; absent or malformed optional values remain NULL.
-Programmers URLs are rebuilt from their problem number and SWEA uses the stable
-problem-list fallback. An absent public source or an already rebuilt public
-shape is a no-op. Any other public shape fails V4 before inserts, so investigate
-instead of baselining or editing the legacy schema.
+- A fresh production schema migrates V1 through V6: six versioned history rows.
+- A V1 baseline has one baseline/history row, then V2 through V6 execute: five
+  migrations after baselining.
+- A V2 baseline has one baseline/history row, then V3 through V6 execute: four
+  migrations after baselining.
+- A second migration run executes zero migrations and keeps the six-version history.
 
-## Adopting an existing Hibernate schema
+For the recognized public legacy import path, Flyway history remains isolated in
+`codearchive_v2`; it does not modify `public.flyway_schema_history`.
 
-Take a database backup and inspect the schema during a maintenance window
-before recording a Flyway baseline. The following query shows the columns and
-nullability that matter for choosing the baseline:
+## Adoption and verification
 
-```sql
-SELECT table_name, column_name, data_type, character_maximum_length,
-       is_nullable, numeric_precision, numeric_scale
-FROM information_schema.columns
-WHERE table_schema = 'public'
-  AND table_name IN ('users', 'solutions')
-ORDER BY table_name, ordinal_position;
-```
+Take a backup and inspect the existing database during a maintenance window before
+recording a baseline. Baseline only the exact V1 or V2 shapes above. Do not enable
+`baselineOnMigrate`, do not use `clean`, and do not edit an unrecognized public
+schema until it has a reviewed migration plan.
 
-Also inspect the primary keys, foreign key, unique constraints, and indexes.
-The expected names for a schema created by these migrations are
-`pk_users`, `pk_solutions`, `fk_solution_user`, `uk_users_email`,
-`uk_users_github_id`, `uk_solution_user_capture`, and
-`idx_solutions_user_solved_at`.
-
-Use the Flyway CLI version compatible with the application's Boot-managed
-Flyway dependencies. Set the same JDBC URL, user, password, schema, and
-migration locations used by the application. Do not use `clean` and do not
-turn on `baselineOnMigrate`:
-
-From `apps/api` in PowerShell, point the CLI to the actual migration directory
-before running the commands below (the CLI does not read Spring's classpath):
-
-```powershell
-$env:FLYWAY_LOCATIONS = 'filesystem:' + (Resolve-Path './src/main/resources/db/migration').Path.Replace('\', '/')
-```
-
-Credentials can instead be supplied through `FLYWAY_URL`, `FLYWAY_USER`, and
-`FLYWAY_PASSWORD`; omit the corresponding command-line arguments when using
-those variables. Never commit credentials or a filled-in command to source control.
-
-```text
-flyway -url=<jdbc-postgresql-url> -user=<user> -password=<password> \
-  -schemas=public -defaultSchema=public \
-  -baselineOnMigrate=false -cleanDisabled=true info
-```
-
-### Legacy schema (baseline at V1)
-
-Choose this path when the database has the legacy `users` and `solutions`
-tables, has no GitHub columns, and matches V1. Confirm that existing rows do
-not violate the V1 primary key, foreign key, unique, length, or required
-column definitions. Then record that V1 is already present and apply V2:
-
-```text
-flyway -url=<jdbc-postgresql-url> -user=<user> -password=<password> \
-  -schemas=public -defaultSchema=public \
-  -baselineOnMigrate=false -cleanDisabled=true \
-  baseline -baselineVersion=1 -baselineDescription="legacy Hibernate schema"
-
-flyway -url=<jdbc-postgresql-url> -user=<user> -password=<password> \
-  -schemas=public -defaultSchema=public \
-  -baselineOnMigrate=false -cleanDisabled=true migrate
-```
-
-The baseline command records V1 without running it. The migrate command then
-runs V2 and V3, preserving every existing user and solution row.
-
-### Current GitHub-enabled schema (baseline at V2)
-
-Some installations may have been run with Hibernate `ddl-auto=update` after
-GitHub login support was introduced. If inspection confirms that the schema
-already has all four GitHub columns, nullable `email` and `password_hash`, and
-the unique `github_id` constraint, record V2 directly:
-
-```text
-flyway -url=<jdbc-postgresql-url> -user=<user> -password=<password> \
-  -schemas=public -defaultSchema=public \
-  -baselineOnMigrate=false -cleanDisabled=true \
-  baseline -baselineVersion=2 -baselineDescription="existing GitHub schema"
-```
-
-Do not baseline at V2 when any of those columns or constraints are missing.
-Reconcile the schema in a reviewed, tested SQL change first, or use the V1
-adoption path when the database is still the legacy shape. After a V2
-baseline, migrate applies V3 and creates the ordering index. After either
-baseline path, start the application and confirm that Flyway reports the
-expected history and Hibernate validation succeeds.
-
-## Repeatable PostgreSQL verification
-
-From the project root with Docker running and `JAVA_HOME` set to JDK 17+:
-
-```powershell
-./scripts/test-postgres.ps1
-```
-
-This runner uses an isolated PostgreSQL 17 container on a random loopback port,
-generates transient credentials, runs `PostgreSqlMigrationTest`, and stops its
-container on success or failure. It never attaches an existing volume. Tests
-cover new schemas, repeat migration, explicit V1/V2 adoption, retained rows,
-rejection of automatic adoption, isolated `codearchive_v2` imports from a
-legacy public fixture, preserved public row/history counts, safe rebuilt-public
-no-op behavior, and Hibernate schema validation. The regular
-H2 API tests still run with `./mvnw.cmd test`; migration tests skip unless all
-`PG_TEST_URL`, `PG_TEST_USER`, and `PG_TEST_PASSWORD` variables are set.
+The PostgreSQL migration suite runs when `PG_TEST_URL`, `PG_TEST_USER`, and
+`PG_TEST_PASSWORD` are set. It verifies fresh/repeat migration, V1/V2 baselines,
+legacy imports, the isolated production schema/history, V5 structures, V6 Spring
+Session tables/indexes, and Hibernate validation. Without those environment values,
+the PostgreSQL-only tests are intentionally skipped while the H2 API suite remains
+self-contained.

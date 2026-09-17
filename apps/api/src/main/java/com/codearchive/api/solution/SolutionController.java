@@ -95,7 +95,8 @@ public class SolutionController {
             return solutionService.upsert(githubId, payload);
         } catch (DataIntegrityViolationException firstFailure) {
             // A concurrent request may have created the unique (user,captureId) row after the initial lookup.
-            // The failed transaction is already closed because upsert uses REQUIRES_NEW, so a second lookup is safe.
+            // This controller method is non-transactional, so each proxied upsert call
+            // has completed before this one-time concurrent-upsert retry begins.
             return solutionService.upsert(githubId, payload);
         }
     }

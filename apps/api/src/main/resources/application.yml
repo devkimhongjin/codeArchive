@@ -18,6 +18,15 @@ spring:
     enabled: true
     baseline-on-migrate: false
     clean-disabled: true
+  session:
+    store-type: jdbc
+    servlet:
+      cookie:
+        name: JSESSIONID
+    jdbc:
+      # Production is Flyway-owned; local and test profiles override this for H2.
+      initialize-schema: never
+      cleanup-cron: "0 0 * * * *"
   jackson:
     time-zone: UTC
 codearchive:
@@ -39,6 +48,18 @@ codearchive:
     connect-timeout-ms: ${GITHUB_CONNECT_TIMEOUT_MS:5000}
     request-timeout-ms: ${GITHUB_REQUEST_TIMEOUT_MS:10000}
     worker-delay-ms: ${GITHUB_WORKER_DELAY_MS:30000}
+    worker-running-lease-ms: ${GITHUB_WORKER_RUNNING_LEASE_MS:300000}
+    # Render stays on polling until an explicitly configured private Cloud Run worker is cut over.
+    dispatch-mode: ${GITHUB_DISPATCH_MODE:polling}
+    worker:
+      http-enabled: ${GITHUB_WORKER_HTTP_ENABLED:false}
+    cloud-tasks:
+      project-id: ${GCP_PROJECT_ID:}
+      location: ${GCP_TASKS_LOCATION:}
+      queue-name: ${GCP_TASKS_QUEUE:}
+      worker-url: ${GCP_TASKS_WORKER_URL:}
+      oidc-service-account: ${GCP_TASKS_OIDC_SERVICE_ACCOUNT:}
+      oidc-audience: ${GCP_TASKS_OIDC_AUDIENCE:}
 server:
   servlet:
     session:
@@ -67,6 +88,9 @@ spring:
       ddl-auto: update
   flyway:
     enabled: false
+  session:
+    jdbc:
+      initialize-schema: always
 server:
   address: 127.0.0.1
 
@@ -85,3 +109,6 @@ spring:
       ddl-auto: create-drop
   flyway:
     enabled: false
+  session:
+    jdbc:
+      initialize-schema: always
