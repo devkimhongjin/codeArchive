@@ -2,7 +2,7 @@ package com.codearchive.api.relay;
 import com.codearchive.api.auth.*; import com.codearchive.api.common.ApiError; import com.codearchive.api.common.GithubAccountAssertion; import com.codearchive.api.solution.*; import com.codearchive.api.automation.GithubAutomationService; import com.codearchive.api.settings.*;
 import java.nio.charset.StandardCharsets; import java.security.*; import java.time.*; import java.util.*;
 import org.springframework.http.ResponseEntity; import org.springframework.security.core.Authentication; import org.springframework.transaction.annotation.Transactional; import org.springframework.web.bind.annotation.*;
-/** Isolated bearer-only append endpoint; it never accepts a payload account identity. */
+/** Isolated bearer-only capture endpoint; it never accepts a payload account identity. */
 @RestController @RequestMapping("/api/relay") public class RelayController {
  private final UserRepository users; private final RelayGrantRepository grants; private final RelayGrantService grantService; private final SolutionService solutions; private final GithubAutomationService automation; private final UserSettingsRepository settings;
  public RelayController(UserRepository users,RelayGrantRepository grants,RelayGrantService grantService,SolutionService solutions,GithubAutomationService automation,UserSettingsRepository settings){this.users=users;this.grants=grants;this.grantService=grantService;this.solutions=solutions;this.automation=automation;this.settings=settings;}
@@ -35,6 +35,14 @@ import org.springframework.http.ResponseEntity; import org.springframework.secur
    UserSettings current=settings.findByUserId(grant.getUser().getId()).orElse(null); if(current==null||!current.isAutoSyncEnabled()||current.getVersion()!=grant.getGeneration())return ResponseEntity.status(401).body(new ApiError("Relay authorization is stale"));
    try { Solution saved=solutions.upsert(grant.getUser().getGithubId(),capture); automation.consider(grant.getUser(), saved); return ResponseEntity.ok(Map.of("captureId",saved.getCaptureId(),"accepted",true,"generation",grant.getGeneration())); }
    catch(CaptureValidationException e){return ResponseEntity.badRequest().body(new ApiError(e.getMessage()));}
+ }
+ @GetMapping("/github-commit-status") @Transactional(readOnly=true) public ResponseEntity<?> githubCommitStatus(@RequestHeader(value="Authorization",required=false) String authorization,@RequestParam(name="captureId") List<String> captureIds){
+   if(authorization==null||!authorization.startsWith("Bearer "))return ResponseEntity.status(401).body(new ApiError("Relay authorization is required"));
+   RelayGrant grant=grants.findByTokenHash(hash(authorization.substring(7))).filter(RelayGrant::usable).orElse(null); if(grant==null)return ResponseEntity.status(401).body(new ApiError("Relay authorization is invalid"));
+   if(captureIds==null||captureIds.isEmpty()||captureIds.size()>10||captureIds.stream().anyMatch(value->{try{return !UUID.fromString(value).toString().equalsIgnoreCase(value);}catch(RuntimeException ignored){return true;}}))return ResponseEntity.badRequest().body(new ApiError("Invalid capture identity"));
+   Map<String,com.codearchive.api.automation.CommitJobState> existing=automation.statuses(grant.getUser(),captureIds); Map<String,String> result=new LinkedHashMap<>();
+   captureIds.stream().distinct().forEach(captureId->result.put(captureId,Optional.ofNullable(existing.get(captureId)).map(state->state.name()).orElse("NOT_REQUESTED")));
+   return ResponseEntity.ok(Map.of("statuses",result));
  }
  public record GrantRequest(String deviceId,long generation){} public record GrantResponse(String secret,long generation,String endpoint,String expiresAt){}
  private static String randomSecret(){byte[] b=new byte[32];new SecureRandom().nextBytes(b);return Base64.getUrlEncoder().withoutPadding().encodeToString(b);} private static String hash(String text){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)));}catch(NoSuchAlgorithmException e){throw new IllegalStateException(e);}}

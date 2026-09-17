@@ -8,6 +8,8 @@ import com.codearchive.api.solution.SolutionRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -83,6 +85,14 @@ public class GithubAutomationService {
     public void recoverAndDispatch() {
         recoverStaleRunning();
         pendingJobIds().forEach(this::dispatchCommittedJob);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, CommitJobState> statuses(AppUser user, List<String> captureIds) {
+        Map<String, CommitJobState> result = new LinkedHashMap<>();
+        jobs.findByUserIdAndCaptureIdIn(user.getId(), captureIds)
+                .forEach(job -> result.put(job.getCaptureId(), job.getState()));
+        return result;
     }
 
     public ProcessResult process(Long id) {

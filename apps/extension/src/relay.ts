@@ -2,8 +2,9 @@ import type { Capture, CaptureSettings } from "./types";
 import type { CaptureStore } from "./storage";
 
 export type RelayAttemptResult = "ACK" | "OFFLINE" | "AUTH_EXPIRED" | "RELAY_ERROR" | "DISABLED";
+export type GithubCommitStatus = "NOT_REQUESTED" | "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "UNKNOWN";
 
-/** The extension owns no GitHub credential; only this opaque append grant crosses the wire. */
+/** The extension owns no GitHub credential; only this narrow capture relay grant crosses the wire. */
 export async function relayCapture(capture: Capture, settings: CaptureSettings, fetcher: typeof fetch = fetch): Promise<RelayAttemptResult> {
   const relay = settings.relay;
   if (!settings.autoSyncEnabled || !relay || relay.status === "AUTH_EXPIRED") return "DISABLED";
@@ -15,6 +16,33 @@ export async function relayCapture(capture: Capture, settings: CaptureSettings, 
     if (response.status === 401) return "AUTH_EXPIRED";
     return response.ok ? "ACK" : "RELAY_ERROR";
   } catch { return "OFFLINE"; }
+}
+
+export async function fetchGithubCommitStatuses(
+  captureIds: string[],
+  settings: CaptureSettings,
+  fetcher: typeof fetch = fetch
+): Promise<Record<string, GithubCommitStatus>> {
+  const relay = settings.relay;
+  if (!relay || captureIds.length === 0 || relay.status === "AUTH_EXPIRED" || relay.status === "REVOCATION_PENDING") return {};
+  let endpoint: URL;
+  try {
+    endpoint = new URL("/api/relay/github-commit-status", new URL(relay.endpoint, "https://codearchive-dashboard-beta.netlify.app").origin);
+  } catch {
+    return {};
+  }
+  if (!("https://codearchive-dashboard-beta.netlify.app" === endpoint.origin || "http://localhost:5173" === endpoint.origin)) return {};
+  for (const captureId of [...new Set(captureIds)].slice(0, 10)) endpoint.searchParams.append("captureId", captureId);
+  try {
+    const response = await fetcher(endpoint, { headers: { "Authorization": `Bearer ${relay.secret}` } });
+    if (!response.ok) return {};
+    const payload = await response.json() as { statuses?: unknown };
+    if (!payload.statuses || typeof payload.statuses !== "object") return {};
+    const allowed = new Set<GithubCommitStatus>(["NOT_REQUESTED", "PENDING", "RUNNING", "SUCCEEDED", "FAILED", "UNKNOWN"]);
+    return Object.fromEntries(Object.entries(payload.statuses).filter((entry): entry is [string, GithubCommitStatus] => typeof entry[1] === "string" && allowed.has(entry[1] as GithubCommitStatus)));
+  } catch {
+    return {};
+  }
 }
 
 /** Persist only the result for the exact relay snapshot that made the request. */

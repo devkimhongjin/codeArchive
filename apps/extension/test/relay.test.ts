@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { recordRelayAttempt, revokeRelay } from "../src/relay";
+import { fetchGithubCommitStatuses, recordRelayAttempt, revokeRelay } from "../src/relay";
 import { MemoryCaptureStore } from "../src/storage";
 import type { CaptureSettings } from "../src/types";
 
@@ -44,4 +44,31 @@ test("delayed relay failure or revoke acknowledgement cannot mutate a newer rela
   assert.equal((await store.mutateRelayIfCurrent(pending, current => ({ ...current, relay: undefined }))).applied, false);
   const final = await store.getSettings();
   assert.equal(final.relay?.secret, "new-secret"); assert.equal(final.autoSyncEnabled, true);
+});
+
+test("commit status lookup is bearer-scoped and accepts only known states", async () => {
+  const enabled: CaptureSettings = {
+    ...settings,
+    autoSyncEnabled: true,
+    githubAutoCommitEnabled: true,
+    githubTargetConfigured: true,
+    relay: { ...settings.relay!, status: "CONFIRMED" }
+  };
+  let requestedHref = "";
+  const statuses = await fetchGithubCommitStatuses(
+    ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"],
+    enabled,
+    async (input, init) => {
+      requestedHref = String(input);
+      assert.equal((init?.headers as Record<string, string>).Authorization, "Bearer opaque");
+      return new Response(JSON.stringify({ statuses: {
+        "11111111-1111-4111-8111-111111111111": "SUCCEEDED",
+        "22222222-2222-4222-8222-222222222222": "INJECTED"
+      } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+  );
+  const requested = new URL(requestedHref);
+  assert.equal(requested.pathname, "/api/relay/github-commit-status");
+  assert.equal(requested.searchParams.getAll("captureId").length, 2);
+  assert.deepEqual(statuses, { "11111111-1111-4111-8111-111111111111": "SUCCEEDED" });
 });

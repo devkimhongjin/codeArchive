@@ -3,7 +3,7 @@ import { DashboardBridge } from "./bridge";
 import { IndexedDbCaptureStore } from "./storage";
 import { downloadFilename, exportCode } from "./export";
 import { textDownloadUrl } from "./download";
-import { recordRelayAttempt, relayCapture, revokeRelay } from "./relay";
+import { fetchGithubCommitStatuses, recordRelayAttempt, relayCapture, revokeRelay } from "./relay";
 import {
   normalizeSweaDetailUrl,
   validateSweaProblemContext
@@ -113,13 +113,20 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 
   if (object.type === "GET_POPUP_STATE") {
     void Promise.all([store.countPending(), store.getSettings(), store.listAll(3)])
-      .then(([pendingCount, settings, recentCaptures]) => sendResponse({
-        pendingCount,
-        settings,
-        // The popup only needs metadata. Keep source code in the archive page's
-        // extension-internal response so it never crosses the dashboard bridge.
-        recentCaptures: recentCaptures.map(({ sourceCode: _sourceCode, ...preview }) => preview)
-      }))
+      .then(async ([pendingCount, settings, recentCaptures]) => {
+        const syncedIds = recentCaptures.filter(capture => capture.syncState === "SYNCED").map(capture => capture.captureId);
+        const githubStatuses = await fetchGithubCommitStatuses(syncedIds, settings);
+        sendResponse({
+          pendingCount,
+          settings,
+          // The popup only needs metadata. Keep source code in the archive page's
+          // extension-internal response so it never crosses the dashboard bridge.
+          recentCaptures: recentCaptures.map(({ sourceCode: _sourceCode, ...preview }) => ({
+            ...preview,
+            ...(githubStatuses[preview.captureId] ? { githubCommitStatus: githubStatuses[preview.captureId] } : {})
+          }))
+        });
+      })
       .catch(() => sendResponse({ pendingCount: 0, settings: null, recentCaptures: [], error: "STORAGE_ERROR" }));
     return true;
   }

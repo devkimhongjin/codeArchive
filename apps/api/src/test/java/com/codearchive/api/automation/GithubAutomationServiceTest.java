@@ -79,6 +79,15 @@ class GithubAutomationServiceTest {
     assertThat(setting.getAutomationEnabledAt()).isAfter(before);
   }
 
+  @Test void commitStatusesAreLimitedToTheRequestedUserAndCaptures() throws Exception {
+    GithubCommitJobRepository jobs=mock(GithubCommitJobRepository.class); AppUser user=AppUser.fromGithub("1","owner","Owner",null); set(user,"id",1L);
+    GithubCommitJob succeeded=new GithubCommitJob(user,"capture-a",1); succeeded.start(); succeeded.terminal(CommitJobState.SUCCEEDED);
+    when(jobs.findByUserIdAndCaptureIdIn(1L,List.of("capture-a","capture-b"))).thenReturn(List.of(succeeded));
+    GithubAutomationService service=new GithubAutomationService(jobs,mock(UserSettingsRepository.class),mock(SolutionRepository.class),mock(GithubProvider.class));
+    assertThat(service.statuses(user,List.of("capture-a","capture-b"))).containsExactlyEntriesOf(java.util.Map.of("capture-a",CommitJobState.SUCCEEDED));
+    verify(jobs).findByUserIdAndCaptureIdIn(1L,List.of("capture-a","capture-b"));
+  }
+
   private static UserSettings settings(AppUser user,long version,Instant boundary) throws Exception { UserSettings s=new UserSettings(user); s.apply(new SettingsRequest(0,"n","n",false,false,"{number}","{number}","github-light","github-dark",true,true,1L,"owner","repo","main",null)); set(s,"version",version); set(s,"automationEnabledAt",boundary); return s; }
   private static Solution solution(AppUser u,String id,Instant observed){ return new Solution(u,id,Platform.SWEA,"1","T","https://example.test","Java","class X{}","ACCEPTED",observed,observed,null,null); }
   private static void set(Object target,String name,Object value)throws Exception{Field f=target.getClass().getDeclaredField(name);f.setAccessible(true);f.set(target,value);}

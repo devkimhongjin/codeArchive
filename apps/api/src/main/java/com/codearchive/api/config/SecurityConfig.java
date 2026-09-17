@@ -123,6 +123,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/github/installations/callback").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/relay/captures").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/relay/github-commit-status").permitAll()
                         .requestMatchers(HttpMethod.DELETE, "/api/relay/grants/self").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/oauth2/authorization/github",
                                 "/api/login/oauth2/code/github").permitAll()

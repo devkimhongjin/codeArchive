@@ -1,6 +1,7 @@
 import type { Capture } from "./types";
+import type { GithubCommitStatus } from "./relay";
 
-type CapturePreview = Omit<Capture, "sourceCode">;
+type CapturePreview = Omit<Capture, "sourceCode"> & { githubCommitStatus?: GithubCommitStatus };
 
 interface PopupServices {
   load: () => Promise<unknown>;
@@ -28,6 +29,8 @@ function asDisplayCapture(value: unknown): CapturePreview | null {
   ) {
     return null;
   }
+  const githubCommitStatus = (value as { githubCommitStatus?: unknown }).githubCommitStatus;
+  if (githubCommitStatus !== undefined && !["NOT_REQUESTED", "PENDING", "RUNNING", "SUCCEEDED", "FAILED", "UNKNOWN"].includes(String(githubCommitStatus))) return null;
   return candidate as CapturePreview;
 }
 
@@ -70,6 +73,17 @@ function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement,
     sync.className = "sync-label";
     sync.textContent = capture.syncState === "SYNCED" ? "동기화됨" : "동기화 대기";
     heading.append(platform, sync);
+    if (capture.githubCommitStatus) {
+      const github = document.createElement("span");
+      github.className = `github-label github-${capture.githubCommitStatus.toLowerCase()}`;
+      github.textContent = capture.githubCommitStatus === "SUCCEEDED" ? "GitHub 완료"
+        : capture.githubCommitStatus === "PENDING" ? "커밋 대기"
+          : capture.githubCommitStatus === "RUNNING" ? "커밋 중"
+            : capture.githubCommitStatus === "FAILED" ? "커밋 실패"
+              : capture.githubCommitStatus === "UNKNOWN" ? "커밋 확인 필요"
+                : "자동 커밋 안 함";
+      heading.append(github);
+    }
     item.append(heading);
 
     appendCaptureTitle(document, item, capture);
