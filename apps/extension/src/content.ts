@@ -120,6 +120,18 @@ function startCapture(adapter: PlatformAdapter, document: Document): void {
 
     processing = true;
     try {
+      if (
+        adapter.collectPerformanceAsync &&
+        collected.capture.executionTime === undefined &&
+        collected.capture.memoryValue === undefined
+      ) {
+        try {
+          const performance = await adapter.collectPerformanceAsync(collected.capture);
+          if (performance) Object.assign(collected.capture, performance);
+        } catch {
+          // Optional metrics must never prevent the accepted source capture.
+        }
+      }
       const response = await storeCaptureWithRetry(collected.capture);
       // A capture is consumed only after the service worker confirms local
       // persistence. Storage or channel failures remain retryable.

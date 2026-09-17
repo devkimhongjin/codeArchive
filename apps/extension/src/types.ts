@@ -78,6 +78,7 @@ export interface PlatformAdapter {
   detectSubmissionResult(options?: { freshOnly?: boolean }): SubmissionResultDetection | null;
   detectEditor(): EditorData | null;
   collectPerformance(): PerformanceData | null;
+  collectPerformanceAsync?(capture: Capture): Promise<PerformanceData | null>;
   isSubmitControl(element: Element): boolean;
   beginSubmissionAttempt(now?: Date): void;
   consumeSubmissionResult(detection: SubmissionResultDetection): void;

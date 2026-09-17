@@ -20,6 +20,7 @@ import {
   SWEA_SOLVING_PATH,
   SWEA_SUBMIT_SELECTORS
 } from "./sweaSelectors";
+import { fetchSweaPerformance } from "./sweaPerformance";
 
 export const SWEA_ATTEMPT_TTL_MS = 60_000;
 
@@ -162,6 +163,18 @@ export class SweaAdapter implements PlatformAdapter {
     // SWEA publishes the authoritative performance row on a separate Problem
     // page request. The local capture path never guesses from popup prose.
     return null;
+  }
+
+  collectPerformanceAsync(capture: import("../types").Capture): Promise<PerformanceData | null> {
+    const contestProbId = readSweaContestProbId(this.document);
+    if (!contestProbId) return Promise.resolve(null);
+    return fetchSweaPerformance(
+      this.document,
+      this.location,
+      contestProbId,
+      capture.sourceCode,
+      capture.observedAt
+    );
   }
 
   isSubmitControl(element: Element): boolean {
