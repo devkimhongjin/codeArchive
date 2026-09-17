@@ -20,7 +20,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { ApiError, bulkUpload, getAccountSettings, getAuthProviders, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, getGithubRepositories, getGithubBranches, getGithubDirectories } from './api'
+import { ApiError, bulkUpload, getAccountSettings, getAuthProviders, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories } from './api'
 import { BridgeError, parseAckResponse, parseConnectResponse, parsePendingResponse, requestBridge } from './bridge'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
@@ -28,6 +28,7 @@ import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type
 import { CodeBlock } from './CodeBlock'
 import { EXTENSION_ID, LEGACY_EXTENSION_ID, EXTENSION_CANDIDATES } from './extensionConfig'
 import { readExportSettings, EXPORT_SETTINGS_KEY, exportCode, downloadFilename, gitPath, sourceFileExtension, type ExportSettings } from './codeExport'
+import { navigateSameTab } from './navigation'
 import './styles.css'
 
 type IconName =
@@ -156,6 +157,31 @@ function persistLocalThemes(settings: Pick<AccountSettings, 'lightTheme' | 'dark
 const defaultAccountSettings = (): AccountSettings => ({ version: 0, name: null, nickname: null, copyHeader: false, downloadHeader: false, downloadFilenameTemplate: '{platform}-{number}-{title}', gitPathTemplate: '{platform}/{number}-{title}', ...readLocalThemes(), autoSyncEnabled: false, githubAutoCommitEnabled: false, githubTargetConfigured: false, githubStatus: 'TARGET_MISSING', githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null })
 const RELAY_DEVICE_KEY = 'codearchive-relay-device-id'
 
+type GithubInstallReturn = {
+  result: 'success' | 'cancelled' | 'expired' | 'invalid' | 'account_mismatch' | 'provider_unavailable' | 'authentication_required'
+  installationId: number | null
+}
+
+function readGithubInstallReturn(): GithubInstallReturn | null {
+  const params = new URLSearchParams(window.location.search)
+  const result = params.get('githubInstall')
+  if (!result || !['success', 'cancelled', 'expired', 'invalid', 'account_mismatch', 'provider_unavailable', 'authentication_required'].includes(result)) return null
+  const rawInstallationId = params.get('installationId')
+  const installationId = rawInstallationId && /^[1-9][0-9]{0,19}$/.test(rawInstallationId) ? Number(rawInstallationId) : null
+  if (result === 'success' && (!installationId || !Number.isSafeInteger(installationId))) return { result: 'invalid', installationId: null }
+  return { result: result as GithubInstallReturn['result'], installationId }
+}
+
+function trustedGithubInstallUrl(value: string | null): value is string {
+  if (!value) return false
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && url.hostname === 'github.com'
+      && /^\/apps\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,98}[A-Za-z0-9])?\/installations\/new$/.test(url.pathname)
+      && Boolean(url.searchParams.get('state'))
+  } catch { return false }
+}
+
 function relayDeviceId() {
   const existing = localStorage.getItem(RELAY_DEVICE_KEY)
   if (existing && /^[A-Za-z0-9_-]{16,100}$/.test(existing)) return existing
@@ -167,7 +193,8 @@ function relayDeviceId() {
 }
 
 export default function App() {
-  const [view, setView] = useState<ViewName>('solutions')
+  const [githubInstallReturn] = useState(readGithubInstallReturn)
+  const [view, setView] = useState<ViewName>(() => readGithubInstallReturn() ? 'settings' : 'solutions')
   const [mode, setMode] = useState<'local' | 'live'>('local')
   // Async bridge/settings work outlives the render that created it. Keep the
   // authorization mode in a ref so a failed API read cannot be followed by a
@@ -406,13 +433,26 @@ export default function App() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    if (params.get('authError') !== 'github') return
-
-    // The callback only exposes a fixed, safe error state. Never render an
-    // arbitrary query value supplied by a failed OAuth provider.
-    showToast('error', 'GitHub 로그인에 실패했습니다. 다시 시도해 주세요.')
+    if (params.get('authError') === 'github') {
+      // The callback only exposes a fixed, safe error state. Never render an
+      // arbitrary query value supplied by a failed OAuth provider.
+      showToast('error', 'GitHub 로그인에 실패했습니다. 다시 시도해 주세요.')
+    } else if (githubInstallReturn) {
+      const messages: Record<GithubInstallReturn['result'], [Toast['kind'], string]> = {
+        success: ['info', 'GitHub App 설치 결과를 확인하고 있습니다.'],
+        cancelled: ['info', 'GitHub App 설치가 완료되지 않았습니다. 다시 연결할 수 있습니다.'],
+        expired: ['error', 'GitHub App 연결 시간이 만료되었습니다. 다시 시도해 주세요.'],
+        invalid: ['error', 'GitHub App 연결 요청이 유효하지 않거나 이미 사용되었습니다.'],
+        account_mismatch: ['error', '현재 로그인한 GitHub 계정과 설치 계정이 일치하지 않습니다.'],
+        provider_unavailable: ['error', 'GitHub App 설치 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.'],
+        authentication_required: ['error', 'GitHub 로그인 세션이 만료되었습니다. 다시 로그인해 주세요.'],
+      }
+      showToast(...messages[githubInstallReturn.result])
+    } else return
     const nextUrl = new URL(window.location.href)
     nextUrl.searchParams.delete('authError')
+    nextUrl.searchParams.delete('githubInstall')
+    nextUrl.searchParams.delete('installationId')
     window.history.replaceState({}, document.title, `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`)
   }, [])
 
@@ -1110,6 +1150,8 @@ export default function App() {
             onLogin={() => setGithubLoginOpen(true)}
             onLogout={() => void handleLogout()}
             onExpectedAccountChange={(expectedGithubId) => void handleExpectedAccountChange(new ApiError('GitHub account changed; reconnect required', 409), expectedGithubId)}
+            githubInstallReturn={githubInstallReturn}
+            accountSettingsReady={Boolean(user && settingsLoadedRef.current?.accountId === user.id)}
           />
         )}
       </main>
@@ -1323,6 +1365,8 @@ function SettingsView({
   onLogin,
   onLogout,
   onExpectedAccountChange,
+  githubInstallReturn,
+  accountSettingsReady,
 }: {
   user: User | null
   exportSettings: ExportSettings
@@ -1340,6 +1384,8 @@ function SettingsView({
   onLogin: () => void
   onLogout: () => void
   onExpectedAccountChange: (expectedGithubId: string) => void
+  githubInstallReturn: GithubInstallReturn | null
+  accountSettingsReady: boolean
 }) {
   const [installations, setInstallations] = useState<import('./types').GithubInstallation[]>([])
   const [repositories, setRepositories] = useState<import('./types').GithubRepositoryTarget[]>([])
@@ -1348,11 +1394,13 @@ function SettingsView({
   const [targetBusy, setTargetBusy] = useState(false); const [targetError, setTargetError] = useState<string | null>(null)
   const [repositoryId, setRepositoryId] = useState<number | null>(null)
   const targetOperation = useRef(0)
-  const loadInstallations = async () => { if(!user)return; const githubId=user.githubId; const operation=++targetOperation.current;setTargetBusy(true);setTargetError(null);try{const values=await getGithubInstallations(githubId);if(operation===targetOperation.current)setInstallations(values)}catch(e){if(e instanceof ApiError&&e.message==='GitHub account changed; reconnect required'){onExpectedAccountChange(githubId);return}if(operation===targetOperation.current)setTargetError(e instanceof Error?e.message:'GitHub 설치를 불러오지 못했습니다.')}finally{if(operation===targetOperation.current)setTargetBusy(false)} }
   const loadAllPages = async <T,>(fetchPage:(page:number)=>Promise<{items:T[];hasMore:boolean}|T[]>, key:(value:T)=>string|number) => { const values:T[]=[];const seen=new Set<string|number>();for(let page=1;page<=100;page+=1){const response=await fetchPage(page);const current=Array.isArray(response)?response:response.items;for(const value of current){const id=key(value);if(!seen.has(id)){seen.add(id);values.push(value)}}if(Array.isArray(response)?current.length<100:!response.hasMore)break}return values }
   const chooseInstallation = async (id:number | null) => { const operation=++targetOperation.current;if(id===null){updateAccountSettings({...accountSettings,githubInstallationId:null,githubOwner:null,githubRepository:null,githubBranch:null,githubRootPath:null,githubAutoCommitEnabled:false});setRepositoryId(null);setRepositories([]);setBranches([]);setDirectory(null);setTargetBusy(false);setTargetError(null);return}if(!user)return;const githubId=user.githubId;const next={...accountSettings,githubInstallationId:id,githubOwner:null,githubRepository:null,githubBranch:null,githubRootPath:null,githubAutoCommitEnabled:false};updateAccountSettings(next);setRepositoryId(null);setRepositories([]);setBranches([]);setDirectory(null);setTargetBusy(true);setTargetError(null);try{const values=await loadAllPages(page=>getGithubRepositories(githubId,id,page),repo=>repo.id);if(operation===targetOperation.current)setRepositories(values)}catch(e){if(e instanceof ApiError&&e.message==='GitHub account changed; reconnect required'){onExpectedAccountChange(githubId);return}if(operation===targetOperation.current)setTargetError(e instanceof Error?e.message:'저장소를 불러오지 못했습니다.')}finally{if(operation===targetOperation.current)setTargetBusy(false)} }
   const chooseRepository = async (id:number | null) => { const operation=++targetOperation.current;if(id===null){updateAccountSettings({...accountSettings,githubOwner:null,githubRepository:null,githubBranch:null,githubRootPath:null,githubAutoCommitEnabled:false});setRepositoryId(null);setBranches([]);setDirectory(null);setTargetBusy(false);setTargetError(null);return}const repo=repositories.find(x=>x.id===id);if(!repo||!accountSettings.githubInstallationId||!user)return;const githubId=user.githubId;const installation=accountSettings.githubInstallationId;setRepositoryId(id);updateAccountSettings({...accountSettings,githubOwner:repo.owner,githubRepository:repo.name,githubBranch:null,githubRootPath:null,githubAutoCommitEnabled:false});setBranches([]);setDirectory(null);setTargetBusy(true);setTargetError(null);try{const values=await loadAllPages(page=>getGithubBranches(githubId,installation,id,page),branch=>branch.name);if(operation===targetOperation.current)setBranches(values)}catch(e){if(e instanceof ApiError&&e.message==='GitHub account changed; reconnect required'){onExpectedAccountChange(githubId);return}if(operation===targetOperation.current)setTargetError(e instanceof Error?e.message:'브랜치를 불러오지 못했습니다.')}finally{if(operation===targetOperation.current)setTargetBusy(false)} }
   const chooseBranch = async (branch:string,path='') => { const operation=++targetOperation.current;if(!branch){updateAccountSettings({...accountSettings,githubBranch:null,githubRootPath:null,githubAutoCommitEnabled:false});setDirectory(null);setTargetBusy(false);setTargetError(null);return}if(!accountSettings.githubInstallationId||!repositoryId||!user)return;const githubId=user.githubId;const installation=accountSettings.githubInstallationId;const repository=repositoryId;updateAccountSettings({...accountSettings,githubBranch:branch,githubRootPath:path||null,githubAutoCommitEnabled:false});setTargetBusy(true);setTargetError(null);try{const value=await getGithubDirectories(githubId,installation,repository,branch,path);if(operation===targetOperation.current)setDirectory(value)}catch(e){if(e instanceof ApiError&&e.message==='GitHub account changed; reconnect required'){onExpectedAccountChange(githubId);return}if(operation===targetOperation.current)setTargetError(e instanceof Error?e.message:'폴더를 불러오지 못했습니다.')}finally{if(operation===targetOperation.current)setTargetBusy(false)} }
+  const loadInstallations = async (preferredInstallationId?:number | null) => { if(!user)return; const githubId=user.githubId; const operation=++targetOperation.current;setTargetBusy(true);setTargetError(null);try{const values=await getGithubInstallations(githubId);if(operation!==targetOperation.current)return;setInstallations(values);const preferred=preferredInstallationId&&values.some(value=>value.id===preferredInstallationId)?preferredInstallationId:values.length===1?values[0].id:null;if(preferred)await chooseInstallation(preferred);else if(preferredInstallationId)setTargetError('설치한 GitHub App을 현재 계정에서 확인하지 못했습니다. 다시 연결해 주세요.')}catch(e){if(e instanceof ApiError&&e.message==='GitHub account changed; reconnect required'){onExpectedAccountChange(githubId);return}if(operation===targetOperation.current)setTargetError(e instanceof Error?e.message:'GitHub 설치를 불러오지 못했습니다.')}finally{if(operation===targetOperation.current)setTargetBusy(false)} }
+  const beginGithubConnection = async () => { if(!user)return; const githubId=user.githubId; const operation=++targetOperation.current;setTargetBusy(true);setTargetError(null);try{const existing=await getGithubInstallations(githubId);if(operation!==targetOperation.current)return;const result=existing.length?{status:'AVAILABLE' as const,installations:existing,installUrl:null}:await startGithubInstallation(githubId);if(operation!==targetOperation.current)return;setInstallations(result.installations);if(result.status==='INSTALL_REQUIRED'){if(!trustedGithubInstallUrl(result.installUrl)){setTargetError('안전한 GitHub App 설치 주소를 확인하지 못했습니다.');return}navigateSameTab(result.installUrl);return}const preferred=accountSettings.githubInstallationId&&result.installations.some(value=>value.id===accountSettings.githubInstallationId)?accountSettings.githubInstallationId:result.installations.length===1?result.installations[0].id:null;if(preferred)await chooseInstallation(preferred)}catch(e){if(e instanceof ApiError&&e.message==='GitHub account changed; reconnect required'){onExpectedAccountChange(githubId);return}if(operation===targetOperation.current)setTargetError(e instanceof Error?e.message:'GitHub App 연결을 시작하지 못했습니다.')}finally{if(operation===targetOperation.current)setTargetBusy(false)} }
+  useEffect(() => { if(!accountSettingsReady||!user||githubInstallReturn?.result!=='success'||!githubInstallReturn.installationId)return;void loadInstallations(githubInstallReturn.installationId) }, [accountSettingsReady,user?.id,githubInstallReturn?.result,githubInstallReturn?.installationId])
   const draftTargetConfigured = Boolean(accountSettings.githubInstallationId && accountSettings.githubOwner?.trim() && accountSettings.githubRepository?.trim() && accountSettings.githubBranch?.trim())
   const providerUnavailable = accountSettings.githubStatus === 'PROVIDER_UNAVAILABLE'
   const githubStatusText = providerUnavailable ? 'GitHub App 서버 설정이 아직 없습니다. 관리자에게 App ID와 개인 키 설정을 요청하세요.' : draftTargetConfigured ? '저장 시 GitHub 자동 커밋 대상을 확인합니다.' : 'GitHub App 설치와 저장소 대상을 지정하세요.'
@@ -1365,7 +1413,7 @@ function SettingsView({
             <label><input type="checkbox" checked={accountSettings.copyHeader} onChange={e => updateAccountSettings({ ...accountSettings, copyHeader: e.target.checked })} /> 복사할 때 문제 정보 주석 포함</label><label><input type="checkbox" checked={accountSettings.downloadHeader} onChange={e => updateAccountSettings({ ...accountSettings, downloadHeader: e.target.checked })} /> 다운로드할 때 문제 정보 주석 포함</label>
             <div className="setting-field"><label htmlFor="filename-template">다운로드 파일명</label><input id="filename-template" maxLength={160} value={accountSettings.downloadFilenameTemplate} onChange={e => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate: e.target.value })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="git-path-template">Git 저장 경로</label><input id="git-path-template" value={accountSettings.gitPathTemplate} onChange={e => updateAccountSettings({ ...accountSettings, gitPathTemplate: e.target.value })} /><p>Git 미리보기: <output>{gitPath(previewSolution, accountSettings.gitPathTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id }) ?? '유효하지 않은 상대 경로'}</output></p><label htmlFor="light-theme">밝은 테마</label><select id="light-theme" value={accountSettings.lightTheme} onChange={e => updateAccountSettings({ ...accountSettings, lightTheme: e.target.value as AccountSettings['lightTheme'] })}>{LIGHT_THEMES.map(x => <option key={x}>{x}</option>)}</select><label htmlFor="dark-theme">어두운 테마</label><select id="dark-theme" value={accountSettings.darkTheme} onChange={e => updateAccountSettings({ ...accountSettings, darkTheme: e.target.value as AccountSettings['darkTheme'] })}>{DARK_THEMES.map(x => <option key={x}>{x}</option>)}</select></div><label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label><label><input type="checkbox" disabled={!draftTargetConfigured || providerUnavailable} checked={accountSettings.githubAutoCommitEnabled} onChange={e => updateAccountSettings({ ...accountSettings, githubAutoCommitEnabled: e.target.checked })} /> GitHub 자동 커밋</label><button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
           </article>
-          <article className="settings-card github-card"><h2>GitHub 대상</h2><p role="status">{githubStatusText}</p>{accountSettings.githubSetupUrl && <a href={accountSettings.githubSetupUrl} target="_blank" rel="noreferrer">GitHub App 설치/저장소 선택 열기</a>}<button type="button" className="secondary-button" onClick={()=>void loadInstallations()} disabled={!user||targetBusy}>저장 위치 다시 선택</button>{targetError&&<p role="alert">{targetError}</p>}<label>GitHub 설치<select aria-label="GitHub 설치" value={accountSettings.githubInstallationId??''} onChange={e=>void chooseInstallation(e.target.value ? Number(e.target.value) : null)}><option value="">선택하세요</option>{installations.map(x=><option key={x.id} value={x.id}>{x.accountLogin}</option>)}</select></label><label>저장소<select aria-label="저장소" disabled={!accountSettings.githubInstallationId||targetBusy} value={repositoryId??''} onChange={e=>void chooseRepository(e.target.value ? Number(e.target.value) : null)}><option value="">선택하세요</option>{repositories.map(x=><option key={x.id} value={x.id}>{x.fullName}</option>)}</select></label><label>브랜치<select aria-label="브랜치" disabled={!repositoryId||targetBusy} value={accountSettings.githubBranch??''} onChange={e=>void chooseBranch(e.target.value)}><option value="">선택하세요</option>{branches.map(x=><option key={x.name} value={x.name}>{x.name}{x.protectedBranch?' (보호됨)':''}</option>)}</select></label>{directory&&<div><p>폴더: <strong>{directory.currentPath||'/'}</strong></p>{directory.currentPath&&<button type="button" onClick={()=>void chooseBranch(accountSettings.githubBranch!,directory.parentPath)}>상위 폴더</button>}{directory.directories.map(name=><button type="button" key={name} onClick={()=>void chooseBranch(accountSettings.githubBranch!,directory.currentPath?`${directory.currentPath}/${name}`:name)}>{name}/</button>)}</div>}{draftTargetConfigured&&<p><strong>현재 대상:</strong> {accountSettings.githubOwner}/{accountSettings.githubRepository} · {accountSettings.githubBranch}{accountSettings.githubRootPath ? `/${accountSettings.githubRootPath}` : ''}</p>}</article>
+          <article className="settings-card github-card"><h2>GitHub 대상</h2><p role="status">{githubStatusText}</p><button type="button" className="secondary-button" onClick={()=>void beginGithubConnection()} disabled={!user||targetBusy||providerUnavailable}>{targetBusy?'확인 중…':draftTargetConfigured?'저장 위치 다시 선택':'GitHub 연결 및 저장 위치 선택'}</button>{targetError&&<p role="alert">{targetError}</p>}<label>GitHub 설치<select aria-label="GitHub 설치" value={accountSettings.githubInstallationId??''} onChange={e=>void chooseInstallation(e.target.value ? Number(e.target.value) : null)}><option value="">선택하세요</option>{installations.map(x=><option key={x.id} value={x.id}>{x.accountLogin}</option>)}</select></label><label>저장소<select aria-label="저장소" disabled={!accountSettings.githubInstallationId||targetBusy} value={repositoryId??''} onChange={e=>void chooseRepository(e.target.value ? Number(e.target.value) : null)}><option value="">선택하세요</option>{repositories.map(x=><option key={x.id} value={x.id}>{x.fullName}</option>)}</select></label><label>브랜치<select aria-label="브랜치" disabled={!repositoryId||targetBusy} value={accountSettings.githubBranch??''} onChange={e=>void chooseBranch(e.target.value)}><option value="">선택하세요</option>{branches.map(x=><option key={x.name} value={x.name}>{x.name}{x.protectedBranch?' (보호됨)':''}</option>)}</select></label>{directory&&<div><p>폴더: <strong>{directory.currentPath||'/'}</strong></p>{directory.currentPath&&<button type="button" onClick={()=>void chooseBranch(accountSettings.githubBranch!,directory.parentPath)}>상위 폴더</button>}{directory.directories.map(name=><button type="button" key={name} onClick={()=>void chooseBranch(accountSettings.githubBranch!,directory.currentPath?`${directory.currentPath}/${name}`:name)}>{name}/</button>)}</div>}{draftTargetConfigured&&<p><strong>현재 대상:</strong> {accountSettings.githubOwner}/{accountSettings.githubRepository} · {accountSettings.githubBranch}{accountSettings.githubRootPath ? `/${accountSettings.githubRootPath}` : ''}</p>}</article>
         </div>
         <aside className="settings-sidebar"><article className="account-card"><span className="card-kicker">ACCOUNT</span>{user ? <><div className="account-large"><span className="account-avatar large"><Icon name="user" size={18} /></span><div><strong>{displayUser(user)}</strong><span>@{user.githubLogin} · CodeArchive 계정</span></div></div><button className="wide-ghost-button" onClick={onLogout}><Icon name="logout" size={14} /> 로그아웃</button></> : <><div className="account-logged-out"><div className="logged-out-icon"><Icon name="user" size={18} /></div><strong>로그인이 필요합니다</strong><span>내 풀이를 저장하고 동기화하세요.</span></div><button className="primary-button wide" onClick={onLogin}>GitHub로 로그인 <Icon name="github" size={14} /></button></>}</article><article className="privacy-card"><Icon name="check" size={16} /><div><strong>데이터를 직접 통제하세요</strong><p>자동 동기화를 켜면 새 캡처가 안전한 릴레이로 전송됩니다. 끄면 수동 동기화만 사용합니다.</p></div></article></aside>
       </div>

@@ -385,6 +385,20 @@ class CodeArchiveApiIntegrationTest {
     }
 
     @Test
+    void githubInstallationStartIsCsrfProtectedAndFailsClosedWhenProviderIsUnavailable() throws Exception {
+        githubAccountService.upsert(principal("804", "install-user", "Install", null));
+        mockMvc.perform(post("/api/github/installations/start")
+                        .with(githubLogin("804", "install-user", "Install", null))
+                        .header("X-CodeArchive-Github-Id", "804"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/github/installations/start").with(csrf().asHeader())
+                        .with(githubLogin("804", "install-user", "Install", null))
+                        .header("X-CodeArchive-Github-Id", "804"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.message", is("GitHub App provider is unavailable")));
+    }
+
+    @Test
     void dashboardCorsPreflightAllowsImmutableGithubAccountAssertion() throws Exception {
         mockMvc.perform(options("/api/settings")
                         .header("Origin", "http://localhost:5173")

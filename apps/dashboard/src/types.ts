@@ -88,6 +88,11 @@ export type RelayGrant = {
   expiresAt: string
 }
 export type GithubInstallation = { id: number; accountLogin: string }
+export type GithubInstallationStart = {
+  status: 'AVAILABLE' | 'INSTALL_REQUIRED'
+  installations: GithubInstallation[]
+  installUrl: string | null
+}
 export type GithubRepositoryTarget = { id: number; owner: string; name: string; fullName: string; privateRepository: boolean; defaultBranch: string }
 export type GithubBranchTarget = { name: string; protectedBranch: boolean; commitSha: string }
 export type GithubDirectoryTarget = { currentPath: string; parentPath: string; directories: string[] }

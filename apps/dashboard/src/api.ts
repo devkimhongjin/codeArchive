@@ -1,4 +1,4 @@
-import { GITHUB_LOGIN_URL, type AccountSettings, type AuthProviders, type BulkResponse, type Capture, type RelayGrant, type Solution, type User, type GithubInstallation, type GithubRepositoryTarget, type GithubBranchTarget, type GithubDirectoryTarget, type GithubPage } from './types'
+import { GITHUB_LOGIN_URL, type AccountSettings, type AuthProviders, type BulkResponse, type Capture, type RelayGrant, type Solution, type User, type GithubInstallation, type GithubInstallationStart, type GithubRepositoryTarget, type GithubBranchTarget, type GithubDirectoryTarget, type GithubPage } from './types'
 
 export { GITHUB_LOGIN_URL } from './types'
 
@@ -150,6 +150,7 @@ export async function revokeRelayGrant(deviceId: string, expectedGithubId: strin
   await requestJson(`/api/relay/grants/${encodeURIComponent(deviceId)}`, { method: 'DELETE', headers: expectedGithubIdHeaders(expectedGithubId) })
 }
 export const getGithubInstallations = (expectedGithubId: string) => requestJson<GithubInstallation[]>('/api/github/targets/installations', { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const startGithubInstallation = (expectedGithubId: string) => requestJson<GithubInstallationStart>('/api/github/installations/start', { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId) })
 export const getGithubRepositories = (expectedGithubId: string, installationId: number, page = 1) => requestJson<GithubPage<GithubRepositoryTarget>>(`/api/github/targets/installations/${installationId}/repositories?page=${page}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
 export const getGithubBranches = (expectedGithubId: string, installationId: number, repositoryId: number, page = 1) => requestJson<GithubPage<GithubBranchTarget>>(`/api/github/targets/installations/${installationId}/repositories/${repositoryId}/branches?page=${page}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
 export const getGithubDirectories = (expectedGithubId: string, installationId: number, repositoryId: number, branch: string, path = '') => requestJson<GithubDirectoryTarget>(`/api/github/targets/installations/${installationId}/repositories/${repositoryId}/directories?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
