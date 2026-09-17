@@ -114,6 +114,10 @@ public class SecurityConfig {
                     }
                     authorize.requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/health", "/api/auth/csrf", "/api/auth/providers").permitAll()
+                        // GitHub returns the browser here. The controller converts a
+                        // missing/expired login session into a fixed dashboard result;
+                        // state and installation ownership still require authentication.
+                        .requestMatchers(HttpMethod.GET, "/api/github/installations/callback").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/relay/captures").permitAll()
                         .requestMatchers(HttpMethod.DELETE, "/api/relay/grants/self").permitAll()

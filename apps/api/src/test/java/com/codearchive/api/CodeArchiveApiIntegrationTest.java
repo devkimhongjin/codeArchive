@@ -411,6 +411,16 @@ class CodeArchiveApiIntegrationTest {
     }
 
     @Test
+    void githubInstallationCallbackReturnsAnExpiredLoginToTheDashboard() throws Exception {
+        mockMvc.perform(get("/api/github/installations/callback")
+                        .param("state", "opaque-state")
+                        .param("installation_id", "44"))
+                .andExpect(status().isFound())
+                .andExpect(header().string("Location",
+                        "http://localhost:5173/?githubInstall=authentication_required"));
+    }
+
+    @Test
     void dashboardCorsPreflightAllowsImmutableGithubAccountAssertion() throws Exception {
         mockMvc.perform(options("/api/settings")
                         .header("Origin", "http://localhost:5173")

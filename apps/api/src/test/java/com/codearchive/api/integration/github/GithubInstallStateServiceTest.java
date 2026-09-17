@@ -52,7 +52,7 @@ class GithubInstallStateServiceTest {
     void failsClosedForExpiredAndForeignAccountCallbacks() {
         MockHttpSession expiredSession = new MockHttpSession();
         String expiredState = stateFrom(service(NOW).issue(17L, "123456", expiredSession));
-        assertThatThrownBy(() -> service(NOW.plusSeconds(601)).consume(expiredState, 17L, "123456", expiredSession))
+        assertThatThrownBy(() -> service(NOW.plusSeconds(600)).consume(expiredState, 17L, "123456", expiredSession))
                 .isInstanceOfSatisfying(InstallStateException.class,
                         exception -> assertThat(exception.failure()).isEqualTo(Failure.EXPIRED));
 
