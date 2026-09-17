@@ -48,7 +48,9 @@ App provider activates only when `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` ar
 configured and an installation is selected in account settings (optional
 `CODEARCHIVE_GITHUB_API_BASE` is available for a controlled test endpoint). It mints
 a short-lived installation token, re-reads branch HEAD and target generation
-immediately before a create-only non-force ref update. A configured target without
+immediately before a non-force ref update. A missing path is created, an identical
+file is treated as already synchronized, and a changed file is replaced only in a
+new commit whose parent is the still-current observed HEAD. A configured target without
 those App credentials reports `PROVIDER_UNAVAILABLE`; no write is attempted. Never
 retry an unknown possibly-sent provider mutation; leave it `UNKNOWN` for operator
 review.

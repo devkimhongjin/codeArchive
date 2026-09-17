@@ -87,11 +87,22 @@ class GithubAppProviderTest {
     assertThat(requests.get(0).authorization()).startsWith("Bearer ").doesNotContain("BEGIN RSA");
   }
 
-  @Test void existingPathFailsBeforeAnyMutation() throws Exception {
+  @Test void existingNonFilePathFailsBeforeAnyMutation() throws Exception {
     existing=true; GithubProvider.Result result=provider().createOnly(settings(),solution());
     assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.FAILED);
     assertThat(requests).extracting(Request::path).noneMatch(path->path.contains("/git/blobs")||path.contains("/git/trees")||path.contains("/git/commits")&&path.endsWith("commit"));
     assertThat(requests).hasSize(4);
+  }
+
+  @Test void existingPathWithDifferentContentCreatesAConditionalUpdateCommit() throws Exception {
+    existing=true;
+    existingBody="{\"type\":\"file\",\"encoding\":\"base64\",\"content\":\""+Base64.getMimeEncoder().encodeToString("class OldSolution {}".getBytes(StandardCharsets.UTF_8))+"\"}";
+    GithubProvider.Result result=provider().createOnly(settings(),solution());
+    assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(requests).extracting(Request::method,Request::path).contains(
+      org.assertj.core.groups.Tuple.tuple("POST","/repos/owner/repo/git/commits"),
+      org.assertj.core.groups.Tuple.tuple("PATCH","/repos/owner/repo/git/refs/heads/main"));
+    assertThat(requests.get(requests.size()-1).body()).contains("\"force\":false");
   }
 
   @Test void existingPathWithIdenticalContentIsAnIdempotentSuccess() throws Exception {

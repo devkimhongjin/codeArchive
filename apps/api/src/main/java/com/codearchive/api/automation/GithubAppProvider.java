@@ -3,7 +3,7 @@ package com.codearchive.api.automation;
 import com.codearchive.api.settings.UserSettings; import com.codearchive.api.solution.Solution; import com.fasterxml.jackson.databind.*;
 import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; import java.net.http.*; import java.nio.charset.StandardCharsets; import java.security.*; import java.security.interfaces.RSAPrivateKey; import java.security.spec.PKCS8EncodedKeySpec; import java.security.spec.RSAPrivateCrtKeySpec; import java.time.*; import java.util.*; import java.util.regex.Matcher; import java.util.regex.Pattern; import org.springframework.beans.factory.annotation.Autowired; import org.springframework.beans.factory.annotation.Value; import org.springframework.stereotype.Component;
 
-/** Server-only GitHub App write path. Every write is create-only and based on a newly read branch head. */
+/** Server-only GitHub App write path. Every write is based on a newly read branch head and uses a non-force ref update. */
 @Component public class GithubAppProvider implements GithubProvider {
  private final String appId,key,base; private final HttpClient http; private final ObjectMapper json; private final Duration requestTimeout; private final GithubProvider fallback=new FailClosedGithubProvider();
  @Autowired public GithubAppProvider(@Value("${codearchive.github.app-id:}")String appId,@Value("${codearchive.github.app-private-key:}")String key,@Value("${codearchive.github.api-base:https://api.github.com}")String base,@Value("${codearchive.github.connect-timeout-ms:5000}")long connectTimeoutMs,@Value("${codearchive.github.request-timeout-ms:10000}")long requestTimeoutMs,ObjectMapper json){this(appId,key,base,HttpClient.newBuilder().connectTimeout(timeout(connectTimeoutMs)).build(),json,requestTimeoutMs);} 
@@ -33,9 +33,9 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
    Response commit=send("GET",repo+"/git/commits/"+segment(head),token,null); if(commit.code!=200)return classify(commit,false);
    String tree=json.readTree(commit.body).path("tree").path("sha").asText(); if(tree.isBlank())return Result.unknown("Malformed commit");
    // GitHub otherwise checks the repository default branch. The ref is the
-   // freshly observed target head, so create-only remains branch-correct.
+   // freshly observed target head, so create/update remains branch-correct.
    Response exists=send("GET",repo+"/contents/"+encodedPath(path)+"?ref="+segment(head),token,null);
-   if(exists.code==200)return sameExistingContent(exists,solution)?Result.succeeded():Result.failed("Git path already exists with different content"); if(exists.code!=404)return classify(exists,false);
+   if(exists.code==200){ExistingFileState existing=existingFileState(exists,solution);if(existing==ExistingFileState.IDENTICAL)return Result.succeeded();if(existing==ExistingFileState.CONFLICT)return Result.failed("Git path is not an updatable file");}else if(exists.code!=404)return classify(exists,false);
    possibleWrite=true;
    Response blob=send("POST",repo+"/git/blobs",token,json.writeValueAsString(Map.of("content",Base64.getEncoder().encodeToString(solution.getSourceCode().getBytes(StandardCharsets.UTF_8)),"encoding","base64"))); if(blob.code!=201)return Result.unknown("Blob creation was not confirmed");
    String blobSha=json.readTree(blob.body).path("sha").asText();
@@ -84,13 +84,13 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
  }
  private String b64(String s){return Base64.getUrlEncoder().withoutPadding().encodeToString(s.getBytes(StandardCharsets.UTF_8));}
  private String repo(UserSettings s){return "/repos/"+segment(s.getGithubOwner())+"/"+segment(s.getGithubRepository());}
- private boolean sameExistingContent(Response response,Solution solution){
+ private ExistingFileState existingFileState(Response response,Solution solution){
   try {
-   JsonNode body=json.readTree(response.body); if(!"file".equals(body.path("type").asText())||!"base64".equals(body.path("encoding").asText()))return false;
-   String encoded=body.path("content").asText(); if(encoded.isBlank())return false;
+   JsonNode body=json.readTree(response.body); if(!"file".equals(body.path("type").asText())||!"base64".equals(body.path("encoding").asText()))return ExistingFileState.CONFLICT;
+   String encoded=body.path("content").asText(); if(encoded.isBlank())return ExistingFileState.CONFLICT;
    byte[] remote=Base64.getMimeDecoder().decode(encoded); byte[] local=solution.getSourceCode().getBytes(StandardCharsets.UTF_8);
-   return MessageDigest.isEqual(remote,local);
-  } catch(Exception ignored){return false;}
+   return MessageDigest.isEqual(remote,local)?ExistingFileState.IDENTICAL:ExistingFileState.DIFFERENT;
+  } catch(Exception ignored){return ExistingFileState.CONFLICT;}
  }
  private static String segment(String value){if(value==null||value.isBlank())throw new IllegalArgumentException("blank path component");return URLEncoder.encode(value,StandardCharsets.UTF_8).replace("+","%20");}
  private static String encodedPath(String path){return Arrays.stream(path.split("/",-1)).map(GithubAppProvider::segment).collect(java.util.stream.Collectors.joining("/"));}
@@ -104,5 +104,5 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
  }
  private String clean(String value){return value==null?"":value.replaceAll("[\\\\/:*?\"<>|\\x00-\\x1f\\x7f]","-").replaceAll("[. ]+$","").replaceFirst("^\\.+","").trim();}
  private static String render(String template,Map<String,String> values){if(template==null)return "";Matcher matcher=Pattern.compile("\\{([^{}]+)\\}").matcher(template);StringBuffer out=new StringBuffer();while(matcher.find())matcher.appendReplacement(out,Matcher.quoteReplacement(values.getOrDefault(matcher.group(1),"")));matcher.appendTail(out);return out.toString();}
- private String extension(String n){n=n==null?"":n.toLowerCase(Locale.ROOT);if(n.contains("python"))return"py";if(n.contains("typescript")||n.equals("ts"))return"ts";if(n.contains("javascript")||n.equals("js"))return"js";if(n.contains("kotlin"))return"kt";if(n.contains("java"))return"java";if(n.contains("c++")||n.contains("cpp"))return"cpp";if(n.matches("^c(?:\\s|\\d|$).*"))return"c";if(n.equals("c#")||n.contains("csharp"))return"cs";if(n.equals("go"))return"go";if(n.contains("rust"))return"rs";if(n.contains("ruby"))return"rb";if(n.contains("swift"))return"swift";if(n.contains("scala"))return"scala";if(n.contains("sql"))return"sql";return"txt";} private record Response(int code,String body){}
+ private String extension(String n){n=n==null?"":n.toLowerCase(Locale.ROOT);if(n.contains("python"))return"py";if(n.contains("typescript")||n.equals("ts"))return"ts";if(n.contains("javascript")||n.equals("js"))return"js";if(n.contains("kotlin"))return"kt";if(n.contains("java"))return"java";if(n.contains("c++")||n.contains("cpp"))return"cpp";if(n.matches("^c(?:\\s|\\d|$).*"))return"c";if(n.equals("c#")||n.contains("csharp"))return"cs";if(n.equals("go"))return"go";if(n.contains("rust"))return"rs";if(n.contains("ruby"))return"rb";if(n.contains("swift"))return"swift";if(n.contains("scala"))return"scala";if(n.contains("sql"))return"sql";return"txt";} private enum ExistingFileState{IDENTICAL,DIFFERENT,CONFLICT} private record Response(int code,String body){}
 }
