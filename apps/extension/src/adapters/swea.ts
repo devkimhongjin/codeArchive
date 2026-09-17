@@ -7,7 +7,11 @@ import type {
   SubmissionResultDetection
 } from "../types";
 import { elementText, firstElement, isVisible, mainWorldSyncFailed, normalizeText } from "./dom";
-import { normalizeSweaDetailUrl, readSweaContestProbId } from "../sweaProblemContext";
+import {
+  createSweaCanonicalProblemUrl,
+  normalizeSweaDetailUrl,
+  readSweaContestProbId
+} from "../sweaProblemContext";
 import {
   SWEA_EDITOR_SELECTORS,
   SWEA_ORIGIN,
@@ -46,6 +50,8 @@ function detectProblem(document: Document, location: Location, resolvedProblemUr
   if (urlIds.length > 1) return null;
   const urlId = urlIds[0]?.trim() || null;
   if (urlId && hiddenId !== urlId) return null;
+  const canonicalProblemUrl = createSweaCanonicalProblemUrl(hiddenId);
+  if (!canonicalProblemUrl) return null;
 
   let problemUrl = resolvedProblemUrl;
   if (problemUrl) {
@@ -56,18 +62,14 @@ function detectProblem(document: Document, location: Location, resolvedProblemUr
     if (resolvedIds.length !== 1 || resolvedIds[0]?.trim() !== hiddenId) return null;
     problemUrl = normalizedProblemUrl;
   } else if (urlId) {
-    currentUrl.hash = "";
-    problemUrl = currentUrl.href;
+    problemUrl = canonicalProblemUrl;
   }
   // #237's source-link validation is enrichment, not capture identity. A
   // query-less solving page is still a single, validated contest problem
-  // when its heading and one hidden contestProbId agree. Keep that page URL
-  // rather than dropping an otherwise durable accepted capture.
+  // when its heading and one hidden contestProbId agree. Derive the public
+  // detail route instead of saving the transient solving page.
   if (!problemUrl && !allowQuerylessFallback) return null;
-  if (!problemUrl) {
-    currentUrl.hash = "";
-    problemUrl = currentUrl.href;
-  }
+  if (!problemUrl) problemUrl = canonicalProblemUrl;
 
   return {
     problemNumber: match[1],

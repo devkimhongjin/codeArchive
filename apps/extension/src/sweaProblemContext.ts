@@ -65,6 +65,15 @@ function singleQueryContestProbId(url: URL): string | null {
   return values[0]?.trim() || null;
 }
 
+/** Builds the stable public problem page used by saved-solution links. */
+export function createSweaCanonicalProblemUrl(contestProbId: string): string | null {
+  const normalizedId = contestProbId.trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(normalizedId)) return null;
+  const url = new URL(SWEA_PROBLEM_DETAIL_PATHS[0], SWEA_ORIGIN);
+  url.searchParams.set("contestProbId", normalizedId);
+  return url.href;
+}
+
 export function normalizeSweaDetailUrl(value: string): string | null {
   const url = normalizedUrl(value);
   if (!url || url.origin !== SWEA_ORIGIN || !isDetailPath(url.pathname)) return null;
@@ -175,9 +184,12 @@ export function resolveSweaProblem(
   // binding into the query-less fallback.
   if (!absent) return { kind: "invalid", problemUrl: null };
 
-  // Preserve the pre-existing direct-link behavior when the solving URL is
-  // already self-identifying. Query-less pages require trusted source context.
+  // A self-identifying solving URL proves the problem identity, but it is not
+  // a durable user-facing link. Store the public detail route instead.
+  const canonicalProblemUrl = createSweaCanonicalProblemUrl(currentContestProbId);
   return currentQueryIds.length === 1
-    ? { kind: "verified", problemUrl: currentUrl.href }
+    ? canonicalProblemUrl
+      ? { kind: "verified", problemUrl: canonicalProblemUrl }
+      : { kind: "invalid", problemUrl: null }
     : { kind: "missing", problemUrl: null };
 }

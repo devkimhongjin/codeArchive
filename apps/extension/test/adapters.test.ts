@@ -16,7 +16,7 @@ test("SWEA metadata uses the solving heading and fails closed on contest identit
   assert.deepEqual(valid.detectProblem(), {
     problemNumber: "1206",
     title: "View",
-    problemUrl: "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do?contestProbId=current"
+    problemUrl: "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=current"
   });
 });
 

@@ -5,6 +5,7 @@ import { parseHTML } from "linkedom";
 import { SweaAdapter } from "../src/adapters/swea";
 import { IndexedDbCaptureStore } from "../src/storage";
 import {
+  createSweaCanonicalProblemUrl,
   createSweaProblemContext,
   readSweaContestProbId,
   resolveSweaProblem,
@@ -25,6 +26,12 @@ function locationFor(href: string): Location {
 function problemDocument(contestProbId: string, extra = "") {
   return parseHTML(`<input id="contestProbId" value="${contestProbId}">${extra}`);
 }
+
+test("canonical SWEA links accept only one safe contest problem ID", () => {
+  assert.equal(createSweaCanonicalProblemUrl(" AWrDOdQqRCUDFARG "), "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=AWrDOdQqRCUDFARG");
+  assert.equal(createSweaCanonicalProblemUrl("A/B"), null);
+  assert.equal(createSweaCanonicalProblemUrl(""), null);
+});
 
 test("normal and user detail pages preserve their verified original URLs", () => {
   const normal = createSweaProblemContext(problemDocument("A").document, locationFor(NORMAL_DETAIL), 1_000);
@@ -88,7 +95,7 @@ test("query-less solving capture retains validated identity when canonical sourc
   assert.deepEqual(adapter.detectProblem(), {
     problemNumber: "7206",
     title: "숫자 게임",
-    problemUrl: QUERYLESS_SOLVING
+    problemUrl: NORMAL_DETAIL
   });
 });
 
@@ -120,7 +127,7 @@ test("query-less solving page reached from the My Page submission list uses vali
   assert.deepEqual(resolution, { kind: "missing", problemUrl: null });
   assert.deepEqual(
     new SweaAdapter(document, locationFor(QUERYLESS_SOLVING), undefined, undefined, resolution.problemUrl, true).detectProblem(),
-    { problemNumber: "7733", title: "치즈 도둑", problemUrl: QUERYLESS_SOLVING }
+    { problemNumber: "7733", title: "치즈 도둑", problemUrl: "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=AWrDOdQqRCUDFARG" }
   );
 });
 
@@ -132,7 +139,7 @@ test("query-less solving page reached through SWEA's POST detail route uses vali
   assert.deepEqual(resolution, { kind: "missing", problemUrl: null });
   assert.deepEqual(
     new SweaAdapter(document, locationFor(QUERYLESS_SOLVING), undefined, undefined, resolution.problemUrl, true).detectProblem(),
-    { problemNumber: "7733", title: "치즈 도둑", problemUrl: QUERYLESS_SOLVING }
+    { problemNumber: "7733", title: "치즈 도둑", problemUrl: "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=AWrDOdQqRCUDFARG" }
   );
 });
 
@@ -182,7 +189,7 @@ test("query-less solving page rejects another problem, stale referrer, and ambig
 
 test("self-identifying solving URL remains available without stored source context", () => {
   const url = `${QUERYLESS_SOLVING}?contestProbId=A`;
-  assert.equal(resolveSweaProblemUrl(problemDocument("A").document, locationFor(url), "", null), url);
+  assert.equal(resolveSweaProblemUrl(problemDocument("A").document, locationFor(url), "", null), NORMAL_DETAIL);
   assert.equal(resolveSweaProblemUrl(problemDocument("B").document, locationFor(url), "", null), null);
 });
 
