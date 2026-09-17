@@ -93,9 +93,12 @@ validates both that state and the immutable GitHub account before accepting the
 returned `installation_id`. It does not require the optional `setup_action` query
 parameter because GitHub's Setup URL contract guarantees only `installation_id`;
 the state and installation ownership lookup are the security boundaries. The
-GitHub App ID, private key, and slug must all be
-configured server-side; the private key and installation tokens are never sent
-to the dashboard or extension.
+GitHub App ID, private key, and slug must all be configured server-side as
+`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_SLUG`. Deployments
+that already store the PKCS#8 key as `GITHUB_APP_PRIVATE_KEY_PKCS8` remain
+supported; the canonical `GITHUB_APP_PRIVATE_KEY` takes precedence when both
+are present. The private key and installation tokens are never sent to the
+dashboard or extension.
 
 ## Tests
 

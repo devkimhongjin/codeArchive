@@ -38,7 +38,9 @@ codearchive:
     # GitHub App credentials are server-only. Leaving either blank keeps the
     # provider fail-closed and records an actionable unavailable state.
     app-id: ${GITHUB_APP_ID:}
-    app-private-key: ${GITHUB_APP_PRIVATE_KEY:}
+    # Keep the deployed PKCS#8 variable compatible while preferring the
+    # canonical name for new environments. Both values stay server-only.
+    app-private-key: ${GITHUB_APP_PRIVATE_KEY:${GITHUB_APP_PRIVATE_KEY_PKCS8:}}
     app-slug: ${GITHUB_APP_SLUG:}
     # Installation state is signed with server-only App material, bound to the
     # browser session, and expires quickly even if the GitHub flow is abandoned.
