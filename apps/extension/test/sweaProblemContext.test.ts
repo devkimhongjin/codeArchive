@@ -6,6 +6,7 @@ import { SweaAdapter } from "../src/adapters/swea";
 import { IndexedDbCaptureStore } from "../src/storage";
 import {
   createSweaProblemContext,
+  readSweaContestProbId,
   resolveSweaProblem,
   resolveSweaProblemUrl,
   SWEA_CONTEXT_LOOKUP_ERROR
@@ -13,6 +14,8 @@ import {
 
 const NORMAL_DETAIL = "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=A";
 const USER_DETAIL = "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do?contestProbId=U1";
+const USER_SUBMISSIONS = "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do?userId=member";
+const QUERYLESS_DETAIL = "https://swexpertacademy.com/main/code/problem/problemDetail.do";
 const QUERYLESS_SOLVING = "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do";
 
 function locationFor(href: string): Location {
@@ -46,7 +49,7 @@ test("detail context rejects missing, duplicate, and conflicting identities", ()
   assert.equal(createSweaProblemContext(problemDocument("B").document, locationFor(NORMAL_DETAIL)), null);
   assert.equal(
     createSweaProblemContext(
-      problemDocument("A", '<input name="contestProbId" value="A">').document,
+      problemDocument("A", '<input name="contestProbId" value="B">').document,
       locationFor(NORMAL_DETAIL)
     ),
     null
@@ -87,6 +90,50 @@ test("query-less solving capture retains validated identity when canonical sourc
     title: "숫자 게임",
     problemUrl: QUERYLESS_SOLVING
   });
+});
+
+test("live SWEA POST pages recover one problem ID from the exact bootstrap call", () => {
+  const detail = parseHTML(`
+    <input id="contestProbId" value="">
+    <input name="contestProbId" value="">
+    <script>$(document).ready(function () { checkFirstOpenProblem('AWrDOdQqRCUDFARG'); });</script>
+  `).document;
+  const solving = parseHTML(`
+    <input id="contestProbId" value="">
+    <script>checkIsFirstOpen('AWrDOdQqRCUDFARG', 'AWrDOdQqRCUDFARG', 'CODE');</script>
+  `).document;
+
+  assert.equal(readSweaContestProbId(detail), "AWrDOdQqRCUDFARG");
+  assert.equal(readSweaContestProbId(solving), "AWrDOdQqRCUDFARG");
+  assert.equal(readSweaContestProbId(parseHTML(`
+    <input id="contestProbId" value="OTHER">
+    <script>checkIsFirstOpen('AWrDOdQqRCUDFARG', 'AWrDOdQqRCUDFARG', 'CODE');</script>
+  `).document), null);
+  assert.equal(readSweaContestProbId(parseHTML(`
+    <script>checkIsFirstOpen('A', 'B', 'CODE');</script>
+  `).document), null);
+});
+
+test("query-less solving page reached from the My Page submission list uses validated local fallback", () => {
+  const { document } = parseHTML('<div class="problem_box"><h3>7733. 치즈 도둑</h3></div><input id="contestProbId" value="AWrDOdQqRCUDFARG">');
+  const resolution = resolveSweaProblem(document, locationFor(QUERYLESS_SOLVING), USER_SUBMISSIONS, null);
+  assert.deepEqual(resolution, { kind: "missing", problemUrl: null });
+  assert.deepEqual(
+    new SweaAdapter(document, locationFor(QUERYLESS_SOLVING), undefined, undefined, resolution.problemUrl, true).detectProblem(),
+    { problemNumber: "7733", title: "치즈 도둑", problemUrl: QUERYLESS_SOLVING }
+  );
+});
+
+test("query-less solving page reached through SWEA's POST detail route uses validated local fallback", () => {
+  const { document } = parseHTML(`<div class="problem_box"><h3>7733. 치즈 도둑</h3></div>
+    <input id="contestProbId" value="">
+    <script>checkIsFirstOpen('AWrDOdQqRCUDFARG', 'AWrDOdQqRCUDFARG', 'CODE');</script>`);
+  const resolution = resolveSweaProblem(document, locationFor(QUERYLESS_SOLVING), QUERYLESS_DETAIL, null);
+  assert.deepEqual(resolution, { kind: "missing", problemUrl: null });
+  assert.deepEqual(
+    new SweaAdapter(document, locationFor(QUERYLESS_SOLVING), undefined, undefined, resolution.problemUrl, true).detectProblem(),
+    { problemNumber: "7733", title: "치즈 도둑", problemUrl: QUERYLESS_SOLVING }
+  );
 });
 
 test("query-less fallback is allowed only for missing context and not conflicting context", () => {

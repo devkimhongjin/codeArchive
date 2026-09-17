@@ -21,7 +21,7 @@ import {
   X,
 } from 'lucide-react'
 import { ApiError, bulkUpload, getAccountSettings, getAuthProviders, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories } from './api'
-import { BridgeError, parseAckResponse, parseConnectResponse, parsePendingResponse, requestBridge } from './bridge'
+import { BridgeError, parseAckResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, requestBridge } from './bridge'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
 import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type AuthProviders, type BulkResponse, type Solution, type Toast, type User, type ViewName } from './types'
@@ -809,6 +809,24 @@ export default function App() {
       if (!saved.autoSyncEnabled) {
         await requestBridge(currentExtensionId.current, relayConfiguration(capability, saved, account, null))
         if (stillCurrent()) relayHandoffRef.current = handoffKey
+        return
+      }
+      // Chrome may terminate an idle MV3 service worker, which intentionally
+      // drops the in-memory dashboard capability. The relay itself is durable
+      // in IndexedDB, so reconnecting must reuse it instead of rotating a
+      // server grant every heartbeat. No bearer secret crosses this check.
+      let relayReused = false
+      try {
+        relayReused = parseRelayReuseResponse(await requestBridge(currentExtensionId.current, {
+          type: 'REUSE_RELAY', capability, accountId: String(account.id), settingsVersion: saved.version,
+        })).reused
+      } catch {
+        // Compatibility with extension builds that predate REUSE_RELAY: they
+        // receive one ordinary grant and persist it using CONFIGURE_RELAY.
+      }
+      if (!stillCurrent()) return
+      if (relayReused) {
+        relayHandoffRef.current = handoffKey
         return
       }
       const grant = await issueRelayGrant(relayDeviceId(), saved.version, account.githubId)

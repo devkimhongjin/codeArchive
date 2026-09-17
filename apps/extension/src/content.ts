@@ -3,11 +3,17 @@ import { collectAcceptedCaptureAttempt } from "./capture";
 import type { Capture, PlatformAdapter } from "./types";
 import {
   createSweaProblemContext,
+  normalizeSweaDetailUrl,
   resolveSweaProblem,
   SWEA_CONTEXT_LOOKUP_ERROR,
   type SweaProblemContext
 } from "./sweaProblemContext";
-import { SWEA_ORIGIN, SWEA_SOLVING_PATH } from "./adapters/sweaSelectors";
+import {
+  SWEA_ORIGIN,
+  SWEA_PROBLEM_DETAIL_PATHS,
+  SWEA_SOLVING_PATH,
+  SWEA_USER_SUBMISSIONS_PATH
+} from "./adapters/sweaSelectors";
 
 const STORE_CAPTURE_RETRY_DELAYS_MS = [50, 150, 500] as const;
 
@@ -44,6 +50,34 @@ export async function loadSweaProblemContext(
   } catch {
     return SWEA_CONTEXT_LOOKUP_ERROR;
   }
+}
+
+/**
+ * SWEA can POST from My Page into a query-less detail page and then into a
+ * query-less solving page. Those exact same-origin routes are navigation
+ * context, not failed canonical-detail lookups. Keep malformed, cross-origin,
+ * or contestProbId-bearing conflicts fail-closed while allowing the solving
+ * page's own unambiguous DOM identity to be used.
+ */
+export async function loadSweaProblemContextForReferrer(
+  referrer: string,
+  send: SendRuntimeMessage = (message) => chrome.runtime.sendMessage(message)
+): Promise<SweaProblemContext | null | typeof SWEA_CONTEXT_LOOKUP_ERROR> {
+  if (!referrer) return null;
+  const detailUrl = normalizeSweaDetailUrl(referrer);
+  if (detailUrl) return loadSweaProblemContext(detailUrl, send);
+  try {
+    const url = new URL(referrer);
+    const isQuerylessNavigationRoute = url.searchParams.getAll("contestProbId").length === 0 && (
+      url.pathname === SWEA_USER_SUBMISSIONS_PATH ||
+      url.pathname === SWEA_SOLVING_PATH ||
+      SWEA_PROBLEM_DETAIL_PATHS.some((path) => path === url.pathname)
+    );
+    if (url.origin === SWEA_ORIGIN && isQuerylessNavigationRoute) return null;
+  } catch {
+    // An invalid non-empty referrer is conflict evidence, not missing context.
+  }
+  return SWEA_CONTEXT_LOOKUP_ERROR;
 }
 
 /**
@@ -164,10 +198,7 @@ export async function bootstrapContent(
   let sweaProblemUrl: string | null = null;
   let allowSweaQuerylessFallback = true;
   if (location.origin === SWEA_ORIGIN && location.pathname === SWEA_SOLVING_PATH) {
-    // An empty browser referrer is genuinely absent context, not a failed
-    // storage lookup. Do not manufacture a worker request that would turn
-    // that ordinary privacy setting into a fail-closed storage error.
-    const storedContext = referrer ? await loadSweaProblemContext(referrer, send) : null;
+    const storedContext = await loadSweaProblemContextForReferrer(referrer, send);
     const resolution = resolveSweaProblem(document, location, referrer, storedContext);
     sweaProblemUrl = resolution.problemUrl;
     allowSweaQuerylessFallback = resolution.kind === "missing";

@@ -320,6 +320,20 @@ it('saves a versioned complete settings draft and configures the opaque relay af
   expect(configure).toEqual(expect.objectContaining({ capability: 'capability-1', autoSyncEnabled: true, githubAutoCommitEnabled: true, githubTargetConfigured: true, relay: expect.objectContaining({ endpoint: '/api/relay/captures', secret: 'opaque-relay-secret', accountId: '17' }) }))
 })
 
+it('reuses a matching extension relay without rotating the server grant', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue(settings)
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => {
+    if (message.type === 'CONNECT') return Promise.resolve({ capability: 'durable-relay-capability' })
+    if (message.type === 'REUSE_RELAY') return Promise.resolve({ reused: true })
+    return Promise.resolve({ ok: true })
+  })
+  await openSettings()
+  await waitFor(() => expect(bridgeMessages('REUSE_RELAY')).toHaveLength(1))
+  expect(bridgeMessages('REUSE_RELAY')[0][1]).toEqual(expect.objectContaining({ accountId: '17', settingsVersion: 4 }))
+  expect(mocks.grant).not.toHaveBeenCalled()
+  expect(bridgeMessages('CONFIGURE_RELAY')).toHaveLength(0)
+})
+
 it('pushes acknowledged profile/export/theme settings with relay null when automatic sync is OFF', async () => {
   const off = { ...settings, version: 8, autoSyncEnabled: false, githubAutoCommitEnabled: false, name: '오프라인 이름', nickname: '오프 별명', lightTheme: 'solarized-light' as const, darkTheme: 'one-dark-pro' as const }
   mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue(off); mocks.save.mockResolvedValue({ ...off, version: 9, nickname: '저장 별명' })

@@ -11,7 +11,11 @@ import {
 import { SWEA_ORIGIN, SWEA_SOLVING_PATH } from "./adapters/sweaSelectors";
 
 const store = new IndexedDbCaptureStore();
-const bridge = new DashboardBridge(store);
+const bridge = new DashboardBridge(store, {
+  // A refreshed dashboard grant should flush captures that were retained while
+  // the old relay was offline or expired instead of waiting for the next alarm.
+  onRelayConfigured: () => { void drainRelay().catch(() => undefined); }
+});
 
 async function recordRelayResult(settings: Awaited<ReturnType<typeof store.getSettings>>, result: "OFFLINE" | "AUTH_EXPIRED" | "RELAY_ERROR"): Promise<void> {
   const relay = settings.relay;

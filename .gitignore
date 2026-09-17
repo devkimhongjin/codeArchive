@@ -41,3 +41,6 @@ target/
 .tools/
 data/
 *.tsbuildinfo
+
+# Local Netlify folder
+.netlify

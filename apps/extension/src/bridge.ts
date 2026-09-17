@@ -17,6 +17,8 @@ export type DashboardMessage =
   | { type: "GET_PENDING"; capability: string; limit?: number }
   /** Read-only, capability-bound local archive view for an unauthenticated dashboard. */
   | { type: "GET_LOCAL_ARCHIVE"; capability: string; limit?: number }
+  /** Reuse a durable relay after an MV3 service-worker restart without exposing its bearer secret. */
+  | { type: "REUSE_RELAY"; capability: string; accountId: string; settingsVersion: number }
   | { type: "ACK"; capability: string; captureIds: string[] }
   | { type: "CONFIGURE_RELAY"; capability: string; relay: { endpoint: string; secret: string; accountId: string; generation: number } | null; accountId?: string; settingsVersion?: number; autoSyncEnabled?: boolean; githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; copyHeader?: boolean; downloadHeader?: boolean; downloadFilenameTemplate?: string; gitPathTemplate?: string; name?: string | null; nickname?: string | null; lightTheme?: string; darkTheme?: string }
   | { type: "DISCONNECT"; capability: string };
@@ -31,6 +33,7 @@ export interface DashboardSender {
 export type BridgeResponse =
   | { capability: string; expiresAt: number }
   | { captures: Capture[]; hasMore: boolean; localOnly?: boolean }
+  | { reused: boolean }
   | { ok: true }
   | { error: "UNAUTHORIZED" | "BAD_REQUEST" | "STALE_CONFIGURATION" };
 
@@ -53,6 +56,7 @@ export interface DashboardBridgeOptions {
   capabilityFactory?: () => string;
   idleTtlMs?: number;
   absoluteTtlMs?: number;
+  onRelayConfigured?: () => void;
 }
 
 function exactDashboardSender(sender: DashboardSender): boolean {
@@ -88,7 +92,7 @@ function asObject(value: unknown): Record<string, unknown> | null {
 }
 
 function isMessageType(value: unknown): value is DashboardMessage["type"] {
-  return value === "CONNECT" || value === "PING" || value === "GET_PENDING" || value === "GET_LOCAL_ARCHIVE" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
+  return value === "CONNECT" || value === "PING" || value === "GET_PENDING" || value === "GET_LOCAL_ARCHIVE" || value === "REUSE_RELAY" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
 }
 
 export class DashboardBridge {
@@ -97,12 +101,14 @@ export class DashboardBridge {
   private readonly capabilityFactory: () => string;
   private readonly idleTtlMs: number;
   private readonly absoluteTtlMs: number;
+  private readonly onRelayConfigured: () => void;
 
   constructor(private readonly store: CaptureStore, options: DashboardBridgeOptions = {}) {
     this.now = options.now ?? (() => Date.now());
     this.capabilityFactory = options.capabilityFactory ?? createUuid;
     this.idleTtlMs = options.idleTtlMs ?? SESSION_IDLE_TTL_MS;
     this.absoluteTtlMs = options.absoluteTtlMs ?? SESSION_ABSOLUTE_TTL_MS;
+    this.onRelayConfigured = options.onRelayConfigured ?? (() => undefined);
   }
 
   async handleMessage(message: unknown, sender: DashboardSender): Promise<BridgeResponse> {
@@ -124,6 +130,26 @@ export class DashboardBridge {
     if (!session) return { error: "UNAUTHORIZED" };
 
     if (type === "PING") return { ok: true };
+
+    if (type === "REUSE_RELAY") {
+      const accountIdValue = object?.accountId;
+      const settingsVersionValue = object?.settingsVersion;
+      const accountId = typeof accountIdValue === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(accountIdValue) ? accountIdValue : null;
+      const settingsVersion = typeof settingsVersionValue === "number" && Number.isSafeInteger(settingsVersionValue) && settingsVersionValue >= 0 ? settingsVersionValue : null;
+      if (!accountId || settingsVersion === null) return { error: "BAD_REQUEST" };
+      const settings = await this.store.getSettings();
+      const relay = settings.relay;
+      const reusable = settings.autoSyncEnabled === true &&
+        settings.accountId === accountId &&
+        settings.accountSettingsVersion === settingsVersion &&
+        relay?.accountId === accountId &&
+        relay.generation === settingsVersion &&
+        (relay.status === "CONFIRMED" || relay.status === "OFFLINE" || relay.status === "RELAY_ERROR");
+      if (reusable) {
+        try { this.onRelayConfigured(); } catch { /* Durable configuration remains usable. */ }
+      }
+      return { reused: reusable };
+    }
 
     if (type === "CONFIGURE_RELAY") {
       const relay = object?.relay;
@@ -161,7 +187,9 @@ export class DashboardBridge {
       let endpoint: URL; try { endpoint = new URL(endpointValue, DASHBOARD_ORIGIN); } catch { return { error: "BAD_REQUEST" }; }
       if (!DASHBOARD_ORIGINS.includes(endpoint.origin as typeof DASHBOARD_ORIGINS[number]) || !endpoint.pathname.startsWith("/api/relay/")) return { error: "BAD_REQUEST" };
       const stale=await apply(current => ({ ...current, ...shared, relay: { endpoint: endpointValue, secret, accountId: candidateAccountId, generation, status: "CONFIRMED" }, accountId: candidateAccountId, autoSyncEnabled: automatic.autoSyncEnabled === true, githubAutoCommitEnabled: automatic.githubAutoCommitEnabled === true, githubTargetConfigured: automatic.githubTargetConfigured === true }));
-      return stale ? { error: "STALE_CONFIGURATION" } : { ok: true };
+      if (stale) return { error: "STALE_CONFIGURATION" };
+      try { this.onRelayConfigured(); } catch { /* Durable configuration already succeeded. */ }
+      return { ok: true };
     }
 
     if (type === "GET_PENDING") {

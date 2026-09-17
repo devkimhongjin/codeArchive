@@ -35,12 +35,28 @@ function isDetailPath(pathname: string): pathname is SweaProblemContext["sourceP
 
 /** Reads one unambiguous, non-empty problem identity from the current DOM. */
 export function readSweaContestProbId(document: Document): string | null {
-  const candidates = new Set(document.querySelectorAll(SWEA_CONTEST_PROBLEM_ID_SELECTOR));
-  if (candidates.size !== 1) return null;
-  const candidate = candidates.values().next().value;
-  if (!candidate || !("value" in candidate)) return null;
-  const value = String((candidate as HTMLInputElement).value).trim();
-  return value || null;
+  const candidates = new Set<string>();
+  for (const candidate of document.querySelectorAll(SWEA_CONTEST_PROBLEM_ID_SELECTOR)) {
+    if (!("value" in candidate)) continue;
+    const value = String((candidate as HTMLInputElement).value).trim();
+    if (value) candidates.add(value);
+  }
+
+  // On the live POST-based SWEA flow the hidden input is present but empty.
+  // The server-rendered bootstrap call still repeats the exact current problem
+  // ID. Parse only these narrowly scoped call signatures and keep conflicts
+  // fail-closed instead of scanning arbitrary script tokens.
+  for (const script of document.querySelectorAll("script")) {
+    const source = script.textContent ?? "";
+    for (const match of source.matchAll(/\bcheckFirstOpenProblem\(\s*(['"])([A-Za-z0-9_-]+)\1\s*\)/g)) {
+      if (match[2]) candidates.add(match[2]);
+    }
+    for (const match of source.matchAll(/\bcheckIsFirstOpen\(\s*(['"])([A-Za-z0-9_-]+)\1\s*,\s*(['"])([A-Za-z0-9_-]+)\3\s*,/g)) {
+      if (match[2] && match[2] === match[4]) candidates.add(match[2]);
+    }
+  }
+
+  return candidates.size === 1 ? candidates.values().next().value ?? null : null;
 }
 
 function singleQueryContestProbId(url: URL): string | null {

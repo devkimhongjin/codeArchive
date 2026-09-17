@@ -94,3 +94,9 @@ export function parseAckResponse(payload: unknown): { ok: true } {
   if (record.ok !== true) throw new BridgeError('확장 프로그램 ACK가 승인되지 않았습니다.')
   return { ok: true }
 }
+
+export function parseRelayReuseResponse(payload: unknown): { reused: boolean } {
+  const record = recordPayload(payload)
+  if (typeof record.reused !== 'boolean') throw new BridgeError('확장 프로그램 릴레이 상태 응답이 올바르지 않습니다.')
+  return { reused: record.reused }
+}

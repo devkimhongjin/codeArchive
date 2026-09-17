@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BridgeError, parseAckResponse, parseConnectResponse, parsePendingResponse, requestBridge } from './bridge'
+import { BridgeError, parseAckResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, requestBridge } from './bridge'
 import { requestIsCurrent } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
 
@@ -19,6 +19,12 @@ describe('extension bridge contract', () => {
     expect(() => parsePendingResponse({ captures: 'not-an-array' })).toThrow('captures')
     expect(() => parseAckResponse({ ok: false })).toThrow('ACK')
     expect(parseAckResponse({ ok: true })).toEqual({ ok: true })
+  })
+
+  it('requires an explicit boolean relay reuse response', () => {
+    expect(parseRelayReuseResponse({ reused: true })).toEqual({ reused: true })
+    expect(parseRelayReuseResponse({ reused: false })).toEqual({ reused: false })
+    expect(() => parseRelayReuseResponse({ ok: true })).toThrow('릴레이 상태')
   })
 
   it('only ACKs server-accepted IDs from the current pending page', () => {

@@ -1,5 +1,6 @@
 export const SWEA_ORIGIN = "https://swexpertacademy.com";
 export const SWEA_SOLVING_PATH = "/main/solvingProblem/solvingProblem.do";
+export const SWEA_USER_SUBMISSIONS_PATH = "/main/userpage/code/userSubmitProblem.do";
 export const SWEA_PROBLEM_DETAIL_PATHS = [
   "/main/code/problem/problemDetail.do",
   "/main/code/userProblem/userProblemDetail.do"

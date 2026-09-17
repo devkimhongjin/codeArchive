@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseHTML } from "linkedom";
 import { createCapture } from "../src/capture";
-import { loadSweaProblemContext, storeCaptureWithRetry, storeSweaProblemContext } from "../src/content";
+import {
+  loadSweaProblemContext,
+  loadSweaProblemContextForReferrer,
+  storeCaptureWithRetry,
+  storeSweaProblemContext
+} from "../src/content";
 import { SWEA_CONTEXT_LOOKUP_ERROR } from "../src/sweaProblemContext";
 
 function locationFor(href: string): Location {
@@ -115,4 +120,27 @@ test("solving-page context lookup distinguishes a genuine no-row from runtime or
   assert.equal(await loadSweaProblemContext(sourceUrl, async () => ({ context: null, missing: true })), null);
   assert.equal(await loadSweaProblemContext(sourceUrl, async () => ({ context: null, error: "STORAGE_ERROR" })), SWEA_CONTEXT_LOOKUP_ERROR);
   assert.equal(await loadSweaProblemContext(sourceUrl, async () => { throw new Error("worker unavailable"); }), SWEA_CONTEXT_LOOKUP_ERROR);
+});
+
+test("SWEA query-less navigation referrers are missing context rather than failed lookups", async () => {
+  let calls = 0;
+  const send = async () => { calls += 1; return { context: null, error: "INVALID_SWEA_CONTEXT_LOOKUP" }; };
+  for (const referrer of [
+    "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do?userId=member",
+    "https://swexpertacademy.com/main/code/problem/problemDetail.do",
+    "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do",
+    "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do"
+  ]) {
+    assert.equal(await loadSweaProblemContextForReferrer(referrer, send), null);
+  }
+  assert.equal(calls, 0);
+
+  assert.equal(
+    await loadSweaProblemContextForReferrer("https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=", async () => {
+      calls += 1;
+      return { context: null, missing: true };
+    }),
+    SWEA_CONTEXT_LOOKUP_ERROR
+  );
+  assert.equal(calls, 0);
 });
