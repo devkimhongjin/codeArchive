@@ -21,7 +21,7 @@ import {
   X,
 } from 'lucide-react'
 import { ApiError, bulkUpload, getAccountSettings, getAuthProviders, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories } from './api'
-import { BridgeError, parseAckResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, requestBridge } from './bridge'
+import { BridgeError, parseAckResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
 import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type AuthProviders, type BulkResponse, type Solution, type Toast, type User, type ViewName } from './types'
@@ -793,7 +793,10 @@ export default function App() {
       return
     }
     if (generation !== accountGeneration.current || settingsLoadedRef.current?.accountId !== account.id || settingsLoadedRef.current?.generation !== generation) return
-    const handoffKey = `${capability}:${account.id}:${saved.version}:${saved.autoSyncEnabled ? 'on' : 'off'}`
+    // Capabilities are intentionally ephemeral and disappear whenever Chrome
+    // suspends the MV3 worker. The durable handoff identity is the installed
+    // extension plus account settings version, not that transient capability.
+    const handoffKey = relayHandoffKey(currentExtensionId.current, account.id, saved.version, saved.autoSyncEnabled)
     if (relayHandoffRef.current === handoffKey || relayHandoffInFlight.current.has(handoffKey)) return
     const operation = ++relayHandoffOperation.current
     const stillCurrent = () =>

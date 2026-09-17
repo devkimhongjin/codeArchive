@@ -100,3 +100,7 @@ export function parseRelayReuseResponse(payload: unknown): { reused: boolean } {
   if (typeof record.reused !== 'boolean') throw new BridgeError('확장 프로그램 릴레이 상태 응답이 올바르지 않습니다.')
   return { reused: record.reused }
 }
+
+export function relayHandoffKey(extensionId: string, accountId: number, settingsVersion: number, autoSyncEnabled: boolean): string {
+  return `${extensionId}:${accountId}:${settingsVersion}:${autoSyncEnabled ? 'on' : 'off'}`
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BridgeError, parseAckResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, requestBridge } from './bridge'
+import { BridgeError, parseAckResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
 import { requestIsCurrent } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
 
@@ -25,6 +25,12 @@ describe('extension bridge contract', () => {
     expect(parseRelayReuseResponse({ reused: true })).toEqual({ reused: true })
     expect(parseRelayReuseResponse({ reused: false })).toEqual({ reused: false })
     expect(() => parseRelayReuseResponse({ ok: true })).toThrow('릴레이 상태')
+  })
+
+  it('keys a durable relay handoff independently from ephemeral capabilities', () => {
+    expect(relayHandoffKey('extension-a', 17, 12, true)).toBe('extension-a:17:12:on')
+    expect(relayHandoffKey('extension-a', 17, 12, false)).toBe('extension-a:17:12:off')
+    expect(relayHandoffKey('extension-b', 17, 12, true)).not.toBe(relayHandoffKey('extension-a', 17, 12, true))
   })
 
   it('only ACKs server-accepted IDs from the current pending page', () => {
