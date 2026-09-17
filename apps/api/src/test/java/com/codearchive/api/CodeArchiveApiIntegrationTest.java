@@ -25,6 +25,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Base64;
+import java.nio.charset.StandardCharsets;
+import jakarta.servlet.http.Cookie;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,6 +37,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpMethod;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.client.registration.ClientRegistration;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
@@ -44,6 +50,9 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import org.springframework.session.Session;
+import org.springframework.session.SessionRepository;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -73,6 +82,10 @@ class CodeArchiveApiIntegrationTest {
 
     @Autowired
     GithubAccountService githubAccountService;
+
+    @Autowired
+    @SuppressWarnings("rawtypes")
+    SessionRepository sessionRepository;
 
     @Autowired
     ObjectMapper objectMapper;
@@ -164,14 +177,13 @@ class CodeArchiveApiIntegrationTest {
                         .content("{\"deviceId\":\""+device+"\",\"generation\":1}"))
                 .andExpect(status().isOk()).andReturn();
         String secret=objectMapper.readTree(issued.getResponse().getContentAsString()).path("secret").asText();
-        MockHttpSession session = new MockHttpSession();
-        mockMvc.perform(get("/api/auth/me").session(session)
-                        .with(githubLogin("1003", "logout-user", "Logout", null)))
+        Cookie session = persistedGithubSession("1003", "logout-user", "Logout", null);
+        mockMvc.perform(get("/api/auth/me").cookie(session))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(post("/api/auth/logout").session(session).with(csrf().asHeader()))
+        mockMvc.perform(post("/api/auth/logout").cookie(session).with(csrf().asHeader()))
                 .andExpect(status().isNoContent());
-        mockMvc.perform(get("/api/auth/me").session(session))
+        mockMvc.perform(get("/api/auth/me").cookie(session))
                 .andExpect(status().isUnauthorized());
         // This is a separate request/transaction, proving logout persisted the
         // revocation instead of mutating only a detached grant entity.
@@ -526,4 +538,22 @@ class CodeArchiveApiIntegrationTest {
         Map<String,Object> value=new HashMap<>(); value.put("version",version); value.put("name",name); value.put("nickname",nickname); value.put("copyHeader",true); value.put("downloadHeader",true); value.put("downloadFilenameTemplate",filename); value.put("gitPathTemplate",git); value.put("lightTheme",light); value.put("darkTheme",dark); value.put("autoSyncEnabled",auto); value.put("githubAutoCommitEnabled",githubAuto); value.put("githubInstallationId",installation); value.put("githubOwner",owner); value.put("githubRepository",repo); value.put("githubBranch",branch); value.put("githubRootPath",root); return objectMapper.writeValueAsString(value);
     }
     private void enableRelay(String id,String login,String name) throws Exception { mockMvc.perform(get("/api/settings").with(githubLogin(id,login,name,null)).header("X-CodeArchive-Github-Id", id)).andExpect(status().isOk()); mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin(id,login,name,null)).header("X-CodeArchive-Github-Id", id).contentType("application/json").content(settingsJson(0,"n","n","{number}","{number}","github-light","github-dark",true,false,null,null,null,null,null))).andExpect(status().isOk()); }
+
+    private Cookie persistedGithubSession(String id, String login, String name, String email) {
+        Session session = (Session) sessionRepository.createSession();
+        Map<String, Object> attributes = new HashMap<>();
+        attributes.put("id", id);
+        attributes.put("login", login);
+        if (name != null) attributes.put("name", name);
+        if (email != null) attributes.put("email", email);
+        var authorities = java.util.List.of(new SimpleGrantedAuthority("ROLE_USER"));
+        GithubOAuth2User user = new GithubOAuth2User(authorities, attributes,
+                new GithubIdentity(id, login, name, email));
+        SecurityContext context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(new OAuth2AuthenticationToken(user, authorities, "github"));
+        session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, context);
+        sessionRepository.save(session);
+        return new Cookie("JSESSIONID", Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(session.getId().getBytes(StandardCharsets.UTF_8)));
+    }
 }

@@ -12,7 +12,6 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -26,7 +25,7 @@ public class SolutionService {
         this.solutionRepository = solutionRepository;
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional(noRollbackFor = CaptureValidationException.class)
     public Solution upsert(String githubId, CapturePayload payload) {
         NormalizedCapture capture = normalize(payload);
         AppUser user = userRepository.findByGithubId(githubId)

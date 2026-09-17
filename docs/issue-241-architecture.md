@@ -53,7 +53,12 @@ those App credentials reports `PROVIDER_UNAVAILABLE`; no write is attempted. Nev
 retry an unknown possibly-sent provider mutation; leave it `UNKNOWN` for operator
 review.
 
-The scheduler processes only `PENDING` jobs. It revalidates the settings generation,
+The dispatcher processes only `PENDING` jobs. The default `polling` dispatcher keeps
+the existing Render scheduler behavior. A future `cloud-tasks` dispatcher enqueues
+only a deterministic durable job id after the capture/job transaction commits; its
+private Cloud Run worker endpoint is conditionally registered and protected first by
+Cloud Run IAM/OIDC. See `docs/cloud-run-readiness.md` for the paused cutover runbook.
+It revalidates the settings generation,
 both automation flags, target configuration and capture before invoking the injectable
 provider boundary. Retryable pre-write failures are bounded to three attempts;
 `UNKNOWN` is terminal and is never automatically retried. The concrete provider
