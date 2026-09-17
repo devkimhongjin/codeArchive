@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.codearchive.api.auth.AppUser;
 import com.codearchive.api.auth.UserRepository;
@@ -84,7 +85,7 @@ class GithubInstallationControllerTest {
                 .thenReturn(new Payload(1, 17L, "123", 1L, 2L, "nonce", "/"));
         when(github.installations("123")).thenReturn(List.of(new GithubAppProvider.InstallationChoice(44L, "account")));
 
-        var response = controller.callback(github("123", "account"), "signed", 44L, "install", session);
+        var response = controller.callback(github("123", "account"), "signed", 44L, session);
 
         assertThat(response.getStatusCode().value()).isEqualTo(302);
         assertThat(response.getHeaders().getLocation()).hasToString(
@@ -97,7 +98,7 @@ class GithubInstallationControllerTest {
         when(states.consume("expired-state", 17L, "123", session))
                 .thenThrow(new InstallStateException(Failure.EXPIRED));
 
-        var response = controller.callback(github("123", "account"), "expired-state", 44L, "install", session);
+        var response = controller.callback(github("123", "account"), "expired-state", 44L, session);
 
         assertThat(response.getHeaders().getLocation()).hasToString(
                 "https://dashboard.example.test/?githubInstall=expired");
@@ -110,10 +111,59 @@ class GithubInstallationControllerTest {
                 .thenReturn(new Payload(1, 17L, "123", 1L, 2L, "nonce", "/"));
         when(github.installations("123")).thenReturn(List.of());
 
-        var response = controller.callback(github("123", "account"), "signed", 99L, "install", session);
+        var response = controller.callback(github("123", "account"), "signed", 99L, session);
 
         assertThat(response.getHeaders().getLocation()).hasToString(
-                "https://dashboard.example.test/?githubInstall=account_mismatch");
+                "https://dashboard.example.test/?githubInstall=installation_unavailable");
+    }
+
+    @Test
+    void callbackTreatsAConsumedStateWithoutAnInstalledAppAsCancelled() {
+        MockHttpSession session = new MockHttpSession();
+        when(states.consume("signed", 17L, "123", session))
+                .thenReturn(new Payload(1, 17L, "123", 1L, 2L, "nonce", "/"));
+
+        var response = controller.callback(github("123", "account"), "signed", null, session);
+
+        assertThat(response.getHeaders().getLocation()).hasToString(
+                "https://dashboard.example.test/?githubInstall=cancelled");
+        verifyNoInteractions(github);
+    }
+
+    @Test
+    void callbackReportsARevokedInstallationSeparately() throws Exception {
+        MockHttpSession revokedSession = new MockHttpSession();
+        when(states.consume("revoked", 17L, "123", revokedSession))
+                .thenReturn(new Payload(1, 17L, "123", 1L, 2L, "nonce", "/"));
+        when(github.installations("123")).thenThrow(new SecurityException("installation revoked"));
+
+        var revoked = controller.callback(github("123", "account"), "revoked", 44L, revokedSession);
+
+        assertThat(revoked.getHeaders().getLocation()).hasToString(
+                "https://dashboard.example.test/?githubInstall=installation_unavailable");
+    }
+
+    @Test
+    void callbackReportsAProviderFailureSeparately() throws Exception {
+        MockHttpSession outageSession = new MockHttpSession();
+        when(states.consume("outage", 17L, "123", outageSession))
+                .thenReturn(new Payload(1, 17L, "123", 1L, 2L, "nonce", "/"));
+        when(github.installations("123")).thenThrow(
+                new GithubAppProvider.ProviderUnavailableException("GitHub unavailable"));
+
+        var outage = controller.callback(github("123", "account"), "outage", 44L, outageSession);
+
+        assertThat(outage.getHeaders().getLocation()).hasToString(
+                "https://dashboard.example.test/?githubInstall=provider_unavailable");
+    }
+
+    @Test
+    void callbackRequiresAnAuthenticatedGithubSession() {
+        var response = controller.callback(null, "signed", 44L, new MockHttpSession());
+
+        assertThat(response.getHeaders().getLocation()).hasToString(
+                "https://dashboard.example.test/?githubInstall=authentication_required");
+        verifyNoInteractions(states, github);
     }
 
     private static OAuth2AuthenticationToken github(String id, String login) {

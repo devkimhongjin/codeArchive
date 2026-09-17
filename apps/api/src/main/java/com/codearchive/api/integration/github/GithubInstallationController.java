@@ -4,6 +4,7 @@ import com.codearchive.api.auth.AppUser;
 import com.codearchive.api.auth.GithubAuthentication;
 import com.codearchive.api.auth.UserRepository;
 import com.codearchive.api.automation.GithubAppProvider;
+import com.codearchive.api.automation.GithubAppProvider.ProviderUnavailableException;
 import com.codearchive.api.common.ApiError;
 import com.codearchive.api.common.GithubAccountAssertion;
 import com.codearchive.api.config.GithubOAuth2Properties;
@@ -66,7 +67,6 @@ public class GithubInstallationController {
     public ResponseEntity<Void> callback(Authentication authentication,
                                          @RequestParam(value = "state", required = false) String state,
                                          @RequestParam(value = "installation_id", required = false) Long installationId,
-                                         @RequestParam(value = "setup_action", required = false) String setupAction,
                                          HttpSession session) {
         var identity = GithubAuthentication.identity(authentication);
         if (identity.isEmpty()) return redirect("authentication_required", null);
@@ -84,16 +84,22 @@ public class GithubInstallationController {
             }, null);
         }
 
-        if (installationId == null || installationId <= 0 || !"install".equals(setupAction)) {
+        // GitHub's documented setup callback contract guarantees installation_id,
+        // but not setup_action. The signed one-time state and the ownership lookup
+        // below are the trust boundaries, so an omitted setup_action must not turn a
+        // successful installation into a false cancellation.
+        if (installationId == null || installationId <= 0) {
             return redirect("cancelled", null);
         }
         try {
             boolean owned = github.installations(identity.get().githubId()).stream()
                     .anyMatch(installation -> installation.id() == installationId);
-            if (!owned) return redirect("account_mismatch", null);
+            if (!owned) return redirect("installation_unavailable", null);
             return redirect("success", installationId);
+        } catch (ProviderUnavailableException exception) {
+            return redirect("provider_unavailable", null);
         } catch (SecurityException exception) {
-            return redirect("account_mismatch", null);
+            return redirect("installation_unavailable", null);
         } catch (Exception exception) {
             return redirect("provider_unavailable", null);
         }

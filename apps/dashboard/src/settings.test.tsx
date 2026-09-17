@@ -73,6 +73,25 @@ it('restores the installed account and repository cascade after the setup callba
   expect(window.location.search).toBe('')
 })
 
+it.each([
+  ['cancelled', 'GitHub App 설치가 완료되지 않았습니다. 다시 연결할 수 있습니다.'],
+  ['expired', 'GitHub App 연결 시간이 만료되었습니다. 다시 시도해 주세요.'],
+  ['invalid', 'GitHub App 연결 요청이 유효하지 않거나 이미 사용되었습니다.'],
+  ['account_mismatch', '현재 로그인한 GitHub 계정과 설치 계정이 일치하지 않습니다.'],
+  ['installation_unavailable', 'GitHub App 설치 권한이 없거나 철회되었습니다. 다시 연결해 주세요.'],
+  ['provider_unavailable', 'GitHub App 설치 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.'],
+  ['authentication_required', 'GitHub 로그인 세션이 만료되었습니다. 다시 로그인해 주세요.'],
+] as const)('shows the fixed %s setup callback result without loading an installation', async (result, message) => {
+  window.history.replaceState({}, '', `/?githubInstall=${result}`)
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue(settings); mocks.bridge.mockResolvedValue({ capability: 'callback-error-capability' })
+
+  render(<App />)
+
+  expect(await screen.findByText(message)).toBeTruthy()
+  expect(window.location.search).toBe('')
+  expect(mocks.installations).not.toHaveBeenCalled()
+})
+
 it('uses only the server-verified GitHub target cascade and clears dependent consent', async () => {
   mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false }); mocks.save.mockResolvedValue(settings)
   mocks.installations.mockResolvedValue([{ id: 9, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue([{ id: 11, owner: 'archive-user', name: 'repo', fullName: 'archive-user/repo', privateRepository: true, defaultBranch: 'main' }]); mocks.branches.mockResolvedValue([{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }]); mocks.directories.mockResolvedValueOnce({ currentPath: '', parentPath: '', directories: ['src'] }).mockResolvedValueOnce({ currentPath: 'src', parentPath: '', directories: [] }).mockResolvedValueOnce({ currentPath: '', parentPath: '', directories: ['src'] })
@@ -210,6 +229,7 @@ it('coalesces rapid inline theme changes onto the latest acknowledged settings v
   mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([solution]); mocks.settings.mockResolvedValue({ ...settings, autoSyncEnabled: false, githubAutoCommitEnabled: false }); mocks.save.mockReturnValueOnce(first.promise).mockResolvedValueOnce(final)
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT' ? Promise.resolve({ capability: 'rapid-theme-capability' }) : Promise.resolve({ ok: true }))
   render(<App />); await screen.findAllByText('빠른 테마')
+  await waitFor(() => expect((screen.getByLabelText('밝은 테마') as HTMLSelectElement).value).toBe('one-light'))
   fireEvent.change(screen.getByLabelText('밝은 테마'), { target: { value: 'solarized-light' } }); fireEvent.change(screen.getByLabelText('어두운 테마'), { target: { value: 'one-dark-pro' } })
   await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1)); first.resolve(afterFirst)
   await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2))

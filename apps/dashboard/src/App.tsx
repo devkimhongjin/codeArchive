@@ -158,14 +158,14 @@ const defaultAccountSettings = (): AccountSettings => ({ version: 0, name: null,
 const RELAY_DEVICE_KEY = 'codearchive-relay-device-id'
 
 type GithubInstallReturn = {
-  result: 'success' | 'cancelled' | 'expired' | 'invalid' | 'account_mismatch' | 'provider_unavailable' | 'authentication_required'
+  result: 'success' | 'cancelled' | 'expired' | 'invalid' | 'account_mismatch' | 'installation_unavailable' | 'provider_unavailable' | 'authentication_required'
   installationId: number | null
 }
 
 function readGithubInstallReturn(): GithubInstallReturn | null {
   const params = new URLSearchParams(window.location.search)
   const result = params.get('githubInstall')
-  if (!result || !['success', 'cancelled', 'expired', 'invalid', 'account_mismatch', 'provider_unavailable', 'authentication_required'].includes(result)) return null
+  if (!result || !['success', 'cancelled', 'expired', 'invalid', 'account_mismatch', 'installation_unavailable', 'provider_unavailable', 'authentication_required'].includes(result)) return null
   const rawInstallationId = params.get('installationId')
   const installationId = rawInstallationId && /^[1-9][0-9]{0,19}$/.test(rawInstallationId) ? Number(rawInstallationId) : null
   if (result === 'success' && (!installationId || !Number.isSafeInteger(installationId))) return { result: 'invalid', installationId: null }
@@ -444,6 +444,7 @@ export default function App() {
         expired: ['error', 'GitHub App 연결 시간이 만료되었습니다. 다시 시도해 주세요.'],
         invalid: ['error', 'GitHub App 연결 요청이 유효하지 않거나 이미 사용되었습니다.'],
         account_mismatch: ['error', '현재 로그인한 GitHub 계정과 설치 계정이 일치하지 않습니다.'],
+        installation_unavailable: ['error', 'GitHub App 설치 권한이 없거나 철회되었습니다. 다시 연결해 주세요.'],
         provider_unavailable: ['error', 'GitHub App 설치 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.'],
         authentication_required: ['error', 'GitHub 로그인 세션이 만료되었습니다. 다시 로그인해 주세요.'],
       }

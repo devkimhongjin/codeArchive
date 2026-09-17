@@ -90,7 +90,10 @@ https://codearchive-dashboard-beta.netlify.app/api/github/installations/callback
 The dashboard starts installation with an authenticated, CSRF-protected `POST`.
 The API signs a short-lived state, binds it to the current browser session, and
 validates both that state and the immutable GitHub account before accepting the
-returned `installation_id`. The GitHub App ID, private key, and slug must all be
+returned `installation_id`. It does not require the optional `setup_action` query
+parameter because GitHub's Setup URL contract guarantees only `installation_id`;
+the state and installation ownership lookup are the security boundaries. The
+GitHub App ID, private key, and slug must all be
 configured server-side; the private key and installation tokens are never sent
 to the dashboard or extension.
 

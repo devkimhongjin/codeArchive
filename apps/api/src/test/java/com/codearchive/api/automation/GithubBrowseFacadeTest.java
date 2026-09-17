@@ -119,9 +119,9 @@ class GithubBrowseFacadeTest {
         reply(exchange, 200, installationsPage(exchange.getRequestURI().getQuery()));
         return;
       }
-      reply(exchange, 200, "[{\"id\":44,\"account\":{\"id\":\"123\",\"login\":\"OwNeR\",\"type\":\"User\"}},"
-          + "{\"id\":45,\"account\":{\"id\":\"124\",\"login\":\"OwNeR\",\"type\":\"User\"}},"
-          + "{\"id\":46,\"account\":{\"id\":\"300\",\"login\":\"owner-org\",\"type\":\"Organization\"}}]");
+      reply(exchange, 200, "[{\"id\":44,\"account\":{\"id\":123,\"login\":\"OwNeR\",\"type\":\"User\"},\"suspended_at\":null},"
+          + "{\"id\":45,\"account\":{\"id\":124,\"login\":\"OwNeR\",\"type\":\"User\"},\"suspended_at\":null},"
+          + "{\"id\":46,\"account\":{\"id\":300,\"login\":\"owner-org\",\"type\":\"Organization\"},\"suspended_at\":null}]");
     } else if (path.equals("/installation/repositories")) {
       if (paginateTarget) {
         reply(exchange, 200, repositoriesPage(exchange.getRequestURI().getQuery()));
@@ -145,14 +145,14 @@ class GithubBrowseFacadeTest {
 
   private static String installationsPage(String query) {
     if (query != null && query.contains("page=2")) {
-      return "[{\"id\":44,\"account\":{\"id\":\"123\",\"login\":\"OwNeR\",\"type\":\"User\"}}]";
+      return "[{\"id\":44,\"account\":{\"id\":123,\"login\":\"OwNeR\",\"type\":\"User\"},\"suspended_at\":null}]";
     }
     StringBuilder body = new StringBuilder("[");
     for (int id = 1; id <= 100; id++) {
       if (id > 1) body.append(',');
       body.append("{\"id\":").append(1000 + id)
-          .append(",\"account\":{\"id\":\"").append(1000 + id)
-          .append("\",\"login\":\"other\",\"type\":\"User\"}}");
+          .append(",\"account\":{\"id\":").append(1000 + id)
+          .append(",\"login\":\"other\",\"type\":\"User\"},\"suspended_at\":null}");
     }
     return body.append(']').toString();
   }

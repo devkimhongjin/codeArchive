@@ -111,11 +111,11 @@ public class GithubInstallStateService {
         session.removeAttribute(SESSION_ATTRIBUTE);
         long now = clock.instant().getEpochSecond();
         if (payload.version() != 1 || payload.expiresAt() != pending.expiresAt()
-                || payload.issuedAt() > now + 30 || payload.expiresAt() < now
+                || payload.issuedAt() > now + 30 || payload.expiresAt() <= now
                 || payload.expiresAt() - payload.issuedAt() > ttl.toSeconds()
                 || !RETURN_PATH.equals(payload.returnPath()) || payload.nonce() == null
                 || !payload.nonce().matches("[A-Za-z0-9_-]{40,64}")) {
-            throw new InstallStateException(payload.expiresAt() < now ? Failure.EXPIRED : Failure.INVALID);
+            throw new InstallStateException(payload.expiresAt() <= now ? Failure.EXPIRED : Failure.INVALID);
         }
         if (payload.userId() != userId || !constantTimeEquals(payload.githubId(), githubId)) {
             throw new InstallStateException(Failure.ACCOUNT_MISMATCH);
