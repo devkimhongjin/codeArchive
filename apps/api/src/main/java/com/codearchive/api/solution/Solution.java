@@ -78,6 +78,15 @@ public class Solution {
     protected Solution() {
     }
 
+    /** Keeps internal callers source-compatible while deriving the trusted key server-side. */
+    public Solution(AppUser user, String captureId, Platform platform, String problemNumber, String title,
+                    String problemUrl, String language, String sourceCode, String result,
+                    Instant observedAt, Instant solvedAt, BigDecimal executionTime, BigDecimal memoryUsage) {
+        this(user, captureId, platform, problemNumber, title, problemUrl, language,
+                LanguageNormalizer.canonicalKey(language), sourceCode, result, observedAt, solvedAt,
+                executionTime, memoryUsage);
+    }
+
     public Solution(AppUser user, String captureId, Platform platform, String problemNumber, String title,
                     String problemUrl, String language, String languageKey, String sourceCode, String result,
                     Instant observedAt, Instant solvedAt, BigDecimal executionTime, BigDecimal memoryUsage) {
