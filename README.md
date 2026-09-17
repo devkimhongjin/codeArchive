@@ -1,158 +1,110 @@
 # CodeArchive
 
-CodeArchive는 코딩테스트 풀이를 자동으로 수집하고 로컬에 우선 보관한 뒤, 서버 동기화와 AI 보조 기능으로 확장하는 **local-first 풀이 아카이브**입니다.
+SWEA와 Programmers의 통과한 풀이를 로컬에 보관하고 개인 대시보드로 동기화하는 서비스의 1차 구현입니다.
 
-현재 목표는 약 20명이 사용할 수 있는 SWEA 베타입니다.
+## 구성
 
-```text
-GitHub 로그인
-→ SWEA PASS 감지
-→ Extension IndexedDB 자동 저장
-→ 인증된 Main API 동기화
-→ 사용자별 PostgreSQL 영구 저장
-→ AI 보조 결과 생성·조회
+| 디렉터리 | 역할 | 기술 |
+| --- | --- | --- |
+| apps/extension | 제출 감지, 로컬 보관, Dashboard 연결 | TypeScript, Chrome MV3, IndexedDB |
+| apps/dashboard | 계정, 풀이 목록·검색·코드 상세, 수동 동기화 | React, TypeScript, Vite |
+| apps/api | 세션 인증, 사용자별 풀이, Bulk 저장 | Java 17+, Spring Boot, JPA |
+| docs | 구조, 검증 범위, 후속 개발 | Markdown |
+
+UI는 [CodeArchive Figma](https://www.figma.com/design/MjmogsVNXfKIxuGbJ8btWh/CodeArchive-Dashboard-Archive-UI?node-id=5-2)를 참고합니다. 데모 화면의 풀이 데이터는 실제 계정 데이터와 구분됩니다.
+
+## 로컬 실행
+
+Node.js 22.12+와 Java 17 이상이 필요합니다. 아래 명령은 저장소 루트에서 실행합니다.
+
+```powershell
+npm run setup
+npm run build
+npm run dev
 ```
 
-로그인, API, 데이터베이스 또는 분석 서비스가 사용할 수 없는 상황에서도 로컬 저장·조회·수정·내보내기·삭제 기능은 계속 동작해야 합니다.
+Dashboard 주소는 http://localhost:5173 입니다. 별도 터미널에서 API를 실행하세요.
 
-## 현재 베타 상태
-
-- Main API: `https://codearchive-api.onrender.com`
-- Analysis API: `https://codearchive-analysis.onrender.com`
-- 안정화된 Extension ID: `oohlcmihldmfninmdcmanddfmhoonmdl`
-- Extension Main API 권한: `https://codearchive-api.onrender.com/*`만 허용
-- PostgreSQL: Neon, Flyway V1–V5 적용
-- Analysis provider: `fake`
-- live OpenAI: 비활성화
-- Render 서비스: Free 플랜, 자동 배포 비활성화
-
-Main API와 Analysis API health, Analysis 내부 API의 미인증 `401`, GitHub 로그인 시작 URL 생성까지 확인했습니다. 실제 unpacked Chrome에서 OAuth 복귀·일회용 코드 교환·인증된 `/api/v1/me` 검증은 [Issue #66](https://github.com/devkimhongjin/codeArchive/issues/66)의 남은 작업입니다.
-
-## 저장소 구성
-
-| 경로 | 역할 |
-| --- | --- |
-| `apps/extension` | React, TypeScript, Vite 기반 Manifest V3 Chrome Extension |
-| `apps/web` | 향후 React 대시보드 |
-| `apps/api` | Java 21, Spring Boot 3.5.16 Main API |
-| `apps/analysis` | Python, FastAPI 분석 서비스 |
-| `packages/shared-types` | 공통 TypeScript 모델과 enum |
-| `infra` | 로컬 Compose와 Render 베타 Blueprint |
-| `.github/agents` | 역할별 멀티에이전트 프로필 |
-| `plugins/codearchive-workflows` | ChatGPT Work용 CodeArchive 역할 Skill |
-
-## 개발 환경
-
-- Node.js 20 이상
-- pnpm 10.15.0
-- Java 21
-- Python 3.12
-- Docker Compose
-
-### TypeScript / Extension
-
-```bash
-corepack enable
-pnpm install --frozen-lockfile
-pnpm --filter @codearchive/extension typecheck
-pnpm --filter @codearchive/extension test
-pnpm --filter @codearchive/extension build
-```
-
-빌드 결과는 `apps/extension/dist`에 생성됩니다. Chrome의 `chrome://extensions`에서 개발자 모드를 켠 뒤 **압축해제된 확장 프로그램을 로드합니다**로 해당 폴더를 선택합니다.
-
-### 로컬 인프라
-
-Main API를 실행하기 전에 PostgreSQL과 Redis를 시작합니다.
-
-```bash
-cp infra/.env.example infra/.env
-pnpm infra:up
-pnpm infra:ps
-```
-
-사용을 마치면 `pnpm infra:down`으로 종료합니다. 비밀번호와 토큰이 포함된 `infra/.env`는 저장소에 커밋하지 않습니다.
-
-### Main API
-
-```bash
+```powershell
 cd apps/api
-export DB_PASSWORD=change-me
-./gradlew test
-./gradlew bootRun
+# JAVA_HOME이 Java 17 이상의 JDK를 가리켜야 합니다.
+./mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local"
 ```
 
-Windows PowerShell에서는 `$env:DB_PASSWORD="change-me"`를 설정하고 `./gradlew.bat`을 사용할 수 있습니다. 로컬 GitHub OAuth 값과 데이터베이스 연결 정보는 `apps/api/.env.example`을 참고하되, 실제 secret은 커밋하지 않습니다. OAuth 값이 비어 있으면 GitHub 로그인 기능만 비활성화됩니다.
+macOS/Linux에서는 ./mvnw를 사용합니다. 로컬 프로필은 파일 기반 H2 DB를 사용합니다. Dashboard의 /api 요청은 Vite 프록시를 통해 localhost:8080으로 전달됩니다. 로그인은 GitHub 전용이며 이메일·비밀번호 가입은 제공하지 않습니다.
 
-### Analysis API
+### GitHub 로그인 설정
 
-```bash
-cd apps/analysis
-python -m pip install -r requirements.txt
-python -m pytest
-uvicorn app.main:app --reload --port 8000
+GitHub OAuth App의 콜백 URL을 `http://localhost:5173/api/login/oauth2/code/github`로 등록하고 API 프로세스에 아래 환경 변수를 설정합니다. Client Secret은 서버에서만 사용합니다.
+
+```powershell
+$env:GITHUB_CLIENT_ID = 'your-client-id'
+$env:GITHUB_CLIENT_SECRET = 'your-client-secret'
+$env:GITHUB_REDIRECT_URI = 'http://localhost:5173/api/login/oauth2/code/github'
+$env:DASHBOARD_ORIGIN = 'http://localhost:5173'
 ```
 
-기본 개발·베타 provider는 `fake`입니다. `OPENAI_API_KEY` 설정과 live OpenAI 활성화는 별도 승인 없이는 수행하지 않습니다.
+설정이 없으면 데모 화면과 서버는 실행할 수 있지만 GitHub 로그인은 비활성으로 표시됩니다. 계정 식별은 GitHub 고유 ID를 사용하며 기존 로컬 계정을 이메일로 자동 병합하지 않습니다. 로그인 권한과 GitHub 저장소 커밋 권한은 별도입니다.
 
-## 브랜치와 배포 목표 정책
+이 PC의 재사용 OAuth 설정은 Git에서 제외된 `apps/api/config/application-local.properties`에 보관합니다. `apps/api` 디렉터리에서 `local` 프로필로 API를 실행하면 자동으로 읽습니다. 이 파일에는 비밀값이 있으므로 공유하거나 커밋하지 않습니다.
 
-```text
-feature/*, fix/*, chore/*
-→ develop 대상 Pull Request
-→ CI와 독립 리뷰
-→ 같은 저장소의 develop → master release Pull Request
-→ 병합 직전 사용자 승인
-→ master 병합
-→ 배포 직전 별도 사용자 승인
-→ master의 정확한 commit을 수동 배포
-→ smoke 검증
+### 확장 프로그램
+
+1. npm run build로 확장 프로그램을 빌드합니다.
+2. Chrome의 chrome://extensions에서 개발자 모드를 켭니다.
+3. **압축해제된 확장 프로그램을 로드합니다**에서 apps/extension/dist를 선택합니다.
+4. GitHub로 로그인하면 고정 ID의 확장 프로그램에 자동 연결합니다.
+5. 지금 동기화를 눌러 저장된 Capture를 가져옵니다. 이전 개발 ID의 기록은 설정의 이전 개발 기록 확인에서 가져올 수 있습니다.
+
+확장 프로그램 연결 허용 origin은 정확히 `http://localhost:5173`와 운영
+`https://codearchive-dashboard-beta.netlify.app`입니다. 127.0.0.1, 다른 포트,
+lookalike 도메인, 또는 로컬/운영 sender-tab 혼합은 연결되지 않습니다.
+
+### 운영 배포
+
+Render API는 `apps/api/Dockerfile`을 Docker context `apps/api`로 빌드합니다.
+`prod` 프로필은 `$PORT`(기본 8080)로 실행하고 `/actuator/health`를 제공합니다.
+`DATABASE_URL`(JDBC PostgreSQL URL), `DB_USERNAME`, `DB_PASSWORD`, GitHub OAuth
+값과 정확한 production origin 값은 배포 환경에서 설정합니다. Netlify는
+`apps/dashboard/dist`를 배포하며 `/api/*`를 Render API로 same-origin 프록시하므로
+OAuth callback은 `https://codearchive-dashboard-beta.netlify.app/api/login/oauth2/code/github`입니다.
+
+### PostgreSQL
+
+개발용 PostgreSQL 컨테이너를 사용하는 경우:
+
+```powershell
+$env:POSTGRES_PASSWORD = 'choose-your-local-password'
+docker compose up -d postgres
+$env:DB_USERNAME = 'codearchive'
+$env:DB_PASSWORD = $env:POSTGRES_PASSWORD
+$env:DATABASE_URL = 'jdbc:postgresql://localhost:5432/codearchive'
+cd apps/api
+./mvnw.cmd spring-boot:run
 ```
 
-- `develop`: 통합 개발 브랜치
-- `master`: 배포 가능한 목표 브랜치
-- `master`에 직접 기능을 개발하거나 직접 push하지 않습니다.
-- Render 자동 배포는 계속 비활성화합니다.
-- release 병합 승인은 배포 승인을 대신하지 않습니다.
-- `master` 보호 규칙을 활성화한 뒤에는 `Master Release Source / require-develop` 검사를 필수로 사용합니다.
+PostgreSQL 스키마는 Flyway 버전별 SQL로 생성·변경하고 Hibernate는 엔티티와의 일치 여부를 검증합니다. 기존 PostgreSQL DB를 도입할 때는 백업과 스키마 확인 후 명시적으로 baseline을 지정해야 합니다. 자동 baseline은 사용하지 않습니다. 절차는 `apps/api/docs/database-migrations.md`를 참고하세요. 로컬 H2 프로필의 기존 데이터 보관 방식은 유지합니다.
 
-이 정책은 [Issue #67](https://github.com/devkimhongjin/codeArchive/issues/67)과 PR #68에서 도입 중입니다. 최초 승격 전에는 원격 `master`와 정확한 `develop` commit을 확인하고, 승인된 `develop → master` release PR을 병합한 직후 다음 보호 규칙을 활성화·검증해야 합니다.
+Docker와 JDK가 준비되어 있으면 별도 임시 PostgreSQL 17에서 마이그레이션 테스트를 실행할 수 있습니다. 테스트가 만든 컨테이너는 실행 후 정리됩니다.
 
-- Pull Request 없이 `master` 갱신 금지
-- 직접 push와 우회 허용 금지
-- `Master Release Source / require-develop` 필수
-- 같은 저장소의 `develop`만 통과하고 fork 또는 다른 branch는 실패하는지 확인
+```powershell
+./scripts/test-postgres.ps1
+```
 
-보호 규칙 활성화와 Render source branch 전환은 저장소 파일 변경과 별개의 외부 승인 단계입니다. 세부 절차는 [작업 Skill 워크플로](docs/work-skill-workflow.md)를 따릅니다.
+## 검증 명령
 
-## 멀티에이전트 작업 방식
+```powershell
+npm run build
+npm run test:extension
+cd apps/api
+./mvnw.cmd test
+```
 
-CodeArchive는 `.github/agents`의 기존 5개 역할을 사용합니다.
+## 현재 경계
 
-| 역할 | 책임 |
-| --- | --- |
-| `project-integrator` | 계획, 공유 계약, 이슈·PR 인계, 최종 통합과 승인 게이트 |
-| `client-builder` | `apps/extension/**`, `apps/web/**` |
-| `service-builder` | `apps/api/**`, `apps/analysis/**`, `infra/**` |
-| `quality-reviewer` | 독립적인 정확성·보안·운영 검토, 기본적으로 읽기 전용 |
-| `repo-maintainer` | 명시적으로 할당된 기계적·가역적 작업 |
+- 플랫폼 Adapter는 기존 `devkimhongjin/codeArchive`의 제출 검증 방식을 참고합니다. 출처와 선택자는 `docs/reference-submission-verification.md`에 기록했습니다. 현재 서비스 DOM 호환성은 실브라우저 제출 검증이 필요합니다.
+- Dashboard가 닫혀 있으면 로컬 보관만 지속하며 서버 전달은 재연결 후 수행합니다.
+- GitHub App 연동, 실제 커밋, 자동 커밋 Worker와 별도 Relay는 후속 개발 대상입니다.
+- 개발 변경은 GitHub의 기능 브랜치에서 PR을 열어 develop에 병합합니다. master 반영과 배포는 별도 승인 대상입니다. 이번 신규 구축 전환 범위와 후속 작업은 docs/rebuild-handoff.md를 참고하세요.
 
-두 에이전트가 같은 경로를 동시에 수정하지 않습니다. 범위, 경로 소유권, 계약 변경, 실제 검사 결과, 위험과 후속 작업은 GitHub Issue와 PR에 남깁니다. 대화보다 GitHub 상태를 우선합니다.
-
-ChatGPT Work에서는 한 대화에 CodeArchive 역할 Skill 하나만 명시적으로 선택합니다. 자세한 내용은 [에이전트 구조](docs/agent-architecture.md), [저장소 에이전트 규칙](AGENTS.md), [작업 Skill 워크플로](docs/work-skill-workflow.md)를 참고하세요.
-
-## 보안 및 범위 제한
-
-- OAuth secret, API key, token, cookie와 전체 사용자 코드를 로그·Issue·PR에 남기지 않습니다.
-- 로그인 단계에서 GitHub repository 권한을 요청하지 않습니다.
-- Extension 권한은 승인된 정확한 Main API origin 이상으로 넓히지 않습니다.
-- live AI, 유료 인프라, 외부 업로드와 권한 확대는 명시적인 승인 없이는 진행하지 않습니다.
-- 문제 본문 전체, 공식 해설, 비공개 테스트 데이터와 플랫폼 로그인 정보는 수집하지 않습니다.
-
-## 문서
-
-- [개발 명세서](docs/codearchive-development-spec.md)
-- [에이전트 구조](docs/agent-architecture.md)
-- [저장소 에이전트 규칙](AGENTS.md)
-- [ChatGPT Work Skill 워크플로](docs/work-skill-workflow.md)
-- [배포 베타 검증 Issue #37](https://github.com/devkimhongjin/codeArchive/issues/37)
+자세한 내용은 docs/architecture.md, docs/validation-matrix.md, docs/roadmap.md를 참고하세요.

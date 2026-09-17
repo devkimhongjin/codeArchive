@@ -1,0 +1,13 @@
+package com.codearchive.api.integration.github;
+
+import com.codearchive.api.auth.*;import com.codearchive.api.automation.GithubAppProvider;import com.codearchive.api.common.GithubAccountAssertion;import java.util.*;import org.springframework.http.*;import org.springframework.security.core.Authentication;import org.springframework.web.bind.annotation.*;
+/** Read-only, authenticated cascade; client IDs are always resolved through the installation token. */
+@RestController @RequestMapping("/api/github/targets") public class GithubTargetController{
+ private final UserRepository users;private final GithubAppProvider github;public GithubTargetController(UserRepository users,GithubAppProvider github){this.users=users;this.github=github;}
+ private ResponseEntity<?> call(Authentication a,String expected,Work w){var checked=GithubAccountAssertion.require(a,expected,users);if(!checked.accepted())return checked.failure();if(!github.browseReady())return ResponseEntity.status(503).build();try{return ResponseEntity.ok(w.run(checked.account().githubId()));}catch(IllegalArgumentException e){return ResponseEntity.badRequest().build();}catch(SecurityException e){return ResponseEntity.status(403).build();}catch(Exception e){return ResponseEntity.status(503).build();}}
+ @GetMapping("/installations") public ResponseEntity<?> installations(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected){return call(a,expected,id->github.installations(id));}
+ @GetMapping("/installations/{id}/repositories") public ResponseEntity<?> repositories(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected,@PathVariable long id,@RequestParam(defaultValue="1") int page){return call(a,expected,githubId->github.repositoriesPage(githubId,id,page));}
+ @GetMapping("/installations/{id}/repositories/{repo}/branches") public ResponseEntity<?> branches(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected,@PathVariable long id,@PathVariable long repo,@RequestParam(defaultValue="1") int page){return call(a,expected,githubId->github.branchesPage(githubId,id,repo,page));}
+ @GetMapping("/installations/{id}/repositories/{repo}/directories") public ResponseEntity<?> dirs(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected,@PathVariable long id,@PathVariable long repo,@RequestParam String branch,@RequestParam(defaultValue="") String path){return call(a,expected,githubId->github.directories(githubId,id,repo,branch,path));}
+ @FunctionalInterface interface Work{Object run(String login)throws Exception;}
+}

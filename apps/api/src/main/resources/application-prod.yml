@@ -1,0 +1,36 @@
+spring:
+  datasource:
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:5}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: codearchive_v2
+  flyway:
+    schemas: codearchive_v2
+    default-schema: codearchive_v2
+    create-schemas: true
+  session:
+    jdbc:
+      initialize-schema: never
+      table-name: codearchive_v2.SPRING_SESSION
+
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      cookie:
+        secure: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never

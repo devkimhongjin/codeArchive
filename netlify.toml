@@ -1,0 +1,32 @@
+[build]
+  command = "npm --prefix apps/dashboard ci && npm --prefix apps/dashboard run build"
+  publish = "apps/dashboard/dist"
+
+[build.environment]
+  NODE_VERSION = "22.12.0"
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://codearchive-api.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+    X-Content-Type-Options = "nosniff"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cache-Control = "no-cache"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Permissions-Policy = "geolocation=(), microphone=(), camera=()"

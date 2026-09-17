@@ -1,241 +1,205 @@
 package com.codearchive.api.solution;
 
-import java.time.Clock;
+import com.codearchive.api.auth.AppUser;
+import com.codearchive.api.auth.UserRepository;
+import java.math.BigDecimal;
+import java.net.URI;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
-import java.util.Set;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
-
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import com.codearchive.api.auth.security.CodeArchivePrincipal;
-import com.codearchive.api.common.exception.CodeArchiveException;
-import com.codearchive.api.common.exception.ErrorCode;
 
 @Service
 public class SolutionService {
 
-    private static final String SUPPORTED_PLATFORM = "SWEA";
-    private static final String ACCEPTED_RESULT = "ACCEPTED";
-    private static final String DEFAULT_AI_USAGE = "unknown";
-    private static final Set<String> AI_USAGE_VALUES = Set.of(
-            "used",
-            "not_used",
-            "unknown"
-    );
-
+    private final UserRepository userRepository;
     private final SolutionRepository solutionRepository;
-    private final SolutionUpsertRepository upsertRepository;
-    private final Clock clock;
 
-    @Autowired
-    public SolutionService(
-            SolutionRepository solutionRepository,
-            SolutionUpsertRepository upsertRepository
-    ) {
-        this(
-                solutionRepository,
-                upsertRepository,
-                Clock.systemUTC()
-        );
-    }
-
-    SolutionService(
-            SolutionRepository solutionRepository,
-            SolutionUpsertRepository upsertRepository,
-            Clock clock
-    ) {
+    public SolutionService(UserRepository userRepository, SolutionRepository solutionRepository) {
+        this.userRepository = userRepository;
         this.solutionRepository = solutionRepository;
-        this.upsertRepository = upsertRepository;
-        this.clock = clock;
     }
 
-    @Transactional
-    public SolutionResponse upsert(
-            CodeArchivePrincipal principal,
-            String rawClientRecordId,
-            SolutionUpsertRequest request
-    ) {
-        UUID userId = ownerId(principal);
-        String clientRecordId = normalizeClientRecordId(
-                rawClientRecordId
-        );
-        SolutionUpsertRepository.Values values = normalize(request);
-        Instant now = clock.instant();
+    @Transactional(noRollbackFor = CaptureValidationException.class)
+    public Solution upsert(String githubId, CapturePayload payload) {
+        NormalizedCapture capture = normalize(payload);
+        AppUser user = userRepository.findByGithubId(githubId)
+                .orElseThrow(() -> new CaptureValidationException("Authenticated user no longer exists"));
 
-        UUID id = upsertRepository.upsert(
-                userId,
-                clientRecordId,
-                values,
-                now
-        );
-
-        Solution solution = solutionRepository
-                .findByIdAndUserId(id, userId)
-                .orElseThrow(() -> new CodeArchiveException(
-                        ErrorCode.SOLUTION_NOT_FOUND
-                ));
-
-        return SolutionResponse.from(solution);
-    }
-
-    @Transactional(readOnly = true)
-    public SolutionResponse get(
-            CodeArchivePrincipal principal,
-            UUID id
-    ) {
-        UUID userId = ownerId(principal);
-
-        return solutionRepository
-                .findByIdAndUserId(id, userId)
-                .map(SolutionResponse::from)
-                .orElseThrow(() -> new CodeArchiveException(
-                        ErrorCode.SOLUTION_NOT_FOUND
-                ));
-    }
-
-    @Transactional(readOnly = true)
-    public List<SolutionResponse> list(
-            CodeArchivePrincipal principal,
-            int limit
-    ) {
-        UUID userId = ownerId(principal);
-
-        return solutionRepository
-                .findByUserIdOrderByObservedAtDescCreatedAtDesc(
-                        userId,
-                        PageRequest.of(0, limit)
-                )
-                .stream()
-                .map(SolutionResponse::from)
-                .toList();
-    }
-
-    private UUID ownerId(CodeArchivePrincipal principal) {
-        if (principal == null) {
-            throw new CodeArchiveException(
-                    ErrorCode.AUTH_REQUIRED
-            );
+        Optional<Solution> existing = solutionRepository.findByUserIdAndCaptureId(user.getId(), capture.captureId());
+        if (existing.isPresent()) {
+            Solution solution = existing.get();
+            if (!sameCoreData(solution, capture)) {
+                throw new CaptureValidationException("captureId already exists with different solution data");
+            }
+            BigDecimal executionTime = capture.executionTime() == null
+                    ? solution.getExecutionTime() : capture.executionTime();
+            BigDecimal memoryUsage = capture.memoryUsage() == null
+                    ? solution.getMemoryUsage() : capture.memoryUsage();
+            solution.update(capture.platform(), capture.problemNumber(), capture.title(), capture.problemUrl(),
+                    capture.language(), capture.languageKey(), capture.sourceCode(), capture.result(), capture.observedAt(),
+                    capture.solvedAt(), executionTime, memoryUsage);
+            if (capture.memoryValue() != null) solution.setMemoryMeasurement(capture.memoryValue(), capture.memoryUnit());
+            return solutionRepository.saveAndFlush(solution);
         }
-        return principal.userId();
+
+        Solution solution = new Solution(user, capture.captureId(), capture.platform(), capture.problemNumber(),
+                capture.title(), capture.problemUrl(), capture.language(), capture.languageKey(), capture.sourceCode(), capture.result(),
+                capture.observedAt(), capture.solvedAt(), capture.executionTime(), capture.memoryUsage());
+        solution.setMemoryMeasurement(capture.memoryValue(), capture.memoryUnit());
+        return solutionRepository.saveAndFlush(solution);
     }
 
-    private String normalizeClientRecordId(String value) {
-        if (value == null) {
-            throw invalidRequest();
+    @Transactional(readOnly = true)
+    public List<Solution> listForUser(String githubId) {
+        AppUser user = userRepository.findByGithubId(githubId)
+                .orElseThrow(() -> new CaptureValidationException("Authenticated user no longer exists"));
+        return solutionRepository.findByUserIdOrderBySolvedAtDesc(user.getId());
+    }
+
+    private NormalizedCapture normalize(CapturePayload payload) {
+        if (payload == null) {
+            throw new CaptureValidationException("Capture must be an object");
+        }
+
+        String captureId = required(payload.getCaptureId(), "captureId", 36);
+        try {
+            UUID parsed = UUID.fromString(captureId);
+            if (!parsed.toString().equalsIgnoreCase(captureId)) {
+                throw new IllegalArgumentException("non-canonical UUID");
+            }
+            captureId = parsed.toString();
+        } catch (IllegalArgumentException exception) {
+            throw new CaptureValidationException("captureId must be a UUID");
+        }
+
+        String platformValue = required(payload.getPlatform(), "platform", 20).toUpperCase(Locale.ROOT);
+        Platform platform;
+        try {
+            platform = Platform.valueOf(platformValue);
+        } catch (IllegalArgumentException exception) {
+            throw new CaptureValidationException("platform must be SWEA or PROGRAMMERS");
+        }
+
+        String problemNumber = required(payload.getProblemNumber(), "problemNumber", 100);
+        String title = required(payload.getTitle(), "title", 500);
+        String problemUrl = required(payload.getProblemUrl(), "problemUrl", 2048);
+        validateUrl(problemUrl);
+        String language = required(payload.getLanguage(), "language", 100);
+        String languageKey = LanguageNormalizer.canonicalKey(language);
+        if (payload.getLanguageKey() != null && !payload.getLanguageKey().trim().equals(languageKey)) {
+            throw new CaptureValidationException("languageKey does not match language");
+        }
+        String sourceCode = requiredPreservingWhitespace(payload.getSourceCode(), "sourceCode", 1_000_000);
+        String result = required(payload.getResult(), "result", 20);
+        if (!"ACCEPTED".equalsIgnoreCase(result)) {
+            throw new CaptureValidationException("result must be ACCEPTED");
+        }
+        result = "ACCEPTED";
+
+        Instant observedAt = parseTimestamp(payload.getObservedAt(), "observedAt");
+        Instant solvedAt = parseTimestamp(payload.getSolvedAt(), "solvedAt");
+        validateMetric(payload.getExecutionTime(), "executionTime");
+        validateMetric(payload.getMemoryUsage(), "memoryUsage");
+        validateMetric(payload.getMemoryValue(), "memoryValue");
+        String memoryUnit = normalizeMemoryUnit(payload.getMemoryUnit(), payload.getMemoryValue());
+
+        return new NormalizedCapture(captureId, platform, problemNumber, title, problemUrl, language, languageKey, sourceCode,
+                result, observedAt, solvedAt, payload.getExecutionTime(), payload.getMemoryUsage(), payload.getMemoryValue(), memoryUnit);
+    }
+
+    private String required(String value, String field, int maxLength) {
+        if (value == null || value.trim().isEmpty()) {
+            throw new CaptureValidationException(field + " is required");
         }
         String normalized = value.trim();
-        if (normalized.isEmpty() || normalized.length() > 128) {
-            throw invalidRequest();
+        if (normalized.length() > maxLength) {
+            throw new CaptureValidationException(field + " is too long");
         }
         return normalized;
     }
 
-    private SolutionUpsertRepository.Values normalize(
-            SolutionUpsertRequest request
-    ) {
-        if (request == null) {
-            throw invalidRequest();
+    private String requiredPreservingWhitespace(String value, String field, int maxLength) {
+        if (value == null || value.trim().isEmpty()) {
+            throw new CaptureValidationException(field + " is required");
         }
-
-        String platform = normalizePlatform(request.platform());
-        String result = normalizeResult(request.result());
-        String aiUsage = normalizeAiUsage(request.aiUsage());
-        String problemNumber = requiredTrimmed(
-                request.problemNumber(),
-                64
-        );
-        String title = requiredTrimmed(request.title(), 255);
-        String language = requiredTrimmed(request.language(), 64);
-        String code = requiredCode(request.code());
-
-        return new SolutionUpsertRepository.Values(
-                platform,
-                problemNumber,
-                title,
-                language,
-                code,
-                result,
-                request.solvedAt(),
-                request.observedAt(),
-                optionalTrimmed(request.executionTime(), 128),
-                optionalTrimmed(request.memoryUsage(), 128),
-                aiUsage
-        );
-    }
-
-    private String normalizePlatform(String value) {
-        String platform = value == null || value.isBlank()
-                ? SUPPORTED_PLATFORM
-                : value.trim();
-        if (!SUPPORTED_PLATFORM.equals(platform)) {
-            throw new CodeArchiveException(
-                    ErrorCode.PLATFORM_NOT_SUPPORTED
-            );
-        }
-        return platform;
-    }
-
-    private String normalizeResult(String value) {
-        String result = requiredTrimmed(value, 32);
-        if (!ACCEPTED_RESULT.equals(result)) {
-            throw new CodeArchiveException(
-                    ErrorCode.CAPTURE_DATA_INVALID
-            );
-        }
-        return result;
-    }
-
-    private String normalizeAiUsage(String value) {
-        String aiUsage = value == null || value.isBlank()
-                ? DEFAULT_AI_USAGE
-                : value.trim();
-        if (!AI_USAGE_VALUES.contains(aiUsage)) {
-            throw invalidRequest();
-        }
-        return aiUsage;
-    }
-
-    private String requiredTrimmed(String value, int maxLength) {
-        if (value == null) {
-            throw invalidRequest();
-        }
-        String normalized = value.trim();
-        if (normalized.isEmpty() || normalized.length() > maxLength) {
-            throw invalidRequest();
-        }
-        return normalized;
-    }
-
-    private String requiredCode(String value) {
-        if (value == null
-                || value.isBlank()
-                || value.length() > 200_000) {
-            throw invalidRequest();
+        if (value.length() > maxLength) {
+            throw new CaptureValidationException(field + " is too long");
         }
         return value;
     }
 
-    private String optionalTrimmed(String value, int maxLength) {
-        if (value == null) {
-            return null;
+    private void validateUrl(String value) {
+        try {
+            URI uri = URI.create(value);
+            String scheme = uri.getScheme();
+            if (scheme == null || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                    || uri.getHost() == null) {
+                throw new IllegalArgumentException("unsupported URL");
+            }
+        } catch (IllegalArgumentException exception) {
+            throw new CaptureValidationException("problemUrl must be an http(s) URL");
         }
-        String normalized = value.trim();
-        if (normalized.isEmpty()) {
-            return null;
-        }
-        if (normalized.length() > maxLength) {
-            throw invalidRequest();
-        }
-        return normalized;
     }
 
-    private CodeArchiveException invalidRequest() {
-        return new CodeArchiveException(
-                ErrorCode.INVALID_REQUEST
-        );
+    private Instant parseTimestamp(String value, String field) {
+        String normalized = required(value, field, 80);
+        try {
+            return Instant.parse(normalized);
+        } catch (DateTimeParseException ignored) {
+            try {
+                return OffsetDateTime.parse(normalized).toInstant();
+            } catch (DateTimeParseException exception) {
+                throw new CaptureValidationException(field + " must be an ISO-8601 timestamp");
+            }
+        }
+    }
+
+    private void validateMetric(BigDecimal value, String field) {
+        if (value != null && value.signum() < 0) {
+            throw new CaptureValidationException(field + " cannot be negative");
+        }
+    }
+
+    private String normalizeMemoryUnit(String value, BigDecimal memoryValue) {
+        // A numeric measurement without a unit is deliberately not guessed.
+        // Keeping UNKNOWN makes new rows distinguishable from KB/MB captures.
+        if (value == null || value.isBlank()) return "UNKNOWN";
+        String normalized = value.trim();
+        String unit;
+        if (normalized.equalsIgnoreCase("KB")) unit = "KB";
+        else if (normalized.equalsIgnoreCase("KiB")) unit = "KiB";
+        else if (normalized.equalsIgnoreCase("MB")) unit = "MB";
+        else if (normalized.equalsIgnoreCase("MiB")) unit = "MiB";
+        else if (normalized.equalsIgnoreCase("UNKNOWN")) unit = "UNKNOWN";
+        else {
+            throw new CaptureValidationException("memoryUnit must be KB, KiB, MB, MiB, or UNKNOWN");
+        }
+        if (memoryValue == null && !unit.equals("UNKNOWN")) throw new CaptureValidationException("memoryValue is required with memoryUnit");
+        return unit;
+    }
+
+    private boolean sameCoreData(Solution solution, NormalizedCapture capture) {
+        return solution.getPlatform() == capture.platform()
+                && solution.getProblemNumber().equals(capture.problemNumber())
+                && solution.getTitle().equals(capture.title())
+                && solution.getProblemUrl().equals(capture.problemUrl())
+                && solution.getLanguage().equals(capture.language())
+                && solution.getLanguageKey().equals(capture.languageKey())
+                && solution.getSourceCode().equals(capture.sourceCode())
+                && solution.getResult().equals(capture.result())
+                && solution.getObservedAt().equals(capture.observedAt())
+                && solution.getSolvedAt().equals(capture.solvedAt());
+    }
+
+    private record NormalizedCapture(String captureId, Platform platform, String problemNumber, String title,
+                                     String problemUrl, String language, String languageKey, String sourceCode, String result,
+                                     Instant observedAt, Instant solvedAt, BigDecimal executionTime,
+                                     BigDecimal memoryUsage, BigDecimal memoryValue, String memoryUnit) {
     }
 }

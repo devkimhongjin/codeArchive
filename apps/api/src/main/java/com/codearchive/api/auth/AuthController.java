@@ -1,127 +1,72 @@
 package com.codearchive.api.auth;
 
-import java.net.URI;
-
-import org.springframework.http.HttpStatus;
+import com.codearchive.api.common.ApiError;
+import com.codearchive.api.config.GithubOAuth2AvailabilityFilter;
+import com.codearchive.api.config.GithubOAuth2Properties;
+import jakarta.servlet.http.HttpServletResponse;
+import java.util.Map;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestAttribute;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.codearchive.api.auth.security.CodeArchivePrincipal;
-import com.codearchive.api.common.filter.RequestIdFilter;
-import com.codearchive.api.common.response.ApiResponse;
-
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
-
 @RestController
-@RequestMapping("/api/v1/auth")
+@RequestMapping("/api/auth")
 @Validated
 public class AuthController {
 
-    private final AuthService authService;
+    private final UserRepository userRepository;
+    private final GithubOAuth2Properties githubProperties;
 
-    public AuthController(AuthService authService) {
-        this.authService = authService;
+    public AuthController(UserRepository userRepository, GithubOAuth2Properties githubProperties) {
+        this.userRepository = userRepository;
+        this.githubProperties = githubProperties;
     }
 
-    @GetMapping("/github/login")
-    public ApiResponse<AuthService.LoginStart> login(
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        return ApiResponse.success(
-                authService.beginGitHubLogin(),
-                requestId
-        );
+    @GetMapping("/csrf")
+    public CsrfResponse csrf(CsrfToken csrfToken, HttpServletResponse response) {
+        String token = csrfToken.getToken();
+        // CookieCsrfTokenRepository writes this cookie during normal filter processing. The explicit
+        // header keeps the contract deterministic for clients and MockMvc when the token is deferred.
+        response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from("XSRF-TOKEN", token)
+                .path("/")
+                .httpOnly(false)
+                .sameSite("Lax")
+                .build()
+                .toString());
+        return new CsrfResponse(token);
     }
 
-    @GetMapping("/github/extension-login")
-    public ApiResponse<AuthService.LoginStart> extensionLogin(
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        return ApiResponse.success(
-                authService.beginGitHubExtensionLogin(),
-                requestId
-        );
+    @GetMapping("/providers")
+    public Map<String, GithubProviderResponse> providers() {
+        return Map.of("github", new GithubProviderResponse(
+                githubProperties.isEnabled(), GithubOAuth2AvailabilityFilter.AUTHORIZATION_PATH));
     }
 
-    @GetMapping("/github/callback")
-    public ResponseEntity<?> callback(
-            @RequestParam(required = false) String code,
-            @RequestParam(required = false) String state,
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        AuthService.CallbackExchange completion =
-                authService.completeGitHubCallback(
-                        code,
-                        state
-                );
-
-        if (completion.completionRedirectUri() != null) {
-            return ResponseEntity
-                    .status(HttpStatus.FOUND)
-                    .location(URI.create(
-                            completion.completionRedirectUri()
-                    ))
-                    .build();
-        }
-
-        return ResponseEntity.ok(
-                ApiResponse.success(
-                        completion,
-                        requestId
-                )
-        );
+    @GetMapping("/me")
+    public ResponseEntity<?> me(Authentication authentication) {
+        return GithubAuthentication.identity(authentication)
+                .flatMap(identity -> userRepository.findByGithubId(identity.githubId()))
+                .<ResponseEntity<?>>map(user -> ResponseEntity.ok(UserResponse.from(user)))
+                .orElseGet(() -> ResponseEntity.status(401).body(new ApiError("Authentication is required")));
     }
 
-    @PostMapping("/exchange")
-    public ApiResponse<AuthService.IssuedSession> exchange(
-            @Valid @RequestBody ExchangeRequest request,
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        return ApiResponse.success(
-                authService.exchange(request.code()),
-                requestId
-        );
+    /**
+     * Keep a deliberate migration response for clients that still post the old
+     * email/password payload. No credentials are read or authenticated.
+     */
+    @PostMapping({"/register", "/login"})
+    public ResponseEntity<ApiError> legacyPasswordAuth() {
+        return ResponseEntity.status(410)
+                .body(new ApiError("Email and password authentication has been removed; use GitHub"));
     }
 
-    @PostMapping("/logout")
-    public ApiResponse<LogoutResponse> logout(
-            @AuthenticationPrincipal
-            CodeArchivePrincipal principal,
-            @RequestAttribute(
-                    RequestIdFilter.REQUEST_ID_ATTRIBUTE
-            ) String requestId
-    ) {
-        authService.logout(principal);
-        return ApiResponse.success(
-                new LogoutResponse(true),
-                requestId
-        );
-    }
-
-    public record ExchangeRequest(
-            @NotBlank String code
-    ) {
-    }
-
-    public record LogoutResponse(
-            boolean revoked
-    ) {
+    public record GithubProviderResponse(boolean enabled, String loginUrl) {
     }
 }
