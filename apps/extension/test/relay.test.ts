@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { revokeRelay } from "../src/relay";
+import { recordRelayAttempt, revokeRelay } from "../src/relay";
 import { MemoryCaptureStore } from "../src/storage";
 import type { CaptureSettings } from "../src/types";
 
@@ -15,6 +15,18 @@ test("self-revocation uses only the opaque bearer and accepts server confirmatio
 
 test("offline self-revocation remains pending rather than discarding the bearer", async () => {
   assert.equal(await revokeRelay(settings, async () => { throw new Error("offline"); }), "OFFLINE");
+});
+
+test("a successful retry restores the durable relay status", async () => {
+  const store = new MemoryCaptureStore();
+  await store.updateSettings({
+    autoSyncEnabled: true,
+    githubTargetConfigured: true,
+    relay: { endpoint: "/api/relay/captures", secret: "opaque", accountId: "7", generation: 1, status: "RELAY_ERROR" }
+  });
+  const current = await store.getSettings();
+  await recordRelayAttempt(store, current, "ACK");
+  assert.equal((await store.getSettings()).relay?.status, "CONFIRMED");
 });
 
 test("delayed relay failure or revoke acknowledgement cannot mutate a newer relay or REVOCATION_PENDING", async () => {

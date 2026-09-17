@@ -1,6 +1,10 @@
 import type { Capture, CaptureSettings } from "./types";
+import type { CaptureStore } from "./storage";
+
+export type RelayAttemptResult = "ACK" | "OFFLINE" | "AUTH_EXPIRED" | "RELAY_ERROR" | "DISABLED";
+
 /** The extension owns no GitHub credential; only this opaque append grant crosses the wire. */
-export async function relayCapture(capture: Capture, settings: CaptureSettings, fetcher: typeof fetch = fetch): Promise<"ACK" | "OFFLINE" | "AUTH_EXPIRED" | "RELAY_ERROR" | "DISABLED"> {
+export async function relayCapture(capture: Capture, settings: CaptureSettings, fetcher: typeof fetch = fetch): Promise<RelayAttemptResult> {
   const relay = settings.relay;
   if (!settings.autoSyncEnabled || !relay || relay.status === "AUTH_EXPIRED") return "DISABLED";
   if (relay.status !== "CONFIRMED" && relay.status !== "OFFLINE" && relay.status !== "RELAY_ERROR") return "DISABLED";
@@ -11,6 +15,15 @@ export async function relayCapture(capture: Capture, settings: CaptureSettings, 
     if (response.status === 401) return "AUTH_EXPIRED";
     return response.ok ? "ACK" : "RELAY_ERROR";
   } catch { return "OFFLINE"; }
+}
+
+/** Persist only the result for the exact relay snapshot that made the request. */
+export async function recordRelayAttempt(store: Pick<CaptureStore, "mutateRelayIfCurrent">, settings: CaptureSettings, result: RelayAttemptResult): Promise<void> {
+  if (result === "DISABLED") return;
+  const relay = settings.relay;
+  if (!relay) return;
+  const status = result === "ACK" ? "CONFIRMED" : result;
+  await store.mutateRelayIfCurrent(relay, current => ({ ...current, relay: { ...relay, status } }));
 }
 
 /** The bearer is intentionally allowed only to revoke itself, never settings. */

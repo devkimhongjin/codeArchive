@@ -3,7 +3,7 @@ import { DashboardBridge } from "./bridge";
 import { IndexedDbCaptureStore } from "./storage";
 import { downloadFilename, exportCode } from "./export";
 import { textDownloadUrl } from "./download";
-import { relayCapture, revokeRelay } from "./relay";
+import { recordRelayAttempt, relayCapture, revokeRelay } from "./relay";
 import {
   normalizeSweaDetailUrl,
   validateSweaProblemContext
@@ -16,12 +16,6 @@ const bridge = new DashboardBridge(store, {
   // the old relay was offline or expired instead of waiting for the next alarm.
   onRelayConfigured: () => { void drainRelay().catch(() => undefined); }
 });
-
-async function recordRelayResult(settings: Awaited<ReturnType<typeof store.getSettings>>, result: "OFFLINE" | "AUTH_EXPIRED" | "RELAY_ERROR"): Promise<void> {
-  const relay = settings.relay;
-  if (!relay) return;
-  await store.mutateRelayIfCurrent(relay, current => ({ ...current, relay: { ...relay, status: result } }));
-}
 
 async function finishSelfRevocation(settings: Awaited<ReturnType<typeof store.getSettings>>): Promise<void> {
   const relay = settings.relay;
@@ -40,7 +34,7 @@ async function drainRelay(): Promise<void> {
   const next = (await store.listPending([], 1))[0]; if (!next) return;
   const result = await relayCapture(next, settings);
   if (result === "ACK") await store.markSynced([next.captureId]);
-  else if (result !== "DISABLED") await recordRelayResult(settings, result);
+  await recordRelayAttempt(store, settings, result);
 }
 chrome.alarms.create("codearchive-relay-drain", { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "codearchive-relay-drain") void drainRelay().catch(() => undefined); });
@@ -108,7 +102,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
           const settings = await store.getSettings();
           const result = await relayCapture(capture, settings);
           if (result === "ACK") await store.markSynced([capture.captureId]);
-          if (result !== "ACK" && result !== "DISABLED") await recordRelayResult(settings, result);
+          await recordRelayAttempt(store, settings, result);
         }
         if (created) void drainRelay().catch(() => undefined);
         sendResponse({ ok: true, created });
