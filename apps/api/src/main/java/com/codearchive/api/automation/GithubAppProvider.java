@@ -35,7 +35,7 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
    // GitHub otherwise checks the repository default branch. The ref is the
    // freshly observed target head, so create-only remains branch-correct.
    Response exists=send("GET",repo+"/contents/"+encodedPath(path)+"?ref="+segment(head),token,null);
-   if(exists.code==200)return Result.failed("Git path already exists"); if(exists.code!=404)return classify(exists,false);
+   if(exists.code==200)return sameExistingContent(exists,solution)?Result.succeeded():Result.failed("Git path already exists with different content"); if(exists.code!=404)return classify(exists,false);
    possibleWrite=true;
    Response blob=send("POST",repo+"/git/blobs",token,json.writeValueAsString(Map.of("content",Base64.getEncoder().encodeToString(solution.getSourceCode().getBytes(StandardCharsets.UTF_8)),"encoding","base64"))); if(blob.code!=201)return Result.unknown("Blob creation was not confirmed");
    String blobSha=json.readTree(blob.body).path("sha").asText();
@@ -84,6 +84,14 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
  }
  private String b64(String s){return Base64.getUrlEncoder().withoutPadding().encodeToString(s.getBytes(StandardCharsets.UTF_8));}
  private String repo(UserSettings s){return "/repos/"+segment(s.getGithubOwner())+"/"+segment(s.getGithubRepository());}
+ private boolean sameExistingContent(Response response,Solution solution){
+  try {
+   JsonNode body=json.readTree(response.body); if(!"file".equals(body.path("type").asText())||!"base64".equals(body.path("encoding").asText()))return false;
+   String encoded=body.path("content").asText(); if(encoded.isBlank())return false;
+   byte[] remote=Base64.getMimeDecoder().decode(encoded); byte[] local=solution.getSourceCode().getBytes(StandardCharsets.UTF_8);
+   return MessageDigest.isEqual(remote,local);
+  } catch(Exception ignored){return false;}
+ }
  private static String segment(String value){if(value==null||value.isBlank())throw new IllegalArgumentException("blank path component");return URLEncoder.encode(value,StandardCharsets.UTF_8).replace("+","%20");}
  private static String encodedPath(String path){return Arrays.stream(path.split("/",-1)).map(GithubAppProvider::segment).collect(java.util.stream.Collectors.joining("/"));}
  private String path(UserSettings s,Solution x){

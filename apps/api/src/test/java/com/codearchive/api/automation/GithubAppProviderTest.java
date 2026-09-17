@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 
 class GithubAppProviderTest {
   private HttpServer server; private final List<Request> requests = new ArrayList<>();
-  private int finalStatus = 200; private int installationListStatus = 200; private String installationListBody = "[]"; private boolean existing; private boolean transientRef; private boolean dropFinal; private boolean movedBeforePatch; private boolean timeoutToken; private boolean timeoutBlob; private int refRequests;
+  private int finalStatus = 200; private int installationListStatus = 200; private String installationListBody = "[]"; private boolean existing; private String existingBody = "{}"; private boolean transientRef; private boolean dropFinal; private boolean movedBeforePatch; private boolean timeoutToken; private boolean timeoutBlob; private int refRequests;
 
   @BeforeEach void start() throws Exception { server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0); server.createContext("/",this::handle); server.start(); }
   @AfterEach void stop(){ if(server!=null)server.stop(0); }
@@ -92,6 +92,15 @@ class GithubAppProviderTest {
     assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.FAILED);
     assertThat(requests).extracting(Request::path).noneMatch(path->path.contains("/git/blobs")||path.contains("/git/trees")||path.contains("/git/commits")&&path.endsWith("commit"));
     assertThat(requests).hasSize(4);
+  }
+
+  @Test void existingPathWithIdenticalContentIsAnIdempotentSuccess() throws Exception {
+    existing=true;
+    existingBody="{\"type\":\"file\",\"encoding\":\"base64\",\"content\":\""+Base64.getMimeEncoder().encodeToString("class Solution {}".getBytes(StandardCharsets.UTF_8))+"\"}";
+    GithubProvider.Result result=provider().createOnly(settings(),solution());
+    assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(requests).hasSize(4);
+    assertThat(requests).extracting(Request::path).noneMatch(path->path.contains("/git/blobs")||path.contains("/git/trees")||path.endsWith("/git/commits"));
   }
 
   @Test void preWriteTransientIsRetryable() throws Exception {
@@ -166,7 +175,7 @@ class GithubAppProviderTest {
   private static byte[] tagged(int tag,byte[] body) { byte[] length=length(body.length); byte[] result=new byte[1+length.length+body.length]; result[0]=(byte)tag;System.arraycopy(length,0,result,1,length.length);System.arraycopy(body,0,result,1+length.length,body.length);return result; }
   private static byte[] length(int value) { if(value<128)return new byte[]{(byte)value}; int count=0;for(int n=value;n>0;n>>>=8)count++;byte[] result=new byte[count+1];result[0]=(byte)(0x80|count);for(int i=count;i>0;i--){result[i]=(byte)value;value>>>=8;}return result; }
   private static byte[] join(byte[]... values) { int size=0;for(byte[] value:values)size+=value.length;byte[] result=new byte[size];int offset=0;for(byte[] value:values){System.arraycopy(value,0,result,offset,value.length);offset+=value.length;}return result; }
-  private void handle(HttpExchange x) throws IOException { String body=new String(x.getRequestBody().readAllBytes(),StandardCharsets.UTF_8); requests.add(new Request(x.getRequestMethod(),x.getRequestURI().getPath(),x.getRequestURI().getRawPath(),x.getRequestURI().getRawQuery(),x.getRequestHeaders().getFirst("Authorization"),body)); String path=x.getRequestURI().getPath(); if(dropFinal&&path.contains("/git/refs/")){x.close();return;} if(path.equals("/app/installations"))reply(x,installationListStatus,installationListBody); else if(path.endsWith("/access_tokens")){pauseIf(timeoutToken);reply(x,201,"{\"token\":\"installation-token\"}");} else if(path.contains("/git/ref/")){refRequests++;reply(x,transientRef?503:200,"{\"object\":{\"sha\":\""+(movedBeforePatch&&refRequests>1?"moved-head":"head-sha")+"\"}}");} else if(path.contains("/git/commits/head-sha"))reply(x,200,"{\"tree\":{\"sha\":\"tree-sha\"}}"); else if(path.contains("/contents/"))reply(x,existing?200:404,"{}"); else if(path.endsWith("/git/blobs")){pauseIf(timeoutBlob);reply(x,201,"{\"sha\":\"blob-sha\"}");} else if(path.endsWith("/git/trees"))reply(x,201,"{\"sha\":\"new-tree\"}"); else if(path.endsWith("/git/commits"))reply(x,201,"{\"sha\":\"new-commit\"}"); else if(path.contains("/git/refs/"))reply(x,finalStatus,"{}"); else reply(x,500,"{}"); }
+  private void handle(HttpExchange x) throws IOException { String body=new String(x.getRequestBody().readAllBytes(),StandardCharsets.UTF_8); requests.add(new Request(x.getRequestMethod(),x.getRequestURI().getPath(),x.getRequestURI().getRawPath(),x.getRequestURI().getRawQuery(),x.getRequestHeaders().getFirst("Authorization"),body)); String path=x.getRequestURI().getPath(); if(dropFinal&&path.contains("/git/refs/")){x.close();return;} if(path.equals("/app/installations"))reply(x,installationListStatus,installationListBody); else if(path.endsWith("/access_tokens")){pauseIf(timeoutToken);reply(x,201,"{\"token\":\"installation-token\"}");} else if(path.contains("/git/ref/")){refRequests++;reply(x,transientRef?503:200,"{\"object\":{\"sha\":\""+(movedBeforePatch&&refRequests>1?"moved-head":"head-sha")+"\"}}");} else if(path.contains("/git/commits/head-sha"))reply(x,200,"{\"tree\":{\"sha\":\"tree-sha\"}}"); else if(path.contains("/contents/"))reply(x,existing?200:404,existing?existingBody:"{}"); else if(path.endsWith("/git/blobs")){pauseIf(timeoutBlob);reply(x,201,"{\"sha\":\"blob-sha\"}");} else if(path.endsWith("/git/trees"))reply(x,201,"{\"sha\":\"new-tree\"}"); else if(path.endsWith("/git/commits"))reply(x,201,"{\"sha\":\"new-commit\"}"); else if(path.contains("/git/refs/"))reply(x,finalStatus,"{}"); else reply(x,500,"{}"); }
   private static void pauseIf(boolean delayed) { if(!delayed)return;try{Thread.sleep(250);}catch(InterruptedException e){Thread.currentThread().interrupt();} }
   private void reply(HttpExchange x,int status,String body)throws IOException{x.sendResponseHeaders(status,body.getBytes(StandardCharsets.UTF_8).length);x.getResponseBody().write(body.getBytes(StandardCharsets.UTF_8));x.close();}
   private record Request(String method,String path,String rawPath,String query,String authorization,String body){}
