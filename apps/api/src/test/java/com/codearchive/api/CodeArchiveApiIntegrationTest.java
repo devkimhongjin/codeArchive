@@ -465,6 +465,29 @@ class CodeArchiveApiIntegrationTest {
     }
 
     @Test
+    void pinnedExtensionCorsPreflightAllowsBearerRelay() throws Exception {
+        String extensionOrigin = "chrome-extension://oohlcmihldmfninmdcmanddfmhoonmdl";
+        mockMvc.perform(options("/api/relay/captures")
+                        .header("Origin", extensionOrigin)
+                        .header("Access-Control-Request-Method", "POST")
+                        .header("Access-Control-Request-Headers", "Authorization, Content-Type"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", extensionOrigin))
+                .andExpect(header().string("Access-Control-Allow-Methods", Matchers.containsString("POST")))
+                .andExpect(header().string("Access-Control-Allow-Headers", Matchers.containsString("Authorization")));
+    }
+
+    @Test
+    void unknownExtensionCorsPreflightCannotUseBearerRelay() throws Exception {
+        mockMvc.perform(options("/api/relay/captures")
+                        .header("Origin", "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                        .header("Access-Control-Request-Method", "POST")
+                        .header("Access-Control-Request-Headers", "Authorization, Content-Type"))
+                .andExpect(status().isForbidden())
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
+    }
+
+    @Test
     void dashboardExpectedGithubIdFailsClosedBeforeSettingsMutation() throws Exception {
         githubAccountService.upsert(principal("801", "account-a", "A", null));
         githubAccountService.upsert(principal("802", "account-b", "B", null));

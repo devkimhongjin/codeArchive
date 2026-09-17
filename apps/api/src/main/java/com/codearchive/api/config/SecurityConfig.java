@@ -48,6 +48,9 @@ import com.codearchive.api.relay.RelayGrantService;
 @EnableWebSecurity
 public class SecurityConfig {
 
+    /** Derived from the pinned public key in apps/extension/manifest.json. */
+    private static final String EXTENSION_ORIGIN = "chrome-extension://oohlcmihldmfninmdcmanddfmhoonmdl";
+
     /**
      * JDBC sessions must serialize the GitHub principal across restarts. The OAuth2
      * principal intentionally is not Java-serializable, so persist a narrow, immutable
@@ -180,7 +183,19 @@ public class SecurityConfig {
         configuration.setExposedHeaders(Arrays.asList("Set-Cookie"));
         configuration.setAllowCredentials(true);
 
+        // The service worker sends only bearer-authenticated relay requests. Keep
+        // its privileged Origin and Authorization header scoped to relay routes;
+        // ordinary dashboard endpoints retain the narrower session/CSRF policy.
+        CorsConfiguration relayConfiguration = new CorsConfiguration(configuration);
+        List<String> relayOrigins = new ArrayList<>(origins);
+        if (!relayOrigins.contains(EXTENSION_ORIGIN)) relayOrigins.add(EXTENSION_ORIGIN);
+        relayConfiguration.setAllowedOrigins(relayOrigins);
+        List<String> relayHeaders = new ArrayList<>(configuration.getAllowedHeaders());
+        relayHeaders.add("Authorization");
+        relayConfiguration.setAllowedHeaders(relayHeaders);
+
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/api/relay/**", relayConfiguration);
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }
