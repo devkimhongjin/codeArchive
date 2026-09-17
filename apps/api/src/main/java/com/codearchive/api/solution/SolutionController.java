@@ -3,6 +3,7 @@ package com.codearchive.api.solution;
 import com.codearchive.api.common.ApiError;
 import com.codearchive.api.auth.GithubAuthentication;
 import com.codearchive.api.auth.GithubIdentity;
+import com.codearchive.api.automation.GithubAutomationService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
@@ -26,10 +27,13 @@ public class SolutionController {
 
     private final ObjectMapper objectMapper;
     private final SolutionService solutionService;
+    private final GithubAutomationService automation;
 
-    public SolutionController(ObjectMapper objectMapper, SolutionService solutionService) {
+    public SolutionController(ObjectMapper objectMapper, SolutionService solutionService,
+                              GithubAutomationService automation) {
         this.objectMapper = objectMapper;
         this.solutionService = solutionService;
+        this.automation = automation;
     }
 
     @GetMapping
@@ -79,6 +83,10 @@ public class SolutionController {
             try {
                 CapturePayload payload = objectMapper.treeToValue(node, CapturePayload.class);
                 Solution saved = saveWithOneRetry(githubId, payload);
+                // Manual recovery and automatic relay must have identical
+                // post-persistence semantics. The unique job constraint keeps
+                // repeated syncs idempotent.
+                automation.consider(saved.getUser(), saved);
                 acceptedCaptureIds.add(saved.getCaptureId());
             } catch (CaptureValidationException exception) {
                 failures.add(new CaptureFailure(rawCaptureId, exception.getMessage()));

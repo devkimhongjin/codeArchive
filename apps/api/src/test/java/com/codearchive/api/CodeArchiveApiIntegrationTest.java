@@ -81,6 +81,9 @@ class CodeArchiveApiIntegrationTest {
     com.codearchive.api.settings.UserSettingsRepository userSettingsRepository;
 
     @Autowired
+    com.codearchive.api.automation.GithubCommitJobRepository githubCommitJobRepository;
+
+    @Autowired
     GithubAccountService githubAccountService;
 
     @Autowired
@@ -92,6 +95,7 @@ class CodeArchiveApiIntegrationTest {
 
     @BeforeEach
     void clearUsers() {
+        githubCommitJobRepository.deleteAll();
         relayGrantRepository.deleteAll();
         userSettingsRepository.deleteAll();
         solutionRepository.deleteAll();
@@ -261,6 +265,34 @@ class CodeArchiveApiIntegrationTest {
                 .andExpect(jsonPath("$.failures", hasSize(2)))
                 .andExpect(jsonPath("$.failures[0].message").isString())
                 .andExpect(jsonPath("$.failures[1].message").isString());
+    }
+
+    @Test
+    @org.springframework.transaction.annotation.Transactional
+    void bulkSyncEnqueuesTheSameDurableGithubJobAsRelayDelivery() throws Exception {
+        AppUser user = githubAccountService.upsert(principal("304", "manual-recovery", "Manual", null));
+        var settings = new com.codearchive.api.settings.UserSettings(user);
+        settings.apply(new com.codearchive.api.settings.SettingsRequest(
+                0, "Manual", null, false, false,
+                "{platform}-{number}-{title}", "{platform}/{number}-{title}",
+                "github-light", "github-dark", true, true,
+                77L, "manual-recovery", "archive", "main", null));
+        userSettingsRepository.saveAndFlush(settings);
+        String captureId = UUID.randomUUID().toString();
+        String observedAt = java.time.Instant.now().plusSeconds(1).toString();
+        String payload = capture(captureId, "manual recovery source")
+                .replace("2026-01-02T03:04:05Z", observedAt);
+
+        mockMvc.perform(post("/api/solutions/bulk").with(csrf().asHeader())
+                        .with(githubLogin("304", "manual-recovery", "Manual", null))
+                        .contentType("application/json")
+                        .content("{\"captures\":[" + payload + "]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.acceptedCaptureIds[0]", is(captureId)));
+
+        org.assertj.core.api.Assertions.assertThat(
+                githubCommitJobRepository.findByUserIdAndCaptureId(user.getId(), captureId))
+                .isPresent();
     }
 
     @Test
