@@ -41,12 +41,12 @@ class PostgreSqlMigrationTest {
             Flyway flyway = database.flyway();
 
             MigrateResult first = flyway.migrate();
-            assertEquals(7, first.migrationsExecuted);
-            assertEquals(7, database.historyCount());
+            assertEquals(8, first.migrationsExecuted);
+            assertEquals(8, database.historyCount());
 
             MigrateResult second = flyway.migrate();
             assertEquals(0, second.migrationsExecuted);
-            assertEquals(7, database.historyCount());
+            assertEquals(8, database.historyCount());
 
             database.assertFinalSchema();
             validateWithHibernate(database);
@@ -69,7 +69,7 @@ class PostgreSqlMigrationTest {
             assertThrows(FlywayException.class, adopted::migrate);
             adopted.baseline();
             assertEquals(1, database.historyCount());
-            assertEquals(6, adopted.migrate().migrationsExecuted);
+            assertEquals(7, adopted.migrate().migrationsExecuted);
 
             assertEquals("legacy@example.com", database.scalar(
                     "SELECT email FROM users WHERE id = ?", userId));
@@ -77,6 +77,8 @@ class PostgreSqlMigrationTest {
                     "SELECT password_hash FROM users WHERE id = ?", userId));
             assertEquals(1L, ((Number) database.scalar(
                     "SELECT COUNT(*) FROM solutions WHERE user_id = ?", userId)).longValue());
+            assertEquals("java", database.scalar(
+                    "SELECT language_key FROM solutions WHERE user_id = ?", userId));
             database.assertFinalSchema();
             validateWithHibernate(database);
         } finally {
@@ -96,7 +98,7 @@ class PostgreSqlMigrationTest {
             Flyway adopted = database.flywayAtBaseline(MigrationVersion.fromVersion("2"));
             adopted.baseline();
             assertEquals(1, database.historyCount());
-            assertEquals(5, adopted.migrate().migrationsExecuted);
+            assertEquals(6, adopted.migrate().migrationsExecuted);
 
             assertEquals("9001", database.scalar(
                     "SELECT github_id FROM users WHERE id = ?", userId));
@@ -119,14 +121,16 @@ class PostgreSqlMigrationTest {
             assertEquals(2L, database.publicCount("users"));
             assertEquals(57L, database.publicCount("solutions"));
 
-            assertEquals(7, database.prodFlyway().migrate().migrationsExecuted);
-            assertEquals(7L, database.versionedHistoryCount("codearchive_v2"));
+            assertEquals(8, database.prodFlyway().migrate().migrationsExecuted);
+            assertEquals(8L, database.versionedHistoryCount("codearchive_v2"));
             assertEquals(2L, database.countInSchema("codearchive_v2", "users"));
             assertEquals(57L, database.countInSchema("codearchive_v2", "solutions"));
             assertEquals("101.000000", database.scalarInSchema("codearchive_v2",
                     "SELECT execution_time::text FROM solutions WHERE problem_number = '1000'"));
             assertEquals("101164.000000", database.scalarInSchema("codearchive_v2",
                     "SELECT memory_usage::text FROM solutions WHERE problem_number = '1000'"));
+            assertEquals("java", database.scalarInSchema("codearchive_v2",
+                    "SELECT language_key FROM solutions WHERE problem_number = '1000'"));
             assertEquals("https://school.programmers.co.kr/learn/courses/30/lessons/1000",
                     database.scalarInSchema("codearchive_v2",
                             "SELECT problem_url FROM solutions WHERE problem_number = '1000'"));
@@ -149,7 +153,7 @@ class PostgreSqlMigrationTest {
         TestDatabase database = TestDatabase.create();
         try {
             database.createRebuiltPublicSource();
-            assertEquals(7, database.prodFlyway().migrate().migrationsExecuted);
+            assertEquals(8, database.prodFlyway().migrate().migrationsExecuted);
             assertEquals(0L, database.countInSchema("codearchive_v2", "users"));
             assertEquals(0L, database.countInSchema("codearchive_v2", "solutions"));
             assertEquals(0, database.prodFlyway().migrate().migrationsExecuted);
@@ -430,6 +434,7 @@ class PostgreSqlMigrationTest {
             assertEquals("NO", nullable("solutions", "user_id"));
             assertEquals("NO", nullable("solutions", "capture_id"));
             assertEquals("NO", nullable("solutions", "source_code"));
+            assertEquals("NO", nullable("solutions", "language_key"));
             assertEquals("users", scalar(
                     "SELECT table_name FROM information_schema.tables "
                             + "WHERE table_schema = ? AND table_name = 'users'", schema));
@@ -444,6 +449,9 @@ class PostgreSqlMigrationTest {
             assertEquals(1L, ((Number) scalar(
                     "SELECT COUNT(*) FROM pg_indexes "
                             + "WHERE schemaname = ? AND indexname = 'idx_solutions_user_solved_at'", schema)).longValue());
+            assertEquals(1L, ((Number) scalar(
+                    "SELECT COUNT(*) FROM pg_indexes "
+                            + "WHERE schemaname = ? AND indexname = 'idx_solutions_language_key'", schema)).longValue());
             assertEquals("YES", nullable("solutions", "memory_value"));
             assertEquals("YES", nullable("solutions", "memory_unit"));
             assertEquals("user_settings", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'user_settings'", schema));
