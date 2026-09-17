@@ -5,7 +5,6 @@ type CapturePreview = Omit<Capture, "sourceCode"> & { githubCommitStatus?: Githu
 
 interface PopupServices {
   load: () => Promise<unknown>;
-  extensionId: string;
   copy: (text: string) => Promise<void>;
   copyCapture?: (captureId: string) => Promise<{ ok?: boolean; text?: string }>;
   downloadCapture?: (captureId: string) => Promise<{ ok?: boolean }>;
@@ -118,8 +117,6 @@ export function mountPopup(document: Document, services: PopupServices): void {
   const recentList = document.querySelector<HTMLElement>("#recent-list")!;
   const recentEmpty = document.querySelector<HTMLElement>("#recent-empty")!;
   const recentError = document.querySelector<HTMLElement>("#recent-error")!;
-  const copy = document.querySelector<HTMLButtonElement>("#copy-id")!;
-  const copyStatus = document.querySelector<HTMLElement>("#copy-status")!;
   const autoSync = document.querySelector<HTMLInputElement>("#auto-sync");
   const githubAuto = document.querySelector<HTMLInputElement>("#github-auto");
   const automationStatus = document.querySelector<HTMLElement>("#automation-status");
@@ -195,14 +192,5 @@ export function mountPopup(document: Document, services: PopupServices): void {
   refresh.addEventListener("click", () => void load());
   const updateAutomation = (patch: Record<string, boolean>) => void chrome.runtime.sendMessage({ type: "UPDATE_SETTINGS", patch }).then(() => void load()).catch(() => void load());
   autoSync?.addEventListener("change", () => { autoSync.setAttribute("aria-checked", String(autoSync.checked)); updateAutomation({ autoSyncEnabled: autoSync.checked }); });
-  copy.disabled = !/^[a-p]{32}$/.test(services.extensionId);
-  copy.addEventListener("click", () => {
-    copy.disabled = true;
-    void services.copy(services.extensionId).then(() => {
-      copyStatus.textContent = "진단용 ID를 복사했어요. 연결에는 입력할 필요가 없어요.";
-    }).catch(() => {
-      copyStatus.textContent = `복사하지 못했어요. ID: ${services.extensionId}`;
-    }).finally(() => { copy.disabled = false; });
-  });
   void load();
 }

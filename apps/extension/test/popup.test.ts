@@ -10,7 +10,7 @@ test('popup distinguishes loading, empty, pending and storage failure with retry
   let resolve!: (value: unknown) => void;
   let next: unknown = { pendingCount: 3, settings: {} };
   let first = true;
-  mountPopup(document, { extensionId: 'a'.repeat(32), copy: async () => {}, load: () => {
+  mountPopup(document, { copy: async () => {}, load: () => {
     if (first) { first = false; return new Promise(done => { resolve = done; }); }
     return Promise.resolve(next);
   }});
@@ -28,16 +28,16 @@ test('popup distinguishes loading, empty, pending and storage failure with retry
   assert.equal((document.querySelector('#error') as HTMLElement).hidden, true);
   assert.equal(document.querySelector('#pending-count')!.textContent, '1');
 });
-test('popup copies actual extension ID and provides a manual fallback', async () => {
+test('popup follows the Figma action hierarchy without legacy connection diagnostics', async () => {
   const { document } = parseHTML(html);
-  let copied = ''; let fail = false;
-  mountPopup(document, { extensionId: 'a'.repeat(32), load: async () => ({ pendingCount: 0, settings: {} }), copy: async text => { if(fail) throw Error(); copied = text; }});
-  (document.querySelector('#copy-id') as HTMLButtonElement).click(); await settle();
-  assert.equal(copied, 'a'.repeat(32));
-  fail = true;
-  (document.querySelector('#copy-id') as HTMLButtonElement).click(); await settle();
-  assert.match(document.querySelector('#copy-status')!.textContent!, /aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/);
-  assert.equal(document.querySelector('a.primary')!.getAttribute('href'), 'https://codearchive-dashboard-beta.netlify.app');
+  mountPopup(document, { load: async () => ({ pendingCount: 0, settings: {} }), copy: async () => {} });
+  await settle();
+  assert.equal(document.querySelector('.connection'), null);
+  assert.equal(document.querySelector('#copy-id'), null);
+  assert.equal(document.querySelector('#capture-card .dashboard-link')?.getAttribute('href'), 'https://codearchive-dashboard-beta.netlify.app');
+  assert.equal(document.querySelector('#recent-card .recent-archive-link')?.getAttribute('href'), 'archive.html');
+  assert.equal(document.querySelector('.bottom-actions'), null);
+  assert.equal(document.querySelector('.note'), null);
 });
 
 test('popup renders at most the newest preview records and links them to the local archive', async () => {
@@ -63,7 +63,6 @@ test('popup renders at most the newest preview records and links them to the loc
     makeCapture('44444444-4444-4444-8444-444444444444', '2026-09-15T13:00:00.000Z', 'SYNCED')
   ];
   mountPopup(document, {
-    extensionId: 'a'.repeat(32),
     copy: async () => {},
     load: async () => ({ pendingCount: 2, settings: {}, recentCaptures: captures })
   });
@@ -73,13 +72,13 @@ test('popup renders at most the newest preview records and links them to the loc
   assert.doesNotMatch(document.querySelector('.recent-list')!.textContent!, /Problem 4444/);
   assert.equal(document.querySelector('.recent-title')!.getAttribute('href'), 'archive.html#11111111-1111-4111-8111-111111111111');
   assert.match(document.querySelector('.recent-list')!.textContent!, /GitHub 완료/);
-  assert.equal(document.querySelector('.archive-link')!.textContent?.trim(), '로컬 저장 전체보기 ↗');
+  assert.equal(document.querySelector('.recent-archive-link')!.textContent?.trim(), '로컬 저장 전체보기 ↗');
 });
 
 test('popup recent actions use a capture-specific privileged request without source in state', async () => {
   const { document } = parseHTML(html); const copied: string[] = []; const actions: string[] = [];
   mountPopup(document, {
-    extensionId: 'a'.repeat(32), copy: async value => { copied.push(value); },
+    copy: async value => { copied.push(value); },
     copyCapture: async id => { actions.push(`copy:${id}`); return { ok: true, text: 'private source' }; },
     downloadCapture: async id => { actions.push(`download:${id}`); return { ok: true }; },
     load: async () => ({ pendingCount: 0, settings: {}, recentCaptures: [{ captureId: '11111111-1111-4111-8111-111111111111', platform: 'SWEA', problemNumber: '1', title: 'one', problemUrl: 'https://example.test', language: 'Java', result: 'ACCEPTED', observedAt: '2026-01-01T00:00:00.000Z', solvedAt: '2026-01-01T00:00:00.000Z', syncState: 'PENDING' }] })

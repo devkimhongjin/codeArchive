@@ -29,5 +29,6 @@ await build({
 await cp(resolve(root, "manifest.json"), resolve(dist, "manifest.json"));
 await cp(resolve(root, "src/popup.html"), resolve(dist, "popup.html"));
 await cp(resolve(root, "src/popup.css"), resolve(dist, "popup.css"));
+await cp(resolve(root, "src/popup-layout.css"), resolve(dist, "popup-layout.css"));
 await cp(resolve(root, "src/archive.html"), resolve(dist, "archive.html"));
 await cp(resolve(root, "src/archive.css"), resolve(dist, "archive.css"));
