@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ThemedToken } from 'shiki'
-import { sourceFileExtension } from './codeExport'
+import { describeLanguage } from '../../../shared/language'
 import { DARK_THEMES, LIGHT_THEMES, type DarkTheme, type LightTheme } from './types'
 
 let highlighter: ReturnType<typeof loadHighlighter> | undefined
@@ -14,7 +14,7 @@ async function loadHighlighter() {
   })
 }
 export function highlightLanguage(language: string) {
-  return ({ py: 'python', js: 'javascript', ts: 'typescript', kt: 'kotlin', cs: 'csharp', cpp: 'cpp', c: 'c', java: 'java', sql: 'sql', go: 'go', rs: 'rust', rb: 'ruby', swift: 'swift', scala: 'scala' } as Record<string, string>)[sourceFileExtension(language)] ?? 'text'
+  return describeLanguage(language).shikiLanguage ?? 'text'
 }
 export function CodeBlock({ code, language, lightTheme = 'github-light', darkTheme = 'github-dark', onLightThemeChange, onDarkThemeChange }: { code: string; language: string; lightTheme?: LightTheme; darkTheme?: DarkTheme; onLightThemeChange?: (theme: LightTheme) => void; onDarkThemeChange?: (theme: DarkTheme) => void }) {
   const [result, setResult] = useState<{ code: string; language: string; theme: string; tokens: ThemedToken[][]; foreground?: string; background?: string } | null>(null)

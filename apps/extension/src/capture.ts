@@ -6,6 +6,7 @@ import {
   type PlatformAdapter,
   type SubmissionResultDetection
 } from "./types";
+import { canonicalLanguageKey } from "../../../shared/language";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -104,6 +105,7 @@ export function createCapture(
     title: draft.title.trim(),
     problemUrl: draft.problemUrl,
     language: draft.language.trim(),
+    languageKey: canonicalLanguageKey(draft.language),
     sourceCode: draft.sourceCode,
     result: CAPTURE_RESULT,
     observedAt,
@@ -129,6 +131,7 @@ export function isCaptureRecord(value: unknown): value is Capture {
     nonEmpty(candidate.title, 500) &&
     validProblemUrl(candidate.problemUrl) &&
     nonEmpty(candidate.language, 100) &&
+    (candidate.languageKey === undefined || candidate.languageKey === canonicalLanguageKey(candidate.language)) &&
     nonEmpty(candidate.sourceCode, 1_000_000) &&
     candidate.result === CAPTURE_RESULT &&
     candidate.syncState === "PENDING" &&

@@ -1,5 +1,6 @@
 import { DEFAULT_CAPTURE_SETTINGS, type Capture, type CaptureSettings, type SyncState } from "./types";
 import type { SweaProblemContext } from "./sweaProblemContext";
+import { canonicalLanguageKey } from "../../../shared/language";
 
 const LIGHT_THEMES = ["github-light", "vitesse-light", "catppuccin-latte", "solarized-light", "one-light"] as const;
 const DARK_THEMES = ["github-dark", "vitesse-dark", "catppuccin-mocha", "dracula", "one-dark-pro"] as const;
@@ -47,7 +48,7 @@ function sortNewestFirst(left: Capture, right: Capture): number {
 function hasSameSubmittedCode(left: Capture, right: Capture): boolean {
   return left.platform === right.platform &&
     left.problemNumber === right.problemNumber &&
-    left.language === right.language &&
+    canonicalLanguageKey(left.language) === canonicalLanguageKey(right.language) &&
     left.sourceCode === right.sourceCode;
 }
 
@@ -116,12 +117,11 @@ export class IndexedDbCaptureStore implements CaptureStore {
       transaction.abort();
       return { created: false };
     }
-    const sameProblem = await requestResult(store.index(CAPTURE_IDENTITY_INDEX_NAME).getAll([
-      capture.platform,
-      capture.problemNumber,
-      capture.language
-    ]));
-    if ((sameProblem as StoredCapture[]).some(stored => hasSameSubmittedCode(stored, capture))) {
+    // Older records have no languageKey and the legacy index contains raw
+    // labels, so scan retained local records to prevent Java/JAVA aliases from
+    // bypassing identical-code suppression.
+    const retained = await requestResult(store.getAll());
+    if ((retained as StoredCapture[]).some(stored => hasSameSubmittedCode(stored, capture))) {
       transaction.abort();
       return { created: false };
     }

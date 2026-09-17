@@ -10,6 +10,7 @@ public class CapturePayload {
     private String title;
     private String problemUrl;
     private String language;
+    private String languageKey;
     private String sourceCode;
     private String result;
     private String observedAt;
@@ -32,6 +33,8 @@ public class CapturePayload {
     public void setProblemUrl(String problemUrl) { this.problemUrl = problemUrl; }
     public String getLanguage() { return language; }
     public void setLanguage(String language) { this.language = language; }
+    public String getLanguageKey() { return languageKey; }
+    public void setLanguageKey(String languageKey) { this.languageKey = languageKey; }
     public String getSourceCode() { return sourceCode; }
     public void setSourceCode(String sourceCode) { this.sourceCode = sourceCode; }
     public String getResult() { return result; }

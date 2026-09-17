@@ -1,5 +1,6 @@
 import type { Capture } from "./types";
 import { tokensForSource } from "./highlighter";
+import { canonicalLanguageDisplayName } from "../../../shared/language";
 
 interface ArchiveServices {
   load: () => Promise<unknown>;
@@ -90,7 +91,7 @@ function renderCapture(document: Document, capture: Capture): { item: HTMLElemen
   const metadata = document.createElement("p");
   metadata.className = "capture-meta";
   const language = document.createElement("span");
-  language.textContent = capture.language;
+  language.textContent = canonicalLanguageDisplayName(capture.language);
   const date = document.createElement("span");
   date.textContent = `저장 ${formatObservedAt(capture.observedAt)}`;
   metadata.append(language, date);

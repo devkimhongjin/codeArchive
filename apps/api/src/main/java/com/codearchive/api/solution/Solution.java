@@ -48,6 +48,9 @@ public class Solution {
     @Column(nullable = false, length = 100)
     private String language;
 
+    @Column(name = "language_key", nullable = false, length = 100)
+    private String languageKey;
+
     @Column(name = "source_code", nullable = false, columnDefinition = "TEXT")
     private String sourceCode;
 
@@ -76,22 +79,23 @@ public class Solution {
     }
 
     public Solution(AppUser user, String captureId, Platform platform, String problemNumber, String title,
-                    String problemUrl, String language, String sourceCode, String result,
+                    String problemUrl, String language, String languageKey, String sourceCode, String result,
                     Instant observedAt, Instant solvedAt, BigDecimal executionTime, BigDecimal memoryUsage) {
         this.user = user;
         this.captureId = captureId;
-        update(platform, problemNumber, title, problemUrl, language, sourceCode, result,
+        update(platform, problemNumber, title, problemUrl, language, languageKey, sourceCode, result,
                 observedAt, solvedAt, executionTime, memoryUsage);
     }
 
     public void update(Platform platform, String problemNumber, String title, String problemUrl,
-                       String language, String sourceCode, String result, Instant observedAt,
+                       String language, String languageKey, String sourceCode, String result, Instant observedAt,
                        Instant solvedAt, BigDecimal executionTime, BigDecimal memoryUsage) {
         this.platform = platform;
         this.problemNumber = problemNumber;
         this.title = title;
         this.problemUrl = problemUrl;
         this.language = language;
+        this.languageKey = languageKey;
         this.sourceCode = sourceCode;
         this.result = result;
         this.observedAt = observedAt;
@@ -131,6 +135,8 @@ public class Solution {
     public String getLanguage() {
         return language;
     }
+
+    public String getLanguageKey() { return languageKey; }
 
     public String getSourceCode() {
         return sourceCode;

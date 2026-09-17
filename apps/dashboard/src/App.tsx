@@ -30,6 +30,8 @@ import { EXTENSION_ID, LEGACY_EXTENSION_ID, EXTENSION_CANDIDATES } from './exten
 import { readExportSettings, EXPORT_SETTINGS_KEY, exportCode, downloadFilename, githubCommitMessage, gitPath, sourceFileExtension, DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, type ExportSettings } from './codeExport'
 import { navigateSameTab } from './navigation'
 import './styles.css'
+import { canonicalLanguageDisplayName, canonicalLanguageKey } from '../../../shared/language'
+import { filterAndSortSolutions, groupSolutions, type SolutionGroup, type SolutionSort } from './solutionQuery'
 
 type IconName =
   | 'book'
@@ -98,6 +100,7 @@ function normalizeSolution(value: unknown, index = 0): Solution {
     title: String(read('title', 'problemTitle', 'problem_title') ?? '이름 없는 풀이'),
     problemUrl: String(read('problemUrl', 'problem_url') ?? '#'),
     language: String(read('language') ?? 'Unknown'),
+    languageKey: String(read('languageKey', 'language_key') ?? canonicalLanguageKey(String(read('language') ?? 'Unknown'))),
     sourceCode: String(read('sourceCode', 'source_code') ?? ''),
     result: String(read('result') ?? 'ACCEPTED'),
     observedAt: read('observedAt', 'observed_at') as string | undefined,
@@ -210,6 +213,7 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [platformFilter, setPlatformFilter] = useState<'ALL' | 'SWEA' | 'PROGRAMMERS'>('ALL')
   const [languageFilter, setLanguageFilter] = useState('ALL')
+  const [solutionSort, setSolutionSort] = useState<SolutionSort>('latest')
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [githubLoginOpen, setGithubLoginOpen] = useState(false)
@@ -483,32 +487,32 @@ export default function App() {
     }
   }, [githubLoginOpen])
 
-  const languages = useMemo(
-    () => ['ALL', ...Array.from(new Set(solutions.map((solution) => solution.language))).sort()],
-    [solutions],
-  )
+  const languages = useMemo(() => {
+    const options = new Map<string, string>()
+    for (const solution of solutions) {
+      const key = solution.languageKey ?? canonicalLanguageKey(solution.language)
+      if (!options.has(key)) options.set(key, canonicalLanguageDisplayName(solution.language))
+    }
+    return [
+      { key: 'ALL', label: '모든 언어' },
+      ...Array.from(options, ([key, label]) => ({ key, label })).sort((left, right) => left.label.localeCompare(right.label)),
+    ]
+  }, [solutions])
 
   const filteredSolutions = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase()
-    return solutions.filter((solution) => {
-      const matchesPlatform = platformFilter === 'ALL' || solution.platform === platformFilter
-      const matchesLanguage = languageFilter === 'ALL' || solution.language === languageFilter
-      const matchesQuery =
-        !normalizedQuery ||
-        [solution.title, solution.problemNumber, solution.language, solution.platform].some((field) =>
-          field.toLowerCase().includes(normalizedQuery),
-        )
-      return matchesPlatform && matchesLanguage && matchesQuery
-    })
-  }, [languageFilter, platformFilter, query, solutions])
+    return filterAndSortSolutions(solutions, { query, platform: platformFilter, languageKey: languageFilter, sort: solutionSort })
+  }, [languageFilter, platformFilter, query, solutionSort, solutions])
+
+  const solutionGroups = useMemo(() => groupSolutions(filteredSolutions), [filteredSolutions])
 
   useEffect(() => {
     if (!filteredSolutions.some((solution) => solution.captureId === selectedId)) {
-      setSelectedId(filteredSolutions[0]?.captureId ?? '')
+      setSelectedId(solutionGroups[0]?.submissions[0]?.captureId ?? '')
     }
-  }, [filteredSolutions, selectedId])
+  }, [filteredSolutions, selectedId, solutionGroups])
 
-  const selectedSolution = filteredSolutions.find((solution) => solution.captureId === selectedId) ?? filteredSolutions[0] ?? null
+  const selectedGroup = solutionGroups.find((group) => group.submissions.some((solution) => solution.captureId === selectedId)) ?? solutionGroups[0] ?? null
+  const selectedSolution = selectedGroup?.submissions.find((solution) => solution.captureId === selectedId) ?? selectedGroup?.submissions[0] ?? null
 
   const changeView = (nextView: ViewName) => {
     setView(nextView)
@@ -1132,17 +1136,21 @@ export default function App() {
           <SolutionsView
             solutions={solutions}
             filteredSolutions={filteredSolutions}
+            solutionGroups={solutionGroups}
             selectedSolution={selectedSolution}
+            selectedGroup={selectedGroup}
             selectedId={selectedId}
             query={query}
             platformFilter={platformFilter}
             languageFilter={languageFilter}
             languages={languages}
+            solutionSort={solutionSort}
             loading={loading}
             mode={mode}
             setQuery={setQuery}
             setPlatformFilter={setPlatformFilter}
             setLanguageFilter={setLanguageFilter}
+            setSolutionSort={setSolutionSort}
             setSelectedId={setSelectedId}
             onCopy={copyCode}
             onDownload={downloadCode}
@@ -1167,9 +1175,6 @@ export default function App() {
             onSaveSettings={() => void saveAccountSettings()}
             onAutoSyncDisabled={clearRelay}
             previewSolution={selectedSolution ?? { captureId: 'preview', platform: 'SWEA', problemNumber: '0000', title: '미리보기', problemUrl: '#', language: 'Java', sourceCode: '', result: 'ACCEPTED' }}
-            extensionId={extensionId}
-            bridgeStatus={bridgeStatus}
-            onConnectLegacy={() => { setAutoConnect(true); void connectBridge(false, true) }}
             onLogin={() => setGithubLoginOpen(true)}
             onLogout={() => void handleLogout()}
             onExpectedAccountChange={(expectedGithubId) => void handleExpectedAccountChange(new ApiError('GitHub account changed; reconnect required', 409), expectedGithubId)}
@@ -1206,17 +1211,21 @@ export default function App() {
 function SolutionsView({
   solutions,
   filteredSolutions,
+  solutionGroups,
   selectedSolution,
+  selectedGroup,
   selectedId,
   query,
   platformFilter,
   languageFilter,
   languages,
+  solutionSort,
   loading,
   mode,
   setQuery,
   setPlatformFilter,
   setLanguageFilter,
+  setSolutionSort,
   setSelectedId,
   onCopy,
   onDownload,
@@ -1227,17 +1236,21 @@ function SolutionsView({
 }: {
   solutions: Solution[]
   filteredSolutions: Solution[]
+  solutionGroups: SolutionGroup[]
   selectedSolution: Solution | null
+  selectedGroup: SolutionGroup | null
   selectedId: string
   query: string
   platformFilter: 'ALL' | 'SWEA' | 'PROGRAMMERS'
   languageFilter: string
-  languages: string[]
+  languages: Array<{ key: string; label: string }>
+  solutionSort: SolutionSort
   loading: boolean
   mode: 'local' | 'live'
   setQuery: (value: string) => void
   setPlatformFilter: (value: 'ALL' | 'SWEA' | 'PROGRAMMERS') => void
   setLanguageFilter: (value: string) => void
+  setSolutionSort: (value: SolutionSort) => void
   setSelectedId: (value: string) => void
   onCopy: () => void
   onDownload: () => void
@@ -1271,46 +1284,49 @@ function SolutionsView({
           ))}
         </div>
         <select value={languageFilter} onChange={(event) => setLanguageFilter(event.target.value)} aria-label="언어 필터">
-          {languages.map((language) => <option key={language} value={language}>{language === 'ALL' ? '모든 언어' : language}</option>)}
+          {languages.map((language) => <option key={language.key} value={language.key}>{language.label}</option>)}
         </select>
+        {(query || platformFilter !== 'ALL' || languageFilter !== 'ALL') && <button className="filter-reset" onClick={() => { setQuery(''); setPlatformFilter('ALL'); setLanguageFilter('ALL') }}><Icon name="close" size={13} /> 필터 초기화</button>}
       </div>
 
       <div className="content-grid">
         <section className="solution-list-panel" aria-label="풀이 목록">
           <div className="panel-heading">
             <div><span className="panel-title">풀이 목록</span><span className="panel-count">{filteredSolutions.length}</span></div>
-            <span className="panel-sort">최신순 <Icon name="chevron" size={13} /></span>
+            <label className="panel-sort">정렬 <select aria-label="풀이 정렬" value={solutionSort} onChange={(event) => setSolutionSort(event.target.value as SolutionSort)}><option value="latest">최신 저장순</option><option value="oldest">오래된 저장순</option><option value="problem">문제 번호순</option><option value="title">문제 제목순</option></select></label>
           </div>
           <div className="solution-list">
             {loading && <ListSkeleton />}
-            {!loading && filteredSolutions.length === 0 && <EmptyList mode={mode} />}
-            {!loading && filteredSolutions.map((solution) => (
-              <SolutionRow key={solution.captureId} solution={solution} selected={solution.captureId === selectedSolution?.captureId || solution.captureId === selectedId} onSelect={() => setSelectedId(solution.captureId)} />
+            {!loading && solutionGroups.length === 0 && <EmptyList mode={mode} />}
+            {!loading && solutionGroups.map((group) => (
+              <SolutionGroupRow key={group.key} group={group} selected={group.key === selectedGroup?.key} onSelect={() => setSelectedId(group.submissions[0]!.captureId)} />
             ))}
           </div>
           <div className="list-footer"><span><span className="status-dot" /> {mode === 'local' ? '로컬 기록 · 업로드 전' : '서버와 연결됨'}</span><span>{filteredSolutions.length} / {solutions.length}</span></div>
         </section>
-        <SolutionDetail solution={selectedSolution} mode={mode} onCopy={onCopy} onDownload={onDownload} lightTheme={lightTheme} darkTheme={darkTheme} onLightThemeChange={onLightThemeChange} onDarkThemeChange={onDarkThemeChange} />
+        <SolutionDetail solution={selectedSolution} group={selectedGroup} onSelectSubmission={setSelectedId} mode={mode} onCopy={onCopy} onDownload={onDownload} lightTheme={lightTheme} darkTheme={darkTheme} onLightThemeChange={onLightThemeChange} onDarkThemeChange={onDarkThemeChange} />
       </div>
     </section>
   )
 }
 
-function SolutionRow({ solution, selected, onSelect }: { solution: Solution; selected: boolean; onSelect: () => void }) {
+function SolutionGroupRow({ group, selected, onSelect }: { group: SolutionGroup; selected: boolean; onSelect: () => void }) {
+  const latest = group.submissions[0]!
+  const languageLabels = Array.from(new Set(group.submissions.map(solution => canonicalLanguageDisplayName(solution.language)))).join(', ')
   return (
     <button className={`solution-row ${selected ? 'selected' : ''}`} onClick={onSelect}>
-      <span className={`platform-logo ${solution.platform === 'SWEA' ? 'swea' : 'programmers'}`}>{solution.platform === 'SWEA' ? 'S' : 'P'}</span>
+      <span className={`platform-logo ${group.platform === 'SWEA' ? 'swea' : 'programmers'}`}>{group.platform === 'SWEA' ? 'S' : 'P'}</span>
       <span className="solution-row-main">
-        <span className="solution-row-top"><span className="solution-platform">{solution.platform}</span><span className="solution-result"><Icon name="check" size={12} /> {solution.result === 'ACCEPTED' ? 'Accepted' : solution.result}</span></span>
-        <span className="solution-title">{solution.title}</span>
-        <span className="solution-row-bottom"><span>#{solution.problemNumber}</span><span className="row-divider" /><span>{solution.language}</span><span className="row-time"><Icon name="clock" size={12} /> {formatDate(solution.solvedAt ?? solution.observedAt)}</span></span>
+        <span className="solution-row-top"><span className="solution-platform">{group.platform}</span><span className="solution-result">풀이 {group.submissions.length}개</span></span>
+        <span className="solution-title">{group.title}</span>
+        <span className="solution-row-bottom"><span>#{group.problemNumber}</span><span className="row-divider" /><span>{languageLabels}</span><span className="row-time"><Icon name="clock" size={12} /> {formatDate(latest.solvedAt ?? latest.observedAt)}</span></span>
       </span>
       <Icon name="chevron" size={17} />
     </button>
   )
 }
 
-function SolutionDetail({ solution, mode, onCopy, onDownload, lightTheme, darkTheme, onLightThemeChange, onDarkThemeChange }: { solution: Solution | null; mode: 'local' | 'live'; onCopy: () => void; onDownload: () => void; lightTheme: AccountSettings['lightTheme']; darkTheme: AccountSettings['darkTheme']; onLightThemeChange: (theme: AccountSettings['lightTheme']) => void; onDarkThemeChange: (theme: AccountSettings['darkTheme']) => void }) {
+function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onDownload, lightTheme, darkTheme, onLightThemeChange, onDarkThemeChange }: { solution: Solution | null; group: SolutionGroup | null; onSelectSubmission: (captureId: string) => void; mode: 'local' | 'live'; onCopy: () => void; onDownload: () => void; lightTheme: AccountSettings['lightTheme']; darkTheme: AccountSettings['darkTheme']; onLightThemeChange: (theme: AccountSettings['lightTheme']) => void; onDarkThemeChange: (theme: AccountSettings['darkTheme']) => void }) {
   return (
     <section className="solution-detail" aria-label="선택한 풀이 상세">
       {!solution ? (
@@ -1321,7 +1337,7 @@ function SolutionDetail({ solution, mode, onCopy, onDownload, lightTheme, darkTh
             <div className="detail-heading-main">
               <div className="detail-breadcrumb"><span>{solution.platform}</span><Icon name="chevron" size={12} /><span>#{solution.problemNumber}</span></div>
               <h2>{solution.title}</h2>
-              <div className="detail-subline"><span className="accepted-badge"><Icon name="check" size={12} /> ACCEPTED</span><span>{solution.language}</span><span className="row-divider" /><span>풀이 기록 {formatDate(solution.solvedAt ?? solution.observedAt)}</span></div>
+              <div className="detail-subline"><span>{canonicalLanguageDisplayName(solution.language)}</span><span className="row-divider" /><span>풀이 기록 {formatDate(solution.solvedAt ?? solution.observedAt)}</span></div>
             </div>
             <a className="problem-link" href={solution.problemUrl} target="_blank" rel="noreferrer">문제 보기 <Icon name="external" size={14} /></a>
           </div>
@@ -1330,6 +1346,7 @@ function SolutionDetail({ solution, mode, onCopy, onDownload, lightTheme, darkTh
             <MetricCard label="메모리 사용량" value={formatMemory(solution)} icon="spark" />
             <MetricCard label="관측 시각" value={formatObservedTime(solution.observedAt ?? solution.solvedAt)} icon="check" />
           </div>
+          {group && group.submissions.length > 1 && <label className="submission-picker">제출 기록<select aria-label="제출 기록" value={solution.captureId} onChange={(event) => onSelectSubmission(event.target.value)}>{group.submissions.map((submission, index) => <option key={submission.captureId} value={submission.captureId}>{index + 1}. {formatObservedTime(submission.solvedAt ?? submission.observedAt)} · {canonicalLanguageDisplayName(submission.language)}</option>)}</select></label>}
           <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
           <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} onLightThemeChange={onLightThemeChange} onDarkThemeChange={onDarkThemeChange} />
           <div className="detail-note"><Icon name="spark" size={14} /><span>{mode === 'local' ? '이 브라우저의 로컬 기록입니다. 로그인 후 명시적으로 동기화할 수 있습니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
@@ -1382,9 +1399,6 @@ function SettingsView({
   onSaveSettings,
   onAutoSyncDisabled,
   previewSolution,
-  extensionId,
-  bridgeStatus,
-  onConnectLegacy,
   onLogin,
   onLogout,
   onExpectedAccountChange,
@@ -1401,9 +1415,6 @@ function SettingsView({
   onSaveSettings: () => void
   onAutoSyncDisabled: () => void
   previewSolution: Solution
-  extensionId: string
-  bridgeStatus: 'disconnected' | 'connecting' | 'connected'
-  onConnectLegacy: () => void
   onLogin: () => void
   onLogout: () => void
   onExpectedAccountChange: (expectedGithubId: string) => void
@@ -1432,7 +1443,7 @@ function SettingsView({
       <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> WORKSPACE / SETTINGS</p><h1>설정</h1><p>CodeArchive가 문제 풀이를 가져오는 방법을 관리합니다.</p></div>
       <div className="settings-layout">
         <div className="settings-column">
-          <details className="settings-card"><summary>이전 개발 확장에 남은 기록</summary><p>고정 ID 버전을 설치하기 전의 기록은 별도 저장소에 남습니다. 이전 확장을 삭제하지 않은 상태에서 연결한 뒤 지금 동기화를 눌러 가져오세요.</p><button className="secondary-button" onClick={onConnectLegacy} disabled={!user || bridgeStatus === 'connecting'}>이전 개발 기록 확인</button></details><article className="settings-card export-settings"><h2>계정 · 코드 저장</h2>{settingsError && <p role="alert">{settingsError}</p>}<div className="setting-field"><label htmlFor="profile-name">이름</label><input id="profile-name" value={accountSettings.name ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, name: e.target.value || null })} /><label htmlFor="profile-nickname">닉네임</label><input id="profile-nickname" value={accountSettings.nickname ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, nickname: e.target.value || null })} /></div><p>문제 정보 주석을 추가합니다. 원본 코드는 유지합니다.</p>
+          <article className="settings-card export-settings"><h2>계정 · 코드 저장</h2>{settingsError && <p role="alert">{settingsError}</p>}<div className="setting-field"><label htmlFor="profile-name">이름</label><input id="profile-name" value={accountSettings.name ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, name: e.target.value || null })} /><label htmlFor="profile-nickname">닉네임</label><input id="profile-nickname" value={accountSettings.nickname ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, nickname: e.target.value || null })} /></div><p>문제 정보 주석을 추가합니다. 원본 코드는 유지합니다.</p>
             <label><input type="checkbox" checked={accountSettings.copyHeader} onChange={e => updateAccountSettings({ ...accountSettings, copyHeader: e.target.checked })} /> 복사할 때 문제 정보 주석 포함</label><label><input type="checkbox" checked={accountSettings.downloadHeader} onChange={e => updateAccountSettings({ ...accountSettings, downloadHeader: e.target.checked })} /> 다운로드할 때 문제 정보 주석 포함</label>
             <div className="setting-field"><label htmlFor="filename-template">다운로드 파일명</label><input id="filename-template" maxLength={160} value={accountSettings.downloadFilenameTemplate} onChange={e => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate: e.target.value })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="git-path-template">Git 저장 경로</label><input id="git-path-template" value={accountSettings.gitPathTemplate} onChange={e => updateAccountSettings({ ...accountSettings, gitPathTemplate: e.target.value })} /><p>Git 미리보기: <output>{gitPath(previewSolution, accountSettings.gitPathTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id }) ?? '유효하지 않은 상대 경로'}</output></p><label htmlFor="github-commit-message-template">Git 커밋 메시지</label><input id="github-commit-message-template" maxLength={200} value={accountSettings.githubCommitMessageTemplate} onChange={e => updateAccountSettings({ ...accountSettings, githubCommitMessageTemplate: e.target.value })} /><p>커밋 미리보기: <output>{githubCommitMessage(previewSolution, accountSettings.githubCommitMessageTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="light-theme">밝은 테마</label><select id="light-theme" value={accountSettings.lightTheme} onChange={e => updateAccountSettings({ ...accountSettings, lightTheme: e.target.value as AccountSettings['lightTheme'] })}>{LIGHT_THEMES.map(x => <option key={x}>{x}</option>)}</select><label htmlFor="dark-theme">어두운 테마</label><select id="dark-theme" value={accountSettings.darkTheme} onChange={e => updateAccountSettings({ ...accountSettings, darkTheme: e.target.value as AccountSettings['darkTheme'] })}>{DARK_THEMES.map(x => <option key={x}>{x}</option>)}</select></div><label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label><label><input type="checkbox" disabled={!draftTargetConfigured || providerUnavailable} checked={accountSettings.githubAutoCommitEnabled} onChange={e => updateAccountSettings({ ...accountSettings, githubAutoCommitEnabled: e.target.checked })} /> GitHub 자동 커밋</label><button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
           </article>

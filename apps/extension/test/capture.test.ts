@@ -74,6 +74,7 @@ test('SWEA captures the observed live success popup with br-separated sentences'
   assert.ok(captured);
   assert.equal(captured.capture.problemNumber, '5678');
   assert.equal(captured.capture.problemUrl, 'https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=AV1234');
+  assert.equal(captured.capture.languageKey, 'java');
   assert.equal(captured.capture.sourceCode, 'class Solution {}');
   adapter.consumeSubmissionResult(captured.detection);
   assert.equal(collectAcceptedCaptureAttempt(adapter), null);
@@ -286,6 +287,13 @@ test("local stores skip a repeated submission only when problem, language, and s
         observedAt: "2026-09-17T02:00:00.000Z",
         solvedAt: "2026-09-17T02:00:00.000Z",
         executionTime: 999,
+        syncState: "PENDING"
+      }), { created: false });
+      assert.deepEqual(await store.putCapture({
+        ...capture,
+        captureId: "66666666-6666-4666-8666-666666666666",
+        language: "JAVA",
+        languageKey: undefined,
         syncState: "PENDING"
       }), { created: false });
       assert.deepEqual(await store.putCapture({

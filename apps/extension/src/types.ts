@@ -12,6 +12,8 @@ export interface Capture {
   title: string;
   problemUrl: string;
   language: string;
+  /** Stable filter/export key. Missing only on records written by older builds. */
+  languageKey?: string;
   sourceCode: string;
   result: CaptureResult;
   observedAt: string;
@@ -31,6 +33,7 @@ export interface CaptureDraft {
   title: string;
   problemUrl: string;
   language: string;
+  languageKey?: string;
   sourceCode: string;
   result: CaptureResult;
   observedAt?: string | Date;

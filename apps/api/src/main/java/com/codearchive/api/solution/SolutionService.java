@@ -42,14 +42,14 @@ public class SolutionService {
             BigDecimal memoryUsage = capture.memoryUsage() == null
                     ? solution.getMemoryUsage() : capture.memoryUsage();
             solution.update(capture.platform(), capture.problemNumber(), capture.title(), capture.problemUrl(),
-                    capture.language(), capture.sourceCode(), capture.result(), capture.observedAt(),
+                    capture.language(), capture.languageKey(), capture.sourceCode(), capture.result(), capture.observedAt(),
                     capture.solvedAt(), executionTime, memoryUsage);
             if (capture.memoryValue() != null) solution.setMemoryMeasurement(capture.memoryValue(), capture.memoryUnit());
             return solutionRepository.saveAndFlush(solution);
         }
 
         Solution solution = new Solution(user, capture.captureId(), capture.platform(), capture.problemNumber(),
-                capture.title(), capture.problemUrl(), capture.language(), capture.sourceCode(), capture.result(),
+                capture.title(), capture.problemUrl(), capture.language(), capture.languageKey(), capture.sourceCode(), capture.result(),
                 capture.observedAt(), capture.solvedAt(), capture.executionTime(), capture.memoryUsage());
         solution.setMemoryMeasurement(capture.memoryValue(), capture.memoryUnit());
         return solutionRepository.saveAndFlush(solution);
@@ -91,6 +91,10 @@ public class SolutionService {
         String problemUrl = required(payload.getProblemUrl(), "problemUrl", 2048);
         validateUrl(problemUrl);
         String language = required(payload.getLanguage(), "language", 100);
+        String languageKey = LanguageNormalizer.canonicalKey(language);
+        if (payload.getLanguageKey() != null && !payload.getLanguageKey().trim().equals(languageKey)) {
+            throw new CaptureValidationException("languageKey does not match language");
+        }
         String sourceCode = requiredPreservingWhitespace(payload.getSourceCode(), "sourceCode", 1_000_000);
         String result = required(payload.getResult(), "result", 20);
         if (!"ACCEPTED".equalsIgnoreCase(result)) {
@@ -105,7 +109,7 @@ public class SolutionService {
         validateMetric(payload.getMemoryValue(), "memoryValue");
         String memoryUnit = normalizeMemoryUnit(payload.getMemoryUnit(), payload.getMemoryValue());
 
-        return new NormalizedCapture(captureId, platform, problemNumber, title, problemUrl, language, sourceCode,
+        return new NormalizedCapture(captureId, platform, problemNumber, title, problemUrl, language, languageKey, sourceCode,
                 result, observedAt, solvedAt, payload.getExecutionTime(), payload.getMemoryUsage(), payload.getMemoryValue(), memoryUnit);
     }
 
@@ -186,6 +190,7 @@ public class SolutionService {
                 && solution.getTitle().equals(capture.title())
                 && solution.getProblemUrl().equals(capture.problemUrl())
                 && solution.getLanguage().equals(capture.language())
+                && solution.getLanguageKey().equals(capture.languageKey())
                 && solution.getSourceCode().equals(capture.sourceCode())
                 && solution.getResult().equals(capture.result())
                 && solution.getObservedAt().equals(capture.observedAt())
@@ -193,7 +198,7 @@ public class SolutionService {
     }
 
     private record NormalizedCapture(String captureId, Platform platform, String problemNumber, String title,
-                                     String problemUrl, String language, String sourceCode, String result,
+                                     String problemUrl, String language, String languageKey, String sourceCode, String result,
                                      Instant observedAt, Instant solvedAt, BigDecimal executionTime,
                                      BigDecimal memoryUsage, BigDecimal memoryValue, String memoryUnit) {
     }

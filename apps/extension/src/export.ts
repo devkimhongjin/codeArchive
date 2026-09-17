@@ -1,9 +1,7 @@
 import type { Capture } from "./types";
+import { describeLanguage } from "../../../shared/language";
 export function sourceFileExtension(language: string): string {
-  const n = language.toLowerCase();
-  if (n.includes("python") || n.includes("pypy")) return "py"; if (n.includes("typescript") || n === "ts") return "ts"; if (n.includes("javascript") || n === "js") return "js";
-  if (n.includes("kotlin")) return "kt"; if (n.includes("java")) return "java"; if (n.includes("c++") || n.includes("cpp")) return "cpp"; if (/^c(?:\s|\d|$)/.test(n)) return "c";
-  if (n === "c#" || n.startsWith("c# ") || n.includes("csharp")) return "cs"; if (n === "go" || n.startsWith("go ")) return "go"; if (n.includes("rust")) return "rs"; if (n.includes("ruby")) return "rb"; if (n.includes("swift")) return "swift"; if (n.includes("scala")) return "scala"; if (n.includes("sql")) return "sql"; return "txt";
+  return describeLanguage(language).extension;
 }
 export type ExportProfile={name?:string;nickname?:string;id?:string};
 export function downloadFilename(capture: Capture, template = "{platform}-{number}-{title}", profile:ExportProfile={}): string {

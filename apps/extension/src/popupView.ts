@@ -1,5 +1,6 @@
 import type { Capture } from "./types";
 import type { GithubCommitStatus } from "./relay";
+import { canonicalLanguageDisplayName } from "../../../shared/language";
 
 type CapturePreview = Omit<Capture, "sourceCode"> & { githubCommitStatus?: GithubCommitStatus };
 
@@ -88,7 +89,7 @@ function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement,
     appendCaptureTitle(document, item, capture);
     const metadata = document.createElement("p");
     metadata.className = "recent-meta";
-    metadata.textContent = `${capture.language} · ${formatObservedAt(capture.observedAt)}`;
+    metadata.textContent = `${canonicalLanguageDisplayName(capture.language)} · ${formatObservedAt(capture.observedAt)}`;
     item.append(metadata);
     const actions = document.createElement("div");
     actions.className = "recent-actions";

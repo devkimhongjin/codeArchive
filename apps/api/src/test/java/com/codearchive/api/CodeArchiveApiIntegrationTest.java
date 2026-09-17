@@ -228,7 +228,9 @@ class CodeArchiveApiIntegrationTest {
                         .header("X-CodeArchive-Account", "101"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(1)))
-                .andExpect(jsonPath("$[0].sourceCode", is("first source")));
+                .andExpect(jsonPath("$[0].sourceCode", is("first source")))
+                .andExpect(jsonPath("$[0].language", is("JAVA")))
+                .andExpect(jsonPath("$[0].languageKey", is("java")));
 
         mockMvc.perform(get("/api/solutions").with(githubLogin("202", "second", "Second", null))
                         .header("X-CodeArchive-Account", "202"))

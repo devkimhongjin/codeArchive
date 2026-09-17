@@ -97,13 +97,17 @@ h1, h2, p { margin-top: 0; }
 .filter-pill { padding: 8px 9px; border-radius: 5px; background: transparent; color: #8b8798; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .filter-pill.active { background: var(--purple); color: #fff; box-shadow: 0 4px 9px rgba(87,66,220,.16); }
 .search-toolbar select { height: 35px; padding: 0 27px 0 10px; color: #767186; font-size: 11px; border: 1px solid var(--line); background: #fcfbff; border-radius: 6px; outline: 0; }
+.filter-reset { display: inline-flex; align-items: center; gap: 4px; height: 35px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: #767186; font-size: 11px; white-space: nowrap; }
 .content-grid { display: grid; grid-template-columns: minmax(340px, 40%) minmax(0, 60%); align-items: stretch; background: var(--surface); border: 1px solid var(--line); border-top: 0; border-radius: 0 0 10px 10px; min-height: 607px; overflow: hidden; box-shadow: var(--shadow); }
 .solution-list-panel { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--line); }
 .panel-heading { display: flex; justify-content: space-between; align-items: center; min-height: 55px; padding: 0 17px; border-bottom: 1px solid var(--line); }
 .panel-heading > div { display: flex; align-items: center; gap: 8px; }
 .panel-title { color: var(--ink); font-size: 12px; font-weight: 800; letter-spacing: -.04em; }
 .panel-count { min-width: 19px; padding: 3px 5px; text-align: center; color: var(--purple); background: var(--purple-soft); border-radius: 4px; font: 500 9px 'DM Mono', monospace; }
-.panel-sort { display: inline-flex; align-items: center; gap: 4px; color: #9e9aab; font-size: 10px; }
+.panel-sort { display: inline-flex; align-items: center; gap: 6px; color: #9e9aab; font-size: 10px; }
+.panel-sort select { border: 0; background: transparent; color: #777286; font-size: 10px; outline: 0; }
+.submission-picker { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin: -2px 0 10px; color: #8b8798; font-size: 10px; }
+.submission-picker select { max-width: 260px; height: 32px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 11px; }
 .solution-list { flex: 1; }
 .solution-row { width: 100%; display: flex; align-items: center; gap: 11px; min-height: 104px; padding: 15px 17px; text-align: left; color: #9b97a9; border-bottom: 1px solid #f0edf4; background: #fff; transition: background .16s, border-color .16s; }
 .solution-row:hover { background: #fbfaff; }

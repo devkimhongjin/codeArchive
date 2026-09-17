@@ -1,4 +1,5 @@
 import type { Solution } from './types'
+import { describeLanguage } from '../../../shared/language'
 
 export type ExportSettings = { copyHeader: boolean; downloadHeader: boolean; filenameTemplate: string; gitPathTemplate?: string }
 export const DEFAULT_EXPORT_SETTINGS: ExportSettings = { copyHeader: false, downloadHeader: false, filenameTemplate: '{platform}-{number}-{title}', gitPathTemplate: '{platform}/{number}-{title}' }
@@ -14,22 +15,7 @@ export function readExportSettings(): ExportSettings {
   } catch { return { ...DEFAULT_EXPORT_SETTINGS } }
 }
 export function sourceFileExtension(language: string) {
-  const name = language.toLowerCase()
-  if (name.includes('python') || name.includes('pypy')) return 'py'
-  if (name.includes('javascript') || name === 'js') return 'js'
-  if (name.includes('typescript') || name === 'ts') return 'ts'
-  if (name.includes('kotlin')) return 'kt'
-  if (name.includes('java')) return 'java'
-  if (name.includes('c++') || name === 'cpp') return 'cpp'
-  if (/^c(?:\s|\d|$)/.test(name)) return 'c'
-  if (name === 'c#' || name.startsWith('c# ') || name.includes('csharp')) return 'cs'
-  if (name.includes('swift')) return 'swift'
-  if (name === 'go' || name.startsWith('go ')) return 'go'
-  if (name.includes('rust')) return 'rs'
-  if (name.includes('ruby')) return 'rb'
-  if (name.includes('scala')) return 'scala'
-  if (name.includes('sql')) return 'sql'
-  return 'txt'
+  return describeLanguage(language).extension
 }
 export function exportCode(solution: Solution, header: boolean): string {
   if (!header) return solution.sourceCode

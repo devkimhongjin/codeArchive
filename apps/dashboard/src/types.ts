@@ -28,6 +28,7 @@ export type Solution = {
   title: string
   problemUrl: string
   language: string
+  languageKey?: string
   sourceCode: string
   result: 'ACCEPTED' | string
   observedAt?: string

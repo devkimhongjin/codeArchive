@@ -11,6 +11,7 @@ public class SolutionResponse {
     private final String title;
     private final String problemUrl;
     private final String language;
+    private final String languageKey;
     private final String sourceCode;
     private final String result;
     private final Instant observedAt;
@@ -28,6 +29,7 @@ public class SolutionResponse {
         this.title = solution.getTitle();
         this.problemUrl = solution.getProblemUrl();
         this.language = solution.getLanguage();
+        this.languageKey = solution.getLanguageKey();
         this.sourceCode = solution.getSourceCode();
         this.result = solution.getResult();
         this.observedAt = solution.getObservedAt();
@@ -49,6 +51,7 @@ public class SolutionResponse {
     public String getTitle() { return title; }
     public String getProblemUrl() { return problemUrl; }
     public String getLanguage() { return language; }
+    public String getLanguageKey() { return languageKey; }
     public String getSourceCode() { return sourceCode; }
     public String getResult() { return result; }
     public Instant getObservedAt() { return observedAt; }
