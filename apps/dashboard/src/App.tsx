@@ -32,6 +32,7 @@ import { navigateSameTab } from './navigation'
 import './styles.css'
 import { canonicalLanguageDisplayName, canonicalLanguageKey } from '../../../shared/language'
 import { filterAndSortSolutions, groupSolutions, type SolutionGroup, type SolutionSort } from './solutionQuery'
+import { BUILD_METADATA, buildLabel, updatedLabel } from '../../../shared/buildMetadata'
 
 type IconName =
   | 'book'
@@ -1049,7 +1050,7 @@ export default function App() {
             <span className="brand-mark">B</span>
             <span className="brand-copy">
               <span className="brand-name">CodeArchive</span>
-              <span className="brand-beta">BETA</span>
+              <span className="brand-release"><span className="brand-beta">BETA</span><span className="brand-updated">{updatedLabel()}</span></span>
             </span>
           </button>
           <button className="mobile-menu" onClick={() => setMobileNavOpen((open) => !open)} aria-label="메뉴 열기">
@@ -1168,7 +1169,7 @@ export default function App() {
         <div className="footer-inner">
           <span className="footer-brand"><span className="footer-mark">B</span> CodeArchive</span>
           <span>풀이를 모으고, 다시 푸는 흐름을 가볍게</span>
-          <span className="footer-version">v0.1 beta</span>
+          <span className="footer-version" title={`Updated ${BUILD_METADATA.updatedDate}`}>{buildLabel()}</span>
         </div>
       </footer>
 

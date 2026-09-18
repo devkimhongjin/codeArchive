@@ -45,3 +45,28 @@
   font-size: 9px;
   line-height: 1.4;
 }
+
+.release-badge {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  margin-left: auto;
+  color: #9b92a8;
+  font: 500 8px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+}
+
+.release-badge .badge {
+  margin-left: 0;
+}
+
+footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#build-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+}

@@ -40,6 +40,8 @@ test('archive renders pending and retained synced captures with source as text',
   });
   await settle();
   assert.equal(document.querySelector('#archive-count')!.textContent, '2');
+  assert.equal(document.querySelector('#archive-build-label')!.textContent, 'vdev · dev+source-unknown');
+  assert.equal(document.querySelector('#archive-updated-label')!.textContent, 'Updated dev');
   assert.equal(document.querySelectorAll('.capture-card').length, 2);
   assert.match(document.querySelector('.archive-list')!.textContent!, /대시보드 동기화됨/);
   assert.match(document.querySelector('.archive-list')!.textContent!, /풀이 시간/);

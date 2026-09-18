@@ -17,6 +17,8 @@ test('popup distinguishes loading, empty, pending and storage failure with retry
   assert.equal(document.querySelector('#pending-count')!.textContent, '—');
   resolve({ pendingCount: 0, settings: {} }); await settle();
   assert.equal(document.querySelector('#pending-count')!.textContent, '0');
+  assert.equal(document.querySelector('#build-label')!.textContent, 'vdev · dev+source-unknown');
+  assert.equal(document.querySelector('#updated-label')!.textContent, 'Updated dev');
   (document.querySelector('#refresh') as HTMLButtonElement).click(); await settle();
   assert.equal(document.querySelector('#pending-count')!.textContent, '3');
   next = { pendingCount: 0, settings: null, error: 'STORAGE_ERROR' };
