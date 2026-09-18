@@ -190,7 +190,10 @@ Workload Identity Federation provider. Admission is restricted to this exact
 repository on `refs/heads/develop`; no service-account JSON key is created.
 The deployer can push to the staging Artifact Registry repository, update only
 the two existing staging Cloud Run services, attach their service identities,
-and enqueue the harmless private-worker smoke task.
+and enqueue the harmless private-worker smoke task. A project custom role with
+only `logging.logEntries.list` lets the workflow confirm that exact task reached
+the worker with HTTP 204; it does not grant the broader predefined Logs Viewer
+role.
 
 The manual `Deploy GCP Staging` workflow builds one commit-tagged image, deploys
 that same image to API and worker, checks public health, and requires a Cloud
