@@ -1,6 +1,7 @@
 import type { Capture } from "./types";
 import { tokensForSource } from "./highlighter";
 import { canonicalLanguageDisplayName } from "../../../shared/language";
+import { formatCaptureMemory, formatExecutionTime, formatSolutionTime } from "./capturePresentation";
 
 interface ArchiveServices {
   load: () => Promise<unknown>;
@@ -27,18 +28,6 @@ function asDisplayCapture(value: unknown): Capture | null {
     return null;
   }
   return candidate as Capture;
-}
-
-function formatObservedAt(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "날짜 없음";
-  return new Intl.DateTimeFormat("ko-KR", {
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit"
-  }).format(date);
 }
 
 function isSafeProblemUrl(value: string): boolean {
@@ -93,7 +82,7 @@ function renderCapture(document: Document, capture: Capture): { item: HTMLElemen
   const language = document.createElement("span");
   language.textContent = canonicalLanguageDisplayName(capture.language);
   const date = document.createElement("span");
-  date.textContent = `저장 ${formatObservedAt(capture.observedAt)}`;
+  date.textContent = `풀이 시간 ${formatSolutionTime(capture.solvedAt ?? capture.observedAt)}`;
   metadata.append(language, date);
   item.append(metadata);
 
@@ -107,16 +96,10 @@ function renderCapture(document: Document, capture: Capture): { item: HTMLElemen
   details.append(summary, source);
   item.append(details);
 
-  const metrics: string[] = [];
-  if (capture.executionTime !== undefined) metrics.push(`실행 ${capture.executionTime}ms`);
-  if (capture.memoryValue !== undefined && capture.memoryUnit && capture.memoryUnit !== "UNKNOWN") metrics.push(`메모리 ${capture.memoryValue}${capture.memoryUnit}`);
-  else if (capture.memoryUsage !== undefined) metrics.push(`메모리 ${capture.memoryUsage} (단위 미확인)`);
-  if (metrics.length) {
-    const metricLine = document.createElement("p");
-    metricLine.className = "capture-metrics";
-    metricLine.textContent = metrics.join(" · ");
-    item.append(metricLine);
-  }
+  const metricLine = document.createElement("p");
+  metricLine.className = "capture-metrics";
+  metricLine.textContent = `실행 시간 ${formatExecutionTime(capture.executionTime)} · 메모리 ${formatCaptureMemory(capture)}`;
+  item.append(metricLine);
   return { item, source };
 }
 

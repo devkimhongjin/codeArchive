@@ -34,7 +34,7 @@ test('archive renders pending and retained synced captures with source as text',
   const { document } = parseHTML(html);
   mountArchive(document, {
     load: async () => ({ captures: [
-      capture('11111111-1111-4111-8111-111111111111', 'PENDING', 'const pending = true;'),
+      { ...capture('11111111-1111-4111-8111-111111111111', 'PENDING', 'const pending = true;'), executionTime: 0, memoryValue: 0, memoryUnit: 'MB' },
       capture('22222222-2222-4222-8222-222222222222', 'SYNCED', '<script>const synced = true;</script>')
     ] })
   });
@@ -42,6 +42,9 @@ test('archive renders pending and retained synced captures with source as text',
   assert.equal(document.querySelector('#archive-count')!.textContent, '2');
   assert.equal(document.querySelectorAll('.capture-card').length, 2);
   assert.match(document.querySelector('.archive-list')!.textContent!, /대시보드 동기화됨/);
+  assert.match(document.querySelector('.archive-list')!.textContent!, /풀이 시간/);
+  assert.match(document.querySelector('.archive-list')!.textContent!, /실행 시간 0 ms · 메모리 0 MB/);
+  assert.match(document.querySelector('.archive-list')!.textContent!, /실행 시간 정보 없음 · 메모리 정보 없음/);
   assert.equal(document.querySelectorAll('.source-code')[1]!.textContent, '<script>const synced = true;</script>');
   assert.equal(document.querySelectorAll('.source-code')[1]!.querySelector('script'), null);
 });

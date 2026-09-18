@@ -1,6 +1,7 @@
 import type { Capture } from "./types";
 import type { GithubCommitStatus } from "./relay";
 import { canonicalLanguageDisplayName } from "../../../shared/language";
+import { formatCaptureMemory, formatExecutionTime, formatSolutionTime } from "./capturePresentation";
 
 type CapturePreview = Omit<Capture, "sourceCode"> & { githubCommitStatus?: GithubCommitStatus };
 
@@ -34,17 +35,6 @@ function asDisplayCapture(value: unknown): CapturePreview | null {
   const githubCommitStatus = (value as { githubCommitStatus?: unknown }).githubCommitStatus;
   if (githubCommitStatus !== undefined && !["NOT_REQUESTED", "PENDING", "RUNNING", "SUCCEEDED", "FAILED", "UNKNOWN"].includes(String(githubCommitStatus))) return null;
   return candidate as CapturePreview;
-}
-
-function formatObservedAt(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "날짜 없음";
-  return new Intl.DateTimeFormat("ko-KR", {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit"
-  }).format(date);
 }
 
 function appendCaptureTitle(document: Document, item: HTMLElement, capture: CapturePreview): void {
@@ -91,8 +81,12 @@ function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement,
     appendCaptureTitle(document, item, capture);
     const metadata = document.createElement("p");
     metadata.className = "recent-meta";
-    metadata.textContent = `${canonicalLanguageDisplayName(capture.language)} · ${formatObservedAt(capture.observedAt)}`;
+    metadata.textContent = `${canonicalLanguageDisplayName(capture.language)} · 풀이 시간 ${formatSolutionTime(capture.solvedAt ?? capture.observedAt)}`;
     item.append(metadata);
+    const performance = document.createElement("p");
+    performance.className = "recent-performance";
+    performance.textContent = `실행 시간 ${formatExecutionTime(capture.executionTime)} · 메모리 ${formatCaptureMemory(capture)}`;
+    item.append(performance);
     const actions = document.createElement("div");
     actions.className = "recent-actions";
     const copy = document.createElement("button"); copy.type = "button"; copy.textContent = "복사"; copy.setAttribute("aria-label", `${capture.title} 코드 복사`);
