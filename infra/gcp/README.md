@@ -206,3 +206,22 @@ variables from the plan/apply output:
 - `GCP_DEPLOY_SERVICE_ACCOUNT`
 
 The workflow intentionally runs only when manually dispatched from `develop`.
+
+## Production traffic promotion
+
+To stay within the free tier, the verified staging API and worker are promoted
+in place instead of keeping a second always-identical Cloud Run pair. The
+public browser endpoint remains the Netlify origin, so GitHub OAuth and GitHub
+App callbacks continue to use:
+
+```text
+https://codearchive-dashboard-beta.netlify.app/api/login/oauth2/code/github
+https://codearchive-dashboard-beta.netlify.app/api/github/installations/callback
+```
+
+Before changing `netlify.toml`, update the API service's
+`GITHUB_REDIRECT_URI` to the Netlify OAuth callback and verify
+`/actuator/health`. Production promotion changes only the Netlify `/api/*`
+proxy target. The Render service remains unchanged as a rollback target; a
+rollback consists of restoring its proxy URL and deploying that one-line
+Netlify change.
