@@ -64,6 +64,8 @@ $poolName = "projects/$projectNumber/locations/global/workloadIdentityPools/$Poo
 $providerName = "$poolName/providers/$Provider"
 $principal = "principalSet://iam.googleapis.com/$poolName/attribute.repository/$GithubRepository"
 $condition = "assertion.repository=='$GithubRepository' && assertion.ref=='refs/heads/develop'"
+$logReaderRoleId = 'codearchiveStagingLogReader'
+$logReaderRole = "projects/$ProjectId/roles/$logReaderRoleId"
 
 $plan = [ordered]@{
     Project = $ProjectId
@@ -74,6 +76,7 @@ $plan = [ordered]@{
     Services = @($ApiService, $WorkerService)
     ArtifactRepository = $ArtifactRepository
     Queue = $QueueName
+    CustomLogReaderRole = $logReaderRole
     LongLivedServiceAccountKey = $false
 }
 
@@ -167,6 +170,28 @@ Invoke-Gcloud -Arguments @(
     'tasks', 'queues', 'add-iam-policy-binding', $QueueName,
     "--project=$ProjectId", "--location=$Region", "--member=serviceAccount:$deployerEmail",
     '--role=roles/cloudtasks.enqueuer', '--quiet'
+) | Out-Null
+
+if (Test-Gcloud -Arguments @(
+    'iam', 'roles', 'describe', $logReaderRoleId, "--project=$ProjectId", '--format=value(name)'
+)) {
+    Invoke-Gcloud -Arguments @(
+        'iam', 'roles', 'update', $logReaderRoleId, "--project=$ProjectId",
+        '--title=CodeArchive staging smoke log reader',
+        '--description=Can list project logs only to verify staging Cloud Tasks delivery',
+        '--permissions=logging.logEntries.list', '--stage=GA', '--quiet'
+    ) | Out-Null
+} else {
+    Invoke-Gcloud -Arguments @(
+        'iam', 'roles', 'create', $logReaderRoleId, "--project=$ProjectId",
+        '--title=CodeArchive staging smoke log reader',
+        '--description=Can list project logs only to verify staging Cloud Tasks delivery',
+        '--permissions=logging.logEntries.list', '--stage=GA', '--quiet'
+    ) | Out-Null
+}
+Invoke-Gcloud -Arguments @(
+    'projects', 'add-iam-policy-binding', $ProjectId,
+    "--member=serviceAccount:$deployerEmail", "--role=$logReaderRole", '--quiet'
 ) | Out-Null
 
 $plan.Applied = $true
