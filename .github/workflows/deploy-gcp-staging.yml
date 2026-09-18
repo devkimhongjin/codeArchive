@@ -55,6 +55,25 @@ jobs:
           gcloud run deploy "${WORKER_SERVICE}" --project="${PROJECT_ID}" --region="${REGION}" --image="${image}" --quiet
           gcloud run deploy "${API_SERVICE}" --project="${PROJECT_ID}" --region="${REGION}" --image="${image}" --quiet
 
+          # A manual rollback pins Cloud Run traffic to a concrete revision. A
+          # later deploy does not clear that pin automatically, so explicitly
+          # restore the normal "latest revision" policy for both services.
+          for service in "${WORKER_SERVICE}" "${API_SERVICE}"; do
+            gcloud run services update-traffic "${service}" \
+              --project="${PROJECT_ID}" --region="${REGION}" --to-latest --quiet
+
+            latest_ready="$(gcloud run services describe "${service}" \
+              --project="${PROJECT_ID}" --region="${REGION}" \
+              --format='value(status.latestReadyRevisionName)')"
+            serving_revision="$(gcloud run services describe "${service}" \
+              --project="${PROJECT_ID}" --region="${REGION}" \
+              --format='value(status.traffic[0].revisionName)')"
+            if [[ -z "${latest_ready}" || "${serving_revision}" != "${latest_ready}" ]]; then
+              echo "${service} traffic is not serving its latest ready revision." >&2
+              exit 1
+            fi
+          done
+
       - name: Verify health and private OIDC delivery
         shell: bash
         run: |

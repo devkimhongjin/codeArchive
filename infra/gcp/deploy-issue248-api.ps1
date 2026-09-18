@@ -193,6 +193,14 @@ Invoke-Gcloud -Arguments @(
     "--update-env-vars=GITHUB_REDIRECT_URI=$redirectUri", '--quiet'
 ) | Out-Null
 
+# Rollback drills pin traffic to a concrete revision. Explicitly restore the
+# normal latest-revision policy so this deployment cannot leave a fresh image
+# or configuration revision idle behind that pin.
+Invoke-Gcloud -Arguments @(
+    'run', 'services', 'update-traffic', $Service,
+    "--project=$ProjectId", "--region=$Region", '--to-latest', '--quiet'
+) | Out-Null
+
 $readyRevision = (Invoke-Gcloud -Arguments @(
     'run', 'services', 'describe', $Service,
     "--project=$ProjectId", "--region=$Region", '--format=value(status.latestReadyRevisionName)'
