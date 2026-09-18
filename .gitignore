@@ -9,6 +9,7 @@ coverage/
 .env
 .env.local
 .env.*.local
+gha-creds-*.json
 apps/api/config/application-local.properties
 
 # Logs
