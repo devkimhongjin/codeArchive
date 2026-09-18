@@ -1,7 +1,7 @@
 import { isCaptureRecord, isUuid } from "./capture";
 import { DashboardBridge } from "./bridge";
 import { IndexedDbCaptureStore } from "./storage";
-import { loadPopupLocalState, prepareCaptureDownload, storeCaptureLocalFirst } from "./backgroundActions";
+import { loadPopupLocalState, prepareCaptureDownload, retryRelayConnection, storeCaptureLocalFirst } from "./backgroundActions";
 import { exportCode } from "./export";
 import { fetchGithubCommitStatuses, recordRelayAttempt, relayCapture, revokeRelay } from "./relay";
 import {
@@ -46,20 +46,22 @@ async function drainRelay(): Promise<void> {
 let relayDrainPromise: Promise<void> | null = null;
 let relayDrainRequested = false;
 
-function requestRelayDrain(): void {
+function requestRelayDrain(): Promise<void> {
   relayDrainRequested = true;
-  if (relayDrainPromise) return;
-  relayDrainPromise = (async () => {
-    do {
-      relayDrainRequested = false;
-      await drainRelay();
-    } while (relayDrainRequested);
-  })()
-    .catch(() => undefined)
-    .finally(() => {
-      relayDrainPromise = null;
-      if (relayDrainRequested) requestRelayDrain();
-    });
+  if (!relayDrainPromise) {
+    relayDrainPromise = (async () => {
+      do {
+        relayDrainRequested = false;
+        await drainRelay();
+      } while (relayDrainRequested);
+    })()
+      .catch(() => undefined)
+      .finally(() => {
+        relayDrainPromise = null;
+        if (relayDrainRequested) void requestRelayDrain();
+      });
+  }
+  return relayDrainPromise;
 }
 
 async function autoDownloadCapture(capture: Parameters<typeof store.putCapture>[0]): Promise<void> {
@@ -86,6 +88,7 @@ requestRelayDrain();
 type InternalMessage =
   | { type: "STORE_CAPTURE"; capture: unknown }
   | { type: "GET_POPUP_STATE" }
+  | { type: "RETRY_RELAY" }
   | { type: "GET_GITHUB_COMMIT_STATUSES"; captureIds: unknown }
   | { type: "COPY_RECENT_CAPTURE"; captureId: string }
   | { type: "DOWNLOAD_RECENT_CAPTURE"; captureId: string }
@@ -147,6 +150,17 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     void loadPopupLocalState(store)
       .then(sendResponse)
       .catch(() => sendResponse({ pendingCount: 0, settings: null, recentCaptures: [], error: "STORAGE_ERROR" }));
+    return true;
+  }
+
+  if (object.type === "RETRY_RELAY") {
+    if (!isPopupSender(sender)) {
+      sendResponse({ ok: false, error: "UNAUTHORIZED" });
+      return false;
+    }
+    void retryRelayConnection(store, requestRelayDrain)
+      .then(sendResponse)
+      .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;
   }
 

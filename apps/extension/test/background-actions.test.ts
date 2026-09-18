@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadPopupLocalState, prepareCaptureDownload, storeCaptureLocalFirst } from "../src/backgroundActions";
+import { loadPopupLocalState, prepareCaptureDownload, retryRelayConnection, storeCaptureLocalFirst } from "../src/backgroundActions";
 import { createCapture } from "../src/capture";
 import { MemoryCaptureStore } from "../src/storage";
 
@@ -75,4 +75,39 @@ test("automatic download preparation reuses profile, header and language extensi
   assert.ok(prepared);
   assert.equal(prepared.filename, "Solution_1234_홍길동.py");
   assert.match(prepared.url, /^data:application\/octet-stream;base64,/);
+});
+
+test("manual relay retry drains pending captures without clearing automation preferences", async () => {
+  const store = new MemoryCaptureStore();
+  await store.putCapture(capture());
+  await store.putCapture(capture("22222222-2222-4222-8222-222222222222"));
+  await store.updateSettings({
+    autoSyncEnabled: true,
+    githubAutoCommitEnabled: true,
+    githubTargetConfigured: true,
+    relay: { endpoint: "/api/relay/captures", secret: "opaque", accountId: "7", generation: 1, status: "RELAY_ERROR" }
+  });
+  let drains = 0;
+
+  const result = await retryRelayConnection(store, async () => {
+    drains += 1;
+    const pending = await store.listPending([], 50);
+    await store.markSynced(pending.map(item => item.captureId));
+    const current = await store.getSettings();
+    await store.mutateRelayIfCurrent(current.relay!, settings => ({ ...settings, relay: { ...current.relay!, status: "CONFIRMED" } }));
+  });
+
+  assert.deepEqual(result, { ok: true, status: "CONFIRMED", pendingCount: 0 });
+  assert.equal(drains, 1);
+  const settings = await store.getSettings();
+  assert.equal(settings.autoSyncEnabled, true);
+  assert.equal(settings.githubAutoCommitEnabled, true);
+});
+
+test("manual relay retry does not enable an automation preference that is off", async () => {
+  const store = new MemoryCaptureStore();
+  let drains = 0;
+  const result = await retryRelayConnection(store, async () => { drains += 1; });
+  assert.deepEqual(result, { ok: false, status: null, pendingCount: 0, error: "AUTO_SYNC_OFF" });
+  assert.equal(drains, 0);
 });

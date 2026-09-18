@@ -17,6 +17,13 @@ export interface PreparedDownload {
   url: string;
 }
 
+export interface RelayRetryResult {
+  ok: boolean;
+  status: string | null;
+  pendingCount: number;
+  error?: "AUTO_SYNC_OFF" | "RELAY_UNAVAILABLE";
+}
+
 /** Builds one browser download request from the same rules as the manual action. */
 export function prepareCaptureDownload(capture: Capture, settings: CaptureSettings): PreparedDownload | null {
   const filename = downloadFilename(capture, settings.downloadFilenameTemplate, {
@@ -63,4 +70,25 @@ export async function loadPopupLocalState(
     settings,
     recentCaptures: recentCaptures.map(({ sourceCode: _sourceCode, ...preview }) => preview)
   };
+}
+
+/**
+ * Reuses the durable relay grant and waits for the requested drain so the popup
+ * can report the resulting local queue state. User preferences are never
+ * cleared merely because the transport is temporarily unavailable.
+ */
+export async function retryRelayConnection(
+  store: Pick<CaptureStore, "getSettings" | "countPending">,
+  requestDrain: () => Promise<void>
+): Promise<RelayRetryResult> {
+  const before = await store.getSettings();
+  if (!before.autoSyncEnabled) {
+    return { ok: false, status: before.relay?.status ?? null, pendingCount: await store.countPending(), error: "AUTO_SYNC_OFF" };
+  }
+  if (!before.relay || !["CONFIRMED", "OFFLINE", "RELAY_ERROR"].includes(before.relay.status)) {
+    return { ok: false, status: before.relay?.status ?? null, pendingCount: await store.countPending(), error: "RELAY_UNAVAILABLE" };
+  }
+  await requestDrain();
+  const [after, pendingCount] = await Promise.all([store.getSettings(), store.countPending()]);
+  return { ok: after.relay?.status === "CONFIRMED", status: after.relay?.status ?? null, pendingCount };
 }

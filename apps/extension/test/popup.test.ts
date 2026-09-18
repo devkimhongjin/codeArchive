@@ -142,3 +142,57 @@ test('popup keeps automatic download as an independent device-local toggle', asy
 
   assert.deepEqual(patches, [{ autoDownloadEnabled: true }]);
 });
+
+test('popup pauses remote automation during relay errors and retries the pending drain once', async () => {
+  const { document } = parseHTML(html);
+  let state = {
+    pendingCount: 2,
+    settings: {
+      autoDownloadEnabled: true,
+      autoSyncEnabled: true,
+      githubAutoCommitEnabled: true,
+      githubTargetConfigured: true,
+      relay: { status: 'RELAY_ERROR' }
+    },
+    recentCaptures: []
+  };
+  let retryCalls = 0;
+  let finishRetry!: () => void;
+  mountPopup(document, {
+    copy: async () => {},
+    load: async () => state,
+    retryRelay: () => {
+      retryCalls += 1;
+      return new Promise<void>(resolve => { finishRetry = resolve; });
+    }
+  });
+  await settle();
+
+  const autoDownload = document.querySelector('#auto-download') as HTMLInputElement;
+  const autoSync = document.querySelector('#auto-sync') as HTMLInputElement;
+  const githubAuto = document.querySelector('#github-auto') as HTMLInputElement;
+  const retry = document.querySelector('#retry-relay') as HTMLButtonElement;
+  assert.equal(autoDownload.checked, true);
+  assert.equal(autoDownload.disabled, false);
+  assert.equal(autoSync.checked, false);
+  assert.equal(autoSync.disabled, true);
+  assert.equal(githubAuto.checked, false);
+  assert.equal(githubAuto.disabled, true);
+  assert.equal(retry.hidden, false);
+  assert.match(document.querySelector('#automation-help')!.textContent!, /대기 중인 풀이를 즉시 전송/);
+
+  retry.click();
+  retry.click();
+  assert.equal(retryCalls, 1);
+  assert.equal(retry.disabled, true);
+  state = { ...state, pendingCount: 0, settings: { ...state.settings, relay: { status: 'CONFIRMED' } } };
+  finishRetry();
+  await settle();
+  await settle();
+
+  assert.equal(document.querySelector('#automation-status')!.textContent, '연결 확인됨');
+  assert.equal((document.querySelector('#auto-sync') as HTMLInputElement).checked, true);
+  assert.equal((document.querySelector('#github-auto') as HTMLInputElement).checked, true);
+  assert.equal((document.querySelector('#retry-relay') as HTMLButtonElement).hidden, true);
+  assert.equal(document.querySelector('#pending-count')!.textContent, '0');
+});
