@@ -39,6 +39,7 @@ const capture = {
   sourceCode: 'console.log(1234)',
   result: 'ACCEPTED' as const,
 }
+const secondCapture = { ...capture, captureId: 'capture-2', problemNumber: '5678', title: '두 번째 풀이', sourceCode: 'console.log(5678)' }
 const liveSettings = {
   version: 4, name: '연결 사용자', nickname: null, copyHeader: false, downloadHeader: false,
   downloadFilenameTemplate: '{platform}-{number}-{title}', gitPathTemplate: '{platform}/{number}-{title}', githubCommitMessageTemplate: 'Add {platform} {number} solution',
@@ -206,7 +207,7 @@ it('keeps a manual live refresh read-only when its solution list fails after set
   render(<App />)
   await waitFor(() => expect(bridgeCalls('GET_LOCAL_ARCHIVE')).toHaveLength(1))
   await waitFor(() => expect(mocks.settings).toHaveBeenCalledOnce())
-  fireEvent.click(screen.getByRole('button', { name: '라이브 연결 새로고침' }))
+  fireEvent.click(screen.getByRole('button', { name: '서버 연결 새로고침' }))
   await waitFor(() => expect(screen.queryAllByText('solution-list outage').length).toBeGreaterThan(0))
   expect(mocks.grant).not.toHaveBeenCalled()
   expect(bridgeCalls('CONFIGURE_RELAY').filter(([, message]) => (message as { relay?: unknown }).relay !== null)).toHaveLength(0)
@@ -227,4 +228,75 @@ it('persists an offline inline code-view theme and seeds the next local archive 
   render(<App />)
   await screen.findAllByText('테스트 풀이')
   expect((screen.getByLabelText('밝은 테마') as HTMLSelectElement).value).toBe('vitesse-light')
+})
+
+it('shows a read-only local pending count without issuing captures for upload', async () => {
+  mocks.me.mockRejectedValue(new Error('not signed in'))
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => {
+    if (message.type === 'CONNECT') return Promise.resolve({ capability: 'status-capability' })
+    if (message.type === 'GET_STATUS') return Promise.resolve({ pendingCount: 2 })
+    if (message.type === 'GET_LOCAL_ARCHIVE') return Promise.resolve({ captures: [], localOnly: true })
+    return Promise.resolve({ ok: true })
+  })
+
+  render(<App />)
+  await waitFor(() => expect(document.querySelector('.sync-count')?.textContent).toBe('2'))
+  expect(screen.getByText('확장 프로그램 연결 완료')).toBeTruthy()
+  expect(screen.getByText('로컬 대기 풀이 2개')).toBeTruthy()
+  expect(bridgeCalls('GET_PENDING')).toHaveLength(0)
+})
+
+it('separates an unavailable extension from signed-out server state', async () => {
+  mocks.me.mockRejectedValue(new Error('not signed in'))
+  mocks.bridge.mockRejectedValue(new Error('extension unavailable'))
+
+  render(<App />)
+  await waitFor(() => expect(bridgeCalls('CONNECT').length).toBeGreaterThan(0))
+  expect(screen.getByText('확장 프로그램 연결 끊김')).toBeTruthy()
+  expect(screen.getByText('GitHub 로그인 전')).toBeTruthy()
+  expect(screen.getByText('로컬 보관함')).toBeTruthy()
+  expect(document.querySelector('.sync-count')?.textContent).toBe('—')
+})
+
+it('refreshes the exact remaining count and exposes a partial sync result', async () => {
+  mocks.me.mockResolvedValue(user)
+  mocks.list.mockResolvedValue([])
+  mocks.bulk.mockResolvedValue({ acceptedCaptureIds: ['capture-1'], failures: [{ captureId: 'capture-2', message: 'retry' }] })
+  let statusReads = 0
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => {
+    if (message.type === 'CONNECT') return Promise.resolve({ capability: 'partial-capability' })
+    if (message.type === 'GET_STATUS') return Promise.resolve({ pendingCount: statusReads++ === 0 ? 2 : 1 })
+    if (message.type === 'GET_PENDING') return Promise.resolve({ captures: [capture, secondCapture] })
+    return Promise.resolve({ ok: true })
+  })
+
+  await openConnectedSettings()
+  await waitFor(() => expect(document.querySelector('.sync-count')?.textContent).toBe('2'))
+  fireEvent.click(screen.getByRole('button', { name: '동기화' }))
+  await waitFor(() => expect(bridgeCalls('ACK')).toHaveLength(1))
+  await waitFor(() => expect(document.querySelector('.sync-count')?.textContent).toBe('1'))
+  expect(screen.getByText(/일부 항목은 다시 시도/)).toBeTruthy()
+  expect(mocks.bulk).toHaveBeenCalledOnce()
+})
+
+it('blocks duplicate sync clicks while one upload is in flight', async () => {
+  mocks.me.mockResolvedValue(user)
+  mocks.list.mockResolvedValue([])
+  let finishUpload!: (value: { acceptedCaptureIds: string[]; failures: never[] }) => void
+  mocks.bulk.mockReturnValue(new Promise(resolve => { finishUpload = resolve }))
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => {
+    if (message.type === 'CONNECT') return Promise.resolve({ capability: 'single-flight-capability' })
+    if (message.type === 'GET_STATUS') return Promise.resolve({ pendingCount: 1 })
+    if (message.type === 'GET_PENDING') return Promise.resolve({ captures: [capture] })
+    return Promise.resolve({ ok: true })
+  })
+
+  await openConnectedSettings()
+  const sync = screen.getByRole('button', { name: '동기화' })
+  fireEvent.click(sync)
+  fireEvent.click(sync)
+  await waitFor(() => expect(mocks.bulk).toHaveBeenCalledOnce())
+  expect(bridgeCalls('GET_PENDING')).toHaveLength(1)
+  finishUpload({ acceptedCaptureIds: ['capture-1'], failures: [] })
+  await waitFor(() => expect(bridgeCalls('ACK')).toHaveLength(1))
 })

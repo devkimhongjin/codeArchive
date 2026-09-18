@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BridgeError, parseAckResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
+import { BridgeError, parseAckResponse, parseBridgeStatusResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
 import { requestIsCurrent } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
 
@@ -53,5 +53,14 @@ describe('extension bridge contract', () => {
     resolveList(['private-old-record'])
     await pendingCommit
     expect(committed).toEqual([])
+  })
+})
+
+describe('bridge status response', () => {
+  it('accepts only a non-negative safe pending count', () => {
+    expect(parseBridgeStatusResponse({ pendingCount: 3 })).toEqual({ pendingCount: 3 })
+    expect(() => parseBridgeStatusResponse({ pendingCount: -1 })).toThrow()
+    expect(() => parseBridgeStatusResponse({ pendingCount: 1.5 })).toThrow()
+    expect(() => parseBridgeStatusResponse({ pendingCount: '3' })).toThrow()
   })
 })

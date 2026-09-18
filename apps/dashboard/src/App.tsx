@@ -21,7 +21,7 @@ import {
   X,
 } from 'lucide-react'
 import { ApiError, bulkUpload, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories } from './api'
-import { BridgeError, parseAckResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
+import { BridgeError, parseAckResponse, parseBridgeStatusResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
 import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type BulkResponse, type Solution, type Toast, type User, type ViewName } from './types'
@@ -239,6 +239,9 @@ export default function App() {
   const [settingsError, setSettingsError] = useState<string | null>(null)
   const [bridgeStatus, setBridgeStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
   const [bridgeCapability, setBridgeCapability] = useState<string | null>(null)
+  const [pendingCount, setPendingCount] = useState<number | null>(null)
+  const [pendingCountState, setPendingCountState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [lastSyncState, setLastSyncState] = useState<'idle' | 'success' | 'partial' | 'failed'>('idle')
   const [syncing, setSyncing] = useState(false)
   const toastId = useRef(0)
   const accountGeneration = useRef(0)
@@ -500,6 +503,28 @@ export default function App() {
     setMobileNavOpen(false)
   }
 
+  const refreshPendingCount = async (
+    capability = bridgeCapabilityRef.current,
+    candidate = currentExtensionId.current,
+    showLoading = false,
+  ) => {
+    if (!capability) {
+      setPendingCountState('idle')
+      return null
+    }
+    if (showLoading) setPendingCountState('loading')
+    try {
+      const { pendingCount: nextCount } = parseBridgeStatusResponse(await requestBridge(candidate, { type: 'GET_STATUS', capability }))
+      if (capability !== bridgeCapabilityRef.current || candidate !== currentExtensionId.current) return null
+      setPendingCount(nextCount)
+      setPendingCountState('ready')
+      return nextCount
+    } catch {
+      if (capability === bridgeCapabilityRef.current && candidate === currentExtensionId.current) setPendingCountState('error')
+      return null
+    }
+  }
+
   const connectLive = async () => {
     if (authMutationInFlight.current !== null) return
     let fence: RequestFence = { generation: accountGeneration.current, operation: ++solutionOperation.current }
@@ -526,7 +551,7 @@ export default function App() {
       setMode('live')
       setSolutions(remote)
       setSelectedId(remote[0]?.captureId ?? '')
-      showToast('success', '라이브 아카이브에 연결했습니다.')
+      showToast('success', '서버 아카이브에 연결했습니다.')
     } catch (error) {
       if (!requestIsCurrent(fence, accountGeneration.current, solutionOperation.current)) return
       if (error instanceof ApiError && error.status === 401) {
@@ -655,6 +680,7 @@ export default function App() {
     connectInFlight.current = true
     const fence: RequestFence = { generation: accountGeneration.current, operation: ++bridgeOperation.current }
     setBridgeStatus('connecting')
+    setPendingCountState('loading')
     const oldCapability = bridgeCapabilityRef.current
     const oldId = currentExtensionId.current
     bridgeCapabilityRef.current = null
@@ -674,6 +700,7 @@ export default function App() {
           bridgeCapabilityRef.current = capability
           setBridgeCapability(capability)
           setBridgeStatus('connected')
+          void refreshPendingCount(capability, candidate, true)
           // A capability is bound to this dashboard document by the extension.
           // This is a read-only fallback, never an upload or ACK authority.
           if (!user || modeRef.current === 'local') {
@@ -697,6 +724,7 @@ export default function App() {
       }
       if (requestIsCurrent(fence, accountGeneration.current, bridgeOperation.current)) {
         setBridgeStatus('disconnected')
+        setPendingCountState('idle')
         if (!silent) showToast('error', '확장 프로그램을 찾지 못했습니다. 설치 후 다시 시도해 주세요.')
       }
       return false
@@ -713,12 +741,16 @@ export default function App() {
       const capability = bridgeCapabilityRef.current
       const operation = bridgeOperation.current
       if (capability && currentExtensionId.current === EXTENSION_ID && !syncInFlight.current && authMutationInFlight.current === null) {
-        try { parseAckResponse(await requestBridge(EXTENSION_ID, { type: 'PING', capability })) }
+        try {
+          parseAckResponse(await requestBridge(EXTENSION_ID, { type: 'PING', capability }))
+          void refreshPendingCount(capability, EXTENSION_ID)
+        }
         catch {
           if (active && operation === bridgeOperation.current && capability === bridgeCapabilityRef.current) {
             bridgeCapabilityRef.current = null
             setBridgeCapability(null)
             setBridgeStatus('disconnected')
+            setPendingCountState('idle')
           }
         }
       }
@@ -735,6 +767,7 @@ export default function App() {
       bridgeCapabilityRef.current = null
       setBridgeCapability(null)
       setBridgeStatus('disconnected')
+      setPendingCountState('idle')
       if (capability) void requestBridge(currentExtensionId.current, { type: 'DISCONNECT', capability }).catch(() => undefined)
     }
   }, [user?.githubId, authResolved, autoConnect, mode])
@@ -877,6 +910,7 @@ export default function App() {
     let syncExtensionId = currentExtensionId.current
     syncInFlight.current = true
     setSyncing(true)
+    setLastSyncState('idle')
     let syncContext: SyncBridgeContext | null = null
     let needsFreshCapability = false
     try {
@@ -965,6 +999,9 @@ export default function App() {
         return
       }
       if (!captures.length) {
+        setPendingCount(0)
+        setPendingCountState('ready')
+        setLastSyncState('success')
         showToast('info', '새로 가져올 풀이가 없습니다.')
         return
       }
@@ -995,6 +1032,8 @@ export default function App() {
         showToast('info', '계정 또는 브리지 상태가 바뀌어 동기화를 중단했습니다.')
         return
       }
+      await refreshPendingCount(syncCapability, syncExtensionId)
+      setLastSyncState(failedCount ? 'partial' : 'success')
       await refreshSolutions(syncGeneration, latestUser.githubId)
       const pageHint = captures.length === 50 ? ' 다음 50개는 다시 동기화해 주세요.' : ''
       showToast(
@@ -1003,6 +1042,8 @@ export default function App() {
       )
     } catch (error) {
       if (syncContext) needsFreshCapability = true
+      setLastSyncState('failed')
+      if (syncContext) await refreshPendingCount(syncContext.capability, syncContext.extensionId)
       showToast('error', error instanceof Error ? error.message : '동기화에 실패했습니다.')
     } finally {
       if (needsFreshCapability && syncContext) {
@@ -1042,6 +1083,30 @@ export default function App() {
     showToast('success', '소스 파일을 다운로드했습니다.')
   }
 
+  const pendingBadge = syncing
+    ? (pendingCount ?? '…')
+    : pendingCountState === 'loading'
+      ? '…'
+      : lastSyncState === 'partial' && pendingCountState === 'ready'
+      ? pendingCount
+      : bridgeStatus === 'connected' && pendingCountState === 'ready'
+      ? pendingCount
+      : bridgeStatus === 'connected' && pendingCountState === 'error' ? '?' : '—'
+  const pendingDescription = syncing
+    ? '로컬 대기 풀이를 서버로 전송 중'
+    : lastSyncState === 'partial' ? `${pendingCount ?? '일부'}개 대기 · 일부 항목은 다시 시도해 주세요.`
+      : lastSyncState === 'failed' ? '마지막 동기화에 실패했습니다. 다시 시도해 주세요.'
+        : pendingCountState === 'loading' ? '로컬 대기 건수를 확인하고 있습니다.'
+          : pendingCountState === 'error' ? '로컬 대기 건수를 확인하지 못했습니다.'
+            : pendingCountState === 'ready' ? `로컬 대기 풀이 ${pendingCount ?? 0}개`
+              : '확장 프로그램이 연결되면 로컬 대기 건수를 확인합니다.'
+  const extensionStatusLabel = bridgeStatus === 'connected'
+    ? '확장 프로그램 연결 완료'
+    : bridgeStatus === 'connecting' ? '확장 프로그램 연결 중' : '확장 프로그램 연결 끊김'
+  const serverStatusLabel = mode === 'live' && user
+    ? `서버 연결 완료 · ${displayUser(user)}`
+    : user ? '서버 연결 오류' : 'GitHub 로그인 전'
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -1068,9 +1133,17 @@ export default function App() {
             </button>
           </nav>
           <div className="topbar-actions">
-            <button className={`sync-button ${syncing ? 'is-loading' : ''}`} onClick={() => void syncPending()} disabled={syncing}>
+            <button
+              className={`sync-button ${syncing ? 'is-loading' : ''} ${lastSyncState === 'partial' || lastSyncState === 'failed' ? 'has-warning' : ''}`}
+              onClick={() => void syncPending()}
+              disabled={syncing}
+              aria-label="동기화"
+              aria-describedby="pending-sync-help"
+              title="로컬 대기 풀이를 서버로 전송"
+            >
               <Icon name="sync" size={16} />
               <span>{syncing ? '동기화 중' : '동기화'}</span>
+              <b className="sync-count" aria-hidden="true">{pendingBadge}</b>
             </button>
             {user ? (
               <div className="account-menu">
@@ -1090,25 +1163,21 @@ export default function App() {
       </header>
 
       <main className="page-content">
-        {mode === 'local' && (
-          <section className="demo-banner" role="status">
-            <div className="demo-banner-icon"><Icon name="spark" size={17} /></div>
-            <div className="demo-banner-copy">
-              <strong>로컬 보관함</strong>
-              <span>로그인하거나 서버 연결이 복구되면 내 아카이브를 불러옵니다. 로컬 기록은 자동으로 업로드되지 않습니다.</span>
-            </div>
-            <button className="banner-action" onClick={() => navigateSameTab(GITHUB_LOGIN_URL)}>GitHub로 로그인 <Icon name="github" size={14} /></button>
-            <button className="banner-refresh" onClick={() => void connectLive()} disabled={loading} aria-label="라이브 연결 새로고침">
-              <Icon name="refresh" size={16} />
-            </button>
-          </section>
-        )}
-        {mode === 'live' && user && (
-          <section className="live-banner" role="status">
-            <span className="live-dot" /> <strong>라이브 아카이브</strong><span>{displayUser(user)}</span>
-            <button onClick={() => void refreshSolutions(undefined, user.githubId)} disabled={loading}><Icon name="refresh" size={14} /> 새로고침</button>
-          </section>
-        )}
+        <section className={`connection-banner is-${bridgeStatus}`} role="status">
+          <div className="connection-icon"><Icon name={bridgeStatus === 'connected' ? 'check' : bridgeStatus === 'connecting' ? 'sync' : 'link'} size={17} /></div>
+          <div className="connection-copy">
+            <strong>{extensionStatusLabel}</strong>
+            <span>{serverStatusLabel}</span>
+            {mode === 'local' && <em>로컬 보관함</em>}
+            <small id="pending-sync-help">{pendingDescription}</small>
+          </div>
+          <div className="connection-actions">
+            {mode === 'local' && !user && <button className="banner-action" onClick={() => navigateSameTab(GITHUB_LOGIN_URL)}>GitHub로 로그인 <Icon name="github" size={14} /></button>}
+            {mode === 'local' && <button className="banner-secondary" onClick={() => void connectLive()} disabled={loading}><Icon name="refresh" size={14} /> 서버 연결 새로고침</button>}
+            {bridgeStatus === 'disconnected' && <button className="banner-secondary" onClick={() => void connectBridge()} disabled={loading}>확장 재연결</button>}
+            {mode === 'live' && user && <button className="server-refresh" onClick={() => void refreshSolutions(undefined, user.githubId)} disabled={loading} title="서버 아카이브 목록을 다시 읽습니다."><Icon name="refresh" size={14} /> 서버 목록 새로고침</button>}
+          </div>
+        </section>
         {loadError && (
           <section className="load-error" role="alert"><Icon name="close" size={17} /><span>{loadError}</span><button onClick={() => setLoadError(null)} aria-label="오류 닫기"><Icon name="close" size={15} /></button></section>
         )}

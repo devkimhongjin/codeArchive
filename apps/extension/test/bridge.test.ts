@@ -74,6 +74,17 @@ test("bridge pages pending records, binds capability to document/tab, and ACKs o
   const connected = await bridge.handleMessage({ type: "CONNECT" }, dashboard);
   assert.ok("capability" in connected);
 
+  const status = await bridge.handleMessage(
+    { type: "GET_STATUS", capability: connected.capability },
+    dashboard
+  );
+  assert.deepEqual(status, { pendingCount: 3 });
+  const statusDidNotIssue = await bridge.handleMessage(
+    { type: "ACK", capability: connected.capability, captureIds: [first.captureId] },
+    dashboard
+  );
+  assert.deepEqual(statusDidNotIssue, { error: "BAD_REQUEST" });
+
   const pageOne = await bridge.handleMessage(
     { type: "GET_PENDING", capability: connected.capability, limit: 2 },
     dashboard
