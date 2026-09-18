@@ -1,6 +1,7 @@
 package com.codearchive.api.solution;
 
 import com.codearchive.api.common.ApiError;
+import com.codearchive.api.common.SafeFailureLogger;
 import com.codearchive.api.auth.GithubAuthentication;
 import com.codearchive.api.auth.GithubIdentity;
 import com.codearchive.api.automation.GithubAutomationService;
@@ -20,10 +21,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @RestController
 @RequestMapping("/api/solutions")
 public class SolutionController {
+    private static final Logger LOGGER = LoggerFactory.getLogger(SolutionController.class);
 
     private final ObjectMapper objectMapper;
     private final SolutionService solutionService;
@@ -91,6 +95,11 @@ public class SolutionController {
             } catch (CaptureValidationException exception) {
                 failures.add(new CaptureFailure(rawCaptureId, exception.getMessage()));
             } catch (Exception exception) {
+                if (exception instanceof DataIntegrityViolationException) {
+                    SafeFailureLogger.databaseConstraint(LOGGER, rawCaptureId);
+                } else {
+                    SafeFailureLogger.unexpectedProcessingFailure(LOGGER, rawCaptureId);
+                }
                 failures.add(new CaptureFailure(rawCaptureId, "Capture could not be saved"));
             }
         }

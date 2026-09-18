@@ -34,3 +34,11 @@ management:
   endpoint:
     health:
       show-details: never
+
+# Hibernate includes PostgreSQL's full "Failing row contains (...)" detail in
+# this logger. A solutions row contains user source code, so production must
+# never emit the vendor exception text. Application-owned failure logs use a
+# fixed error code and request correlation only.
+logging:
+  level:
+    org.hibernate.engine.jdbc.spi.SqlExceptionHelper: "OFF"
