@@ -33,6 +33,7 @@ import './styles.css'
 import { canonicalLanguageDisplayName, canonicalLanguageKey } from '../../../shared/language'
 import { filterAndSortSolutions, groupSolutions, type SolutionGroup, type SolutionSort } from './solutionQuery'
 import { BUILD_METADATA, buildLabel, updatedLabel } from '../../../shared/buildMetadata'
+import { EXTENSION_RELEASE, fetchLatestExtensionRelease, isVersionAtLeast, type ExtensionReleaseInfo } from './extensionRelease'
 
 type IconName =
   | 'book'
@@ -239,6 +240,7 @@ export default function App() {
   const [settingsError, setSettingsError] = useState<string | null>(null)
   const [bridgeStatus, setBridgeStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
   const [bridgeCapability, setBridgeCapability] = useState<string | null>(null)
+  const [extensionVersion, setExtensionVersion] = useState<string | null>(null)
   const [pendingCount, setPendingCount] = useState<number | null>(null)
   const [pendingCountState, setPendingCountState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [lastSyncState, setLastSyncState] = useState<'idle' | 'success' | 'partial' | 'failed'>('idle')
@@ -604,6 +606,7 @@ export default function App() {
     // older reset clear the newer connection when its request completes.
     if (bridgeOperation.current !== resetOperation) return
     setBridgeStatus('disconnected')
+    setExtensionVersion(null)
     bridgeCapabilityRef.current = null
     setBridgeCapability(null)
   }
@@ -681,6 +684,7 @@ export default function App() {
     const fence: RequestFence = { generation: accountGeneration.current, operation: ++bridgeOperation.current }
     setBridgeStatus('connecting')
     setPendingCountState('loading')
+    setExtensionVersion(null)
     const oldCapability = bridgeCapabilityRef.current
     const oldId = currentExtensionId.current
     bridgeCapabilityRef.current = null
@@ -690,7 +694,7 @@ export default function App() {
       for (const candidate of legacyOnly ? [LEGACY_EXTENSION_ID] : EXTENSION_CANDIDATES) {
         if (!requestIsCurrent(fence, accountGeneration.current, bridgeOperation.current)) return false
         try {
-          const { capability } = parseConnectResponse(await requestBridge(candidate, { type: 'CONNECT' }))
+          const { capability, version } = parseConnectResponse(await requestBridge(candidate, { type: 'CONNECT' }))
           if (!requestIsCurrent(fence, accountGeneration.current, bridgeOperation.current)) {
             await requestBridge(candidate, { type: 'DISCONNECT', capability }).catch(() => undefined)
             return false
@@ -700,6 +704,7 @@ export default function App() {
           bridgeCapabilityRef.current = capability
           setBridgeCapability(capability)
           setBridgeStatus('connected')
+          setExtensionVersion(version)
           void refreshPendingCount(capability, candidate, true)
           // A capability is bound to this dashboard document by the extension.
           // This is a read-only fallback, never an upload or ACK authority.
@@ -725,6 +730,7 @@ export default function App() {
       if (requestIsCurrent(fence, accountGeneration.current, bridgeOperation.current)) {
         setBridgeStatus('disconnected')
         setPendingCountState('idle')
+        setExtensionVersion(null)
         if (!silent) showToast('error', '확장 프로그램을 찾지 못했습니다. 설치 후 다시 시도해 주세요.')
       }
       return false
@@ -751,6 +757,7 @@ export default function App() {
             setBridgeCapability(null)
             setBridgeStatus('disconnected')
             setPendingCountState('idle')
+            setExtensionVersion(null)
           }
         }
       }
@@ -768,6 +775,7 @@ export default function App() {
       setBridgeCapability(null)
       setBridgeStatus('disconnected')
       setPendingCountState('idle')
+      setExtensionVersion(null)
       if (capability) void requestBridge(currentExtensionId.current, { type: 'DISCONNECT', capability }).catch(() => undefined)
     }
   }, [user?.githubId, authResolved, autoConnect, mode])
@@ -1101,8 +1109,11 @@ export default function App() {
             : pendingCountState === 'ready' ? `로컬 대기 풀이 ${pendingCount ?? 0}개`
               : '확장 프로그램이 연결되면 로컬 대기 건수를 확인합니다.'
   const extensionStatusLabel = bridgeStatus === 'connected'
-    ? '확장 프로그램 연결 완료'
+    ? extensionVersion && !isVersionAtLeast(extensionVersion, EXTENSION_RELEASE.minimumExtensionVersion)
+      ? `확장 프로그램 업데이트 필요 · v${extensionVersion}`
+      : extensionVersion ? `확장 프로그램 연결 완료 · v${extensionVersion}` : '확장 프로그램 연결 완료 · 버전 확인 불가'
     : bridgeStatus === 'connecting' ? '확장 프로그램 연결 중' : '확장 프로그램 연결 끊김'
+  const extensionUpdateRequired = bridgeStatus === 'connected' && extensionVersion !== null && !isVersionAtLeast(extensionVersion, EXTENSION_RELEASE.minimumExtensionVersion)
   const serverStatusLabel = mode === 'live' && user
     ? `서버 연결 완료 · ${displayUser(user)}`
     : user ? '서버 연결 오류' : 'GitHub 로그인 전'
@@ -1163,7 +1174,7 @@ export default function App() {
       </header>
 
       <main className="page-content">
-        <section className={`connection-banner is-${bridgeStatus}`} role="status">
+        <section className={`connection-banner is-${bridgeStatus} ${extensionUpdateRequired ? 'needs-update' : ''}`} role="status">
           <div className="connection-icon"><Icon name={bridgeStatus === 'connected' ? 'check' : bridgeStatus === 'connecting' ? 'sync' : 'link'} size={17} /></div>
           <div className="connection-copy">
             <strong>{extensionStatusLabel}</strong>
@@ -1174,6 +1185,7 @@ export default function App() {
           <div className="connection-actions">
             {mode === 'local' && !user && <button className="banner-action" onClick={() => navigateSameTab(GITHUB_LOGIN_URL)}>GitHub로 로그인 <Icon name="github" size={14} /></button>}
             {mode === 'local' && <button className="banner-secondary" onClick={() => void connectLive()} disabled={loading}><Icon name="refresh" size={14} /> 서버 연결 새로고침</button>}
+            {extensionUpdateRequired && <button className="banner-secondary update-extension" onClick={() => changeView('guide')}>확장 업데이트</button>}
             {bridgeStatus === 'disconnected' && <button className="banner-secondary" onClick={() => void connectBridge()} disabled={loading}>확장 재연결</button>}
             {mode === 'live' && user && <button className="server-refresh" onClick={() => void refreshSolutions(undefined, user.githubId)} disabled={loading} title="서버 아카이브 목록을 다시 읽습니다."><Icon name="refresh" size={14} /> 서버 목록 새로고침</button>}
           </div>
@@ -1409,15 +1421,42 @@ function EmptyList({ mode }: { mode: 'local' | 'live' }) {
 }
 
 function GuideView({ onSettings }: { onSettings: () => void }) {
+  const [latestRelease, setLatestRelease] = useState<ExtensionReleaseInfo | null>(null)
+  const [releaseState, setReleaseState] = useState<'loading' | 'ready' | 'unavailable'>('loading')
+  useEffect(() => {
+    let active = true
+    void fetchLatestExtensionRelease()
+      .then((metadata) => { if (active) { setLatestRelease(metadata); setReleaseState('ready') } })
+      .catch(() => { if (active) setReleaseState('unavailable') })
+    return () => { active = false }
+  }, [])
+  const dashboardCompatible = latestRelease
+    ? isVersionAtLeast(BUILD_METADATA.version, latestRelease.compatibility.minimumDashboardVersion)
+    : false
   return (
     <section className="guide-page">
       <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> GET STARTED / BRIDGE</p><h1>연동 가이드</h1><p>Chrome 확장 프로그램에서 저장한 제출 기록을 CodeArchive로 가져옵니다.</p></div>
       <div className="guide-grid">
         <article className="guide-card guide-hero"><div className="guide-hero-icon"><Icon name="link" size={25} /></div><div><span className="card-kicker">CODEARCHIVE BRIDGE</span><h2>3분 안에 첫 풀이를 모아보세요</h2><p>자동 동기화가 꺼져 있으면 수동 동기화 때만 전송하고, 켜면 새 캡처를 안전한 릴레이로 전송합니다.</p></div><button className="primary-button" onClick={onSettings}>브리지 설정하기 <Icon name="chevron" size={14} /></button></article>
-        <GuideStep number="01" title="확장 프로그램 설치" text="CodeArchive Extension을 Chrome에 설치하고, SWEA 또는 프로그래머스 문제를 한 번 제출해 주세요." action="chrome://extensions" />
+        <article className="guide-card extension-release-card">
+          <div className="release-heading"><div><span className="card-kicker">BETA DISTRIBUTION</span><h2>검증된 확장 프로그램 받기</h2></div><span className={`release-state is-${releaseState}`}>{releaseState === 'loading' ? '확인 중' : releaseState === 'ready' ? `v${latestRelease?.version}` : '릴리스 준비 중'}</span></div>
+          <p>Chrome Web Store 출시 전에는 ZIP을 내려받아 개발자 모드에서 직접 로드합니다. 웹사이트가 확장을 자동 설치하거나 업데이트할 수는 없습니다.</p>
+          {latestRelease && <dl className="release-meta"><div><dt>업데이트</dt><dd>{latestRelease.releasedAt}</dd></div><div><dt>Chrome</dt><dd>v{latestRelease.minimumChromeVersion}+</dd></div><div><dt>확장 ID</dt><dd>{latestRelease.extensionId}</dd></div></dl>}
+          {latestRelease && <div className="release-checksum"><span>SHA-256</span><code>{latestRelease.artifact.sha256}</code></div>}
+          {latestRelease && !dashboardCompatible && <p className="release-warning">이 대시보드 버전과 호환되지 않습니다. 대시보드를 먼저 업데이트해 주세요.</p>}
+          <div className="release-actions">
+            {releaseState === 'ready' && dashboardCompatible && latestRelease
+              ? <a className="primary-button" href={latestRelease.downloadUrl}>확장 ZIP 다운로드 <Icon name="download" size={14} /></a>
+              : <span className="primary-button is-disabled" aria-disabled="true">{releaseState === 'loading' ? '릴리스 확인 중…' : '다운로드 준비 중'}</span>}
+            <a className="ghost-button" href={latestRelease?.releasePageUrl ?? EXTENSION_RELEASE.releaseHistoryUrl} target="_blank" rel="noreferrer">{latestRelease ? '릴리스 상세' : '모든 릴리스'} <Icon name="external" size={13} /></a>
+            {latestRelease && <a className="text-button checksum-link" href={latestRelease.checksumUrl}>체크섬 파일</a>}
+          </div>
+        </article>
+        <GuideStep number="01" title="압축 해제 후 로드" text="ZIP을 압축 해제하고 chrome://extensions에서 개발자 모드를 켠 뒤 ‘압축해제된 확장 프로그램을 로드합니다’를 선택하세요." action="chrome://extensions" />
         <GuideStep number="02" title="GitHub 로그인 · 자동 연결" text="로그인하면 설치된 CodeArchive에 자동 연결합니다. ID를 복사하거나 붙여 넣을 필요가 없습니다." action="연결 상태 확인" onAction={onSettings} />
         <GuideStep number="03" title="지금 동기화" text="동기화를 누르면 대기 중인 풀이를 가져옵니다. 서버가 저장한 항목만 확장 프로그램에서 확인 처리합니다." action="동기화 시작" onAction={onSettings} />
       </div>
+      <div className="guide-update-note"><Icon name="check" size={18} /><div><strong>업데이트할 때 로컬 풀이를 유지하려면</strong><p>확장을 삭제하지 말고 기존 압축 해제 폴더의 파일을 새 ZIP 내용으로 교체한 뒤 확장 관리 화면에서 ‘새로고침’을 누르세요. 고정된 확장 ID가 유지되므로 IndexedDB 로컬 기록도 그대로 사용합니다.</p></div></div>
       <div className="guide-contract"><div className="contract-icon"><Icon name="spark" size={18} /></div><div><strong>데이터 흐름을 확인하세요</strong><p>확장 프로그램 → 대기 중인 캡처 50개 → 서버의 일괄 검증 → 승인된 captureId만 ACK</p></div><span className="contract-badge">EXPLICIT SYNC</span></div>
     </section>
   )

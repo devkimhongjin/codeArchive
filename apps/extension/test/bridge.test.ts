@@ -73,6 +73,7 @@ test("bridge pages pending records, binds capability to document/tab, and ACKs o
   const dashboard = sender();
   const connected = await bridge.handleMessage({ type: "CONNECT" }, dashboard);
   assert.ok("capability" in connected);
+  assert.equal(connected.version, "dev");
 
   const status = await bridge.handleMessage(
     { type: "GET_STATUS", capability: connected.capability },

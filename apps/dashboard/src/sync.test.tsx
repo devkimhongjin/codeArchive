@@ -233,7 +233,7 @@ it('persists an offline inline code-view theme and seeds the next local archive 
 it('shows a read-only local pending count without issuing captures for upload', async () => {
   mocks.me.mockRejectedValue(new Error('not signed in'))
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => {
-    if (message.type === 'CONNECT') return Promise.resolve({ capability: 'status-capability' })
+    if (message.type === 'CONNECT') return Promise.resolve({ capability: 'status-capability', version: '0.2.0' })
     if (message.type === 'GET_STATUS') return Promise.resolve({ pendingCount: 2 })
     if (message.type === 'GET_LOCAL_ARCHIVE') return Promise.resolve({ captures: [], localOnly: true })
     return Promise.resolve({ ok: true })
@@ -241,7 +241,7 @@ it('shows a read-only local pending count without issuing captures for upload', 
 
   render(<App />)
   await waitFor(() => expect(document.querySelector('.sync-count')?.textContent).toBe('2'))
-  expect(screen.getByText('확장 프로그램 연결 완료')).toBeTruthy()
+  expect(screen.getByText('확장 프로그램 연결 완료 · v0.2.0')).toBeTruthy()
   expect(screen.getByText('로컬 대기 풀이 2개')).toBeTruthy()
   expect(bridgeCalls('GET_PENDING')).toHaveLength(0)
 })
@@ -256,6 +256,20 @@ it('separates an unavailable extension from signed-out server state', async () =
   expect(screen.getByText('GitHub 로그인 전')).toBeTruthy()
   expect(screen.getByText('로컬 보관함')).toBeTruthy()
   expect(document.querySelector('.sync-count')?.textContent).toBe('—')
+})
+
+it('shows an update action for a connected extension below the compatibility floor', async () => {
+  mocks.me.mockRejectedValue(new Error('not signed in'))
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => {
+    if (message.type === 'CONNECT') return Promise.resolve({ capability: 'old-version-capability', version: '0.1.9' })
+    if (message.type === 'GET_STATUS') return Promise.resolve({ pendingCount: 0 })
+    if (message.type === 'GET_LOCAL_ARCHIVE') return Promise.resolve({ captures: [], localOnly: true })
+    return Promise.resolve({ ok: true })
+  })
+
+  render(<App />)
+  expect(await screen.findByText('확장 프로그램 업데이트 필요 · v0.1.9')).toBeTruthy()
+  expect(screen.getByRole('button', { name: '확장 업데이트' })).toBeTruthy()
 })
 
 it('refreshes the exact remaining count and exposes a partial sync result', async () => {

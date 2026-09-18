@@ -12,7 +12,8 @@ describe('extension bridge contract', () => {
   it('requires a non-empty CONNECT capability', () => {
     expect(() => parseConnectResponse({})).toThrow(BridgeError)
     expect(() => parseConnectResponse({ capability: '' })).toThrow('capability')
-    expect(parseConnectResponse({ capability: 'cap-123' })).toEqual({ capability: 'cap-123' })
+    expect(parseConnectResponse({ capability: 'cap-123', version: '0.2.0' })).toEqual({ capability: 'cap-123', version: '0.2.0' })
+    expect(parseConnectResponse({ capability: 'legacy-cap' })).toEqual({ capability: 'legacy-cap', version: null })
   })
 
   it('requires captures and a positive ACK response', () => {
