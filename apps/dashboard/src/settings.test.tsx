@@ -44,6 +44,18 @@ async function openSettings(name = '홍길동') {
 
 afterEach(() => { cleanup(); localStorage.clear(); window.history.replaceState({}, '', '/'); vi.clearAllMocks() })
 
+it('starts GitHub OAuth in the same tab on the first logged-out click', async () => {
+  mocks.me.mockRejectedValue(new ApiError('Authentication is required', 401))
+  mocks.bridge.mockRejectedValue(new Error('Extension is unavailable'))
+
+  render(<App />)
+
+  fireEvent.click(await screen.findByRole('button', { name: /^GitHub 로그인/ }))
+  expect(mocks.navigate).toHaveBeenCalledOnce()
+  expect(mocks.navigate).toHaveBeenCalledWith('/api/oauth2/authorization/github')
+  expect(screen.queryByRole('dialog', { name: 'GitHub로 로그인' })).toBeNull()
+})
+
 it('starts the signed GitHub App installation flow when no personal installation exists', async () => {
   mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false })
   mocks.installations.mockResolvedValue([]); mocks.startInstallation.mockResolvedValue({ status: 'INSTALL_REQUIRED', installations: [], installUrl: 'https://github.com/apps/codearchive/installations/new?state=signed-state' }); mocks.bridge.mockResolvedValue({ capability: 'install-capability' })

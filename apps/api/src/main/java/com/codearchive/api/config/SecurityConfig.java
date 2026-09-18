@@ -15,6 +15,9 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestRedirectFilter;
+import org.springframework.security.oauth2.client.web.DefaultOAuth2AuthorizationRequestResolver;
+import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
@@ -75,6 +78,16 @@ public class SecurityConfig {
     }
 
     @Bean
+    OAuth2AuthorizationRequestResolver githubAuthorizationRequestResolver(
+            ClientRegistrationRepository clientRegistrations) {
+        DefaultOAuth2AuthorizationRequestResolver resolver = new DefaultOAuth2AuthorizationRequestResolver(
+                clientRegistrations, "/api/oauth2/authorization");
+        resolver.setAuthorizationRequestCustomizer(builder -> builder.additionalParameters(parameters ->
+                parameters.put("prompt", "select_account")));
+        return resolver;
+    }
+
+    @Bean
     SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             GithubOAuth2UserService githubOAuth2UserService,
@@ -84,6 +97,7 @@ public class SecurityConfig {
             GithubAutomationProperties automationProperties,
             UserRepository users,
             RelayGrantService relayGrants,
+            OAuth2AuthorizationRequestResolver githubAuthorizationRequestResolver,
             AuthenticationEntryPoint authenticationEntryPoint,
             AccessDeniedHandler accessDeniedHandler) throws Exception {
         CookieCsrfTokenRepository csrfTokenRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
@@ -133,7 +147,9 @@ public class SecurityConfig {
                 .httpBasic(httpBasic -> httpBasic.disable())
                 .formLogin(formLogin -> formLogin.disable())
                 .oauth2Login(oauth2 -> oauth2
-                        .authorizationEndpoint(endpoint -> endpoint.baseUri("/api/oauth2/authorization"))
+                        .authorizationEndpoint(endpoint -> endpoint
+                                .baseUri("/api/oauth2/authorization")
+                                .authorizationRequestResolver(githubAuthorizationRequestResolver))
                         .redirectionEndpoint(endpoint -> endpoint.baseUri("/api/login/oauth2/code/*"))
                         .userInfoEndpoint(endpoint -> endpoint.userService(githubOAuth2UserService))
                         .successHandler(githubOAuth2SuccessHandler)

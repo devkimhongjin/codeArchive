@@ -20,11 +20,11 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { ApiError, bulkUpload, getAccountSettings, getAuthProviders, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories } from './api'
+import { ApiError, bulkUpload, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories } from './api'
 import { BridgeError, parseAckResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
-import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type AuthProviders, type BulkResponse, type Solution, type Toast, type User, type ViewName } from './types'
+import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type BulkResponse, type Solution, type Toast, type User, type ViewName } from './types'
 import { CodeBlock } from './CodeBlock'
 import { EXTENSION_ID, LEGACY_EXTENSION_ID, EXTENSION_CANDIDATES } from './extensionConfig'
 import { readExportSettings, EXPORT_SETTINGS_KEY, exportCode, downloadFilename, githubCommitMessage, gitPath, sourceFileExtension, DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, type ExportSettings } from './codeExport'
@@ -226,10 +226,6 @@ export default function App() {
   const [solutionSort, setSolutionSort] = useState<SolutionSort>('latest')
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [githubLoginOpen, setGithubLoginOpen] = useState(false)
-  const [githubProvider, setGithubProvider] = useState<AuthProviders['github'] | null>(null)
-  const [githubProviderBusy, setGithubProviderBusy] = useState(false)
-  const [githubProviderError, setGithubProviderError] = useState<string | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [extensionId, setExtensionId] = useState<string>(EXTENSION_ID)
@@ -249,7 +245,6 @@ export default function App() {
   const bridgeCapabilityRef = useRef<string | null>(null)
   const solutionOperation = useRef(0)
   const bridgeOperation = useRef(0)
-  const githubProviderOperation = useRef(0)
   const logoutOperation = useRef(0)
   const authMutationInFlight = useRef<number | null>(null)
   // A bridge can connect before /api/settings resolves.  Keep the server-loaded
@@ -472,31 +467,6 @@ export default function App() {
     window.history.replaceState({}, document.title, `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`)
   }, [])
 
-  useEffect(() => {
-    if (!githubLoginOpen) return
-    let active = true
-    const operation = ++githubProviderOperation.current
-    setGithubProvider(null)
-    setGithubProviderError(null)
-    setGithubProviderBusy(true)
-    void getAuthProviders()
-      .then((providers) => {
-        if (!active || operation !== githubProviderOperation.current) return
-        setGithubProvider(providers.github)
-      })
-      .catch(() => {
-        if (!active || operation !== githubProviderOperation.current) return
-        setGithubProvider({ enabled: false, loginUrl: GITHUB_LOGIN_URL })
-        setGithubProviderError('서버에서 GitHub 로그인 설정을 확인하지 못했습니다.')
-      })
-      .finally(() => {
-        if (active && operation === githubProviderOperation.current) setGithubProviderBusy(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [githubLoginOpen])
-
   const languages = useMemo(() => {
     const options = new Map<string, string>()
     for (const solution of solutions) {
@@ -564,7 +534,7 @@ export default function App() {
         setSolutions([])
         setSelectedId('')
         showToast('info', '먼저 로그인하면 내 풀이를 불러올 수 있습니다.')
-        setGithubLoginOpen(true)
+        navigateSameTab(GITHUB_LOGIN_URL)
       } else {
         setMode('local')
         const message = error instanceof Error ? error.message : '서버에 연결하지 못했습니다.'
@@ -900,7 +870,7 @@ export default function App() {
     if (syncing || syncInFlight.current) return
     if (!user || mode !== 'live') {
       showToast('info', '로그인한 라이브 모드에서만 동기화할 수 있습니다.')
-      setGithubLoginOpen(true)
+      navigateSameTab(GITHUB_LOGIN_URL)
       return
     }
     let syncExtensionId = currentExtensionId.current
@@ -921,7 +891,7 @@ export default function App() {
           setSolutions([])
           setSelectedId('')
           showToast('info', '세션이 만료되었습니다. 다시 로그인해 주세요.')
-          setGithubLoginOpen(true)
+          navigateSameTab(GITHUB_LOGIN_URL)
           return
         }
         throw error
@@ -1110,7 +1080,7 @@ export default function App() {
                 </button>
               </div>
             ) : (
-              <button className="login-button" onClick={() => setGithubLoginOpen(true)}>
+              <button className="login-button" onClick={() => navigateSameTab(GITHUB_LOGIN_URL)}>
                 GitHub 로그인 <Icon name="github" size={14} />
               </button>
             )}
@@ -1126,7 +1096,7 @@ export default function App() {
               <strong>로컬 보관함</strong>
               <span>로그인하거나 서버 연결이 복구되면 내 아카이브를 불러옵니다. 로컬 기록은 자동으로 업로드되지 않습니다.</span>
             </div>
-            <button className="banner-action" onClick={() => setGithubLoginOpen(true)}>GitHub로 로그인 <Icon name="github" size={14} /></button>
+            <button className="banner-action" onClick={() => navigateSameTab(GITHUB_LOGIN_URL)}>GitHub로 로그인 <Icon name="github" size={14} /></button>
             <button className="banner-refresh" onClick={() => void connectLive()} disabled={loading} aria-label="라이브 연결 새로고침">
               <Icon name="refresh" size={16} />
             </button>
@@ -1185,7 +1155,7 @@ export default function App() {
             onSaveSettings={() => void saveAccountSettings()}
             onAutoSyncDisabled={clearRelay}
             previewSolution={selectedSolution ?? { captureId: 'preview', platform: 'SWEA', problemNumber: '0000', title: '미리보기', problemUrl: '#', language: 'Java', sourceCode: '', result: 'ACCEPTED' }}
-            onLogin={() => setGithubLoginOpen(true)}
+            onLogin={() => navigateSameTab(GITHUB_LOGIN_URL)}
             onLogout={() => void handleLogout()}
             onExpectedAccountChange={(expectedGithubId) => void handleExpectedAccountChange(new ApiError('GitHub account changed; reconnect required', 409), expectedGithubId)}
             githubInstallReturn={githubInstallReturn}
@@ -1202,17 +1172,6 @@ export default function App() {
         </div>
       </footer>
 
-      {githubLoginOpen && (
-        <GithubLoginDialog
-          provider={githubProvider}
-          loading={githubProviderBusy}
-          error={githubProviderError}
-          onLogin={() => {
-            if (githubProvider?.enabled && githubProvider.loginUrl === GITHUB_LOGIN_URL) window.location.assign(GITHUB_LOGIN_URL)
-          }}
-          onClose={() => setGithubLoginOpen(false)}
-        />
-      )}
       {toast && <ToastView toast={toast} onClose={() => setToast(null)} />}
     </div>
   )
@@ -1463,11 +1422,6 @@ function SettingsView({
       </div>
     </section>
   )
-}
-
-function GithubLoginDialog({ provider, loading, error, onLogin, onClose }: { provider: AuthProviders['github'] | null; loading: boolean; error: string | null; onLogin: () => void; onClose: () => void }) {
-  const enabled = provider?.enabled === true && provider.loginUrl === GITHUB_LOGIN_URL
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section className="github-login-modal" role="dialog" aria-modal="true" aria-labelledby="github-login-title"><button className="modal-close" onClick={onClose} aria-label="닫기"><Icon name="close" size={19} /></button><div className="auth-symbol github-symbol"><Icon name="github" size={22} /></div><p className="eyebrow"><span className="eyebrow-dot" /> CODEARCHIVE ACCOUNT</p><h2 id="github-login-title">GitHub로 로그인</h2><p className="auth-description">GitHub 계정으로 안전하게 CodeArchive 아카이브를 확인하세요.</p>{loading ? <div className="github-provider-state" role="status">GitHub 로그인 설정을 확인하는 중…</div> : enabled ? <><button className="primary-button github-login-submit" onClick={onLogin}><Icon name="github" size={17} /> GitHub로 로그인 <Icon name="chevron" size={14} /></button><p className="auth-privacy"><Icon name="check" size={13} /> GitHub 인증은 서버에서 처리합니다.</p></> : <div className="github-provider-disabled" role="alert"><strong>GitHub 로그인 설정이 필요합니다</strong><p>{error ?? '서버 관리자가 GitHub OAuth 클라이언트 설정을 완료하면 로그인할 수 있습니다.'}</p><code>GITHUB_CLIENT_ID · GITHUB_CLIENT_SECRET</code></div>}</section></div>
 }
 
 function ToastView({ toast, onClose }: { toast: Toast; onClose: () => void }) {
