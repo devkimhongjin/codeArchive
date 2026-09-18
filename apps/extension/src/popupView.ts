@@ -13,6 +13,7 @@ interface PopupServices {
   downloadCapture?: (captureId: string) => Promise<{ ok?: boolean }>;
   loadGithubStatuses?: (captureIds: string[]) => Promise<{ statuses?: Record<string, GithubCommitStatus> }>;
   updateSettings?: (patch: Record<string, boolean>) => Promise<unknown>;
+  retryRelay?: () => Promise<unknown>;
 }
 
 function asDisplayCapture(value: unknown): CapturePreview | null {
@@ -124,7 +125,9 @@ export function mountPopup(document: Document, services: PopupServices): void {
   const githubAuto = document.querySelector<HTMLInputElement>("#github-auto");
   const automationStatus = document.querySelector<HTMLElement>("#automation-status");
   const automationHelp = document.querySelector<HTMLElement>("#automation-help");
+  const retryRelay = document.querySelector<HTMLButtonElement>("#retry-relay");
   let loading = false;
+  let retrying = false;
   let loadGeneration = 0;
 
   function resetRecent(): void {
@@ -164,16 +167,24 @@ export function mountPopup(document: Document, services: PopupServices): void {
         autoDownload.setAttribute("aria-checked", String(autoDownload.checked));
       }
       if (autoSync && githubAuto && automationStatus && automationHelp) {
-        autoSync.checked = settings.autoSyncEnabled === true; githubAuto.checked = settings.githubAutoCommitEnabled === true;
+        const relayStatus = settings.relay?.status;
+        const relayOperational = relayStatus === "CONFIRMED";
+        const relayRetryable = settings.autoSyncEnabled === true && (relayStatus === "OFFLINE" || relayStatus === "RELAY_ERROR");
+        autoSync.checked = settings.autoSyncEnabled === true && relayOperational;
+        githubAuto.checked = settings.githubAutoCommitEnabled === true && relayOperational;
         autoSync.setAttribute("aria-checked", String(autoSync.checked)); githubAuto.setAttribute("aria-checked", String(githubAuto.checked));
         // ON grants are dashboard-confirmed. The popup can only turn an
         // existing confirmed setting OFF, never pretend an ON was accepted.
-        autoSync.disabled = settings.autoSyncEnabled !== true;
+        autoSync.disabled = settings.autoSyncEnabled !== true || !relayOperational;
         githubAuto.disabled = true;
-        githubAuto.title = "GitHub 자동 커밋은 대시보드에서만 변경할 수 있습니다.";
-        const relayStatus = settings.relay?.status;
+        autoSync.title = settings.autoSyncEnabled === true && !relayOperational ? "설정은 ON이지만 릴레이 연결 복구 전까지 일시 중지됩니다." : "";
+        githubAuto.title = settings.githubAutoCommitEnabled === true && !relayOperational ? "설정은 ON이지만 릴레이 연결 복구 전까지 일시 중지됩니다." : "GitHub 자동 커밋은 대시보드에서만 변경할 수 있습니다.";
         automationStatus.textContent = relayStatus === "PENDING" ? "확인 대기" : relayStatus === "OFFLINE" ? "오프라인" : relayStatus === "AUTH_EXPIRED" ? "인증 만료" : relayStatus === "RELAY_ERROR" ? "릴레이 오류" : relayStatus === "REVOCATION_PENDING" ? "서버 폐기 대기" : relayStatus === "CONFIRMED" ? "연결 확인됨" : settings.githubTargetConfigured ? "릴레이 설정 필요" : "대상 필요";
-        automationHelp.textContent = relayStatus === "REVOCATION_PENDING" ? "자동 전송은 이미 중지했습니다. 네트워크가 복구되면 서버의 릴레이 권한을 폐기합니다." : relayStatus === "CONFIRMED" ? "자동 동기화는 여기서 끌 수 있습니다. GitHub 자동 커밋은 대시보드에서 변경합니다." : settings.githubTargetConfigured ? "자동 동기화를 켜거나 GitHub 자동 커밋을 바꾸려면 대시보드에서 이 브라우저를 확인하세요." : "GitHub 자동 커밋에는 대시보드에서 저장소 대상을 지정해야 합니다.";
+        automationHelp.textContent = relayStatus === "REVOCATION_PENDING" ? "자동 전송은 이미 중지했습니다. 네트워크가 복구되면 서버의 릴레이 권한을 폐기합니다." : relayStatus === "CONFIRMED" ? "자동 동기화는 여기서 끌 수 있습니다. GitHub 자동 커밋은 대시보드에서 변경합니다." : relayRetryable ? "자동화 설정은 유지됩니다. 연결을 재시도하면 대기 중인 풀이를 즉시 전송합니다." : relayStatus === "AUTH_EXPIRED" ? "인증이 만료됐습니다. 대시보드를 열어 이 브라우저를 다시 연결해 주세요." : settings.githubTargetConfigured ? "자동 동기화를 켜거나 GitHub 자동 커밋을 바꾸려면 대시보드에서 이 브라우저를 확인하세요." : "GitHub 자동 커밋에는 대시보드에서 저장소 대상을 지정해야 합니다.";
+        if (retryRelay) {
+          retryRelay.hidden = !relayRetryable || !services.retryRelay;
+          retryRelay.disabled = retrying;
+        }
       }
       status.textContent = "로컬 보관";
       description.textContent = state.pendingCount
@@ -213,6 +224,20 @@ export function mountPopup(document: Document, services: PopupServices): void {
   }
 
   refresh.addEventListener("click", () => void load());
+  retryRelay?.addEventListener("click", () => {
+    if (retrying || !services.retryRelay) return;
+    retrying = true;
+    retryRelay.disabled = true;
+    retryRelay.textContent = "재시도 중…";
+    void services.retryRelay()
+      .catch(() => undefined)
+      .then(() => load())
+      .finally(() => {
+        retrying = false;
+        retryRelay.disabled = false;
+        retryRelay.textContent = "연결 재시도";
+      });
+  });
   const updateAutomation = (patch: Record<string, boolean>) => {
     if (!services.updateSettings) return;
     void services.updateSettings(patch).then(() => void load()).catch(() => void load());

@@ -70,3 +70,12 @@ footer {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: nowrap;
 }
+
+.retry-relay {
+  width: 100%;
+  margin-top: 10px;
+  color: #6847c7;
+  border-color: #cfc1f4;
+  background: #f8f5ff;
+  font-weight: 700;
+}
