@@ -124,3 +124,82 @@ uses a downloaded JSON key; Cloud Run provides Application Default Credentials.
 2. With the dashboard closed, submit one new PASS and verify exactly one GitHub
    commit, duplicate-delivery idempotency, and recovery behavior.
 3. Keep Render in polling mode until that end-to-end verification passes.
+
+## Issue #248: public staging API
+
+`deploy-issue248-api.ps1` deploys the public staging API from an already
+verified immutable Artifact Registry digest. It discovers the private worker,
+uses the dedicated API service identity, enables Cloud Tasks dispatch, and
+keeps request-based billing with minimum zero, maximum two instances,
+concurrency 20, and a database pool of two.
+
+The default invocation is plan-only:
+
+```powershell
+./infra/gcp/deploy-issue248-api.ps1 `
+  -ProjectId <project-id> `
+  -ImageDigest sha256:<64-hex-digest>
+```
+
+Add `-Apply` to deploy. The result includes the public staging URL, exact OAuth
+redirect URI, ready revision, and post-deploy health latency. The production
+Netlify proxy and Render service are not changed.
+
+The local dashboard preview can proxy `/api` to staging without changing
+application source or creating a Netlify deploy:
+
+```powershell
+$env:CODEARCHIVE_API_PROXY_TARGET = 'https://<staging-api>.a.run.app'
+npm --prefix apps/dashboard run dev
+```
+
+GitHub must allow the reported staging callback before login can be verified.
+Do not replace the production callback when adding a staging callback would be
+safer. OAuth/session, GitHub App installation, and real Chrome PASS validation
+remain explicit user-facing gates.
+
+### Rollback
+
+`rollback-issue248-api.ps1` selects the previous ready revision by default and
+prints a plan. `-Apply` routes 100% of staging traffic to it and requires the
+health endpoint to remain UP. Pass `-Revision <revision>` to select an explicit
+known-good revision. Traffic changes are limited to the staging service.
+
+### Cost alerts
+
+`configure-issue248-budget.ps1` creates or updates a project-scoped monthly
+budget with actual-spend notifications at 50%, 80%, and 100%. The default
+amount is 10,000 in the billing account currency; pass `-MonthlyAmount` to
+choose a different value.
+
+```powershell
+./infra/gcp/configure-issue248-budget.ps1 `
+  -ProjectId <project-id> `
+  -BillingAccount <billing-account-id> `
+  -Apply
+```
+
+Budget alerts are not a hard spending cap and do not disable services. The
+Cloud Billing Budget API is free; this setup uses role-based email alerts and
+does not create a billable Pub/Sub notification path.
+
+### Keyless GitHub Actions deployment
+
+`configure-issue248-github-oidc.ps1` creates a dedicated staging deployer and
+Workload Identity Federation provider. Admission is restricted to this exact
+repository on `refs/heads/develop`; no service-account JSON key is created.
+The deployer can push to the staging Artifact Registry repository, update only
+the two existing staging Cloud Run services, attach their service identities,
+and enqueue the harmless private-worker smoke task.
+
+The manual `Deploy GCP Staging` workflow builds one commit-tagged image, deploys
+that same image to API and worker, checks public health, and requires a Cloud
+Tasks OIDC 204 from the private worker. Configure these non-secret repository
+variables from the plan/apply output:
+
+- `GCP_PROJECT_ID`
+- `GCP_REGION`
+- `GCP_WIF_PROVIDER`
+- `GCP_DEPLOY_SERVICE_ACCOUNT`
+
+The workflow intentionally runs only when manually dispatched from `develop`.

@@ -1,0 +1,83 @@
+name: Deploy GCP Staging
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-gcp-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      REPOSITORY: codearchive-staging
+      API_SERVICE: codearchive-api-stg
+      WORKER_SERVICE: codearchive-github-worker-stg
+      QUEUE: codearchive-github-staging
+      TASK_INVOKER: codearchive-task-invoker@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Authenticate Docker to Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push immutable image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/codearchive-api:${GITHUB_SHA}"
+          docker build --file apps/api/Dockerfile --tag "${image}" apps/api
+          docker push "${image}"
+          echo "uri=${image}" >> "${GITHUB_OUTPUT}"
+
+      - name: Deploy private worker and public API
+        shell: bash
+        run: |
+          set -euo pipefail
+          image='${{ steps.image.outputs.uri }}'
+          gcloud run deploy "${WORKER_SERVICE}" --project="${PROJECT_ID}" --region="${REGION}" --image="${image}" --quiet
+          gcloud run deploy "${API_SERVICE}" --project="${PROJECT_ID}" --region="${REGION}" --image="${image}" --quiet
+
+      - name: Verify health and private OIDC delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_url="$(gcloud run services describe "${API_SERVICE}" --project="${PROJECT_ID}" --region="${REGION}" --format='value(status.url)')"
+          worker_url="$(gcloud run services describe "${WORKER_SERVICE}" --project="${PROJECT_ID}" --region="${REGION}" --format='value(status.url)')"
+          curl --fail --silent --show-error "${api_url}/actuator/health" | grep -q '"status":"UP"'
+
+          now="$(date +%s)"
+          job_id="900000000${now}"
+          task_id="gha-smoke-${now}"
+          gcloud tasks create-http-task "${task_id}" \
+            --project="${PROJECT_ID}" --location="${REGION}" --queue="${QUEUE}" \
+            --url="${worker_url}/internal/github/jobs/${job_id}" --method=POST \
+            --header='Content-Type: application/json' --body-content="{\"jobId\":${job_id}}" \
+            --oidc-service-account-email="${TASK_INVOKER}" --oidc-token-audience="${worker_url}" --quiet
+
+          for attempt in {1..18}; do
+            status="$(gcloud logging read \
+              "resource.type=cloud_run_revision AND resource.labels.service_name=${WORKER_SERVICE} AND httpRequest.status=204 AND httpRequest.requestUrl:\"/internal/github/jobs/${job_id}\"" \
+              --project="${PROJECT_ID}" --freshness=10m --limit=1 --format='value(httpRequest.status)')"
+            if [[ "${status}" == '204' ]]; then exit 0; fi
+            sleep 5
+          done
+          echo 'Cloud Tasks OIDC smoke did not produce a worker 204.' >&2
+          exit 1
