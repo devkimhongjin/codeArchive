@@ -9,6 +9,7 @@ interface PopupServices {
   copy: (text: string) => Promise<void>;
   copyCapture?: (captureId: string) => Promise<{ ok?: boolean; text?: string }>;
   downloadCapture?: (captureId: string) => Promise<{ ok?: boolean }>;
+  loadGithubStatuses?: (captureIds: string[]) => Promise<{ statuses?: Record<string, GithubCommitStatus> }>;
 }
 
 function asDisplayCapture(value: unknown): CapturePreview | null {
@@ -123,6 +124,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
   const automationStatus = document.querySelector<HTMLElement>("#automation-status");
   const automationHelp = document.querySelector<HTMLElement>("#automation-help");
   let loading = false;
+  let loadGeneration = 0;
 
   function resetRecent(): void {
     recentList.replaceChildren();
@@ -135,6 +137,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
   async function load(): Promise<void> {
     if (loading) return;
     loading = true;
+    const generation = ++loadGeneration;
     refresh.disabled = true;
     error.hidden = true;
     count.textContent = "—";
@@ -175,6 +178,20 @@ export function mountPopup(document: Document, services: PopupServices): void {
           : "아직 저장된 풀이가 없어요. 첫 통과 풀이를 모아보세요.";
       recentCount.textContent = recentCaptures.length ? `${recentCaptures.length}개` : "없음";
       renderRecent(document, recentList, recentEmpty, recentCaptures, services);
+      const syncedIds = recentCaptures.filter(capture => capture.syncState === "SYNCED").map(capture => capture.captureId);
+      if (syncedIds.length && services.loadGithubStatuses) {
+        // Remote enrichment is intentionally detached from the local render.
+        // A sleeping or offline API cannot hide locally persisted captures.
+        void services.loadGithubStatuses(syncedIds).then(response => {
+          if (generation !== loadGeneration) return;
+          const statuses = response?.statuses;
+          if (!statuses || typeof statuses !== "object") return;
+          renderRecent(document, recentList, recentEmpty, recentCaptures.map(capture => ({
+            ...capture,
+            ...(statuses[capture.captureId] ? { githubCommitStatus: statuses[capture.captureId] } : {})
+          })), services);
+        }).catch(() => undefined);
+      }
     } catch {
       count.textContent = "—";
       status.textContent = "확인 필요";

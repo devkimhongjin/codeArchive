@@ -90,3 +90,31 @@ test('popup recent actions use a capture-specific privileged request without sou
   assert.deepEqual(actions, ['copy:11111111-1111-4111-8111-111111111111', 'download:11111111-1111-4111-8111-111111111111']);
   assert.deepEqual(copied, ['private source']);
 });
+
+test('popup renders local captures before a remote GitHub status request settles', async () => {
+  const { document } = parseHTML(html);
+  mountPopup(document, {
+    copy: async () => {},
+    load: async () => ({
+      pendingCount: 0,
+      settings: {},
+      recentCaptures: [{
+        captureId: '11111111-1111-4111-8111-111111111111',
+        platform: 'PROGRAMMERS',
+        problemNumber: '1234',
+        title: 'Local first',
+        problemUrl: 'https://school.programmers.co.kr/learn/courses/30/lessons/1234',
+        language: 'JavaScript',
+        result: 'ACCEPTED',
+        observedAt: '2026-09-18T00:00:00.000Z',
+        solvedAt: '2026-09-18T00:00:00.000Z',
+        syncState: 'SYNCED'
+      }]
+    }),
+    loadGithubStatuses: async () => new Promise(() => undefined)
+  });
+
+  await settle();
+  assert.match(document.querySelector('.recent-list')!.textContent!, /Local first/);
+  assert.equal(document.querySelector('#status')!.textContent, '로컬 보관');
+});

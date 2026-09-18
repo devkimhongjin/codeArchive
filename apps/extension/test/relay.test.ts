@@ -1,10 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchGithubCommitStatuses, recordRelayAttempt, revokeRelay } from "../src/relay";
+import { fetchGithubCommitStatuses, recordRelayAttempt, relayCapture, revokeRelay } from "../src/relay";
 import { MemoryCaptureStore } from "../src/storage";
-import type { CaptureSettings } from "../src/types";
+import type { Capture, CaptureSettings } from "../src/types";
 
 const settings: CaptureSettings = { autoSyncEnabled: false, githubAutoCommitEnabled: false, githubTargetConfigured: false, relay: { endpoint: "/api/relay/captures", secret: "opaque", accountId: "7", generation: 1, status: "REVOCATION_PENDING" } };
+
+const capture: Capture = {
+  captureId: "11111111-1111-4111-8111-111111111111",
+  platform: "PROGRAMMERS",
+  problemNumber: "1234",
+  title: "Timeout",
+  problemUrl: "https://school.programmers.co.kr/learn/courses/30/lessons/1234",
+  language: "JavaScript",
+  sourceCode: "return 42;",
+  result: "ACCEPTED",
+  observedAt: "2026-09-18T00:00:00.000Z",
+  solvedAt: "2026-09-18T00:00:00.000Z",
+  syncState: "PENDING"
+};
+
+const neverSettlingFetcher: typeof fetch = async () => new Promise<Response>(() => undefined);
 
 test("self-revocation uses only the opaque bearer and accepts server confirmation", async () => {
   let input: RequestInfo | URL | undefined; let init: RequestInit | undefined;
@@ -71,4 +87,16 @@ test("commit status lookup is bearer-scoped and accepts only known states", asyn
   assert.equal(requested.pathname, "/api/relay/github-commit-status");
   assert.equal(requested.searchParams.getAll("captureId").length, 2);
   assert.deepEqual(statuses, { "11111111-1111-4111-8111-111111111111": "SUCCEEDED" });
+});
+
+test("relay, status lookup and self-revocation stop waiting when the network never settles", async () => {
+  const enabled: CaptureSettings = {
+    ...settings,
+    autoSyncEnabled: true,
+    relay: { ...settings.relay!, status: "CONFIRMED" }
+  };
+
+  assert.equal(await relayCapture(capture, enabled, neverSettlingFetcher, 5), "OFFLINE");
+  assert.deepEqual(await fetchGithubCommitStatuses([capture.captureId], enabled, neverSettlingFetcher, 5), {});
+  assert.equal(await revokeRelay(settings, neverSettlingFetcher, 5), "OFFLINE");
 });
