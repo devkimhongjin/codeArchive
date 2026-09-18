@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.Base64;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import jakarta.servlet.http.Cookie;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,6 +37,8 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpMethod;
 import org.springframework.mock.web.MockHttpSession;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -52,6 +55,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.session.Session;
 import org.springframework.session.SessionRepository;
+import org.springframework.session.web.http.CookieSerializer;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 
 @SpringBootTest
@@ -93,6 +97,9 @@ class CodeArchiveApiIntegrationTest {
     @Autowired
     ObjectMapper objectMapper;
 
+    @Autowired
+    CookieSerializer cookieSerializer;
+
     @BeforeEach
     void clearUsers() {
         githubCommitJobRepository.deleteAll();
@@ -109,6 +116,21 @@ class CodeArchiveApiIntegrationTest {
                 .andExpect(jsonPath("$.headerName", is("X-XSRF-TOKEN")))
                 .andExpect(jsonPath("$.token").isString())
                 .andExpect(cookie().exists("XSRF-TOKEN"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void githubLoginSessionPersistsForThirtyDays() {
+        Session session = (Session) sessionRepository.createSession();
+        org.assertj.core.api.Assertions.assertThat(session.getMaxInactiveInterval())
+                .isEqualTo(Duration.ofDays(30));
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        cookieSerializer.writeCookieValue(new CookieSerializer.CookieValue(
+                new MockHttpServletRequest(), response, "persistent-session"));
+
+        org.assertj.core.api.Assertions.assertThat(response.getHeader("Set-Cookie"))
+                .contains("JSESSIONID=", "Max-Age=2592000", "HttpOnly", "SameSite=Lax");
     }
 
     @Test
