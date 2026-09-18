@@ -89,6 +89,14 @@ export function parsePendingResponse(payload: unknown): { captures: Capture[] } 
   return { captures: record.captures as Capture[] }
 }
 
+export function parseBridgeStatusResponse(payload: unknown): { pendingCount: number } {
+  const record = recordPayload(payload)
+  if (typeof record.pendingCount !== 'number' || !Number.isSafeInteger(record.pendingCount) || record.pendingCount < 0) {
+    throw new BridgeError('확장 프로그램 대기 건수 응답이 올바르지 않습니다.')
+  }
+  return { pendingCount: record.pendingCount }
+}
+
 export function parseAckResponse(payload: unknown): { ok: true } {
   const record = recordPayload(payload)
   if (record.ok !== true) throw new BridgeError('확장 프로그램 ACK가 승인되지 않았습니다.')

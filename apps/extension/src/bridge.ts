@@ -14,6 +14,7 @@ export const MAX_PENDING_PAGE_SIZE = 50;
 export type DashboardMessage =
   | { type: "CONNECT" }
   | { type: "PING"; capability: string }
+  | { type: "GET_STATUS"; capability: string }
   | { type: "GET_PENDING"; capability: string; limit?: number }
   /** Read-only, capability-bound local archive view for an unauthenticated dashboard. */
   | { type: "GET_LOCAL_ARCHIVE"; capability: string; limit?: number }
@@ -32,6 +33,7 @@ export interface DashboardSender {
 
 export type BridgeResponse =
   | { capability: string; expiresAt: number }
+  | { pendingCount: number }
   | { captures: Capture[]; hasMore: boolean; localOnly?: boolean }
   | { reused: boolean }
   | { ok: true }
@@ -92,7 +94,7 @@ function asObject(value: unknown): Record<string, unknown> | null {
 }
 
 function isMessageType(value: unknown): value is DashboardMessage["type"] {
-  return value === "CONNECT" || value === "PING" || value === "GET_PENDING" || value === "GET_LOCAL_ARCHIVE" || value === "REUSE_RELAY" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
+  return value === "CONNECT" || value === "PING" || value === "GET_STATUS" || value === "GET_PENDING" || value === "GET_LOCAL_ARCHIVE" || value === "REUSE_RELAY" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
 }
 
 export class DashboardBridge {
@@ -130,6 +132,12 @@ export class DashboardBridge {
     if (!session) return { error: "UNAUTHORIZED" };
 
     if (type === "PING") return { ok: true };
+
+    if (type === "GET_STATUS") {
+      // Counting is deliberately read-only: unlike GET_PENDING it does not
+      // issue capture IDs into this capability's ACK set.
+      return { pendingCount: await this.store.countPending() };
+    }
 
     if (type === "REUSE_RELAY") {
       const accountIdValue = object?.accountId;
