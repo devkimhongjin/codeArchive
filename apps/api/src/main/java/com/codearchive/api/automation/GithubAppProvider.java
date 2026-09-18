@@ -6,6 +6,7 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
 /** Server-only GitHub App write path. Every write is based on a newly read branch head and uses a non-force ref update. */
 @Component public class GithubAppProvider implements GithubProvider {
  private static final DateTimeFormatter VERSION_TIMESTAMP=DateTimeFormatter.ofPattern("yyyyMMdd-HHmmssSSS").withZone(ZoneOffset.UTC);
+ private static final DateTimeFormatter PATH_TIME=DateTimeFormatter.ofPattern("yyMMddHHmmss").withZone(ZoneOffset.UTC);
  private final String appId,key,base; private final HttpClient http; private final ObjectMapper json; private final Duration requestTimeout; private final GithubProvider fallback=new FailClosedGithubProvider();
  @Autowired public GithubAppProvider(@Value("${codearchive.github.app-id:}")String appId,@Value("${codearchive.github.app-private-key:}")String key,@Value("${codearchive.github.api-base:https://api.github.com}")String base,@Value("${codearchive.github.connect-timeout-ms:5000}")long connectTimeoutMs,@Value("${codearchive.github.request-timeout-ms:10000}")long requestTimeoutMs,ObjectMapper json){this(appId,key,base,HttpClient.newBuilder().connectTimeout(timeout(connectTimeoutMs)).build(),json,requestTimeoutMs);} 
  GithubAppProvider(String appId,String key,String base,HttpClient http,ObjectMapper json){this(appId,key,base,http,json,10000);}
@@ -102,7 +103,8 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
  private static String segment(String value){if(value==null||value.isBlank())throw new IllegalArgumentException("blank path component");return URLEncoder.encode(value,StandardCharsets.UTF_8).replace("+","%20");}
  private static String encodedPath(String path){return Arrays.stream(path.split("/",-1)).map(GithubAppProvider::segment).collect(java.util.stream.Collectors.joining("/"));}
  private String path(UserSettings s,Solution x){
-  Map<String,String> v=new HashMap<>(); v.put("platform",x.getPlatform().name());v.put("number",x.getProblemNumber());v.put("title",clean(x.getTitle()));v.put("language",clean(x.getLanguage()));v.put("name",clean(s.getDisplayName()));v.put("nickname",clean(s.getNickname()));v.put("id",s.getUser()!=null&&s.getUser().getId()!=null?String.valueOf(s.getUser().getId()):"");
+  Instant solvedAt=x.getSolvedAt()!=null?x.getSolvedAt():x.getObservedAt();
+  Map<String,String> v=new HashMap<>(); v.put("platform",x.getPlatform().name());v.put("number",x.getProblemNumber());v.put("title",clean(x.getTitle()));v.put("language",clean(x.getLanguage()));v.put("name",clean(s.getDisplayName()));v.put("nickname",clean(s.getNickname()));v.put("id",s.getUser()!=null&&s.getUser().getId()!=null?String.valueOf(s.getUser().getId()):"");v.put("time",PATH_TIME.format(solvedAt==null?Instant.EPOCH:solvedAt));v.put("capture_ID",x.getCaptureId()==null?"":clean(x.getCaptureId()));
   String p=render(s.getGitPathTemplate(),v);
   String root=s.getGithubRootPath();if(root!=null&&!root.isBlank())p=root.replaceAll("^/+|/+$","")+"/"+p;
   if(p.isBlank()||p.startsWith("/")||p.startsWith("\\\\")||p.matches("^[A-Za-z]:.*")||p.contains("..")||p.chars().anyMatch(c->c<32||c==127))throw new IllegalArgumentException("unsafe");
