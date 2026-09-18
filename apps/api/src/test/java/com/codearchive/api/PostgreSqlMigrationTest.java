@@ -33,6 +33,7 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
+    private static final int LATEST_MIGRATION = 10;
 
     @Test
     void freshSchemaMigratesTwiceAndPassesHibernateValidation() throws Exception {
@@ -41,12 +42,12 @@ class PostgreSqlMigrationTest {
             Flyway flyway = database.flyway();
 
             MigrateResult first = flyway.migrate();
-            assertEquals(9, first.migrationsExecuted);
-            assertEquals(9, database.historyCount());
+            assertEquals(LATEST_MIGRATION, first.migrationsExecuted);
+            assertEquals(LATEST_MIGRATION, database.historyCount());
 
             MigrateResult second = flyway.migrate();
             assertEquals(0, second.migrationsExecuted);
-            assertEquals(9, database.historyCount());
+            assertEquals(LATEST_MIGRATION, database.historyCount());
 
             database.assertFinalSchema();
             validateWithHibernate(database);
@@ -69,7 +70,7 @@ class PostgreSqlMigrationTest {
             assertThrows(FlywayException.class, adopted::migrate);
             adopted.baseline();
             assertEquals(1, database.historyCount());
-            assertEquals(8, adopted.migrate().migrationsExecuted);
+            assertEquals(LATEST_MIGRATION - 1, adopted.migrate().migrationsExecuted);
 
             assertEquals("legacy@example.com", database.scalar(
                     "SELECT email FROM users WHERE id = ?", userId));
@@ -98,7 +99,7 @@ class PostgreSqlMigrationTest {
             Flyway adopted = database.flywayAtBaseline(MigrationVersion.fromVersion("2"));
             adopted.baseline();
             assertEquals(1, database.historyCount());
-            assertEquals(7, adopted.migrate().migrationsExecuted);
+            assertEquals(LATEST_MIGRATION - 2, adopted.migrate().migrationsExecuted);
 
             assertEquals("9001", database.scalar(
                     "SELECT github_id FROM users WHERE id = ?", userId));
@@ -121,8 +122,8 @@ class PostgreSqlMigrationTest {
             assertEquals(2L, database.publicCount("users"));
             assertEquals(57L, database.publicCount("solutions"));
 
-            assertEquals(9, database.prodFlyway().migrate().migrationsExecuted);
-            assertEquals(9L, database.versionedHistoryCount("codearchive_v2"));
+            assertEquals(LATEST_MIGRATION, database.prodFlyway().migrate().migrationsExecuted);
+            assertEquals(LATEST_MIGRATION, database.versionedHistoryCount("codearchive_v2"));
             assertEquals(2L, database.countInSchema("codearchive_v2", "users"));
             assertEquals(57L, database.countInSchema("codearchive_v2", "solutions"));
             assertEquals("101.000000", database.scalarInSchema("codearchive_v2",
@@ -153,7 +154,7 @@ class PostgreSqlMigrationTest {
         TestDatabase database = TestDatabase.create();
         try {
             database.createRebuiltPublicSource();
-            assertEquals(9, database.prodFlyway().migrate().migrationsExecuted);
+            assertEquals(LATEST_MIGRATION, database.prodFlyway().migrate().migrationsExecuted);
             assertEquals(0L, database.countInSchema("codearchive_v2", "users"));
             assertEquals(0L, database.countInSchema("codearchive_v2", "solutions"));
             assertEquals(0, database.prodFlyway().migrate().migrationsExecuted);
