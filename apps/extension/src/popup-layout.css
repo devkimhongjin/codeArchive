@@ -38,3 +38,10 @@
 .github-unknown {
   color: #a33846;
 }
+
+.recent-performance {
+  margin: 3px 0 0;
+  color: #776c86;
+  font-size: 9px;
+  line-height: 1.4;
+}

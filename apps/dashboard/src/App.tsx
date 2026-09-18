@@ -130,21 +130,21 @@ function formatDate(value?: string) {
 }
 
 function formatMetric(value: number | string | undefined, suffix: string) {
-  if (value === undefined || value === null || value === '') return '—'
+  if (value === undefined || value === null || value === '') return '정보 없음'
   return `${value}${suffix}`
 }
 
 function formatMemory(solution: Solution) {
   if (solution.memoryValue !== undefined && solution.memoryUnit && solution.memoryUnit !== 'UNKNOWN') return `${solution.memoryValue} ${solution.memoryUnit}`
   if (solution.memoryUsage !== undefined) return `${solution.memoryUsage} · 단위 미확인`
-  return '—'
+  return '정보 없음'
 }
 
 function formatObservedTime(value?: string) {
   if (!value) return '기록 없음'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date)
+  return new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(date)
 }
 
 
@@ -1306,14 +1306,14 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
             <div className="detail-heading-main">
               <div className="detail-breadcrumb"><span>{solution.platform}</span><Icon name="chevron" size={12} /><span>#{solution.problemNumber}</span></div>
               <h2>{solution.title}</h2>
-              <div className="detail-subline"><span>{canonicalLanguageDisplayName(solution.language)}</span><span className="row-divider" /><span>풀이 기록 {formatDate(solution.solvedAt ?? solution.observedAt)}</span></div>
+              <div className="detail-subline"><span>{canonicalLanguageDisplayName(solution.language)}</span><span className="row-divider" /><span>풀이 시간 {formatObservedTime(solution.solvedAt ?? solution.observedAt)}</span></div>
             </div>
             <a className="problem-link" href={solution.problemUrl} target="_blank" rel="noreferrer">문제 보기 <Icon name="external" size={14} /></a>
           </div>
           <div className="metrics-row">
-            <MetricCard label="실행 시간" value={formatMetric(solution.executionTime, typeof solution.executionTime === 'number' && solution.executionTime < 10 ? ' s' : ' ms')} icon="clock" />
+            <MetricCard label="실행 시간" value={formatMetric(solution.executionTime, ' ms')} icon="clock" />
             <MetricCard label="메모리 사용량" value={formatMemory(solution)} icon="spark" />
-            <MetricCard label="관측 시각" value={formatObservedTime(solution.observedAt ?? solution.solvedAt)} icon="check" />
+            <MetricCard label="풀이 시간" value={formatObservedTime(solution.solvedAt ?? solution.observedAt)} icon="check" />
           </div>
           {group && group.submissions.length > 1 && <label className="submission-picker">제출 기록<select aria-label="제출 기록" value={solution.captureId} onChange={(event) => onSelectSubmission(event.target.value)}>{group.submissions.map((submission, index) => <option key={submission.captureId} value={submission.captureId}>{index + 1}. {formatObservedTime(submission.solvedAt ?? submission.observedAt)} · {canonicalLanguageDisplayName(submission.language)}</option>)}</select></label>}
           <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
