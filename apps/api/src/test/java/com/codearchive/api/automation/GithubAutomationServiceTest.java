@@ -73,11 +73,13 @@ class GithubAutomationServiceTest {
 
   @Test void targetChangeRefreshesBoundaryButThemeOnlyChangeDoesNot() throws Exception {
     AppUser user=AppUser.fromGithub("1","owner","Owner",null); UserSettings setting=settings(user,1,Instant.EPOCH); Instant before=setting.getAutomationEnabledAt();
-    setting.apply(new SettingsRequest(1,"n","n",false,false,"{number}","{number}","Add {platform} {number} solution","one-light","dracula",true,true,1L,"owner","repo","main",null));
+    setting.apply(new SettingsRequest(1,"n","n",false,false,false,"{number}","{number}","Add {platform} {number} solution","one-light","dracula",true,true,1L,"owner","repo","main",null));
     assertThat(setting.getAutomationEnabledAt()).isEqualTo(before);
-    setting.apply(new SettingsRequest(1,"n","n",false,false,"{number}","{number}","Solve {platform} {number}","one-light","dracula",true,true,1L,"owner","repo","main",null));
+    setting.apply(new SettingsRequest(1,"n","n",false,false,true,"{number}","{number}","Add {platform} {number} solution","one-light","dracula",true,true,1L,"owner","repo","main",null));
     assertThat(setting.getAutomationEnabledAt()).isAfter(before);
-    setting.apply(new SettingsRequest(1,"n","n",false,false,"{number}","new/{number}","Add {platform} {number} solution","one-light","dracula",true,true,1L,"owner","repo","main",null));
+    setting.apply(new SettingsRequest(1,"n","n",false,false,false,"{number}","{number}","Solve {platform} {number}","one-light","dracula",true,true,1L,"owner","repo","main",null));
+    assertThat(setting.getAutomationEnabledAt()).isAfter(before);
+    setting.apply(new SettingsRequest(1,"n","n",false,false,false,"{number}","new/{number}","Add {platform} {number} solution","one-light","dracula",true,true,1L,"owner","repo","main",null));
     assertThat(setting.getAutomationEnabledAt()).isAfter(before);
   }
 
@@ -90,7 +92,7 @@ class GithubAutomationServiceTest {
     verify(jobs).findByUserIdAndCaptureIdIn(1L,List.of("capture-a","capture-b"));
   }
 
-  private static UserSettings settings(AppUser user,long version,Instant boundary) throws Exception { UserSettings s=new UserSettings(user); s.apply(new SettingsRequest(0,"n","n",false,false,"{number}","{number}","Add {platform} {number} solution","github-light","github-dark",true,true,1L,"owner","repo","main",null)); set(s,"version",version); set(s,"automationEnabledAt",boundary); return s; }
+  private static UserSettings settings(AppUser user,long version,Instant boundary) throws Exception { UserSettings s=new UserSettings(user); s.apply(new SettingsRequest(0,"n","n",false,false,false,"{number}","{number}","Add {platform} {number} solution","github-light","github-dark",true,true,1L,"owner","repo","main",null)); set(s,"version",version); set(s,"automationEnabledAt",boundary); return s; }
   private static Solution solution(AppUser u,String id,Instant observed){ return new Solution(u,id,Platform.SWEA,"1","T","https://example.test","Java","class X{}","ACCEPTED",observed,observed,null,null); }
   private static void set(Object target,String name,Object value)throws Exception{Field f=target.getClass().getDeclaredField(name);f.setAccessible(true);f.set(target,value);}
 }

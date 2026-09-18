@@ -276,7 +276,7 @@ class CodeArchiveApiIntegrationTest {
         AppUser user = githubAccountService.upsert(principal("304", "manual-recovery", "Manual", null));
         var settings = new com.codearchive.api.settings.UserSettings(user);
         settings.apply(new com.codearchive.api.settings.SettingsRequest(
-                0, "Manual", null, false, false,
+                0, "Manual", null, false, false, false,
                 "{platform}-{number}-{title}", "{platform}/{number}_{title}/{time}",
                 "Add {platform} {number} solution",
                 "github-light", "github-dark", true, true,
@@ -366,10 +366,13 @@ class CodeArchiveApiIntegrationTest {
         mockMvc.perform(get("/api/settings").with(githubLogin("601", "settings", "Settings", null)).header("X-CodeArchive-Github-Id", "601"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.version", is(0)))
                 .andExpect(jsonPath("$.downloadFilenameTemplate", is("Solution_{number}_{name}")))
+                .andExpect(jsonPath("$.githubHeader", is(false)))
                 .andExpect(jsonPath("$.githubAutoCommitEnabled", is(false)));
-        String valid = settingsJson(0, "홍길동", "별명", "{platform}-{number}", "archive/{language}/{number}/{time}", "one-light", "dracula", true, true, null, null, null, null, null);
+        String valid = settingsJson(0, "홍길동", "별명", "{platform}-{number}", "archive/{language}/{number}/{time}", "one-light", "dracula", true, true, null, null, null, null, null)
+                .replace("\"githubHeader\":false", "\"githubHeader\":true");
         mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("601", "settings", "Settings", null)).header("X-CodeArchive-Github-Id", "601").contentType("application/json").content(valid))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.name", is("홍길동"))).andExpect(jsonPath("$.nickname", is("별명")))
+                .andExpect(jsonPath("$.githubHeader", is(true)))
                 .andExpect(jsonPath("$.githubAutoCommitEnabled", is(false)));
         mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("601", "settings", "Settings", null)).header("X-CodeArchive-Github-Id", "601").contentType("application/json").content(valid))
                 .andExpect(status().isConflict());
@@ -403,7 +406,7 @@ class CodeArchiveApiIntegrationTest {
                         .header("X-CodeArchive-Github-Id", "603"))
                 .andExpect(status().isOk());
         var persisted = userSettingsRepository.findByUserId(user.getId()).orElseThrow();
-        persisted.apply(new com.codearchive.api.settings.SettingsRequest(0, "Withdraw", null, false, false,
+        persisted.apply(new com.codearchive.api.settings.SettingsRequest(0, "Withdraw", null, false, false, false,
                 "{number}", "archive/{number}/{capture_ID}", "Add {platform} {number} solution", "github-light", "github-dark", true, true,
                 7L, "owner", "repo", "main", "archive"));
         persisted = userSettingsRepository.saveAndFlush(persisted);
@@ -607,7 +610,7 @@ class CodeArchiveApiIntegrationTest {
     }
 
     private String settingsJson(long version, String name, String nickname, String filename, String git, String light, String dark, boolean auto, boolean githubAuto, Long installation, String owner, String repo, String branch, String root) throws Exception {
-        Map<String,Object> value=new HashMap<>(); value.put("version",version); value.put("name",name); value.put("nickname",nickname); value.put("copyHeader",true); value.put("downloadHeader",true); value.put("downloadFilenameTemplate",filename); value.put("gitPathTemplate",git); value.put("githubCommitMessageTemplate","Add {platform} {number} solution"); value.put("lightTheme",light); value.put("darkTheme",dark); value.put("autoSyncEnabled",auto); value.put("githubAutoCommitEnabled",githubAuto); value.put("githubInstallationId",installation); value.put("githubOwner",owner); value.put("githubRepository",repo); value.put("githubBranch",branch); value.put("githubRootPath",root); return objectMapper.writeValueAsString(value);
+        Map<String,Object> value=new HashMap<>(); value.put("version",version); value.put("name",name); value.put("nickname",nickname); value.put("copyHeader",true); value.put("downloadHeader",true); value.put("githubHeader",false); value.put("downloadFilenameTemplate",filename); value.put("gitPathTemplate",git); value.put("githubCommitMessageTemplate","Add {platform} {number} solution"); value.put("lightTheme",light); value.put("darkTheme",dark); value.put("autoSyncEnabled",auto); value.put("githubAutoCommitEnabled",githubAuto); value.put("githubInstallationId",installation); value.put("githubOwner",owner); value.put("githubRepository",repo); value.put("githubBranch",branch); value.put("githubRootPath",root); return objectMapper.writeValueAsString(value);
     }
     private void enableRelay(String id,String login,String name) throws Exception { mockMvc.perform(get("/api/settings").with(githubLogin(id,login,name,null)).header("X-CodeArchive-Github-Id", id)).andExpect(status().isOk()); mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin(id,login,name,null)).header("X-CodeArchive-Github-Id", id).contentType("application/json").content(settingsJson(0,"n","n","{number}","{number}/{capture_ID}","github-light","github-dark",true,false,null,null,null,null,null))).andExpect(status().isOk()); }
 

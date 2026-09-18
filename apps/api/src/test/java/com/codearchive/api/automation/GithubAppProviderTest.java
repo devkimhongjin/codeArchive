@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.security.KeyPairGenerator;
 import java.security.PrivateKey;
@@ -99,6 +100,31 @@ class GithubAppProviderTest {
     GithubProvider.Result result=provider().createOnly(settings("main","Solve {platform} #{number}: {title} by {nickname}"),solution());
     assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
     assertThat(requests.get(6).body()).contains("\"message\":\"Solve SWEA #123: Title by n\"");
+  }
+
+  @Test void optionalGithubProblemHeaderIsWrittenWithMeasurements() throws Exception {
+    Solution measured=new Solution(AppUser.fromGithub("1","owner","Owner",null),"33333333-3333-4333-8333-333333333333",Platform.SWEA,"123","Title","https://example.test/123","Java 21","class Solution {}","ACCEPTED",Instant.parse("2026-09-18T05:21:03.456Z"),Instant.parse("2026-09-18T05:21:03.456Z"),new BigDecimal("12.500000"),null);
+    measured.setMemoryMeasurement(new BigDecimal("2048.000000"),"KB");
+
+    GithubProvider.Result result=provider().createOnly(settings("main","Add {platform} {number} solution",true),measured);
+
+    assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(blobSource()).isEqualTo("// SWEA #123 · Title\n// https://example.test/123\n// Language: Java 21\n// Execution Time: 12.5 ms\n// Memory: 2048 KB\n\nclass Solution {}");
+  }
+
+  @Test void githubProblemHeaderPreservesPythonShebangAndIsUsedForIdempotency() throws Exception {
+    Solution python=new Solution(AppUser.fromGithub("1","owner","Owner",null),"44444444-4444-4444-8444-444444444444",Platform.SWEA,"123","Title","https://example.test/123","Python3","#!/usr/bin/python\nprint(1)","ACCEPTED",Instant.parse("2026-09-18T05:21:03.456Z"),Instant.parse("2026-09-18T05:21:03.456Z"),null,null);
+    UserSettings configured=settings("main","Add {platform} {number} solution",true);
+    assertThat(provider().createOnly(configured,python).outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    String rendered=blobSource();
+    assertThat(rendered).isEqualTo("#!/usr/bin/python\n# SWEA #123 · Title\n# https://example.test/123\n# Language: Python3\n\nprint(1)");
+    requests.clear();refRequests=0;existing=true;existingBody=fileBody(rendered);
+
+    GithubProvider.Result result=provider().createOnly(configured,python);
+
+    assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(requests).hasSize(4);
+    assertThat(requests).extracting(Request::path).noneMatch(path->path.contains("/git/blobs")||path.contains("/git/trees")||path.endsWith("/git/commits"));
   }
 
   @Test void existingPathWithDifferentContentCreatesANewTimestampedFile() throws Exception {
@@ -220,10 +246,12 @@ class GithubAppProviderTest {
   private GithubAppProvider providerWithTimeout(long timeoutMs) throws Exception { return new GithubAppProvider("99",pem(),"http://127.0.0.1:"+server.getAddress().getPort(),HttpClient.newHttpClient(),new ObjectMapper(),timeoutMs); }
   private UserSettings settings(){ return settings("main"); }
   private UserSettings settings(String branch){ return settings(branch,"Add {platform} {number} solution"); }
-  private UserSettings settings(String branch,String commitMessage){ UserSettings s=new UserSettings(AppUser.fromGithub("1","owner","Owner",null)); s.apply(new SettingsRequest(0,"n","n",false,false,"{number}","{platform}/{number}-{title}",commitMessage,"github-light","github-dark",true,true,44L,"owner","repo",branch,null)); return s; }
-  private UserSettings settingsWithPath(String path){ UserSettings s=new UserSettings(AppUser.fromGithub("1","owner","Owner",null)); s.apply(new SettingsRequest(0,"n","n",false,false,"{number}",path,"Add {platform} {number} solution","github-light","github-dark",true,true,44L,"owner","repo","main",null)); return s; }
+  private UserSettings settings(String branch,String commitMessage){ return settings(branch,commitMessage,false); }
+  private UserSettings settings(String branch,String commitMessage,boolean githubHeader){ UserSettings s=new UserSettings(AppUser.fromGithub("1","owner","Owner",null)); s.apply(new SettingsRequest(0,"n","n",false,false,githubHeader,"{number}","{platform}/{number}-{title}",commitMessage,"github-light","github-dark",true,true,44L,"owner","repo",branch,null)); return s; }
+  private UserSettings settingsWithPath(String path){ UserSettings s=new UserSettings(AppUser.fromGithub("1","owner","Owner",null)); s.apply(new SettingsRequest(0,"n","n",false,false,false,"{number}",path,"Add {platform} {number} solution","github-light","github-dark",true,true,44L,"owner","repo","main",null)); return s; }
   private Solution solution(){ Instant solved=Instant.parse("2026-09-18T05:21:03.456Z");return new Solution(AppUser.fromGithub("1","owner","Owner",null),"11111111-1111-4111-8111-111111111111",Platform.SWEA,"123","Title","https://example.test/123","Java 21","class Solution {}","ACCEPTED",solved,solved,null,null); }
-  private String fileBody(String source){return "{\"type\":\"file\",\"encoding\":\"base64\",\"content\":\""+Base64.getMimeEncoder().encodeToString(source.getBytes(StandardCharsets.UTF_8))+"\"}";}
+  private String fileBody(String source){return "{\"type\":\"file\",\"encoding\":\"base64\",\"content\":\""+Base64.getEncoder().encodeToString(source.getBytes(StandardCharsets.UTF_8))+"\"}";}
+  private String blobSource() throws Exception { Request blob=requests.stream().filter(request->request.path().endsWith("/git/blobs")).findFirst().orElseThrow();String encoded=new ObjectMapper().readTree(blob.body()).path("content").asText();return new String(Base64.getDecoder().decode(encoded),StandardCharsets.UTF_8); }
   private String pem() throws Exception { KeyPairGenerator g=KeyPairGenerator.getInstance("RSA"); g.initialize(2048); PrivateKey key=g.generateKeyPair().getPrivate(); return "-----BEGIN PRIVATE KEY-----\n"+Base64.getMimeEncoder(64,new byte[]{'\n'}).encodeToString(key.getEncoded())+"\n-----END PRIVATE KEY-----"; }
   /** Same ASN.1 form GitHub's \"BEGIN RSA PRIVATE KEY\" downloads use. */
   private String pkcs1Pem() throws Exception {

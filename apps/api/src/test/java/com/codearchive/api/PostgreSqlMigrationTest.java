@@ -33,7 +33,7 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
-    private static final int LATEST_MIGRATION = 11;
+    private static final int LATEST_MIGRATION = 12;
 
     @Test
     void freshSchemaMigratesTwiceAndPassesHibernateValidation() throws Exception {
@@ -458,6 +458,7 @@ class PostgreSqlMigrationTest {
             assertEquals("YES", nullable("solutions", "memory_unit"));
             assertEquals("user_settings", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'user_settings'", schema));
             assertEquals("NO", nullable("user_settings", "github_commit_message_template"));
+            assertEquals("NO", nullable("user_settings", "github_header"));
             assertEquals("'{platform}/{number}_{title}/{time}'::character varying", scalar(
                     "SELECT column_default FROM information_schema.columns WHERE table_schema = ? AND table_name = 'user_settings' AND column_name = 'git_path_template'", schema));
             assertEquals("relay_grants", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'relay_grants'", schema));

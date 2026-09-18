@@ -74,7 +74,7 @@ class SettingsGithubTargetValidationTest {
     when(users.findByGithubId("123")).thenReturn(Optional.of(user));
     when(settings.findByUserId(77L)).thenReturn(Optional.of(new UserSettings(user)));
     SettingsController controller = new SettingsController(users, settings, grants, provider, "1", "key", "app");
-    SettingsRequest invalid = new SettingsRequest(0, "Name", "nick", false, false, "{number}", "archive/{number}", "Add {platform} {number} solution",
+    SettingsRequest invalid = new SettingsRequest(0, "Name", "nick", false, false, false, "{number}", "archive/{number}", "Add {platform} {number} solution",
         "github-light", "github-dark", false, false, null, null, null, null, null);
 
     var response = controller.put(github("123", "account"), "123", invalid);
@@ -85,7 +85,7 @@ class SettingsGithubTargetValidationTest {
   }
 
   private static SettingsRequest request() {
-    return new SettingsRequest(0, "Name", "nick", false, false, "{number}", "archive/{number}/{capture_ID}", "Add {platform} {number} solution",
+    return new SettingsRequest(0, "Name", "nick", false, false, false, "{number}", "archive/{number}/{capture_ID}", "Add {platform} {number} solution",
         "github-light", "github-dark", false, false, 44L, "owner", "repo", "release/v1", "src");
   }
 
