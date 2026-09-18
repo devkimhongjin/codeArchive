@@ -26,7 +26,7 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
  private static void checkPage(int p){if(p<1||p>100)throw new IllegalArgumentException("page");} private static boolean safe(String x){return x!=null&&x.matches("[A-Za-z0-9_.-]{1,100}");} private static boolean safeGithubId(String x){return x!=null&&x.matches("[0-9]{1,20}");} private static boolean sameGithubId(String left,String right){try{return safeGithubId(left)&&safeGithubId(right)&&new BigInteger(left).equals(new BigInteger(right));}catch(NumberFormatException e){return false;}} private static boolean safeBranch(String x){return x!=null&&x.length()<=255&&!x.isBlank()&&!x.startsWith("-")&&!x.contains("..")&&!x.contains("@{")&&!x.chars().anyMatch(c->Character.isWhitespace(c)||c<32||"~^:?*[\\\\".indexOf(c)>=0);} private static boolean safePath(String x){if(x==null||x.length()>1024||x.startsWith("/")||x.contains("\\\\")||x.contains(".."))return false;return x.isBlank()||Arrays.stream(x.split("/",-1)).allMatch(s->safe(s)&&!s.equalsIgnoreCase(".git"));}
  @Override public Result createOnly(UserSettings s,Solution solution,FinalWriteGuard finalWriteGuard){
   if(appId.isBlank()||key.isBlank()||s.getGithubInstallationId()==null)return fallback.createOnly(s,solution);
-  final String path; try { path=path(s,solution); } catch (IllegalArgumentException e) { return Result.failed("Unsafe Git path"); }
+  final String path,source; try { path=path(s,solution);source=source(s,solution); } catch (IllegalArgumentException e) { return Result.failed("Unsafe Git path"); }
   boolean possibleWrite=false;
   try {
    String token=installationToken(s.getGithubInstallationId()); String repo=repo(s);
@@ -39,13 +39,13 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
    // freshly observed target head, so create/update remains branch-correct.
    Response exists=send("GET",repo+"/contents/"+encodedPath(path)+"?ref="+segment(head),token,null);
    if(exists.code==200){
-    ExistingFileState existing=existingFileState(exists,solution);if(existing==ExistingFileState.IDENTICAL)return Result.succeeded();if(existing==ExistingFileState.CONFLICT)return Result.failed("Git path is not an updatable file");
+    ExistingFileState existing=existingFileState(exists,source);if(existing==ExistingFileState.IDENTICAL)return Result.succeeded();if(existing==ExistingFileState.CONFLICT)return Result.failed("Git path is not an updatable file");
     targetPath=versionedPath(path,solution);
     Response versioned=send("GET",repo+"/contents/"+encodedPath(targetPath)+"?ref="+segment(head),token,null);
-    if(versioned.code==200){ExistingFileState state=existingFileState(versioned,solution);if(state==ExistingFileState.IDENTICAL)return Result.succeeded();return Result.failed("Versioned Git path already exists");}else if(versioned.code!=404)return classify(versioned,false);
+    if(versioned.code==200){ExistingFileState state=existingFileState(versioned,source);if(state==ExistingFileState.IDENTICAL)return Result.succeeded();return Result.failed("Versioned Git path already exists");}else if(versioned.code!=404)return classify(versioned,false);
    }else if(exists.code!=404)return classify(exists,false);
    possibleWrite=true;
-   Response blob=send("POST",repo+"/git/blobs",token,json.writeValueAsString(Map.of("content",Base64.getEncoder().encodeToString(solution.getSourceCode().getBytes(StandardCharsets.UTF_8)),"encoding","base64"))); if(blob.code!=201)return Result.unknown("Blob creation was not confirmed");
+   Response blob=send("POST",repo+"/git/blobs",token,json.writeValueAsString(Map.of("content",Base64.getEncoder().encodeToString(source.getBytes(StandardCharsets.UTF_8)),"encoding","base64"))); if(blob.code!=201)return Result.unknown("Blob creation was not confirmed");
    String blobSha=json.readTree(blob.body).path("sha").asText();
    Response newTree=send("POST",repo+"/git/trees",token,json.writeValueAsString(Map.of("base_tree",tree,"tree",List.of(Map.of("path",targetPath,"mode","100644","type","blob","sha",blobSha))))); if(newTree.code!=201)return Result.unknown("Tree creation was not confirmed");
    String treeSha=json.readTree(newTree.body).path("sha").asText();
@@ -92,14 +92,26 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
  }
  private String b64(String s){return Base64.getUrlEncoder().withoutPadding().encodeToString(s.getBytes(StandardCharsets.UTF_8));}
  private String repo(UserSettings s){return "/repos/"+segment(s.getGithubOwner())+"/"+segment(s.getGithubRepository());}
- private ExistingFileState existingFileState(Response response,Solution solution){
+ private ExistingFileState existingFileState(Response response,String expectedSource){
   try {
    JsonNode body=json.readTree(response.body); if(!"file".equals(body.path("type").asText())||!"base64".equals(body.path("encoding").asText()))return ExistingFileState.CONFLICT;
    String encoded=body.path("content").asText(); if(encoded.isBlank())return ExistingFileState.CONFLICT;
-   byte[] remote=Base64.getMimeDecoder().decode(encoded); byte[] local=solution.getSourceCode().getBytes(StandardCharsets.UTF_8);
+   byte[] remote=Base64.getMimeDecoder().decode(encoded); byte[] local=expectedSource.getBytes(StandardCharsets.UTF_8);
    return MessageDigest.isEqual(remote,local)?ExistingFileState.IDENTICAL:ExistingFileState.DIFFERENT;
   } catch(Exception ignored){return ExistingFileState.CONFLICT;}
  }
+ private String source(UserSettings settings,Solution solution){
+  String source=solution.getSourceCode();if(!settings.isGithubHeader())return source;
+  String ext=extension(solution.getLanguage()),prefix=List.of("py","rb").contains(ext)?"#":"sql".equals(ext)?"--":"txt".equals(ext)?"":"//";if(prefix.isBlank())return source;
+  List<String> lines=new ArrayList<>();lines.add(solution.getPlatform().name()+" #"+solution.getProblemNumber()+" · "+solution.getTitle());lines.add(solution.getProblemUrl());lines.add("Language: "+solution.getLanguage());
+  if(solution.getExecutionTime()!=null)lines.add("Execution Time: "+decimal(solution.getExecutionTime())+" ms");
+  if(solution.getMemoryValue()!=null&&solution.getMemoryUnit()!=null&&!solution.getMemoryUnit().isBlank()&&!"UNKNOWN".equalsIgnoreCase(solution.getMemoryUnit()))lines.add("Memory: "+decimal(solution.getMemoryValue())+" "+solution.getMemoryUnit());else if(solution.getMemoryUsage()!=null)lines.add("Memory: "+decimal(solution.getMemoryUsage())+" (unit unknown)");
+  String header=lines.stream().map(line->prefix+" "+metadataLine(line,ext)).collect(java.util.stream.Collectors.joining("\n"))+"\n\n";
+  if(source.startsWith("#!")){int newline=source.indexOf('\n');if(newline>=0)return source.substring(0,newline+1)+header+source.substring(newline+1);}
+  return header+source;
+ }
+ private static String decimal(java.math.BigDecimal value){return value.stripTrailingZeros().toPlainString();}
+ private static String metadataLine(String value,String extension){String line=value==null?"":value.replaceAll("[\\r\\n\\u2028\\u2029]"," ");return "java".equals(extension)?line.replace('\\','/'):line;}
  private static String segment(String value){if(value==null||value.isBlank())throw new IllegalArgumentException("blank path component");return URLEncoder.encode(value,StandardCharsets.UTF_8).replace("+","%20");}
  private static String encodedPath(String path){return Arrays.stream(path.split("/",-1)).map(GithubAppProvider::segment).collect(java.util.stream.Collectors.joining("/"));}
  private String path(UserSettings s,Solution x){

@@ -25,7 +25,7 @@ vi.mock('./navigation', () => ({ navigateSameTab: mocks.navigate }))
 
 const user = { id: 17, githubId: 'account-17', githubLogin: 'archive-user' }
 const settings: AccountSettings = {
-  version: 4, name: '홍길동', nickname: '길동', copyHeader: true, downloadHeader: false,
+  version: 4, name: '홍길동', nickname: '길동', copyHeader: true, downloadHeader: false, githubHeader: false,
   downloadFilenameTemplate: '{platform}-{number}-{title}', gitPathTemplate: 'solutions/{language}/{number}-{title}/{time}', githubCommitMessageTemplate: 'Add {platform} {number} solution',
   lightTheme: 'one-light', darkTheme: 'dracula', autoSyncEnabled: true, githubAutoCommitEnabled: true,
   githubTargetConfigured: true, githubStatus: 'AVAILABLE', githubInstallationId: 77,
@@ -322,9 +322,10 @@ it('saves a versioned complete settings draft and configures the opaque relay af
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT' ? Promise.resolve({ capability: 'capability-1' }) : Promise.resolve({ ok: true }))
   await openSettings()
   fireEvent.change(screen.getByLabelText('닉네임'), { target: { value: '새 별명' } })
+  fireEvent.click(screen.getByLabelText('GitHub 커밋 시 문제 정보 주석 포함'))
   fireEvent.click(screen.getByRole('button', { name: '설정 저장' }))
   await waitFor(() => expect(mocks.save).toHaveBeenCalledOnce())
-  expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ version: 4, name: '홍길동', nickname: '새 별명', copyHeader: true, downloadHeader: false, downloadFilenameTemplate: settings.downloadFilenameTemplate, gitPathTemplate: settings.gitPathTemplate, githubCommitMessageTemplate: 'Add {platform} {number} solution', lightTheme: 'one-light', darkTheme: 'dracula', autoSyncEnabled: true, githubAutoCommitEnabled: true, githubInstallationId: 77, githubOwner: 'codearchive', githubRepository: 'solutions', githubBranch: 'main', githubRootPath: 'archive' }), 'account-17')
+  expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ version: 4, name: '홍길동', nickname: '새 별명', copyHeader: true, downloadHeader: false, githubHeader: true, downloadFilenameTemplate: settings.downloadFilenameTemplate, gitPathTemplate: settings.gitPathTemplate, githubCommitMessageTemplate: 'Add {platform} {number} solution', lightTheme: 'one-light', darkTheme: 'dracula', autoSyncEnabled: true, githubAutoCommitEnabled: true, githubInstallationId: 77, githubOwner: 'codearchive', githubRepository: 'solutions', githubBranch: 'main', githubRootPath: 'archive' }), 'account-17')
   // Initial automatic connection receives the loaded settings, and save then
   // refreshes that grant with the new optimistic version.
   await waitFor(() => expect(mocks.grant).toHaveBeenCalledTimes(2)); expect(mocks.grant.mock.calls.every((call) => call[2] === 'account-17')).toBe(true)

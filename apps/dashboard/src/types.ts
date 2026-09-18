@@ -67,6 +67,7 @@ export type AccountSettings = {
   nickname: string | null
   copyHeader: boolean
   downloadHeader: boolean
+  githubHeader: boolean
   downloadFilenameTemplate: string
   gitPathTemplate: string
   githubCommitMessageTemplate: string

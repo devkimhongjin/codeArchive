@@ -110,7 +110,7 @@ class GithubAutomationTransactionTest {
 
     private static UserSettings settings(AppUser user, long version, Instant boundary) throws Exception {
         UserSettings settings = new UserSettings(user);
-        settings.apply(new SettingsRequest(0, "n", "n", false, false, "{number}", "{number}", "Add {platform} {number} solution",
+        settings.apply(new SettingsRequest(0, "n", "n", false, false, false, "{number}", "{number}", "Add {platform} {number} solution",
                 "github-light", "github-dark", true, true, 1L, "owner", "repo", "main", null));
         set(settings, "version", version);
         set(settings, "automationEnabledAt", boundary);

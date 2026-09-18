@@ -22,6 +22,7 @@ public class UserSettings {
     private String nickname;
     @Column(name = "copy_header") private boolean copyHeader;
     @Column(name = "download_header") private boolean downloadHeader;
+    @Column(name = "github_header") private boolean githubHeader;
     @Column(name = "download_filename_template") private String downloadFilenameTemplate = "Solution_{number}_{name}";
     @Column(name = "git_path_template") private String gitPathTemplate = "{platform}/{number}_{title}/{time}";
     @Column(name = "github_commit_message_template") private String githubCommitMessageTemplate = "Add {platform} {number} solution";
@@ -38,7 +39,7 @@ public class UserSettings {
     protected UserSettings() {}
     public UserSettings(AppUser user) { this.user = user; }
     public long getVersion() { return version; } public String getDisplayName() { return displayName; } public String getNickname() { return nickname; }
-    public boolean isCopyHeader() { return copyHeader; } public boolean isDownloadHeader() { return downloadHeader; }
+    public boolean isCopyHeader() { return copyHeader; } public boolean isDownloadHeader() { return downloadHeader; } public boolean isGithubHeader() { return githubHeader; }
     public String getDownloadFilenameTemplate() { return downloadFilenameTemplate; } public String getGitPathTemplate() { return gitPathTemplate; }
     public String getGithubCommitMessageTemplate() { return githubCommitMessageTemplate; }
     public String getLightTheme() { return lightTheme; } public String getDarkTheme() { return darkTheme; }
@@ -52,13 +53,14 @@ public class UserSettings {
         // Treat it as a new consent generation even if both toggles stay on.
         String nextCommitMessageTemplate = r.githubCommitMessageTemplate() == null ? githubCommitMessageTemplate : r.githubCommitMessageTemplate();
         boolean automationTargetChanged = !java.util.Objects.equals(gitPathTemplate, r.gitPathTemplate())
+                || githubHeader != r.githubHeader()
                 || !java.util.Objects.equals(githubCommitMessageTemplate, nextCommitMessageTemplate)
                 || !java.util.Objects.equals(githubInstallationId, r.githubInstallationId())
                 || !java.util.Objects.equals(githubOwner, r.githubOwner())
                 || !java.util.Objects.equals(githubRepository, r.githubRepository())
                 || !java.util.Objects.equals(githubBranch, r.githubBranch())
                 || !java.util.Objects.equals(githubRootPath, r.githubRootPath());
-        displayName = r.name(); nickname = r.nickname(); copyHeader = r.copyHeader(); downloadHeader = r.downloadHeader();
+        displayName = r.name(); nickname = r.nickname(); copyHeader = r.copyHeader(); downloadHeader = r.downloadHeader(); githubHeader = r.githubHeader();
         downloadFilenameTemplate = r.downloadFilenameTemplate(); gitPathTemplate = r.gitPathTemplate(); githubCommitMessageTemplate = nextCommitMessageTemplate; lightTheme = r.lightTheme(); darkTheme = r.darkTheme();
         autoSyncEnabled = r.autoSyncEnabled(); githubInstallationId = r.githubInstallationId(); githubOwner = r.githubOwner(); githubRepository = r.githubRepository(); githubBranch = r.githubBranch(); githubRootPath = r.githubRootPath();
         githubAutoCommitEnabled = r.githubAutoCommitEnabled() && githubTargetConfigured();
