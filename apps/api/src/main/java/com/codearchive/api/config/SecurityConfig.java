@@ -3,6 +3,7 @@ package com.codearchive.api.config;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.Serializable;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -68,12 +69,15 @@ public class SecurityConfig {
     }
 
     @Bean
-    CookieSerializer cookieSerializer(@org.springframework.beans.factory.annotation.Value("${server.servlet.session.cookie.secure:false}") boolean secure) {
+    CookieSerializer cookieSerializer(
+            @org.springframework.beans.factory.annotation.Value("${server.servlet.session.cookie.secure:false}") boolean secure,
+            @org.springframework.beans.factory.annotation.Value("${server.servlet.session.cookie.max-age:30d}") Duration cookieMaxAge) {
         DefaultCookieSerializer serializer = new DefaultCookieSerializer();
         serializer.setCookieName("JSESSIONID");
         serializer.setUseHttpOnlyCookie(true);
         serializer.setUseSecureCookie(secure);
         serializer.setSameSite("Lax");
+        serializer.setCookieMaxAge(Math.toIntExact(cookieMaxAge.toSeconds()));
         return serializer;
     }
 

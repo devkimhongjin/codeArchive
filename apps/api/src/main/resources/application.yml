@@ -65,7 +65,11 @@ codearchive:
 server:
   servlet:
     session:
+      # Keep active GitHub logins across ordinary idle periods and browser restarts.
+      # Spring Session refreshes the idle deadline whenever the session is used.
+      timeout: ${SESSION_TIMEOUT:30d}
       cookie:
+        max-age: ${SESSION_COOKIE_MAX_AGE:30d}
         http-only: true
         same-site: lax
   error:
