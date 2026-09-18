@@ -1,6 +1,7 @@
-import { isCaptureRecord } from "./capture";
+import { isCaptureRecord, isUuid } from "./capture";
 import { DashboardBridge } from "./bridge";
 import { IndexedDbCaptureStore } from "./storage";
+import { loadPopupLocalState, storeCaptureLocalFirst } from "./backgroundActions";
 import { downloadFilename, exportCode } from "./export";
 import { textDownloadUrl } from "./download";
 import { fetchGithubCommitStatuses, recordRelayAttempt, relayCapture, revokeRelay } from "./relay";
@@ -14,7 +15,7 @@ const store = new IndexedDbCaptureStore();
 const bridge = new DashboardBridge(store, {
   // A refreshed dashboard grant should flush captures that were retained while
   // the old relay was offline or expired instead of waiting for the next alarm.
-  onRelayConfigured: () => { void drainRelay().catch(() => undefined); }
+  onRelayConfigured: requestRelayDrain
 });
 
 async function finishSelfRevocation(settings: Awaited<ReturnType<typeof store.getSettings>>): Promise<void> {
@@ -25,24 +26,50 @@ async function finishSelfRevocation(settings: Awaited<ReturnType<typeof store.ge
 }
 
 async function drainRelay(): Promise<void> {
-  const settings = await store.getSettings();
+  let settings = await store.getSettings();
   if (settings.relay?.status === "REVOCATION_PENDING") {
     await finishSelfRevocation(settings);
     return;
   }
   if (!settings.autoSyncEnabled || !settings.relay) return;
-  const next = (await store.listPending([], 1))[0]; if (!next) return;
-  const result = await relayCapture(next, settings);
-  if (result === "ACK") await store.markSynced([next.captureId]);
-  await recordRelayAttempt(store, settings, result);
+  while (true) {
+    const next = (await store.listPending([], 1))[0];
+    if (!next) return;
+    const result = await relayCapture(next, settings);
+    if (result === "ACK") await store.markSynced([next.captureId]);
+    await recordRelayAttempt(store, settings, result);
+    if (result !== "ACK") return;
+    settings = await store.getSettings();
+    if (!settings.autoSyncEnabled || settings.relay?.status !== "CONFIRMED") return;
+  }
+}
+
+let relayDrainPromise: Promise<void> | null = null;
+let relayDrainRequested = false;
+
+function requestRelayDrain(): void {
+  relayDrainRequested = true;
+  if (relayDrainPromise) return;
+  relayDrainPromise = (async () => {
+    do {
+      relayDrainRequested = false;
+      await drainRelay();
+    } while (relayDrainRequested);
+  })()
+    .catch(() => undefined)
+    .finally(() => {
+      relayDrainPromise = null;
+      if (relayDrainRequested) requestRelayDrain();
+    });
 }
 chrome.alarms.create("codearchive-relay-drain", { periodInMinutes: 1 });
-chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "codearchive-relay-drain") void drainRelay().catch(() => undefined); });
-void drainRelay().catch(() => undefined);
+chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "codearchive-relay-drain") requestRelayDrain(); });
+requestRelayDrain();
 
 type InternalMessage =
   | { type: "STORE_CAPTURE"; capture: unknown }
   | { type: "GET_POPUP_STATE" }
+  | { type: "GET_GITHUB_COMMIT_STATUSES"; captureIds: unknown }
   | { type: "COPY_RECENT_CAPTURE"; captureId: string }
   | { type: "DOWNLOAD_RECENT_CAPTURE"; captureId: string }
   | { type: "GET_ARCHIVE_STATE" }
@@ -93,41 +120,29 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       sendResponse({ ok: false, error: "INVALID_CAPTURE" });
       return false;
     }
-    void store
-      .putCapture(capture)
-      .then(async ({ created }) => {
-        // Local IndexedDB is always the first commit. Acknowledgement is only
-        // returned after remote persistence and does not delete local history.
-        if (created) {
-          const settings = await store.getSettings();
-          const result = await relayCapture(capture, settings);
-          if (result === "ACK") await store.markSynced([capture.captureId]);
-          await recordRelayAttempt(store, settings, result);
-        }
-        if (created) void drainRelay().catch(() => undefined);
-        sendResponse({ ok: true, created });
-      })
+    void storeCaptureLocalFirst(store, capture, requestRelayDrain)
+      .then(({ created }) => sendResponse({ ok: true, created }))
       .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;
   }
 
   if (object.type === "GET_POPUP_STATE") {
-    void Promise.all([store.countPending(), store.getSettings(), store.listAll(3)])
-      .then(async ([pendingCount, settings, recentCaptures]) => {
-        const syncedIds = recentCaptures.filter(capture => capture.syncState === "SYNCED").map(capture => capture.captureId);
-        const githubStatuses = await fetchGithubCommitStatuses(syncedIds, settings);
-        sendResponse({
-          pendingCount,
-          settings,
-          // The popup only needs metadata. Keep source code in the archive page's
-          // extension-internal response so it never crosses the dashboard bridge.
-          recentCaptures: recentCaptures.map(({ sourceCode: _sourceCode, ...preview }) => ({
-            ...preview,
-            ...(githubStatuses[preview.captureId] ? { githubCommitStatus: githubStatuses[preview.captureId] } : {})
-          }))
-        });
-      })
+    void loadPopupLocalState(store)
+      .then(sendResponse)
       .catch(() => sendResponse({ pendingCount: 0, settings: null, recentCaptures: [], error: "STORAGE_ERROR" }));
+    return true;
+  }
+
+  if (object.type === "GET_GITHUB_COMMIT_STATUSES") {
+    if (!isPopupSender(sender) || !Array.isArray(object.captureIds)) {
+      sendResponse({ statuses: {}, error: "UNAUTHORIZED" });
+      return false;
+    }
+    const captureIds = [...new Set(object.captureIds.filter(isUuid))].slice(0, 10);
+    void store.getSettings()
+      .then(settings => fetchGithubCommitStatuses(captureIds, settings))
+      .then(statuses => sendResponse({ statuses }))
+      .catch(() => sendResponse({ statuses: {} }));
     return true;
   }
 
