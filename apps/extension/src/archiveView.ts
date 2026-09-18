@@ -2,6 +2,7 @@ import type { Capture } from "./types";
 import { tokensForSource } from "./highlighter";
 import { canonicalLanguageDisplayName } from "../../../shared/language";
 import { formatCaptureMemory, formatExecutionTime, formatSolutionTime } from "./capturePresentation";
+import { buildLabel, updatedLabel } from "../../../shared/buildMetadata";
 
 interface ArchiveServices {
   load: () => Promise<unknown>;
@@ -115,6 +116,10 @@ function selectTheme(select: HTMLSelectElement, value: string): void {
 }
 
 export function mountArchive(document: Document, services: ArchiveServices): void {
+  const build = document.querySelector<HTMLElement>("#archive-build-label");
+  const updated = document.querySelector<HTMLElement>("#archive-updated-label");
+  if (build) build.textContent = buildLabel();
+  if (updated) updated.textContent = updatedLabel();
   const card = document.querySelector<HTMLElement>(".archive-card")!;
   const refresh = document.querySelector<HTMLButtonElement>("#archive-refresh")!;
   const count = document.querySelector<HTMLElement>("#archive-count")!;

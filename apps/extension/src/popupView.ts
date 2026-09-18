@@ -2,6 +2,7 @@ import type { Capture } from "./types";
 import type { GithubCommitStatus } from "./relay";
 import { canonicalLanguageDisplayName } from "../../../shared/language";
 import { formatCaptureMemory, formatExecutionTime, formatSolutionTime } from "./capturePresentation";
+import { buildLabel, updatedLabel } from "../../../shared/buildMetadata";
 
 type CapturePreview = Omit<Capture, "sourceCode"> & { githubCommitStatus?: GithubCommitStatus };
 
@@ -103,6 +104,10 @@ function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement,
 }
 
 export function mountPopup(document: Document, services: PopupServices): void {
+  const build = document.querySelector<HTMLElement>("#build-label");
+  const updated = document.querySelector<HTMLElement>("#updated-label");
+  if (build) build.textContent = buildLabel();
+  if (updated) updated.textContent = updatedLabel();
   const count = document.querySelector<HTMLElement>("#pending-count")!;
   const status = document.querySelector<HTMLElement>("#status")!;
   const description = document.querySelector<HTMLElement>("#capture-description")!;
