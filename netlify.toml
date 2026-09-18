@@ -7,7 +7,7 @@
 
 [[redirects]]
   from = "/api/*"
-  to = "https://codearchive-api.onrender.com/api/:splat"
+  to = "https://codearchive-api-stg-e3q54l32da-as.a.run.app/api/:splat"
   status = 200
   force = true
 
