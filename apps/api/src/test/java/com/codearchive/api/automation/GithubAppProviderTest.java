@@ -147,6 +147,12 @@ class GithubAppProviderTest {
       .asString().contains("\"path\":\"solutions/Python3/123_20260918-052103456_22222222.py\"");
   }
 
+  @Test void rendersTimeAndCaptureIdPathTokens() throws Exception {
+    GithubProvider.Result result=provider().createOnly(settingsWithPath("{platform}/{number}_{title}/{time}_{capture_ID}"),solution());
+    assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(requests.get(3).path()).isEqualTo("/repos/owner/repo/contents/SWEA/123_Title/260918052103_11111111-1111-4111-8111-111111111111.java");
+  }
+
   @Test void existingPathWithIdenticalContentIsAnIdempotentSuccess() throws Exception {
     existing=true;
     existingBody="{\"type\":\"file\",\"encoding\":\"base64\",\"content\":\""+Base64.getMimeEncoder().encodeToString("class Solution {}".getBytes(StandardCharsets.UTF_8))+"\"}";

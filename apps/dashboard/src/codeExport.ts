@@ -3,7 +3,9 @@ import { describeLanguage } from '../../../shared/language'
 
 export type ExportSettings = { copyHeader: boolean; downloadHeader: boolean; filenameTemplate: string; gitPathTemplate?: string }
 export const DEFAULT_DOWNLOAD_FILENAME_TEMPLATE = 'Solution_{number}_{name}'
-export const DEFAULT_EXPORT_SETTINGS: ExportSettings = { copyHeader: false, downloadHeader: false, filenameTemplate: DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, gitPathTemplate: '{platform}/{number}-{title}' }
+export const DEFAULT_GIT_PATH_TEMPLATE = '{platform}/{number}_{title}/{time}'
+export const GIT_PATH_TOKENS = ['{platform}', '{number}', '{title}', '{language}', '{name}', '{nickname}', '{id}', '{time}', '{capture_ID}'] as const
+export const DEFAULT_EXPORT_SETTINGS: ExportSettings = { copyHeader: false, downloadHeader: false, filenameTemplate: DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, gitPathTemplate: DEFAULT_GIT_PATH_TEMPLATE }
 export const DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE = 'Add {platform} {number} solution'
 export const EXPORT_SETTINGS_KEY = 'codearchive-export-settings'
 export type ExportProfile = { name?: string | null; nickname?: string | null; id?: string | number | null }
@@ -59,13 +61,29 @@ export function downloadFilename(solution: Solution, template: string, profile: 
 
 /** Git paths are deliberately separate from download names and always relative. */
 export function gitPath(solution: Solution, template: string, profile: ExportProfile = {}): string | null {
-  const values: Record<string, string> = { platform: solution.platform, number: solution.problemNumber, title: solution.title, language: solution.language, name: profile.name?.trim() ?? '', nickname: profile.nickname?.trim() ?? '', id: profile.id == null ? '' : String(profile.id) }
+  const values: Record<string, string> = { platform: solution.platform, number: solution.problemNumber, title: solution.title, language: solution.language, name: profile.name?.trim() ?? '', nickname: profile.nickname?.trim() ?? '', id: profile.id == null ? '' : String(profile.id), time: gitPathTime(solution.solvedAt ?? solution.observedAt), capture_ID: solution.captureId }
+  Object.keys(values).forEach(key => { values[key] = gitPathToken(values[key]) })
   const raw = (template || DEFAULT_EXPORT_SETTINGS.gitPathTemplate!).replace(/\{([^{}]+)\}/g, (_, token: string) => values[token] ?? '')
   if (!raw || /^[\\/]|^[a-z]:/i.test(raw) || raw.includes('..') || /[\x00-\x1f\x7f]/.test(raw)) return null
   const path = raw.split('/').map(segment => segment.replace(/[<>:"\\|?*]/g, '-').replace(/[. ]+$/g, '')).filter(Boolean).join('/')
   if (!path) return null
   const ext = sourceFileExtension(solution.language)
   return `${path.replace(/\.(java|kt|py|js|ts|c|cpp|cs|go|rs|rb|swift|scala|sql|txt)$/i, '')}.${ext}`
+}
+
+function gitPathToken(value: string): string {
+  return value.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g, '-').replace(/[. ]+$/g, '').replace(/^\.+/, '').trim()
+}
+
+export function hasGitSubmissionIdentityToken(template: string): boolean {
+  return template.includes('{capture_ID}') || template.includes('{time}')
+}
+
+function gitPathTime(value?: string): string {
+  const date = value ? new Date(value) : null
+  if (!date || Number.isNaN(date.getTime())) return 'unknown-time'
+  const iso = date.toISOString()
+  return `${iso.slice(2, 10).replace(/-/g, '')}${iso.slice(11, 19).replace(/:/g, '')}`
 }
 
 export function githubCommitMessage(solution: Solution, template: string, profile: ExportProfile = {}): string {

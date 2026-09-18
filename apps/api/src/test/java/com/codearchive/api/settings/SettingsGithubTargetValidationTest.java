@@ -63,8 +63,29 @@ class SettingsGithubTargetValidationTest {
     verifyNoInteractions(settings, grants, provider);
   }
 
+  @Test
+  void rejectsGitPathWithoutSubmissionIdentityTokenBeforeTargetValidation() throws Exception {
+    UserRepository users = mock(UserRepository.class);
+    UserSettingsRepository settings = mock(UserSettingsRepository.class);
+    RelayGrantService grants = mock(RelayGrantService.class);
+    GithubAppProvider provider = mock(GithubAppProvider.class);
+    AppUser user = AppUser.fromGithub("123", "account", "Name", null);
+    setId(user, 77L);
+    when(users.findByGithubId("123")).thenReturn(Optional.of(user));
+    when(settings.findByUserId(77L)).thenReturn(Optional.of(new UserSettings(user)));
+    SettingsController controller = new SettingsController(users, settings, grants, provider, "1", "key", "app");
+    SettingsRequest invalid = new SettingsRequest(0, "Name", "nick", false, false, "{number}", "archive/{number}", "Add {platform} {number} solution",
+        "github-light", "github-dark", false, false, null, null, null, null, null);
+
+    var response = controller.put(github("123", "account"), "123", invalid);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    assertThat(response.getBody()).extracting("message").asString().contains("{capture_ID}").contains("{time}");
+    verifyNoInteractions(provider);
+  }
+
   private static SettingsRequest request() {
-    return new SettingsRequest(0, "Name", "nick", false, false, "{number}", "archive/{number}", "Add {platform} {number} solution",
+    return new SettingsRequest(0, "Name", "nick", false, false, "{number}", "archive/{number}/{capture_ID}", "Add {platform} {number} solution",
         "github-light", "github-dark", false, false, 44L, "owner", "repo", "release/v1", "src");
   }
 

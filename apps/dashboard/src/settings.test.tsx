@@ -26,7 +26,7 @@ vi.mock('./navigation', () => ({ navigateSameTab: mocks.navigate }))
 const user = { id: 17, githubId: 'account-17', githubLogin: 'archive-user' }
 const settings: AccountSettings = {
   version: 4, name: '홍길동', nickname: '길동', copyHeader: true, downloadHeader: false,
-  downloadFilenameTemplate: '{platform}-{number}-{title}', gitPathTemplate: 'solutions/{language}/{number}-{title}', githubCommitMessageTemplate: 'Add {platform} {number} solution',
+  downloadFilenameTemplate: '{platform}-{number}-{title}', gitPathTemplate: 'solutions/{language}/{number}-{title}/{time}', githubCommitMessageTemplate: 'Add {platform} {number} solution',
   lightTheme: 'one-light', darkTheme: 'dracula', autoSyncEnabled: true, githubAutoCommitEnabled: true,
   githubTargetConfigured: true, githubStatus: 'AVAILABLE', githubInstallationId: 77,
   githubOwner: 'codearchive', githubRepository: 'solutions', githubBranch: 'main', githubRootPath: 'archive',
@@ -330,6 +330,20 @@ it('saves a versioned complete settings draft and configures the opaque relay af
   await waitFor(() => expect(mocks.grant).toHaveBeenCalledTimes(2)); expect(mocks.grant.mock.calls.every((call) => call[2] === 'account-17')).toBe(true)
   const configure = bridgeMessages('CONFIGURE_RELAY').slice(-1)[0]?.[1] as Record<string, unknown>
   expect(configure).toEqual(expect.objectContaining({ capability: 'capability-1', autoSyncEnabled: true, githubAutoCommitEnabled: true, githubTargetConfigured: true, relay: expect.objectContaining({ endpoint: '/api/relay/captures', secret: 'opaque-relay-secret', accountId: '17' }) }))
+})
+
+it('requires a submission identity token and inserts a selected Git path token', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue(settings)
+  mocks.bridge.mockResolvedValue({ capability: 'path-token-capability' })
+  await openSettings()
+  const input = screen.getByLabelText('Git 저장 경로') as HTMLInputElement
+  fireEvent.change(input, { target: { value: 'archive/{number}' } })
+  expect(screen.getByRole('alert').textContent).toContain('{capture_ID}')
+  expect((screen.getByRole('button', { name: '설정 저장' }) as HTMLButtonElement).disabled).toBe(true)
+  input.setSelectionRange(input.value.length, input.value.length)
+  fireEvent.click(screen.getByRole('button', { name: '{time}' }))
+  expect(input.value).toBe('archive/{number}{time}')
+  expect((screen.getByRole('button', { name: '설정 저장' }) as HTMLButtonElement).disabled).toBe(false)
 })
 
 it('reuses a matching extension relay without rotating the server grant', async () => {
