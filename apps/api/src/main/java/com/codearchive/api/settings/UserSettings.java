@@ -22,7 +22,7 @@ public class UserSettings {
     private String nickname;
     @Column(name = "copy_header") private boolean copyHeader;
     @Column(name = "download_header") private boolean downloadHeader;
-    @Column(name = "download_filename_template") private String downloadFilenameTemplate = "{platform}-{number}-{title}";
+    @Column(name = "download_filename_template") private String downloadFilenameTemplate = "Solution_{number}_{name}";
     @Column(name = "git_path_template") private String gitPathTemplate = "{platform}/{number}-{title}";
     @Column(name = "github_commit_message_template") private String githubCommitMessageTemplate = "Add {platform} {number} solution";
     @Column(name = "light_theme") private String lightTheme = "github-light";

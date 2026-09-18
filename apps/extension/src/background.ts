@@ -1,9 +1,8 @@
 import { isCaptureRecord, isUuid } from "./capture";
 import { DashboardBridge } from "./bridge";
 import { IndexedDbCaptureStore } from "./storage";
-import { loadPopupLocalState, storeCaptureLocalFirst } from "./backgroundActions";
-import { downloadFilename, exportCode } from "./export";
-import { textDownloadUrl } from "./download";
+import { loadPopupLocalState, prepareCaptureDownload, storeCaptureLocalFirst } from "./backgroundActions";
+import { exportCode } from "./export";
 import { fetchGithubCommitStatuses, recordRelayAttempt, relayCapture, revokeRelay } from "./relay";
 import {
   normalizeSweaDetailUrl,
@@ -61,6 +60,24 @@ function requestRelayDrain(): void {
       relayDrainPromise = null;
       if (relayDrainRequested) requestRelayDrain();
     });
+}
+
+async function autoDownloadCapture(capture: Parameters<typeof store.putCapture>[0]): Promise<void> {
+  const settings = await store.getSettings();
+  if (!settings.autoDownloadEnabled) return;
+  const download = prepareCaptureDownload(capture, settings);
+  if (!download) return;
+  await chrome.downloads.download({
+    url: download.url,
+    filename: download.filename,
+    conflictAction: "uniquify",
+    saveAs: false
+  });
+}
+
+function requestPostCaptureWork(capture: Parameters<typeof store.putCapture>[0]): void {
+  requestRelayDrain();
+  void autoDownloadCapture(capture).catch(() => undefined);
 }
 chrome.alarms.create("codearchive-relay-drain", { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "codearchive-relay-drain") requestRelayDrain(); });
@@ -120,7 +137,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       sendResponse({ ok: false, error: "INVALID_CAPTURE" });
       return false;
     }
-    void storeCaptureLocalFirst(store, capture, requestRelayDrain)
+    void storeCaptureLocalFirst(store, capture, () => requestPostCaptureWork(capture))
       .then(({ created }) => sendResponse({ ok: true, created }))
       .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;
@@ -152,10 +169,9 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       if (!capture) return sendResponse({ ok: false, error: "NOT_FOUND" });
       const settings = await store.getSettings(); const text = exportCode(capture, settings.copyHeader === true);
       if (object.type === "COPY_RECENT_CAPTURE") return sendResponse({ ok: true, text });
-      const filename = downloadFilename(capture, settings.downloadFilenameTemplate, { name: settings.name, nickname: settings.nickname, id: settings.accountId });
-      const url = textDownloadUrl(exportCode(capture, settings.downloadHeader === true), filename.split(".").pop() ?? "txt");
-      if (!url) return sendResponse({ ok: false, error: "DOWNLOAD_TOO_LARGE" });
-      try { await chrome.downloads.download({ url, filename, conflictAction: "uniquify", saveAs: false }); sendResponse({ ok: true }); }
+      const download = prepareCaptureDownload(capture, settings);
+      if (!download) return sendResponse({ ok: false, error: "DOWNLOAD_TOO_LARGE" });
+      try { await chrome.downloads.download({ url: download.url, filename: download.filename, conflictAction: "uniquify", saveAs: false }); sendResponse({ ok: true }); }
       catch { sendResponse({ ok: false, error: "DOWNLOAD_FAILED" }); }
     }).catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;
@@ -190,12 +206,21 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       sendResponse({ ok: false, error: "BAD_REQUEST" });
       return false;
     }
+    const hasAutoDownload = Object.prototype.hasOwnProperty.call(patch, "autoDownloadEnabled");
+    if (hasAutoDownload && typeof patch.autoDownloadEnabled !== "boolean") {
+      sendResponse({ ok: false, error: "BAD_REQUEST" });
+      return false;
+    }
     void store.getSettings().then(current => {
       // ON is always dashboard-confirmed through CONFIGURE_RELAY. The popup
       // may only turn automation OFF, which clears the persisted relay now.
       if (patch.autoSyncEnabled === true || Object.prototype.hasOwnProperty.call(patch, "githubAutoCommitEnabled")) return sendResponse({ ok: false, error: "REQUIRES_DASHBOARD" });
-      if (patch.autoSyncEnabled !== false) return sendResponse({ ok: true, settings: current });
-      return store.mutateSettings(latest => ({ ...latest, autoSyncEnabled: false, githubAutoCommitEnabled: false, ...(latest.relay ? { relay: { ...latest.relay, status: "REVOCATION_PENDING" as const } } : {}) })).then(async pending => {
+      if (patch.autoSyncEnabled !== false) {
+        if (!hasAutoDownload) return sendResponse({ ok: true, settings: current });
+        return store.mutateSettings(latest => ({ ...latest, autoDownloadEnabled: patch.autoDownloadEnabled as boolean }))
+          .then(settings => sendResponse({ ok: true, settings }));
+      }
+      return store.mutateSettings(latest => ({ ...latest, ...(hasAutoDownload ? { autoDownloadEnabled: patch.autoDownloadEnabled as boolean } : {}), autoSyncEnabled: false, githubAutoCommitEnabled: false, ...(latest.relay ? { relay: { ...latest.relay, status: "REVOCATION_PENDING" as const } } : {}) })).then(async pending => {
         await finishSelfRevocation(pending);
         // A dashboard configuration may have won while the bearer revoke was
         // pending; always return the current durable state, never a snapshot.

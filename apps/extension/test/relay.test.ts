@@ -4,7 +4,7 @@ import { fetchGithubCommitStatuses, recordRelayAttempt, relayCapture, revokeRela
 import { MemoryCaptureStore } from "../src/storage";
 import type { Capture, CaptureSettings } from "../src/types";
 
-const settings: CaptureSettings = { autoSyncEnabled: false, githubAutoCommitEnabled: false, githubTargetConfigured: false, relay: { endpoint: "/api/relay/captures", secret: "opaque", accountId: "7", generation: 1, status: "REVOCATION_PENDING" } };
+const settings: CaptureSettings = { autoSyncEnabled: false, autoDownloadEnabled: false, githubAutoCommitEnabled: false, githubTargetConfigured: false, relay: { endpoint: "/api/relay/captures", secret: "opaque", accountId: "7", generation: 1, status: "REVOCATION_PENDING" } };
 
 const capture: Capture = {
   captureId: "11111111-1111-4111-8111-111111111111",

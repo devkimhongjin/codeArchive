@@ -1,8 +1,11 @@
 # CodeArchive extension
 
 This package is a standalone Manifest V3 extension build. It stores accepted
-captures in IndexedDB before any dashboard interaction. It contains no network
-client, GitHub token, cookie reader, or coding-site submitter.
+captures in IndexedDB before any dashboard interaction. Its optional automatic
+download uses Chrome's `downloads` permission only after a new, non-duplicate
+PASS capture is committed locally; the feature is off by default and does not
+need the Dashboard, relay, or API. The extension contains no GitHub token,
+cookie reader, or coding-site submitter.
 
 ## Build and test
 

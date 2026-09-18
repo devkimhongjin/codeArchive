@@ -365,6 +365,7 @@ class CodeArchiveApiIntegrationTest {
         githubAccountService.upsert(principal("601", "settings", "Settings", null));
         mockMvc.perform(get("/api/settings").with(githubLogin("601", "settings", "Settings", null)).header("X-CodeArchive-Github-Id", "601"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.version", is(0)))
+                .andExpect(jsonPath("$.downloadFilenameTemplate", is("Solution_{number}_{name}")))
                 .andExpect(jsonPath("$.githubAutoCommitEnabled", is(false)));
         String valid = settingsJson(0, "홍길동", "별명", "{platform}-{number}", "archive/{language}/{number}", "one-light", "dracula", true, true, null, null, null, null, null);
         mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("601", "settings", "Settings", null)).header("X-CodeArchive-Github-Id", "601").contentType("application/json").content(valid))

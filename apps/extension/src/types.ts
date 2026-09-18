@@ -1,4 +1,5 @@
 export type Platform = "SWEA" | "PROGRAMMERS";
+export const DEFAULT_DOWNLOAD_FILENAME_TEMPLATE = "Solution_{number}_{name}";
 
 export const CAPTURE_RESULT = "ACCEPTED" as const;
 export type CaptureResult = typeof CAPTURE_RESULT;
@@ -90,6 +91,8 @@ export interface PlatformAdapter {
 
 export interface CaptureSettings {
   autoSyncEnabled: boolean;
+  /** Device-local preference; it is never overwritten by dashboard relay settings. */
+  autoDownloadEnabled: boolean;
   githubAutoCommitEnabled: boolean;
   githubTargetConfigured: boolean;
   /** Opaque server relay data only: never GitHub/OAuth credentials. */
@@ -110,6 +113,8 @@ export interface CaptureSettings {
 
 export const DEFAULT_CAPTURE_SETTINGS: CaptureSettings = {
   autoSyncEnabled: false,
+  autoDownloadEnabled: false,
   githubAutoCommitEnabled: false,
-  githubTargetConfigured: false
+  githubTargetConfigured: false,
+  downloadFilenameTemplate: DEFAULT_DOWNLOAD_FILENAME_TEMPLATE
 };
