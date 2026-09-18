@@ -1,0 +1,90 @@
+name: Extension beta package
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a prerelease after validation
+        required: true
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "extension-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: apps/extension/package-lock.json
+      - name: Validate release contract
+        id: release
+        shell: bash
+        run: |
+          version="$(node scripts/extension-release.mjs verify)"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "$GITHUB_REF_NAME" != "extension-v$version" ]]; then
+            echo "Expected tag extension-v$version, received $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: npm --prefix apps/extension ci
+      - run: npm --prefix apps/extension test
+      - name: Build release extension
+        run: npm --prefix apps/extension run build
+        env:
+          CODEARCHIVE_RELEASE_BUILD: "true"
+          CODEARCHIVE_BUILD_SHA: ${{ github.sha }}
+      - name: Package and checksum
+        shell: bash
+        env:
+          CODEARCHIVE_BUILD_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p release
+          (cd apps/extension/dist && zip -q -r ../../../release/codearchive-extension.zip .)
+          sha256="$(node scripts/extension-release.mjs metadata release/codearchive-extension.zip release/codearchive-extension-metadata.json)"
+          printf '%s  %s\n' "$sha256" "codearchive-extension.zip" > release/codearchive-extension.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codearchive-extension-v${{ steps.release.outputs.version }}
+          path: release/*
+          if-no-files-found: error
+      - name: Publish GitHub prerelease
+        if: github.ref_type == 'tag' || inputs.publish == true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          tag="extension-v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; refusing to replace immutable assets." >&2
+            exit 1
+          fi
+          target_args=(--verify-tag)
+          if [[ "${GITHUB_REF_TYPE:-}" != "tag" ]]; then
+            target_args=(--target "$GITHUB_SHA")
+          fi
+          {
+            printf 'CodeArchive beta extension v%s.\n\n' "$VERSION"
+            printf '<!-- codearchive-extension-metadata\n'
+            cat release/codearchive-extension-metadata.json
+            printf '%s\n' '-->'
+          } > release/release-notes.md
+          gh release create "$tag" \
+            release/codearchive-extension.zip \
+            release/codearchive-extension.zip.sha256 \
+            release/codearchive-extension-metadata.json \
+            --prerelease \
+            --title "CodeArchive Extension v$VERSION" \
+            --notes-file release/release-notes.md \
+            "${target_args[@]}"

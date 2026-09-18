@@ -75,12 +75,13 @@ function recordPayload(payload: unknown) {
   return payload as Record<string, unknown>
 }
 
-export function parseConnectResponse(payload: unknown): { capability: string } {
+export function parseConnectResponse(payload: unknown): { capability: string; version: string | null } {
   const record = recordPayload(payload)
   if (typeof record.capability !== 'string' || !record.capability.trim()) {
     throw new BridgeError('확장 프로그램 capability가 없습니다.')
   }
-  return { capability: record.capability }
+  const version = typeof record.version === 'string' && /^\d+\.\d+\.\d+$/.test(record.version) ? record.version : null
+  return { capability: record.capability, version }
 }
 
 export function parsePendingResponse(payload: unknown): { captures: Capture[] } {

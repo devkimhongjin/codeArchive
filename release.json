@@ -1,3 +1,14 @@
 {
-  "version": "0.2.0"
+  "version": "0.2.0",
+  "extension": {
+    "id": "oohlcmihldmfninmdcmanddfmhoonmdl",
+    "minimumChromeVersion": "120",
+    "compatibility": {
+      "minimumDashboardVersion": "0.2.0",
+      "minimumApiVersion": "0.2.0",
+      "dashboardMinimumExtensionVersion": "0.2.0"
+    },
+    "releaseListUrl": "https://api.github.com/repos/devkimhongjin/codeArchive/releases?per_page=20",
+    "releaseHistoryUrl": "https://github.com/devkimhongjin/codeArchive/releases"
+  }
 }

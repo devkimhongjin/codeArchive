@@ -1,6 +1,7 @@
 import { createUuid } from "./capture";
 import type { Capture, CaptureSettings } from "./types";
 import type { CaptureStore } from "./storage";
+import { BUILD_METADATA } from "../../../shared/buildMetadata";
 
 export const DASHBOARD_ORIGIN = "https://codearchive-dashboard-beta.netlify.app";
 export const DASHBOARD_ORIGINS = [
@@ -32,7 +33,7 @@ export interface DashboardSender {
 }
 
 export type BridgeResponse =
-  | { capability: string; expiresAt: number }
+  | { capability: string; expiresAt: number; version: string }
   | { pendingCount: number }
   | { captures: Capture[]; hasMore: boolean; localOnly?: boolean }
   | { reused: boolean }
@@ -254,7 +255,7 @@ export class DashboardBridge {
       issuedCaptureIds: new Set()
     };
     this.sessions.set(capability, session);
-    return { capability, expiresAt: now + this.absoluteTtlMs };
+    return { capability, expiresAt: now + this.absoluteTtlMs, version: BUILD_METADATA.version };
   }
 
   private authorize(capability: string, identity: SenderIdentity): Session | null {

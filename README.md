@@ -50,6 +50,8 @@ $env:DASHBOARD_ORIGIN = 'http://localhost:5173'
 
 ### 확장 프로그램
 
+베타 사용자는 GitHub Release ZIP을 검증한 뒤 Chrome 개발자 모드에서 압축 해제 확장으로 로드합니다. 설치·업데이트·체크섬·데이터 보존 절차와 Chrome 배포 제약은 [Extension beta distribution](docs/extension-beta-distribution.md)을 참고하세요.
+
 1. npm run build로 확장 프로그램을 빌드합니다.
 2. Chrome의 chrome://extensions에서 개발자 모드를 켭니다.
 3. **압축해제된 확장 프로그램을 로드합니다**에서 apps/extension/dist를 선택합니다.
