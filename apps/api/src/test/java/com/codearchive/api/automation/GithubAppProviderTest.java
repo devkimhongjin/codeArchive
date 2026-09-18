@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 
 class GithubAppProviderTest {
   private HttpServer server; private final List<Request> requests = new ArrayList<>();
-  private int finalStatus = 200; private int installationListStatus = 200; private String installationListBody = "[]"; private boolean existing; private String existingBody = "{}"; private boolean transientRef; private boolean dropFinal; private boolean movedBeforePatch; private boolean timeoutToken; private boolean timeoutBlob; private int refRequests;
+  private int finalStatus = 200; private int installationListStatus = 200; private String installationListBody = "[]"; private boolean existing; private String existingBody = "{}"; private boolean versionedExisting; private String versionedExistingBody = "{}"; private boolean transientRef; private boolean dropFinal; private boolean movedBeforePatch; private boolean timeoutToken; private boolean timeoutBlob; private int refRequests;
 
   @BeforeEach void start() throws Exception { server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0); server.createContext("/",this::handle); server.start(); }
   @AfterEach void stop(){ if(server!=null)server.stop(0); }
@@ -101,15 +101,50 @@ class GithubAppProviderTest {
     assertThat(requests.get(6).body()).contains("\"message\":\"Solve SWEA #123: Title by n\"");
   }
 
-  @Test void existingPathWithDifferentContentCreatesAConditionalUpdateCommit() throws Exception {
+  @Test void existingPathWithDifferentContentCreatesANewTimestampedFile() throws Exception {
     existing=true;
     existingBody="{\"type\":\"file\",\"encoding\":\"base64\",\"content\":\""+Base64.getMimeEncoder().encodeToString("class OldSolution {}".getBytes(StandardCharsets.UTF_8))+"\"}";
     GithubProvider.Result result=provider().createOnly(settings(),solution());
     assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
     assertThat(requests).extracting(Request::method,Request::path).contains(
+      org.assertj.core.groups.Tuple.tuple("GET","/repos/owner/repo/contents/SWEA/123-Title_20260918-052103456_11111111.java"),
       org.assertj.core.groups.Tuple.tuple("POST","/repos/owner/repo/git/commits"),
       org.assertj.core.groups.Tuple.tuple("PATCH","/repos/owner/repo/git/refs/heads/main"));
+    assertThat(requests).filteredOn(request->request.path().endsWith("/git/trees")).singleElement().extracting(Request::body)
+      .asString().contains("\"path\":\"SWEA/123-Title_20260918-052103456_11111111.java\"");
     assertThat(requests.get(requests.size()-1).body()).contains("\"force\":false");
+  }
+
+  @Test void retryOfTimestampedFileWithIdenticalContentIsIdempotent() throws Exception {
+    existing=true; versionedExisting=true;
+    existingBody=fileBody("class OldSolution {}"); versionedExistingBody=fileBody("class Solution {}");
+
+    GithubProvider.Result result=provider().createOnly(settings(),solution());
+
+    assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(requests).hasSize(5);
+    assertThat(requests).extracting(Request::path).noneMatch(path->path.contains("/git/blobs")||path.contains("/git/trees")||path.endsWith("/git/commits"));
+  }
+
+  @Test void neverOverwritesAConflictingTimestampedFile() throws Exception {
+    existing=true; versionedExisting=true;
+    existingBody=fileBody("class OldSolution {}"); versionedExistingBody=fileBody("class OtherSolution {}");
+
+    GithubProvider.Result result=provider().createOnly(settings(),solution());
+
+    assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.FAILED);
+    assertThat(requests).extracting(Request::path).noneMatch(path->path.contains("/git/blobs")||path.contains("/git/trees")||path.endsWith("/git/commits"));
+  }
+
+  @Test void timestampSuffixPreservesCustomPathAndLanguageExtension() throws Exception {
+    existing=true; existingBody=fileBody("print('old')");
+    Solution python=new Solution(AppUser.fromGithub("1","owner","Owner",null),"22222222-2222-4222-8222-222222222222",Platform.SWEA,"123","Title","https://example.test/123","Python3","print('new')","ACCEPTED",Instant.parse("2026-09-18T05:21:03.456Z"),Instant.parse("2026-09-18T05:21:03.456Z"),null,null);
+
+    GithubProvider.Result result=provider().createOnly(settingsWithPath("solutions/{language}/{number}"),python);
+
+    assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(requests).filteredOn(request->request.path().endsWith("/git/trees")).singleElement().extracting(Request::body)
+      .asString().contains("\"path\":\"solutions/Python3/123_20260918-052103456_22222222.py\"");
   }
 
   @Test void existingPathWithIdenticalContentIsAnIdempotentSuccess() throws Exception {
@@ -180,7 +215,9 @@ class GithubAppProviderTest {
   private UserSettings settings(){ return settings("main"); }
   private UserSettings settings(String branch){ return settings(branch,"Add {platform} {number} solution"); }
   private UserSettings settings(String branch,String commitMessage){ UserSettings s=new UserSettings(AppUser.fromGithub("1","owner","Owner",null)); s.apply(new SettingsRequest(0,"n","n",false,false,"{number}","{platform}/{number}-{title}",commitMessage,"github-light","github-dark",true,true,44L,"owner","repo",branch,null)); return s; }
-  private Solution solution(){ return new Solution(AppUser.fromGithub("1","owner","Owner",null),"11111111-1111-4111-8111-111111111111",Platform.SWEA,"123","Title","https://example.test/123","Java 21","class Solution {}","ACCEPTED",Instant.now(),Instant.now(),null,null); }
+  private UserSettings settingsWithPath(String path){ UserSettings s=new UserSettings(AppUser.fromGithub("1","owner","Owner",null)); s.apply(new SettingsRequest(0,"n","n",false,false,"{number}",path,"Add {platform} {number} solution","github-light","github-dark",true,true,44L,"owner","repo","main",null)); return s; }
+  private Solution solution(){ Instant solved=Instant.parse("2026-09-18T05:21:03.456Z");return new Solution(AppUser.fromGithub("1","owner","Owner",null),"11111111-1111-4111-8111-111111111111",Platform.SWEA,"123","Title","https://example.test/123","Java 21","class Solution {}","ACCEPTED",solved,solved,null,null); }
+  private String fileBody(String source){return "{\"type\":\"file\",\"encoding\":\"base64\",\"content\":\""+Base64.getMimeEncoder().encodeToString(source.getBytes(StandardCharsets.UTF_8))+"\"}";}
   private String pem() throws Exception { KeyPairGenerator g=KeyPairGenerator.getInstance("RSA"); g.initialize(2048); PrivateKey key=g.generateKeyPair().getPrivate(); return "-----BEGIN PRIVATE KEY-----\n"+Base64.getMimeEncoder(64,new byte[]{'\n'}).encodeToString(key.getEncoded())+"\n-----END PRIVATE KEY-----"; }
   /** Same ASN.1 form GitHub's \"BEGIN RSA PRIVATE KEY\" downloads use. */
   private String pkcs1Pem() throws Exception {
@@ -194,7 +231,7 @@ class GithubAppProviderTest {
   private static byte[] tagged(int tag,byte[] body) { byte[] length=length(body.length); byte[] result=new byte[1+length.length+body.length]; result[0]=(byte)tag;System.arraycopy(length,0,result,1,length.length);System.arraycopy(body,0,result,1+length.length,body.length);return result; }
   private static byte[] length(int value) { if(value<128)return new byte[]{(byte)value}; int count=0;for(int n=value;n>0;n>>>=8)count++;byte[] result=new byte[count+1];result[0]=(byte)(0x80|count);for(int i=count;i>0;i--){result[i]=(byte)value;value>>>=8;}return result; }
   private static byte[] join(byte[]... values) { int size=0;for(byte[] value:values)size+=value.length;byte[] result=new byte[size];int offset=0;for(byte[] value:values){System.arraycopy(value,0,result,offset,value.length);offset+=value.length;}return result; }
-  private void handle(HttpExchange x) throws IOException { String body=new String(x.getRequestBody().readAllBytes(),StandardCharsets.UTF_8); requests.add(new Request(x.getRequestMethod(),x.getRequestURI().getPath(),x.getRequestURI().getRawPath(),x.getRequestURI().getRawQuery(),x.getRequestHeaders().getFirst("Authorization"),body)); String path=x.getRequestURI().getPath(); if(dropFinal&&path.contains("/git/refs/")){x.close();return;} if(path.equals("/app/installations"))reply(x,installationListStatus,installationListBody); else if(path.endsWith("/access_tokens")){pauseIf(timeoutToken);reply(x,201,"{\"token\":\"installation-token\"}");} else if(path.contains("/git/ref/")){refRequests++;reply(x,transientRef?503:200,"{\"object\":{\"sha\":\""+(movedBeforePatch&&refRequests>1?"moved-head":"head-sha")+"\"}}");} else if(path.contains("/git/commits/head-sha"))reply(x,200,"{\"tree\":{\"sha\":\"tree-sha\"}}"); else if(path.contains("/contents/"))reply(x,existing?200:404,existing?existingBody:"{}"); else if(path.endsWith("/git/blobs")){pauseIf(timeoutBlob);reply(x,201,"{\"sha\":\"blob-sha\"}");} else if(path.endsWith("/git/trees"))reply(x,201,"{\"sha\":\"new-tree\"}"); else if(path.endsWith("/git/commits"))reply(x,201,"{\"sha\":\"new-commit\"}"); else if(path.contains("/git/refs/"))reply(x,finalStatus,"{}"); else reply(x,500,"{}"); }
+  private void handle(HttpExchange x) throws IOException { String body=new String(x.getRequestBody().readAllBytes(),StandardCharsets.UTF_8); requests.add(new Request(x.getRequestMethod(),x.getRequestURI().getPath(),x.getRequestURI().getRawPath(),x.getRequestURI().getRawQuery(),x.getRequestHeaders().getFirst("Authorization"),body)); String path=x.getRequestURI().getPath(); if(dropFinal&&path.contains("/git/refs/")){x.close();return;} if(path.equals("/app/installations"))reply(x,installationListStatus,installationListBody); else if(path.endsWith("/access_tokens")){pauseIf(timeoutToken);reply(x,201,"{\"token\":\"installation-token\"}");} else if(path.contains("/git/ref/")){refRequests++;reply(x,transientRef?503:200,"{\"object\":{\"sha\":\""+(movedBeforePatch&&refRequests>1?"moved-head":"head-sha")+"\"}}");} else if(path.contains("/git/commits/head-sha"))reply(x,200,"{\"tree\":{\"sha\":\"tree-sha\"}}"); else if(path.contains("/contents/")){boolean versioned=path.matches(".*_\\d{8}-\\d{9}_[A-Za-z0-9]{8}\\.[A-Za-z0-9]+$");reply(x,versioned?(versionedExisting?200:404):(existing?200:404),versioned?(versionedExisting?versionedExistingBody:"{}"): (existing?existingBody:"{}"));} else if(path.endsWith("/git/blobs")){pauseIf(timeoutBlob);reply(x,201,"{\"sha\":\"blob-sha\"}");} else if(path.endsWith("/git/trees"))reply(x,201,"{\"sha\":\"new-tree\"}"); else if(path.endsWith("/git/commits"))reply(x,201,"{\"sha\":\"new-commit\"}"); else if(path.contains("/git/refs/"))reply(x,finalStatus,"{}"); else reply(x,500,"{}"); }
   private static void pauseIf(boolean delayed) { if(!delayed)return;try{Thread.sleep(250);}catch(InterruptedException e){Thread.currentThread().interrupt();} }
   private void reply(HttpExchange x,int status,String body)throws IOException{x.sendResponseHeaders(status,body.getBytes(StandardCharsets.UTF_8).length);x.getResponseBody().write(body.getBytes(StandardCharsets.UTF_8));x.close();}
   private record Request(String method,String path,String rawPath,String query,String authorization,String body){}

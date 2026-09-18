@@ -1,10 +1,11 @@
 package com.codearchive.api.automation;
 
 import com.codearchive.api.settings.UserSettings; import com.codearchive.api.solution.Solution; import com.fasterxml.jackson.databind.*;
-import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; import java.net.http.*; import java.nio.charset.StandardCharsets; import java.security.*; import java.security.interfaces.RSAPrivateKey; import java.security.spec.PKCS8EncodedKeySpec; import java.security.spec.RSAPrivateCrtKeySpec; import java.time.*; import java.util.*; import java.util.regex.Matcher; import java.util.regex.Pattern; import org.springframework.beans.factory.annotation.Autowired; import org.springframework.beans.factory.annotation.Value; import org.springframework.stereotype.Component;
+import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; import java.net.http.*; import java.nio.charset.StandardCharsets; import java.security.*; import java.security.interfaces.RSAPrivateKey; import java.security.spec.PKCS8EncodedKeySpec; import java.security.spec.RSAPrivateCrtKeySpec; import java.time.*; import java.time.format.DateTimeFormatter; import java.util.*; import java.util.regex.Matcher; import java.util.regex.Pattern; import org.springframework.beans.factory.annotation.Autowired; import org.springframework.beans.factory.annotation.Value; import org.springframework.stereotype.Component;
 
 /** Server-only GitHub App write path. Every write is based on a newly read branch head and uses a non-force ref update. */
 @Component public class GithubAppProvider implements GithubProvider {
+ private static final DateTimeFormatter VERSION_TIMESTAMP=DateTimeFormatter.ofPattern("yyyyMMdd-HHmmssSSS").withZone(ZoneOffset.UTC);
  private final String appId,key,base; private final HttpClient http; private final ObjectMapper json; private final Duration requestTimeout; private final GithubProvider fallback=new FailClosedGithubProvider();
  @Autowired public GithubAppProvider(@Value("${codearchive.github.app-id:}")String appId,@Value("${codearchive.github.app-private-key:}")String key,@Value("${codearchive.github.api-base:https://api.github.com}")String base,@Value("${codearchive.github.connect-timeout-ms:5000}")long connectTimeoutMs,@Value("${codearchive.github.request-timeout-ms:10000}")long requestTimeoutMs,ObjectMapper json){this(appId,key,base,HttpClient.newBuilder().connectTimeout(timeout(connectTimeoutMs)).build(),json,requestTimeoutMs);} 
  GithubAppProvider(String appId,String key,String base,HttpClient http,ObjectMapper json){this(appId,key,base,http,json,10000);}
@@ -32,14 +33,20 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
    String head=json.readTree(ref.body).path("object").path("sha").asText(); if(head.isBlank())return Result.unknown("Malformed branch reference");
    Response commit=send("GET",repo+"/git/commits/"+segment(head),token,null); if(commit.code!=200)return classify(commit,false);
    String tree=json.readTree(commit.body).path("tree").path("sha").asText(); if(tree.isBlank())return Result.unknown("Malformed commit");
+   String targetPath=path;
    // GitHub otherwise checks the repository default branch. The ref is the
    // freshly observed target head, so create/update remains branch-correct.
    Response exists=send("GET",repo+"/contents/"+encodedPath(path)+"?ref="+segment(head),token,null);
-   if(exists.code==200){ExistingFileState existing=existingFileState(exists,solution);if(existing==ExistingFileState.IDENTICAL)return Result.succeeded();if(existing==ExistingFileState.CONFLICT)return Result.failed("Git path is not an updatable file");}else if(exists.code!=404)return classify(exists,false);
+   if(exists.code==200){
+    ExistingFileState existing=existingFileState(exists,solution);if(existing==ExistingFileState.IDENTICAL)return Result.succeeded();if(existing==ExistingFileState.CONFLICT)return Result.failed("Git path is not an updatable file");
+    targetPath=versionedPath(path,solution);
+    Response versioned=send("GET",repo+"/contents/"+encodedPath(targetPath)+"?ref="+segment(head),token,null);
+    if(versioned.code==200){ExistingFileState state=existingFileState(versioned,solution);if(state==ExistingFileState.IDENTICAL)return Result.succeeded();return Result.failed("Versioned Git path already exists");}else if(versioned.code!=404)return classify(versioned,false);
+   }else if(exists.code!=404)return classify(exists,false);
    possibleWrite=true;
    Response blob=send("POST",repo+"/git/blobs",token,json.writeValueAsString(Map.of("content",Base64.getEncoder().encodeToString(solution.getSourceCode().getBytes(StandardCharsets.UTF_8)),"encoding","base64"))); if(blob.code!=201)return Result.unknown("Blob creation was not confirmed");
    String blobSha=json.readTree(blob.body).path("sha").asText();
-   Response newTree=send("POST",repo+"/git/trees",token,json.writeValueAsString(Map.of("base_tree",tree,"tree",List.of(Map.of("path",path,"mode","100644","type","blob","sha",blobSha))))); if(newTree.code!=201)return Result.unknown("Tree creation was not confirmed");
+   Response newTree=send("POST",repo+"/git/trees",token,json.writeValueAsString(Map.of("base_tree",tree,"tree",List.of(Map.of("path",targetPath,"mode","100644","type","blob","sha",blobSha))))); if(newTree.code!=201)return Result.unknown("Tree creation was not confirmed");
    String treeSha=json.readTree(newTree.body).path("sha").asText();
    Response newCommit=send("POST",repo+"/git/commits",token,json.writeValueAsString(Map.of("message",commitMessage(s,solution),"tree",treeSha,"parents",List.of(head)))); if(newCommit.code!=201)return Result.unknown("Commit creation was not confirmed");
    String commitSha=json.readTree(newCommit.body).path("sha").asText();
@@ -101,6 +108,11 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
   if(p.isBlank()||p.startsWith("/")||p.startsWith("\\\\")||p.matches("^[A-Za-z]:.*")||p.contains("..")||p.chars().anyMatch(c->c<32||c==127))throw new IllegalArgumentException("unsafe");
   p=Arrays.stream(p.split("/",-1)).map(this::clean).filter(x1->!x1.isBlank()).collect(java.util.stream.Collectors.joining("/"));if(p.isBlank())throw new IllegalArgumentException("empty");
   String ext=extension(x.getLanguage());p=p.replaceFirst("(?i)\\.(java|kt|py|js|ts|c|cpp|cs|go|rs|rb|swift|scala|sql|txt)$","");return p+"."+ext;
+ }
+ private String versionedPath(String path,Solution solution){
+  Instant solvedAt=solution.getSolvedAt()!=null?solution.getSolvedAt():solution.getObservedAt();String timestamp=VERSION_TIMESTAMP.format(solvedAt==null?Instant.EPOCH:solvedAt);
+  String capture=solution.getCaptureId()==null?"unknown":solution.getCaptureId().replaceAll("[^A-Za-z0-9]","");if(capture.length()>8)capture=capture.substring(0,8);if(capture.isBlank())capture="unknown";
+  int slash=path.lastIndexOf('/'),dot=path.lastIndexOf('.');if(dot<=slash)dot=path.length();return path.substring(0,dot)+"_"+timestamp+"_"+capture+path.substring(dot);
  }
  private String commitMessage(UserSettings s,Solution x){
   Map<String,String> v=new HashMap<>();String platform=x.getPlatform().name();v.put("Platform",platform);v.put("platform",platform);v.put("number",x.getProblemNumber());v.put("title",x.getTitle());v.put("language",x.getLanguage());v.put("name",s.getDisplayName()==null?"":s.getDisplayName().trim());v.put("nickname",s.getNickname()==null?"":s.getNickname().trim());v.put("id",s.getUser()!=null&&s.getUser().getId()!=null?String.valueOf(s.getUser().getId()):"");
