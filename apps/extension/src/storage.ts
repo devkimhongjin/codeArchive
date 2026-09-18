@@ -56,11 +56,14 @@ function settingsWithDefaults(value: Partial<CaptureSettings> | undefined): Capt
   const relay = value?.relay;
   return {
     autoSyncEnabled: value?.autoSyncEnabled === true,
+    autoDownloadEnabled: value?.autoDownloadEnabled === true,
     githubAutoCommitEnabled: value?.githubAutoCommitEnabled === true,
     githubTargetConfigured: value?.githubTargetConfigured === true,
     ...(typeof value?.copyHeader === "boolean" ? { copyHeader: value.copyHeader } : {}),
     ...(typeof value?.downloadHeader === "boolean" ? { downloadHeader: value.downloadHeader } : {}),
-    ...(typeof value?.downloadFilenameTemplate === "string" ? { downloadFilenameTemplate: value.downloadFilenameTemplate.slice(0, 160) } : {}),
+    downloadFilenameTemplate: typeof value?.downloadFilenameTemplate === "string"
+      ? value.downloadFilenameTemplate.slice(0, 160)
+      : DEFAULT_CAPTURE_SETTINGS.downloadFilenameTemplate,
     ...(typeof value?.gitPathTemplate === "string" ? { gitPathTemplate: value.gitPathTemplate.slice(0, 240) } : {}),
     ...(typeof value?.name === "string" ? { name: value.name.slice(0, 100) } : {}),
     ...(typeof value?.nickname === "string" ? { nickname: value.nickname.slice(0, 100) } : {}),

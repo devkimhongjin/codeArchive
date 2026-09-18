@@ -10,6 +10,7 @@ interface PopupServices {
   copyCapture?: (captureId: string) => Promise<{ ok?: boolean; text?: string }>;
   downloadCapture?: (captureId: string) => Promise<{ ok?: boolean }>;
   loadGithubStatuses?: (captureIds: string[]) => Promise<{ statuses?: Record<string, GithubCommitStatus> }>;
+  updateSettings?: (patch: Record<string, boolean>) => Promise<unknown>;
 }
 
 function asDisplayCapture(value: unknown): CapturePreview | null {
@@ -119,6 +120,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
   const recentList = document.querySelector<HTMLElement>("#recent-list")!;
   const recentEmpty = document.querySelector<HTMLElement>("#recent-empty")!;
   const recentError = document.querySelector<HTMLElement>("#recent-error")!;
+  const autoDownload = document.querySelector<HTMLInputElement>("#auto-download");
   const autoSync = document.querySelector<HTMLInputElement>("#auto-sync");
   const githubAuto = document.querySelector<HTMLInputElement>("#github-auto");
   const automationStatus = document.querySelector<HTMLElement>("#automation-status");
@@ -157,7 +159,11 @@ export function mountPopup(document: Document, services: PopupServices): void {
         ? state.recentCaptures.map(asDisplayCapture).filter((capture): capture is CapturePreview => capture !== null).slice(0, 3)
         : [];
       count.textContent = String(state.pendingCount);
-      const settings = state.settings as { autoSyncEnabled?: boolean; githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; relay?: { status?: string } };
+      const settings = state.settings as { autoDownloadEnabled?: boolean; autoSyncEnabled?: boolean; githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; relay?: { status?: string } };
+      if (autoDownload) {
+        autoDownload.checked = settings.autoDownloadEnabled === true;
+        autoDownload.setAttribute("aria-checked", String(autoDownload.checked));
+      }
       if (autoSync && githubAuto && automationStatus && automationHelp) {
         autoSync.checked = settings.autoSyncEnabled === true; githubAuto.checked = settings.githubAutoCommitEnabled === true;
         autoSync.setAttribute("aria-checked", String(autoSync.checked)); githubAuto.setAttribute("aria-checked", String(githubAuto.checked));
@@ -208,7 +214,11 @@ export function mountPopup(document: Document, services: PopupServices): void {
   }
 
   refresh.addEventListener("click", () => void load());
-  const updateAutomation = (patch: Record<string, boolean>) => void chrome.runtime.sendMessage({ type: "UPDATE_SETTINGS", patch }).then(() => void load()).catch(() => void load());
+  const updateAutomation = (patch: Record<string, boolean>) => {
+    if (!services.updateSettings) return;
+    void services.updateSettings(patch).then(() => void load()).catch(() => void load());
+  };
+  autoDownload?.addEventListener("change", () => { autoDownload.setAttribute("aria-checked", String(autoDownload.checked)); updateAutomation({ autoDownloadEnabled: autoDownload.checked }); });
   autoSync?.addEventListener("change", () => { autoSync.setAttribute("aria-checked", String(autoSync.checked)); updateAutomation({ autoSyncEnabled: autoSync.checked }); });
   void load();
 }

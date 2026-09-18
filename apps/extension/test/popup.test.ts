@@ -118,3 +118,22 @@ test('popup renders local captures before a remote GitHub status request settles
   assert.match(document.querySelector('.recent-list')!.textContent!, /Local first/);
   assert.equal(document.querySelector('#status')!.textContent, '로컬 보관');
 });
+
+test('popup keeps automatic download as an independent device-local toggle', async () => {
+  const { document } = parseHTML(html);
+  const patches: Array<Record<string, boolean>> = [];
+  mountPopup(document, {
+    copy: async () => {},
+    load: async () => ({ pendingCount: 0, settings: { autoDownloadEnabled: false }, recentCaptures: [] }),
+    updateSettings: async patch => { patches.push(patch); return { ok: true }; }
+  });
+  await settle();
+
+  const toggle = document.querySelector('#auto-download') as HTMLInputElement;
+  assert.equal(toggle.disabled, false);
+  toggle.checked = true;
+  toggle.dispatchEvent(new document.defaultView!.Event('change'));
+  await settle();
+
+  assert.deepEqual(patches, [{ autoDownloadEnabled: true }]);
+});

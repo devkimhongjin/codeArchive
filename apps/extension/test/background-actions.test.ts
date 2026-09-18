@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadPopupLocalState, storeCaptureLocalFirst } from "../src/backgroundActions";
+import { loadPopupLocalState, prepareCaptureDownload, storeCaptureLocalFirst } from "../src/backgroundActions";
 import { createCapture } from "../src/capture";
 import { MemoryCaptureStore } from "../src/storage";
 
@@ -56,4 +56,23 @@ test("popup state is built only from local storage and never exposes source code
   assert.equal(state.pendingCount, 1);
   assert.equal(state.recentCaptures.length, 1);
   assert.equal("sourceCode" in state.recentCaptures[0]!, false);
+});
+
+test("automatic download preparation reuses profile, header and language extension rules", () => {
+  const prepared = prepareCaptureDownload(
+    { ...capture(), language: "Python3", sourceCode: "print(42)" },
+    {
+      autoSyncEnabled: false,
+      autoDownloadEnabled: true,
+      githubAutoCommitEnabled: false,
+      githubTargetConfigured: false,
+      downloadHeader: true,
+      downloadFilenameTemplate: "Solution_{number}_{name}.java",
+      name: "홍길동"
+    }
+  );
+
+  assert.ok(prepared);
+  assert.equal(prepared.filename, "Solution_1234_홍길동.py");
+  assert.match(prepared.url, /^data:application\/octet-stream;base64,/);
 });

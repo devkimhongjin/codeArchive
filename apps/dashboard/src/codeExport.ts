@@ -2,7 +2,8 @@ import type { Solution } from './types'
 import { describeLanguage } from '../../../shared/language'
 
 export type ExportSettings = { copyHeader: boolean; downloadHeader: boolean; filenameTemplate: string; gitPathTemplate?: string }
-export const DEFAULT_EXPORT_SETTINGS: ExportSettings = { copyHeader: false, downloadHeader: false, filenameTemplate: '{platform}-{number}-{title}', gitPathTemplate: '{platform}/{number}-{title}' }
+export const DEFAULT_DOWNLOAD_FILENAME_TEMPLATE = 'Solution_{number}_{name}'
+export const DEFAULT_EXPORT_SETTINGS: ExportSettings = { copyHeader: false, downloadHeader: false, filenameTemplate: DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, gitPathTemplate: '{platform}/{number}-{title}' }
 export const DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE = 'Add {platform} {number} solution'
 export const EXPORT_SETTINGS_KEY = 'codearchive-export-settings'
 export type ExportProfile = { name?: string | null; nickname?: string | null; id?: string | number | null }

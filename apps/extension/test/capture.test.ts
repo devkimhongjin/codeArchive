@@ -358,13 +358,16 @@ test("local archive lists retained captures newest first, including synced recor
   assert.deepEqual((await store.listAll(1)).map((capture) => capture.captureId), [newer.captureId]);
 });
 
-test("memory store defaults both automation flags off and never enables GitHub without a target", async () => {
+test("memory store defaults automation off, uses the new download name and never enables GitHub without a target", async () => {
   const store = new MemoryCaptureStore();
   assert.deepEqual(await store.getSettings(), {
     autoSyncEnabled: false,
+    autoDownloadEnabled: false,
     githubAutoCommitEnabled: false,
-    githubTargetConfigured: false
+    githubTargetConfigured: false,
+    downloadFilenameTemplate: "Solution_{number}_{name}"
   });
+  assert.equal((await store.updateSettings({ autoDownloadEnabled: true })).autoDownloadEnabled, true);
   const settings = await store.updateSettings({ githubAutoCommitEnabled: true });
   assert.equal(settings.githubAutoCommitEnabled, false);
 });

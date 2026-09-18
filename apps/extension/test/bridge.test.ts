@@ -171,7 +171,9 @@ test("bridge accepts both exact dashboard origins and rejects lookalikes or mixe
 
 test("relay configuration persists only opaque acknowledged profile/export/theme settings and OFF clears it", async () => {
   let configuredCount = 0;
-  const store = new MemoryCaptureStore(); const bridge = new DashboardBridge(store, {
+  const store = new MemoryCaptureStore();
+  await store.updateSettings({ autoDownloadEnabled: true });
+  const bridge = new DashboardBridge(store, {
     capabilityFactory: () => "capability-relay",
     onRelayConfigured: () => { configuredCount += 1; }
   });
@@ -180,12 +182,14 @@ test("relay configuration persists only opaque acknowledged profile/export/theme
   const configured = await store.getSettings();
   assert.deepEqual(configured.relay, { endpoint: "/api/relay/captures", secret: "opaque-only", accountId: "17", generation: 3, status: "CONFIRMED" });
   assert.equal(configuredCount, 1);
+  assert.equal(configured.autoDownloadEnabled, true);
   assert.equal(configured.downloadFilenameTemplate, "{number}"); assert.equal(configured.lightTheme, "one-light"); assert.equal(configured.darkTheme, "dracula");
   assert.deepEqual(await bridge.handleMessage({ type: "CONFIGURE_RELAY", capability: connected.capability, relay: null, accountId: "17", settingsVersion: 4, copyHeader: false, downloadHeader: true, downloadFilenameTemplate: "{nickname}-{number}", gitPathTemplate: "offline/{id}", name: null, nickname: "새 별명", lightTheme: "solarized-light", darkTheme: "one-dark-pro", githubTargetConfigured: true }, sender()), { ok: true });
   const off = await store.getSettings();
   assert.equal(off.relay, undefined);
   assert.equal(off.autoSyncEnabled, false);
   assert.equal(off.githubAutoCommitEnabled, false);
+  assert.equal(off.autoDownloadEnabled, true);
   assert.equal(off.accountId, "17");
   assert.equal(off.copyHeader, false); assert.equal(off.downloadHeader, true);
   assert.equal(off.downloadFilenameTemplate, "{nickname}-{number}"); assert.equal(off.gitPathTemplate, "offline/{id}");

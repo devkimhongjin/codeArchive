@@ -1,5 +1,8 @@
 import type { Capture } from "./types";
+import type { CaptureSettings } from "./types";
 import type { CaptureStore } from "./storage";
+import { downloadFilename, exportCode } from "./export";
+import { textDownloadUrl } from "./download";
 
 export type CapturePreview = Omit<Capture, "sourceCode">;
 
@@ -7,6 +10,22 @@ export interface PopupLocalState {
   pendingCount: number;
   settings: Awaited<ReturnType<CaptureStore["getSettings"]>>;
   recentCaptures: CapturePreview[];
+}
+
+export interface PreparedDownload {
+  filename: string;
+  url: string;
+}
+
+/** Builds one browser download request from the same rules as the manual action. */
+export function prepareCaptureDownload(capture: Capture, settings: CaptureSettings): PreparedDownload | null {
+  const filename = downloadFilename(capture, settings.downloadFilenameTemplate, {
+    name: settings.name,
+    nickname: settings.nickname,
+    id: settings.accountId
+  });
+  const url = textDownloadUrl(exportCode(capture, settings.downloadHeader === true), filename.split(".").pop() ?? "txt");
+  return url ? { filename, url } : null;
 }
 
 /**
