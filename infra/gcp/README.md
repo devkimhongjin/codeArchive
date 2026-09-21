@@ -207,6 +207,72 @@ variables from the plan/apply output:
 
 The workflow intentionally runs only when manually dispatched from `develop`.
 
+### Issue #293: fail-closed staging database preflight
+
+The manual staging workflow and both deployment helpers now run
+`staging-db-preflight.mjs` before their first cloud mutation. The preflight
+checks the API and worker together against `staging-db-policy.json` and rejects
+all of the following by default:
+
+- a service registered with a production role, even when its name ends in
+  `-stg`;
+- a canonical database identity registered as production;
+- a canonical database identity without exactly one reviewed nonproduction
+  registration and evidence;
+- API and worker aliases that resolve to different canonical database identities;
+- missing, expired, contradictory, or ambiguous service/database inventory and unregistered aliases;
+- plaintext datasource overrides or Flyway overrides this first slice cannot
+  interpret safely;
+- any `SPRING_DATASOURCE_*` override outside the reviewed URL, username, and
+  password secret bindings;
+- non-empty container command/args that could load higher-precedence Spring
+  configuration outside the reviewed datasource plan;
+- Cloud Run secret annotations that map a datasource alias to another project,
+  and qualified or ambiguous secret identities outside the reviewed project;
+- a current datasource secret name or numeric version that differs from the
+  reviewed inventory.
+
+The policy deliberately starts with
+`blocked_pending_verified_inventory`. Do not replace that state with synthetic
+sample inventory. Before any staging deployment can be enabled, record the
+reviewed GCP project/region/service role, an explicitly approved nonproduction
+canonical Neon project/branch/database
+and schema relationship, registered pool/direct aliases, an explicit policy
+expiry (`validUntil`), and the exact numeric Secret Manager versions with durable evidence. Secret values and JDBC URLs do
+not belong in this policy.
+
+A service may currently reference `latest`, but the preflight resolves that
+reference to a numeric Secret Manager version and requires it to match the
+reviewed policy. The resulting checked plan is fingerprinted, and the workflow
+and PowerShell helpers derive their actual `SPRING_DATASOURCE_*` deployment
+bindings from that plan using the same numeric versions. The deployment path
+therefore does not re-use mutable `latest` for the three database secrets after
+checking it.
+
+There is intentionally no `force`, `AllowProduction`, or boolean bypass for
+this guard. Plan/`-WhatIf` runs also fail closed while inventory is unverified;
+they never report an unknown relationship as safe. Provider read failures are
+reported with fixed preflight codes rather than raw provider output.
+
+This is an entrypoint guard, not a universal database firewall. It protects the
+manual GCP staging workflow and the two documented PowerShell deploy helpers.
+It does not protect raw `gcloud`, Google Cloud Console changes, Render,
+arbitrary JVM startup, or other scripts that do not call this preflight. Real
+DB separation/provider changes and any production deployment remain separate
+owner-approved operational gates.
+
+Local checks for this guard are:
+
+```text
+node --test infra/gcp/staging-db-preflight.test.mjs
+pwsh -NoProfile -File infra/gcp/staging-db-preflight.integration.ps1
+```
+
+The integration script injects fake `gcloud`/`docker` executables into copies
+of the real PowerShell entrypoints and asserts that a rejected plan reaches zero
+build/push/deploy/migrate/traffic-changing calls and does not echo sentinel
+credential/token/source content.
+
 ## Production traffic promotion
 
 To stay within the free tier, the verified staging API and worker are promoted

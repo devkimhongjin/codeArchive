@@ -33,6 +33,9 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: maven
+      - run: node --test infra/gcp/staging-db-preflight.test.mjs
+      - shell: pwsh
+        run: ./infra/gcp/staging-db-preflight.integration.ps1
       - run: npm --prefix apps/dashboard ci
       - run: npm --prefix apps/dashboard test
       - run: npm --prefix apps/dashboard run build

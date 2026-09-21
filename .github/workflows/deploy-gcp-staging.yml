@@ -34,6 +34,34 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v3
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+
+      - name: Preflight API and worker database isolation
+        id: db_preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          plan="${RUNNER_TEMP}/codearchive-staging-db-plan.json"
+          node infra/gcp/staging-db-preflight.mjs prepare \
+            --policy infra/gcp/staging-db-policy.json \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --api-service "${API_SERVICE}" \
+            --worker-service "${WORKER_SERVICE}" \
+            --out "${plan}"
+
+          api_bindings="$(node infra/gcp/staging-db-preflight.mjs bindings --plan "${plan}" --service "${API_SERVICE}")"
+          worker_bindings="$(node infra/gcp/staging-db-preflight.mjs bindings --plan "${plan}" --service "${WORKER_SERVICE}")"
+          fingerprint="$(node infra/gcp/staging-db-preflight.mjs fingerprint --plan "${plan}")"
+
+          {
+            echo "api_db_bindings=${api_bindings}"
+            echo "worker_db_bindings=${worker_bindings}"
+            echo "fingerprint=${fingerprint}"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Authenticate Docker to Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
@@ -49,11 +77,14 @@ jobs:
 
       - name: Deploy private worker and public API
         shell: bash
+        env:
+          API_DB_BINDINGS: ${{ steps.db_preflight.outputs.api_db_bindings }}
+          WORKER_DB_BINDINGS: ${{ steps.db_preflight.outputs.worker_db_bindings }}
         run: |
           set -euo pipefail
           image='${{ steps.image.outputs.uri }}'
-          gcloud run deploy "${WORKER_SERVICE}" --project="${PROJECT_ID}" --region="${REGION}" --image="${image}" --quiet
-          gcloud run deploy "${API_SERVICE}" --project="${PROJECT_ID}" --region="${REGION}" --image="${image}" --quiet
+          gcloud run deploy "${WORKER_SERVICE}" --project="${PROJECT_ID}" --region="${REGION}" --image="${image}" --update-secrets="${WORKER_DB_BINDINGS}" --quiet
+          gcloud run deploy "${API_SERVICE}" --project="${PROJECT_ID}" --region="${REGION}" --image="${image}" --update-secrets="${API_DB_BINDINGS}" --quiet
 
           # A manual rollback pins Cloud Run traffic to a concrete revision. A
           # later deploy does not clear that pin automatically, so explicitly

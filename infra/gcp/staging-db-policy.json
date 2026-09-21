@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "inventoryStatus": "blocked_pending_verified_inventory",
+  "reviewedAt": null,
+  "validUntil": null,
+  "services": [],
+  "datasourceAliases": [],
+  "approvedNonproductionDatabases": [],
+  "protectedProductionDatabases": []
+}
