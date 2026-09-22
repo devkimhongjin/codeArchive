@@ -74,6 +74,113 @@ it('rejects an untrusted installation redirect returned by the API', async () =>
   expect(mocks.navigate).not.toHaveBeenCalled()
 })
 
+it('shows one prominent connection action before revealing the target cascade', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false })
+  mocks.bridge.mockResolvedValue({ capability: 'collapsed-target' })
+
+  await openSettings()
+
+  expect(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' })).toBeTruthy()
+  expect(screen.getByText('풀이를 저장할 GitHub 위치를 연결하세요')).toBeTruthy()
+  expect(screen.queryByLabelText('GitHub 설치')).toBeNull()
+  expect(screen.queryByLabelText('저장소')).toBeNull()
+})
+
+it('covers the target panel with a named loading state and blocks saving while GitHub is checked', async () => {
+  const installations = deferred<Array<{ id: number; accountLogin: string }>>()
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false })
+  mocks.installations.mockReturnValue(installations.promise); mocks.bridge.mockResolvedValue({ capability: 'loading-target' })
+  await openSettings()
+
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' }))
+
+  expect((await screen.findAllByText('연결 중')).length).toBeGreaterThanOrEqual(1)
+  expect(screen.getByText('GitHub에서 안전하게 확인하고 있습니다.')).toBeTruthy()
+  expect((screen.getByRole('button', { name: '설정 저장' }) as HTMLButtonElement).disabled).toBe(true)
+  installations.resolve([{ id: 9, accountLogin: 'first' }, { id: 10, accountLogin: 'second' }])
+  expect(await screen.findByRole('option', { name: 'first' })).toBeTruthy()
+  await waitFor(() => expect(screen.queryByText('GitHub에서 안전하게 확인하고 있습니다.')).toBeNull())
+})
+
+it('distinguishes an empty repository list and retries the failed stage in place', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false })
+  mocks.installations.mockResolvedValue([{ id: 9, accountLogin: 'archive-user' }])
+  mocks.repositories.mockRejectedValueOnce(new ApiError('요청을 처리하지 못했습니다 (403)', 403)).mockResolvedValueOnce([])
+  mocks.bridge.mockResolvedValue({ capability: 'retry-target' })
+  await openSettings()
+
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' }))
+  expect((await screen.findByRole('alert')).textContent).toContain('GitHub App 권한이 없거나 접근이 제한되었습니다.')
+  fireEvent.click(screen.getByRole('button', { name: '이 단계 다시 시도' }))
+
+  await waitFor(() => expect(mocks.repositories).toHaveBeenCalledTimes(2))
+  expect(await screen.findByText(/선택할 수 있는 저장소가 없습니다/)).toBeTruthy()
+  expect(screen.queryByRole('alert')).toBeNull()
+})
+
+it('explains a provider failure and retries branch loading without restarting setup', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false })
+  mocks.installations.mockResolvedValue([{ id: 9, accountLogin: 'archive-user' }])
+  mocks.repositories.mockResolvedValue([{ id: 11, owner: 'archive-user', name: 'repo', fullName: 'archive-user/repo', privateRepository: true, defaultBranch: 'main' }])
+  mocks.branches.mockRejectedValueOnce(new ApiError('요청을 처리하지 못했습니다 (503)', 503)).mockResolvedValueOnce([{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }])
+  mocks.bridge.mockResolvedValue({ capability: 'retry-branch' })
+  await openSettings()
+
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' }))
+  await screen.findByRole('option', { name: 'archive-user/repo' })
+  fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } })
+  expect((await screen.findByRole('alert')).textContent).toContain('GitHub 연결 서비스를 사용할 수 없습니다.')
+  fireEvent.click(screen.getByRole('button', { name: '이 단계 다시 시도' }))
+
+  expect(await screen.findByRole('option', { name: 'main' })).toBeTruthy()
+  expect(mocks.branches).toHaveBeenCalledTimes(2)
+  expect(mocks.repositories).toHaveBeenCalledTimes(1)
+})
+
+it('explains a network failure and retries directory loading at the selected path', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false })
+  mocks.installations.mockResolvedValue([{ id: 9, accountLogin: 'archive-user' }])
+  mocks.repositories.mockResolvedValue([{ id: 11, owner: 'archive-user', name: 'repo', fullName: 'archive-user/repo', privateRepository: true, defaultBranch: 'main' }])
+  mocks.branches.mockResolvedValue([{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }])
+  mocks.directories.mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce({ currentPath: '', parentPath: '', directories: ['src'] })
+  mocks.bridge.mockResolvedValue({ capability: 'retry-directory' })
+  await openSettings()
+
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' }))
+  await screen.findByRole('option', { name: 'archive-user/repo' })
+  fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } })
+  await screen.findByRole('option', { name: 'main' })
+  fireEvent.change(screen.getByLabelText('브랜치'), { target: { value: 'main' } })
+  expect((await screen.findByRole('alert')).textContent).toContain('네트워크 연결을 확인하지 못했습니다.')
+  fireEvent.click(screen.getByRole('button', { name: '이 단계 다시 시도' }))
+
+  expect(await screen.findByRole('button', { name: 'src/' })).toBeTruthy()
+  expect(mocks.directories).toHaveBeenCalledTimes(2)
+  expect(mocks.directories).toHaveBeenLastCalledWith('account-17', 9, 11, 'main', '')
+})
+
+it('announces repository and branch loading as separate full-panel stages', async () => {
+  const repositories = deferred<Array<{ id: number; owner: string; name: string; fullName: string; privateRepository: boolean; defaultBranch: string }>>()
+  const branches = deferred<Array<{ name: string; protectedBranch: boolean; commitSha: string }>>()
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false })
+  mocks.installations.mockResolvedValue([{ id: 9, accountLogin: 'archive-user' }])
+  mocks.repositories.mockReturnValue(repositories.promise)
+  mocks.branches.mockReturnValue(branches.promise)
+  mocks.bridge.mockResolvedValue({ capability: 'stage-target' })
+  await openSettings()
+
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' }))
+  expect((await screen.findAllByText('저장소 확인 중')).length).toBeGreaterThanOrEqual(1)
+  repositories.resolve([{ id: 11, owner: 'archive-user', name: 'repo', fullName: 'archive-user/repo', privateRepository: true, defaultBranch: 'main' }])
+  await screen.findByRole('option', { name: 'archive-user/repo' })
+  fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } })
+  expect((await screen.findAllByText('브랜치 확인 중')).length).toBeGreaterThanOrEqual(1)
+
+  branches.resolve([])
+  expect(await screen.findByText(/브랜치가 없습니다/)).toBeTruthy()
+  await waitFor(() => expect(screen.queryByText('GitHub에서 안전하게 확인하고 있습니다.')).toBeNull())
+})
+
 it('restores the installed account and repository cascade after the setup callback', async () => {
   window.history.replaceState({}, '', '/?githubInstall=success&installationId=9')
   mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false })
@@ -108,7 +215,7 @@ it('uses only the server-verified GitHub target cascade and clears dependent con
   mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false }); mocks.save.mockResolvedValue(settings)
   mocks.installations.mockResolvedValue([{ id: 9, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue([{ id: 11, owner: 'archive-user', name: 'repo', fullName: 'archive-user/repo', privateRepository: true, defaultBranch: 'main' }]); mocks.branches.mockResolvedValue([{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }]); mocks.directories.mockResolvedValueOnce({ currentPath: '', parentPath: '', directories: ['src'] }).mockResolvedValueOnce({ currentPath: 'src', parentPath: '', directories: [] }).mockResolvedValueOnce({ currentPath: '', parentPath: '', directories: ['src'] })
   mocks.bridge.mockResolvedValue({ capability: 'capability' }); await openSettings()
-  fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' })); await screen.findByRole('option', { name: 'archive-user' }); fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '9' } }); await screen.findByRole('option', { name: 'archive-user/repo' }); fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } }); await screen.findByRole('option', { name: 'main' }); fireEvent.change(screen.getByLabelText('브랜치'), { target: { value: 'main' } }); await screen.findByRole('button', { name: 'src/' }); fireEvent.click(screen.getByRole('button', { name: 'src/' })); await screen.findByRole('button', { name: '상위 폴더' }); fireEvent.click(screen.getByRole('button', { name: '상위 폴더' })); fireEvent.click(screen.getByRole('button', { name: '설정 저장' })); await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ githubInstallationId: 9, githubOwner: 'archive-user', githubRepository: 'repo', githubBranch: 'main', githubRootPath: null, githubAutoCommitEnabled: false }), 'account-17')); expect(mocks.installations).toHaveBeenCalledWith('account-17'); expect(mocks.repositories).toHaveBeenCalledWith('account-17', 9, 1); expect(mocks.branches).toHaveBeenCalledWith('account-17', 9, 11, 1); expect(mocks.directories).toHaveBeenCalledWith('account-17', 9, 11, 'main', '')
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' })); await screen.findByRole('option', { name: 'archive-user' }); fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '9' } }); await screen.findByRole('option', { name: 'archive-user/repo' }); fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } }); await screen.findByRole('option', { name: 'main' }); fireEvent.change(screen.getByLabelText('브랜치'), { target: { value: 'main' } }); await screen.findByRole('button', { name: 'src/' }); fireEvent.click(screen.getByRole('button', { name: 'src/' })); await screen.findByRole('button', { name: '상위 폴더' }); fireEvent.click(screen.getByRole('button', { name: '상위 폴더' })); await waitFor(() => expect((screen.getByRole('button', { name: '설정 저장' }) as HTMLButtonElement).disabled).toBe(false)); fireEvent.click(screen.getByRole('button', { name: '설정 저장' })); await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ githubInstallationId: 9, githubOwner: 'archive-user', githubRepository: 'repo', githubBranch: 'main', githubRootPath: null, githubAutoCommitEnabled: false }), 'account-17')); expect(mocks.installations).toHaveBeenCalledWith('account-17'); expect(mocks.repositories).toHaveBeenCalledWith('account-17', 9, 1); expect(mocks.branches).toHaveBeenCalledWith('account-17', 9, 11, 1); expect(mocks.directories).toHaveBeenCalledWith('account-17', 9, 11, 'main', '')
 })
 
 it('clears cascade placeholders without browsing id zero or an empty branch', async () => {
@@ -121,12 +228,12 @@ it('clears cascade placeholders without browsing id zero or an empty branch', as
   fireEvent.change(screen.getByLabelText('브랜치'), { target: { value: 'main' } }); await screen.findByRole('button', { name: 'src/' })
   const directoryCalls = mocks.directories.mock.calls.length; const branchCalls = mocks.branches.mock.calls.length; const repositoryCalls = mocks.repositories.mock.calls.length
   fireEvent.change(screen.getByLabelText('브랜치'), { target: { value: '' } }); await waitFor(() => expect((screen.getByLabelText('브랜치') as HTMLSelectElement).value).toBe(''))
-  fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '' } }); await waitFor(() => expect((screen.getByLabelText('저장소') as HTMLSelectElement).value).toBe(''))
+  fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '' } }); await waitFor(() => expect(screen.queryByLabelText('브랜치')).toBeNull())
   fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '' } }); await waitFor(() => expect((screen.getByLabelText('GitHub 설치') as HTMLSelectElement).value).toBe(''))
   expect(mocks.directories.mock.calls).toHaveLength(directoryCalls); expect(mocks.branches.mock.calls).toHaveLength(branchCalls); expect(mocks.repositories.mock.calls).toHaveLength(repositoryCalls)
   expect(mocks.repositories).not.toHaveBeenCalledWith('account-17', 0); expect(mocks.branches).not.toHaveBeenCalledWith('account-17', 9, 0); expect(mocks.directories).not.toHaveBeenCalledWith('account-17', 9, 11, '')
   expect((screen.getByLabelText('GitHub 자동 커밋') as HTMLInputElement).checked).toBe(false)
-  expect((screen.getByLabelText('저장소') as HTMLSelectElement).disabled).toBe(true); expect((screen.getByLabelText('브랜치') as HTMLSelectElement).disabled).toBe(true)
+  expect(screen.queryByLabelText('저장소')).toBeNull(); expect(screen.queryByLabelText('브랜치')).toBeNull()
 })
 
 it('does not restore a stale repository load after its installation is cleared', async () => {
@@ -136,7 +243,7 @@ it('does not restore a stale repository load after its installation is cleared',
   await openSettings(); fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' })); await screen.findByRole('option', { name: 'old-installation' })
   fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '9' } }); fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '' } })
   oldRepositories.resolve({ items: [{ id: 11, owner: 'old', name: 'private', fullName: 'old/private', privateRepository: true, defaultBranch: 'main' }], hasMore: false })
-  await waitFor(() => expect((screen.getByLabelText('저장소') as HTMLSelectElement).disabled).toBe(true))
+  await waitFor(() => expect(screen.queryByLabelText('저장소')).toBeNull())
   expect(screen.queryByRole('option', { name: 'old/private' })).toBeNull(); expect(screen.queryByRole('alert')).toBeNull()
 })
 
@@ -147,7 +254,7 @@ it('does not restore a stale branch load after its upper selection is cleared', 
   await openSettings(); fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' })); await screen.findByRole('option', { name: 'old-installation' })
   fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '9' } }); await screen.findByRole('option', { name: 'old/private' }); fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } }); fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '' } })
   oldBranches.resolve({ items: [{ name: 'old-branch', protectedBranch: false, commitSha: 'a'.repeat(40) }], hasMore: false })
-  await waitFor(() => expect((screen.getByLabelText('브랜치') as HTMLSelectElement).disabled).toBe(true))
+  await waitFor(() => expect(screen.queryByLabelText('브랜치')).toBeNull())
   expect(screen.queryByRole('option', { name: 'old-branch' })).toBeNull(); expect(screen.queryByRole('alert')).toBeNull()
 })
 
@@ -428,7 +535,7 @@ it('renders provider-unavailable state as actionable and keeps GitHub auto-commi
   mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubStatus: 'PROVIDER_UNAVAILABLE', githubAutoCommitEnabled: false })
   mocks.bridge.mockResolvedValue({ capability: 'capability-1' })
   await openSettings()
-  expect(screen.getByText(/GitHub App 서버 설정/)).toBeTruthy()
+  expect(screen.getByText(/GitHub App 연결을 사용할 수 없습니다/)).toBeTruthy()
   expect((screen.getByLabelText('GitHub 자동 커밋') as HTMLInputElement).disabled).toBe(true)
 })
 
