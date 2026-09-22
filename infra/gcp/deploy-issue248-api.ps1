@@ -31,10 +31,15 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 function Resolve-Gcloud {
-    $command = Get-Command gcloud -ErrorAction SilentlyContinue
-    if ($command) { return $command.Source }
-    $localInstallerPath = Join-Path $env:LOCALAPPDATA 'Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd'
-    if (Test-Path -LiteralPath $localInstallerPath) { return $localInstallerPath }
+    if ($env:OS -eq 'Windows_NT') {
+        $command = Get-Command gcloud.ps1 -ErrorAction SilentlyContinue
+        if ($command) { return $command.Source }
+        $localInstallerPath = Join-Path $env:LOCALAPPDATA 'Google\Cloud SDK\google-cloud-sdk\bin\gcloud.ps1'
+        if (Test-Path -LiteralPath $localInstallerPath) { return $localInstallerPath }
+    } else {
+        $command = Get-Command gcloud -ErrorAction SilentlyContinue
+        if ($command) { return $command.Source }
+    }
     throw 'Google Cloud CLI was not found.'
 }
 
@@ -47,7 +52,7 @@ function Invoke-Gcloud {
     )
     $output = & $gcloud @Arguments 2>&1
     if ($LASTEXITCODE -ne 0) {
-        throw "gcloud failed: gcloud $($Arguments -join ' ')`n$($output -join [Environment]::NewLine)"
+        throw 'gcloud command failed.'
     }
     return $output
 }
@@ -60,6 +65,69 @@ function Test-Gcloud {
     & $gcloud @Arguments *> $null
     return $LASTEXITCODE -eq 0
 }
+
+function Invoke-StagingDbPreflight {
+    param(
+        [Parameter(Mandatory = $true)] [string]$ApiServiceName,
+        [Parameter(Mandatory = $true)] [string]$WorkerServiceName,
+        [Parameter(Mandatory = $true)] [string]$TargetServiceName
+    )
+
+    $node = Get-Command node -ErrorAction SilentlyContinue
+    if (-not $node) {
+        throw 'Node.js is required for the staging database preflight.'
+    }
+
+    $preflightScript = Join-Path $PSScriptRoot 'staging-db-preflight.mjs'
+    $policyPath = Join-Path $PSScriptRoot 'staging-db-policy.json'
+    if (-not (Test-Path -LiteralPath $preflightScript) -or -not (Test-Path -LiteralPath $policyPath)) {
+        throw 'Staging database preflight files are missing.'
+    }
+
+    $planPath = Join-Path ([IO.Path]::GetTempPath()) "codearchive-db-preflight-$([Guid]::NewGuid().ToString('N')).json"
+    try {
+        $prepareOutput = @(& $node.Source $preflightScript prepare `
+            --policy $policyPath `
+            --project $ProjectId `
+            --region $Region `
+            --api-service $ApiServiceName `
+            --worker-service $WorkerServiceName `
+            --gcloud-bin $gcloud `
+            --out $planPath 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            $safeDenial = @($prepareOutput | ForEach-Object { $_.ToString() } |
+                Where-Object { $_ -match '^STAGING_DB_PREFLIGHT_DENY [A-Z0-9_]+(?: [A-Za-z0-9._:-]+)?$' })
+            if ($safeDenial.Count -eq 1) {
+                throw $safeDenial[0]
+            }
+            throw 'Staging database preflight denied deployment.'
+        }
+
+        $fingerprintLine = @($prepareOutput | ForEach-Object { $_.ToString() } | Where-Object { $_ -match '^PREFLIGHT_OK [a-f0-9]{64}$' })
+        if ($fingerprintLine.Count -ne 1) {
+            throw 'Staging database preflight did not return a valid fingerprint.'
+        }
+        $fingerprint = ($fingerprintLine[0] -split ' ', 2)[1]
+
+        $bindingOutput = @(& $node.Source $preflightScript bindings --plan $planPath --service $TargetServiceName 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Staging database preflight execution bindings are invalid.'
+        }
+        $bindings = ($bindingOutput | ForEach-Object { $_.ToString() }) -join ''
+        if ($bindings -notmatch '^SPRING_DATASOURCE_URL=[A-Za-z0-9._-]+:[1-9][0-9]*,SPRING_DATASOURCE_USERNAME=[A-Za-z0-9._-]+:[1-9][0-9]*,SPRING_DATASOURCE_PASSWORD=[A-Za-z0-9._-]+:[1-9][0-9]*$') {
+            throw 'Staging database preflight returned malformed execution bindings.'
+        }
+
+        return [pscustomobject]@{
+            Fingerprint = $fingerprint
+            Bindings = $bindings
+        }
+    } finally {
+        Remove-Item -LiteralPath $planPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+$dbPreflight = Invoke-StagingDbPreflight -ApiServiceName $Service -WorkerServiceName $WorkerService -TargetServiceName $Service
 
 Invoke-Gcloud -Arguments @('projects', 'describe', $ProjectId, '--format=value(projectId)') | Out-Null
 $registryHost = "$Region-docker.pkg.dev"
@@ -80,7 +148,7 @@ $requiredSecrets = @(
 if (-not (Test-Gcloud -Arguments @(
     'artifacts', 'docker', 'images', 'describe', $image, '--format=value(image_summary.digest)'
 ))) {
-    throw "Immutable image digest was not found: $image"
+    throw 'Immutable image digest was not found.'
 }
 
 $workerUrl = (Invoke-Gcloud -Arguments @(
@@ -118,6 +186,8 @@ $plan = [ordered]@{
     WorkerUrl = $workerUrl
     DashboardOrigin = $DashboardOrigin
     PreviousReadyRevision = $currentRevision
+    DatabasePreflightFingerprint = $dbPreflight.Fingerprint
+    DatabaseSecretVersions = 'pinned-numeric'
     Scaling = [ordered]@{
         Billing = 'request-based'
         MinInstances = 0
@@ -139,14 +209,13 @@ if (-not $PSCmdlet.ShouldProcess("Cloud Run service $Service", "Deploy public st
     exit 0
 }
 
+$dbSecretBindings = @($dbPreflight.Bindings.Split(','))
 $secretBindings = @(
-    'SPRING_DATASOURCE_URL=codearchive-spring-datasource-url:latest',
-    'SPRING_DATASOURCE_USERNAME=codearchive-spring-datasource-username:latest',
-    'SPRING_DATASOURCE_PASSWORD=codearchive-spring-datasource-password:latest',
-    'GITHUB_CLIENT_ID=codearchive-github-client-id:latest',
-    'GITHUB_CLIENT_SECRET=codearchive-github-client-secret:latest',
-    'GITHUB_APP_ID=codearchive-github-app-id:latest',
-    'GITHUB_APP_PRIVATE_KEY_PKCS8=codearchive-github-app-private-key-pkcs8:latest',
+    $dbSecretBindings
+    'GITHUB_CLIENT_ID=codearchive-github-client-id:latest'
+    'GITHUB_CLIENT_SECRET=codearchive-github-client-secret:latest'
+    'GITHUB_APP_ID=codearchive-github-app-id:latest'
+    'GITHUB_APP_PRIVATE_KEY_PKCS8=codearchive-github-app-private-key-pkcs8:latest'
     'GITHUB_APP_SLUG=codearchive-github-app-slug:latest'
 ) -join ','
 
@@ -183,7 +252,7 @@ $apiUrl = (Invoke-Gcloud -Arguments @(
     "--project=$ProjectId", "--region=$Region", '--format=value(status.url)'
 ) | Select-Object -First 1).ToString().Trim()
 if (-not $apiUrl.StartsWith('https://')) {
-    throw "Cloud Run did not return a valid HTTPS API URL: $apiUrl"
+    throw 'Cloud Run did not return a valid HTTPS API URL.'
 }
 
 $redirectUri = "$apiUrl/api/login/oauth2/code/github"
