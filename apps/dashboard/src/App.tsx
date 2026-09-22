@@ -34,6 +34,7 @@ import { canonicalLanguageDisplayName, canonicalLanguageKey } from '../../../sha
 import { filterAndSortSolutions, groupSolutions, type SolutionGroup, type SolutionSort } from './solutionQuery'
 import { BUILD_METADATA, buildLabel, updatedLabel } from '../../../shared/buildMetadata'
 import { EXTENSION_RELEASE, fetchLatestExtensionRelease, isVersionAtLeast, type ExtensionReleaseInfo } from './extensionRelease'
+import { formatExecutionTime, formatMemory } from './performancePresentation'
 
 type IconName =
   | 'book'
@@ -129,17 +130,6 @@ function formatDate(value?: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return new Intl.DateTimeFormat('ko-KR', { month: 'short', day: 'numeric' }).format(date)
-}
-
-function formatMetric(value: number | string | undefined, suffix: string) {
-  if (value === undefined || value === null || value === '') return '정보 없음'
-  return `${value}${suffix}`
-}
-
-function formatMemory(solution: Solution) {
-  if (solution.memoryValue !== undefined && solution.memoryUnit && solution.memoryUnit !== 'UNKNOWN') return `${solution.memoryValue} ${solution.memoryUnit}`
-  if (solution.memoryUsage !== undefined) return `${solution.memoryUsage} · 단위 미확인`
-  return '정보 없음'
 }
 
 function formatObservedTime(value?: string) {
@@ -1397,7 +1387,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
             <a className="problem-link" href={solution.problemUrl} target="_blank" rel="noreferrer">문제 보기 <Icon name="external" size={14} /></a>
           </div>
           <div className="metrics-row">
-            <MetricCard label="실행 시간" value={formatMetric(solution.executionTime, ' ms')} icon="clock" />
+            <MetricCard label="실행 시간" value={formatExecutionTime(solution.executionTime)} icon="clock" />
             <MetricCard label="메모리 사용량" value={formatMemory(solution)} icon="spark" />
             <MetricCard label="풀이 시간" value={formatObservedTime(solution.solvedAt ?? solution.observedAt)} icon="check" />
           </div>
