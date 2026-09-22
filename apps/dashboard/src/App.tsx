@@ -1429,9 +1429,9 @@ function GuideView({ onSettings }: { onSettings: () => void }) {
     : false
   return (
     <section className="guide-page">
-      <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> GET STARTED / BRIDGE</p><h1>연동 가이드</h1><p>Chrome 확장 프로그램에서 저장한 제출 기록을 CodeArchive로 가져옵니다.</p></div>
+      <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> GET STARTED / BRIDGE</p><h1>연동 가이드</h1><p>설치부터 첫 PASS 저장, 자동 동기화와 GitHub 커밋 확인까지 순서대로 진행합니다.</p></div>
       <div className="guide-grid">
-        <article className="guide-card guide-hero"><div className="guide-hero-icon"><Icon name="link" size={25} /></div><div><span className="card-kicker">CODEARCHIVE BRIDGE</span><h2>3분 안에 첫 풀이를 모아보세요</h2><p>자동 동기화가 꺼져 있으면 수동 동기화 때만 전송하고, 켜면 새 캡처를 안전한 릴레이로 전송합니다.</p></div><button className="primary-button" onClick={onSettings}>브리지 설정하기 <Icon name="chevron" size={14} /></button></article>
+        <article className="guide-card guide-hero"><div className="guide-hero-icon"><Icon name="link" size={25} /></div><div><span className="card-kicker">CODEARCHIVE BRIDGE</span><h2>PASS 한 번으로 저장 흐름을 확인하세요</h2><p>풀이는 먼저 브라우저에 저장됩니다. 자동 동기화를 켜면 대시보드를 닫아도 릴레이가 대기 중인 풀이를 서버로 전송하고, 설정에 따라 GitHub 커밋까지 요청합니다.</p></div><button className="primary-button" onClick={onSettings}>설정 열기 <Icon name="chevron" size={14} /></button></article>
         <article className="guide-card extension-release-card">
           <div className="release-heading"><div><span className="card-kicker">BETA DISTRIBUTION</span><h2>검증된 확장 프로그램 받기</h2></div><span className={`release-state is-${releaseState}`}>{releaseState === 'loading' ? '확인 중' : releaseState === 'ready' ? `v${latestRelease?.version}` : '릴리스 준비 중'}</span></div>
           <p>Chrome Web Store 출시 전에는 ZIP을 내려받아 개발자 모드에서 직접 로드합니다. 웹사이트가 확장을 자동 설치하거나 업데이트할 수는 없습니다.</p>
@@ -1446,12 +1446,27 @@ function GuideView({ onSettings }: { onSettings: () => void }) {
             {latestRelease && <a className="text-button checksum-link" href={latestRelease.checksumUrl}>체크섬 파일</a>}
           </div>
         </article>
-        <GuideStep number="01" title="압축 해제 후 로드" text="ZIP을 압축 해제하고 chrome://extensions에서 개발자 모드를 켠 뒤 ‘압축해제된 확장 프로그램을 로드합니다’를 선택하세요." action="chrome://extensions" />
-        <GuideStep number="02" title="GitHub 로그인 · 자동 연결" text="로그인하면 설치된 CodeArchive에 자동 연결합니다. ID를 복사하거나 붙여 넣을 필요가 없습니다." action="연결 상태 확인" onAction={onSettings} />
-        <GuideStep number="03" title="지금 동기화" text="동기화를 누르면 대기 중인 풀이를 가져옵니다. 서버가 저장한 항목만 확장 프로그램에서 확인 처리합니다." action="동기화 시작" onAction={onSettings} />
+        <GuideStep number="01" title="확장 프로그램 설치" text="ZIP을 압축 해제하고 Chrome 우측 상단의 확장 프로그램 → 확장 프로그램 관리로 이동합니다. 개발자 모드를 켠 뒤 압축 해제한 폴더를 끌어다 놓으세요." action="chrome://extensions" />
+        <GuideStep number="02" title="첫 PASS를 로컬에 저장" text="지원 사이트에서 정답 제출을 완료하세요. 대시보드 연결 여부와 관계없이 먼저 로컬 저장이 완료되고, 자동 다운로드를 켰다면 파일도 내려받습니다." action="확장 프로그램 열기" />
+        <GuideStep number="03" title="GitHub 로그인 · 자동 연결" text="확장 프로그램에서 대시보드를 열고 GitHub로 로그인하세요. 설치된 CodeArchive가 자동으로 연결되므로 확장 ID를 복사하거나 붙여 넣지 않습니다." action="연결 상태 확인" onAction={onSettings} />
+        <GuideStep number="04" title="자동 동기화 설정" text="설정에서 자동 동기화를 켜고 저장하세요. 릴레이가 연결 확인됨 상태가 되면 로컬 대기 풀이를 전송하며, 대시보드를 닫은 뒤의 새 PASS도 계속 처리합니다." action="자동화 설정" onAction={onSettings} />
+        <GuideStep number="05" title="GitHub App · 저장 위치 선택" text="GitHub 연결 및 저장 위치 선택을 누르면 필요한 경우 GitHub App 설치 화면으로 이동합니다. 설치 계정, 저장소, 브랜치와 폴더를 선택한 뒤 GitHub 자동 커밋을 켜세요." action="GitHub 설정" onAction={onSettings} />
+        <GuideStep number="06" title="저장 결과 확인" text="확장 프로그램의 최근 저장한 풀이에서 동기화 대기·동기화됨과 GitHub 완료·커밋 대기·커밋 중·커밋 실패·커밋 확인 필요·자동 커밋 안 함 상태를 확인하세요. 대시보드의 동기화 숫자는 아직 서버로 보내지 않은 로컬 풀이 수입니다." action="대시보드 확인" />
       </div>
       <div className="guide-update-note"><Icon name="check" size={18} /><div><strong>업데이트할 때 로컬 풀이를 유지하려면</strong><p>확장을 삭제하지 말고 기존 압축 해제 폴더의 파일을 새 ZIP 내용으로 교체한 뒤 확장 관리 화면에서 ‘새로고침’을 누르세요. 고정된 확장 ID가 유지되므로 IndexedDB 로컬 기록도 그대로 사용합니다.</p></div></div>
-      <div className="guide-contract"><div className="contract-icon"><Icon name="spark" size={18} /></div><div><strong>데이터 흐름을 확인하세요</strong><p>확장 프로그램 → 대기 중인 캡처 50개 → 서버의 일괄 검증 → 승인된 captureId만 ACK</p></div><span className="contract-badge">EXPLICIT SYNC</span></div>
+      <section className="guide-recovery" aria-labelledby="guide-recovery-title">
+        <h2 id="guide-recovery-title" className="guide-recovery-title">연결 상태별 복구 방법</h2>
+        <article className="guide-card"><span className="card-kicker">PENDING</span><h2>확인 대기</h2><p>릴레이 정보가 아직 확인되지 않았습니다. 대시보드를 열어 확장 연결을 확인하고 설정 저장이 끝날 때까지 기다리세요.</p></article>
+        <article className="guide-card"><span className="card-kicker">SETUP</span><h2>릴레이 설정 필요</h2><p>GitHub 저장 대상은 있지만 자동 전송 릴레이가 없습니다. 대시보드 설정에서 자동 동기화를 켜고 설정을 다시 저장하세요.</p></article>
+        <article className="guide-card"><span className="card-kicker">RELAY</span><h2>릴레이 오류 · 오프라인</h2><p>로컬 저장은 유지됩니다. 네트워크를 확인하고 확장 프로그램의 <strong>연결 재시도</strong>를 누르세요. 연결되면 자동화 ON/OFF 설정에 따라 대기 중인 풀이가 처리됩니다.</p></article>
+        <article className="guide-card"><span className="card-kicker">AUTH</span><h2>인증 만료</h2><p>대시보드를 열어 GitHub에 다시 로그인하고 이 브라우저를 다시 연결하세요. 인증이 복구되기 전에는 자동 동기화와 GitHub 자동 커밋이 일시 중지됩니다.</p></article>
+        <article className="guide-card"><span className="card-kicker">EXTENSION</span><h2>확장 프로그램 연결 끊김</h2><p>대시보드 상단의 <strong>확장 재연결</strong>을 누르세요. 계속 연결되지 않으면 확장이 활성화됐는지 확인하고 확장 관리 화면에서 새로고침하세요.</p></article>
+        <article className="guide-card"><span className="card-kicker">GITHUB APP</span><h2>대상 필요 · 권한 미설치</h2><p>설정의 <strong>GitHub 연결 및 저장 위치 선택</strong>에서 App 설치를 완료하고 저장소·브랜치·폴더를 다시 선택하세요.</p></article>
+        <article className="guide-card"><span className="card-kicker">REVOKING</span><h2>서버 폐기 대기</h2><p>자동 전송은 이미 중지된 상태입니다. 네트워크가 복구되면 서버의 릴레이 권한 폐기를 완료하므로 로컬 풀이를 삭제하거나 다시 설치하지 마세요.</p></article>
+        <article className="guide-card"><span className="card-kicker">COMMIT</span><h2>커밋 실패 · 확인 필요</h2><p>최근 저장한 풀이의 상태를 확인하고 설정에서 저장 대상을 다시 검증하세요. 확인 필요 상태에서는 중복 커밋을 피하기 위해 자동 재시도하지 않습니다.</p></article>
+        <article className="guide-card"><span className="card-kicker">COMMIT OFF</span><h2>자동 커밋 안 함</h2><p>해당 풀이에는 GitHub 커밋이 요청되지 않았다는 뜻이며 오류가 아닙니다. 이후 풀이부터 커밋하려면 대시보드에서 저장 대상을 선택하고 GitHub 자동 커밋을 켜세요.</p></article>
+      </section>
+      <div className="guide-contract"><div className="contract-icon"><Icon name="spark" size={18} /></div><div><strong>저장 순서를 기억하세요</strong><p>PASS → 로컬 저장 → 릴레이 자동 동기화 → GitHub 자동 커밋</p></div><span className="contract-badge">LOCAL FIRST</span></div>
     </section>
   )
 }
