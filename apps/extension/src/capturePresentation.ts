@@ -14,15 +14,15 @@ export function formatSolutionTime(value: string): string {
 }
 
 export function formatExecutionTime(value: number | undefined): string {
-  return value !== undefined && Number.isFinite(value) && value >= 0 ? `${value} ms` : "정보 없음";
+  return value !== undefined && Number.isFinite(value) && value >= 0 ? `${Math.floor(value)} ms` : "정보 없음";
 }
 
 export function formatCaptureMemory(capture: Pick<Capture, "memoryValue" | "memoryUnit" | "memoryUsage">): string {
   if (capture.memoryValue !== undefined && Number.isFinite(capture.memoryValue) && capture.memoryValue >= 0 && capture.memoryUnit && capture.memoryUnit !== "UNKNOWN") {
-    return `${capture.memoryValue} ${capture.memoryUnit}`;
+    return `${Math.floor(capture.memoryValue)} ${capture.memoryUnit}`;
   }
   if (capture.memoryUsage !== undefined && Number.isFinite(capture.memoryUsage) && capture.memoryUsage >= 0) {
-    return `${capture.memoryUsage} · 단위 미확인`;
+    return `${Math.floor(capture.memoryUsage)} · 단위 미확인`;
   }
   return "정보 없음";
 }
