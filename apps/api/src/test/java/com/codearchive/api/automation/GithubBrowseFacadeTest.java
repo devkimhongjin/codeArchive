@@ -22,6 +22,7 @@ class GithubBrowseFacadeTest {
   private HttpServer server;
   private final AtomicInteger requests = new AtomicInteger();
   private boolean paginateTarget;
+  private boolean includeEmptyRepository;
 
   @BeforeEach
   void start() throws Exception {
@@ -77,6 +78,17 @@ class GithubBrowseFacadeTest {
   }
 
   @Test
+  void keepsARepositoryWithAnExplicitNullDefaultBranchVisible() throws Exception {
+    includeEmptyRepository = true;
+    GithubAppProvider provider = provider();
+
+    assertThat(provider.repositories("123", 44L, 1))
+        .extracting(GithubAppProvider.RepositoryChoice::name,
+            GithubAppProvider.RepositoryChoice::defaultBranch)
+        .contains(org.assertj.core.groups.Tuple.tuple("empty", null));
+  }
+
+  @Test
   void findsInstallationAndValidatedBranchOnLaterBoundedPages() throws Exception {
     paginateTarget = true;
     GithubAppProvider provider = provider();
@@ -128,7 +140,9 @@ class GithubBrowseFacadeTest {
         return;
       }
       reply(exchange, 200, "{\"repositories\":[{\"id\":7,\"owner\":{\"login\":\"owner\"},"
-          + "\"name\":\"repo\",\"default_branch\":\"release/v1\",\"private\":true}]}");
+          + "\"name\":\"repo\",\"default_branch\":\"release/v1\",\"private\":true}"
+          + (includeEmptyRepository ? ",{\"id\":8,\"owner\":{\"login\":\"owner\"},\"name\":\"empty\",\"default_branch\":null,\"private\":true}" : "")
+          + "]}");
     } else if (path.equals("/repos/owner/repo/branches")) {
       if (paginateTarget) {
         reply(exchange, 200, branchesPage(exchange.getRequestURI().getQuery()));

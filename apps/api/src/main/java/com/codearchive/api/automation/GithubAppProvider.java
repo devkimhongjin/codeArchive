@@ -7,6 +7,7 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
 @Component public class GithubAppProvider implements GithubProvider {
  private static final DateTimeFormatter VERSION_TIMESTAMP=DateTimeFormatter.ofPattern("yyyyMMdd-HHmmssSSS").withZone(ZoneOffset.UTC);
  private static final DateTimeFormatter PATH_TIME=DateTimeFormatter.ofPattern("yyMMddHHmmss").withZone(ZoneOffset.UTC);
+ public static final String INITIAL_README="# CodeArchive\n\n이 저장소는 CodeArchive로 관리하는 알고리즘 풀이를 보관합니다. 지원 사이트에서 PASS한 풀이가 설정에 따라 자동 수집·동기화·커밋됩니다.\n\n저장된 풀이에는 플랫폼, 문제 번호와 제목, 제출 언어, 소스 코드, 수집 가능한 실행 시간과 메모리 정보가 포함될 수 있습니다. 폴더 구조와 파일명, 커밋 메시지, 문제 정보 주석은 CodeArchive 설정에 따라 달라집니다.\n";
  private final String appId,key,base; private final HttpClient http; private final ObjectMapper json; private final Duration requestTimeout; private final GithubProvider fallback=new FailClosedGithubProvider();
  @Autowired public GithubAppProvider(@Value("${codearchive.github.app-id:}")String appId,@Value("${codearchive.github.app-private-key:}")String key,@Value("${codearchive.github.api-base:https://api.github.com}")String base,@Value("${codearchive.github.connect-timeout-ms:5000}")long connectTimeoutMs,@Value("${codearchive.github.request-timeout-ms:10000}")long requestTimeoutMs,ObjectMapper json){this(appId,key,base,HttpClient.newBuilder().connectTimeout(timeout(connectTimeoutMs)).build(),json,requestTimeoutMs);} 
  GithubAppProvider(String appId,String key,String base,HttpClient http,ObjectMapper json){this(appId,key,base,http,json,10000);}
@@ -14,12 +15,65 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
  public Result createOnly(UserSettings s,Solution solution){ return createOnly(s,solution,()->true); }
  public record InstallationChoice(long id,String accountLogin){} public record RepositoryChoice(long id,String owner,String name,String fullName,boolean privateRepository,String defaultBranch){} public record BranchChoice(String name,boolean protectedBranch,String commitSha){} public record DirectoryChoice(String currentPath,String parentPath,List<String> directories){} public record PageResult<T>(List<T> items,boolean hasMore){}
  public static final class ProviderUnavailableException extends IllegalStateException { public ProviderUnavailableException(String message){super(message);} }
+ public static final class EmptyRepositoryConflictException extends IllegalStateException { public EmptyRepositoryConflictException(){super("repository is not empty");} }
  public boolean browseReady(){return !appId.isBlank()&&!key.isBlank();}
  public List<InstallationChoice> installations(String githubId)throws Exception{if(!browseReady())throw new ProviderUnavailableException("provider unavailable");if(!safeGithubId(githubId))throw new SecurityException("invalid GitHub identity");List<InstallationChoice> out=new ArrayList<>();for(int page=1;page<=100;page++){Response r=send("GET","/app/installations?per_page=100&page="+page,jwt(),null);if(r.code!=200)throw installationBrowseFailure(r);JsonNode body=json.readTree(r.body);if(!body.isArray())throw new ProviderUnavailableException("installation response invalid");int count=0;for(JsonNode n:body){count++;InstallationChoice choice=installationChoice(n,githubId);if(choice!=null)out.add(choice);}if(count<100)break;}return out;}
- public List<RepositoryChoice> repositories(String githubId,long installation,int page)throws Exception{return repositoriesPage(githubId,installation,page).items();} public PageResult<RepositoryChoice> repositoriesPage(String githubId,long installation,int page)throws Exception{checkPage(page);verifyInstallation(githubId,installation);Response r=send("GET","/installation/repositories?per_page=100&page="+page,installationToken(installation),null);if(r.code!=200)throw new IllegalStateException("repositories unavailable");JsonNode raw=json.readTree(r.body).path("repositories");List<RepositoryChoice> out=new ArrayList<>();int count=0;for(JsonNode n:raw){count++;long id=n.path("id").asLong();String owner=n.path("owner").path("login").asText(),name=n.path("name").asText(),branch=n.path("default_branch").asText();if(id>0&&safe(owner)&&safe(name)&&safeBranch(branch))out.add(new RepositoryChoice(id,owner,name,owner+"/"+name,n.path("private").asBoolean(),branch));}return new PageResult<>(out,count==100&&page<100);}
- public List<BranchChoice> branches(String githubId,long installation,long repository,int page)throws Exception{return branchesPage(githubId,installation,repository,page).items();} public PageResult<BranchChoice> branchesPage(String githubId,long installation,long repository,int page)throws Exception{checkPage(page);RepositoryChoice r=repository(githubId,installation,repository);Response x=send("GET","/repos/"+segment(r.owner())+"/"+segment(r.name())+"/branches?per_page=100&page="+page,installationToken(installation),null);if(x.code!=200)throw new IllegalStateException("branches unavailable");JsonNode raw=json.readTree(x.body);List<BranchChoice> out=new ArrayList<>();int count=0;for(JsonNode n:raw){count++;String name=n.path("name").asText(),sha=n.path("commit").path("sha").asText();if(safeBranch(name)&&sha.matches("[0-9a-fA-F]{40}"))out.add(new BranchChoice(name,n.path("protected").asBoolean(),sha));}return new PageResult<>(out,count==100&&page<100);}
- public DirectoryChoice directories(String githubId,long installation,long repository,String branch,String path)throws Exception{if(!safeBranch(branch)||!safePath(path))throw new IllegalArgumentException("unsafe path");RepositoryChoice r=repository(githubId,installation,repository);if(!branchExists(githubId,installation,repository,branch))throw new SecurityException("branch mismatch");String p=path.isBlank()?"": "/"+Arrays.stream(path.split("/")).map(GithubAppProvider::segment).collect(java.util.stream.Collectors.joining("/"));Response x=send("GET","/repos/"+segment(r.owner())+"/"+segment(r.name())+"/contents"+p+"?ref="+segment(branch),installationToken(installation),null);if(x.code!=200)throw new IllegalStateException("directory unavailable");List<String> dirs=new ArrayList<>();JsonNode body=json.readTree(x.body);if(!body.isArray())throw new IllegalArgumentException("not directory");for(JsonNode n:body){String name=n.path("name").asText();if("dir".equals(n.path("type").asText())&&safe(name)&&dirs.size()<100)dirs.add(name);}String parent=path.isBlank()?"":path.contains("/")?path.substring(0,path.lastIndexOf('/')):"";return new DirectoryChoice(path,parent,dirs);}
+ public List<RepositoryChoice> repositories(String githubId,long installation,int page)throws Exception{return repositoriesPage(githubId,installation,page).items();}
+ public PageResult<RepositoryChoice> repositoriesPage(String githubId,long installation,int page)throws Exception{
+  checkPage(page);verifyInstallation(githubId,installation);
+  Response r=send("GET","/installation/repositories?per_page=100&page="+page,installationToken(installation),null);
+  if(r.code!=200)throw new IllegalStateException("repositories unavailable");
+  JsonNode raw=json.readTree(r.body).path("repositories");
+  if(!raw.isArray())throw new ProviderUnavailableException("repositories response invalid");
+  List<RepositoryChoice> out=new ArrayList<>();int count=0;
+  for(JsonNode n:raw){
+   count++;
+   long id=n.path("id").asLong();String owner=n.path("owner").path("login").asText(),name=n.path("name").asText();
+   JsonNode defaultBranch=n.get("default_branch");
+   if(defaultBranch==null||(!defaultBranch.isNull()&&!defaultBranch.isTextual()))continue;
+   String branch=defaultBranch.isTextual()?defaultBranch.asText():null;
+   // GitHub can return a null default branch before the first commit. Keep
+   // that repository selectable instead of silently dropping it from setup.
+   if(id>0&&safe(owner)&&safe(name)&&(branch==null||safeBranch(branch)))out.add(new RepositoryChoice(id,owner,name,owner+"/"+name,n.path("private").asBoolean(),branch));
+  }
+  return new PageResult<>(out,count==100&&page<100);
+ }
+ public List<BranchChoice> branches(String githubId,long installation,long repository,int page)throws Exception{return branchesPage(githubId,installation,repository,page).items();} public PageResult<BranchChoice> branchesPage(String githubId,long installation,long repository,int page)throws Exception{checkPage(page);RepositoryChoice r=repository(githubId,installation,repository);Response x=send("GET","/repos/"+segment(r.owner())+"/"+segment(r.name())+"/branches?per_page=100&page="+page,installationToken(installation),null);if(x.code==409)return new PageResult<>(List.of(),false);if(x.code!=200)throw new IllegalStateException("branches unavailable");JsonNode raw=json.readTree(x.body);if(!raw.isArray())throw new ProviderUnavailableException("branches response invalid");List<BranchChoice> out=new ArrayList<>();int count=0;for(JsonNode n:raw){count++;String name=n.path("name").asText(),sha=n.path("commit").path("sha").asText();if(safeBranch(name)&&sha.matches("[0-9a-fA-F]{40}"))out.add(new BranchChoice(name,n.path("protected").asBoolean(),sha));}return new PageResult<>(out,count==100&&page<100);}
+ public DirectoryChoice directories(String githubId,long installation,long repository,String branch,String path)throws Exception{if(!safeBranch(branch)||!safePath(path))throw new IllegalArgumentException("unsafe path");RepositoryChoice r=repository(githubId,installation,repository);if(!branchExists(githubId,installation,repository,branch)){if(path.isBlank()&&branch.equals(emptyDefaultBranch(githubId,installation,repository,installationToken(installation))))return new DirectoryChoice("","",List.of());throw new SecurityException("branch mismatch");}String p=path.isBlank()?"": "/"+Arrays.stream(path.split("/")).map(GithubAppProvider::segment).collect(java.util.stream.Collectors.joining("/"));Response x=send("GET","/repos/"+segment(r.owner())+"/"+segment(r.name())+"/contents"+p+"?ref="+segment(branch),installationToken(installation),null);if(x.code!=200)throw new IllegalStateException("directory unavailable");List<String> dirs=new ArrayList<>();JsonNode body=json.readTree(x.body);if(!body.isArray())throw new IllegalArgumentException("not directory");for(JsonNode n:body){String name=n.path("name").asText();if("dir".equals(n.path("type").asText())&&safe(name)&&dirs.size()<100)dirs.add(name);}String parent=path.isBlank()?"":path.contains("/")?path.substring(0,path.lastIndexOf('/')):"";return new DirectoryChoice(path,parent,dirs);}
  public void validateTarget(String githubId,long installation,long repository,String branch,String root)throws Exception{directories(githubId,installation,repository,branch,root==null?"":root);}
+ public String initializeReadme(String githubId,long installation,long repository)throws Exception{
+  String token=installationToken(installation);
+  String branch=emptyDefaultBranch(githubId,installation,repository,token);
+  RepositoryChoice target=repository(githubId,installation,repository);
+  String path="/repos/"+segment(target.owner())+"/"+segment(target.name())+"/contents/README.md";
+  Response created=send("PUT",path,token,json.writeValueAsString(Map.of("message","Initialize CodeArchive archive","content",Base64.getEncoder().encodeToString(INITIAL_README.getBytes(StandardCharsets.UTF_8)))));
+  if(created.code==201)return branch;
+  if(created.code==409||created.code==422)throw new EmptyRepositoryConflictException();
+  throw new ProviderUnavailableException("README initialization outcome is unavailable");
+ }
+ public String emptyDefaultBranch(String githubId,long installation,long repository)throws Exception{
+  return emptyDefaultBranch(githubId,installation,repository,installationToken(installation));
+ }
+ private String emptyDefaultBranch(String githubId,long installation,long repository,String token)throws Exception{
+  RepositoryChoice target=repository(githubId,installation,repository);
+  String repoPath="/repos/"+segment(target.owner())+"/"+segment(target.name());
+  Response metadata=send("GET",repoPath,token,null);
+  if(metadata.code!=200)throw new ProviderUnavailableException("repository metadata unavailable");
+  JsonNode details=json.readTree(metadata.body);
+  if(details.path("id").asLong()!=repository)throw new ProviderUnavailableException("repository identity changed");
+  String branch=details.path("default_branch").asText();
+  if(!safeBranch(branch))throw new ProviderUnavailableException("default branch unavailable");
+  Response branches=send("GET",repoPath+"/branches?per_page=1&page=1",token,null);
+  if(branches.code!=409){
+   if(branches.code!=200)throw new ProviderUnavailableException("branch verification unavailable");
+   JsonNode listed=json.readTree(branches.body);
+   if(!listed.isArray())throw new ProviderUnavailableException("branch response invalid");
+   if(!listed.isEmpty())throw new EmptyRepositoryConflictException();
+  }
+  Response ref=send("GET",repoPath+"/git/ref/heads/"+segment(branch),token,null);
+  if(ref.code!=404&&ref.code!=409){if(ref.code==200)throw new EmptyRepositoryConflictException();throw new ProviderUnavailableException("empty repository verification unavailable");}
+  return branch;
+ }
  private RepositoryChoice repository(String githubId,long installation,long id)throws Exception{for(int page=1;page<=100;page++){PageResult<RepositoryChoice> result=repositoriesPage(githubId,installation,page);Optional<RepositoryChoice> found=result.items().stream().filter(x->x.id()==id).findFirst();if(found.isPresent())return found.get();if(!result.hasMore())break;}throw new SecurityException("repository mismatch");}
  private boolean branchExists(String githubId,long installation,long repository,String branch)throws Exception{for(int page=1;page<=100;page++){PageResult<BranchChoice> result=branchesPage(githubId,installation,repository,page);if(result.items().stream().anyMatch(value->value.name().equals(branch)))return true;if(!result.hasMore())break;}return false;}
  private void verifyInstallation(String githubId,long installation)throws Exception{if(installations(githubId).stream().noneMatch(x->x.id()==installation))throw new SecurityException("installation mismatch");}
@@ -30,7 +84,9 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
   boolean possibleWrite=false;
   try {
    String token=installationToken(s.getGithubInstallationId()); String repo=repo(s);
-   Response ref=send("GET",repo+"/git/ref/heads/"+segment(s.getGithubBranch()),token,null); if(ref.code!=200)return classify(ref,false);
+   Response ref=send("GET",repo+"/git/ref/heads/"+segment(s.getGithubBranch()),token,null);
+   if(ref.code==404||ref.code==409)return createFirstSolution(s,solution,finalWriteGuard,token,repo,path,source);
+   if(ref.code!=200)return classify(ref,false);
    String head=json.readTree(ref.body).path("object").path("sha").asText(); if(head.isBlank())return Result.unknown("Malformed branch reference");
    Response commit=send("GET",repo+"/git/commits/"+segment(head),token,null); if(commit.code!=200)return classify(commit,false);
    String tree=json.readTree(commit.body).path("tree").path("sha").asText(); if(tree.isBlank())return Result.unknown("Malformed commit");
@@ -64,6 +120,34 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
    Response update=send("PATCH",repo+"/git/refs/heads/"+segment(s.getGithubBranch()),token,json.writeValueAsString(Map.of("sha",commitSha,"force",false)));
    if(update.code==200)return Result.succeeded(); return Result.unknown("Final ref update was not confirmed");
   } catch(Exception e){return possibleWrite?Result.unknown("GitHub mutation outcome is unknown"):Result.retryable("GitHub App request failed before final mutation");}
+ }
+ private Result createFirstSolution(UserSettings settings,Solution solution,FinalWriteGuard guard,String token,String repo,String path,String source){
+  // The Contents API is the documented bootstrap path for an empty GitHub
+  // repository. No sha is supplied, so an existing path is never overwritten.
+  try{
+   if(settings.getGithubRootPath()!=null&&!settings.getGithubRootPath().isBlank())return Result.failed("Empty repository root must be blank");
+   long installation=settings.getGithubInstallationId();
+   RepositoryChoice target=repository(settings.getUser().getGithubId(),installation,findRepositoryId(settings.getUser().getGithubId(),installation,settings.getGithubOwner(),settings.getGithubRepository()));
+   if(!target.owner().equals(settings.getGithubOwner())||!target.name().equals(settings.getGithubRepository()))return Result.failed("GitHub target changed");
+   String branch=emptyDefaultBranch(settings.getUser().getGithubId(),installation,target.id(),token);
+   if(!branch.equals(settings.getGithubBranch()))return Result.failed("Default branch changed");
+   if(!guard.stillAuthorized())return Result.failed("GitHub automation consent changed before first commit");
+   String body=json.writeValueAsString(Map.of("message",commitMessage(settings,solution),"content",Base64.getEncoder().encodeToString(source.getBytes(StandardCharsets.UTF_8))));
+   Response created=send("PUT",repo+"/contents/"+encodedPath(path),token,body);
+   if(created.code==201)return Result.succeeded();
+   if(created.code==409||created.code==422)return Result.unknown("First commit collided with another repository change");
+   return Result.unknown("First commit outcome was not confirmed");
+  }catch(EmptyRepositoryConflictException e){return Result.retryable("Repository initialized before first commit; retry against its branch");}
+   catch(SecurityException e){return Result.failed("GitHub target is no longer available");}
+   catch(Exception e){return Result.unknown("First commit preflight or outcome was not confirmed");}
+ }
+ private long findRepositoryId(String githubId,long installation,String owner,String name)throws Exception{
+  for(int page=1;page<=100;page++){
+   PageResult<RepositoryChoice> result=repositoriesPage(githubId,installation,page);
+   for(RepositoryChoice item:result.items())if(item.owner().equals(owner)&&item.name().equals(name))return item.id();
+   if(!result.hasMore())break;
+  }
+  throw new SecurityException("repository mismatch");
  }
  private String installationToken(Long id)throws Exception{Response r=send("POST","/app/installations/"+id+"/access_tokens",jwt(),"{}");if(r.code!=201)throw new IllegalStateException("installation token unavailable");return json.readTree(r.body).path("token").asText();}
  private Response send(String method,String path,String token,String body)throws Exception{HttpRequest.Builder b=HttpRequest.newBuilder(URI.create(base+path)).timeout(requestTimeout).header("Accept","application/vnd.github+json").header("Authorization","Bearer "+token).header("X-GitHub-Api-Version","2022-11-28"); if(body==null)b.method(method,HttpRequest.BodyPublishers.noBody());else b.header("Content-Type","application/json").method(method,HttpRequest.BodyPublishers.ofString(body));HttpResponse<String> r=http.send(b.build(),HttpResponse.BodyHandlers.ofString());return new Response(r.statusCode(),r.body());}

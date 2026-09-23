@@ -97,7 +97,7 @@ export type GithubInstallationStart = {
   installations: GithubInstallation[]
   installUrl: string | null
 }
-export type GithubRepositoryTarget = { id: number; owner: string; name: string; fullName: string; privateRepository: boolean; defaultBranch: string }
+export type GithubRepositoryTarget = { id: number; owner: string; name: string; fullName: string; privateRepository: boolean; defaultBranch: string | null }
 export type GithubBranchTarget = { name: string; protectedBranch: boolean; commitSha: string }
 export type GithubDirectoryTarget = { currentPath: string; parentPath: string; directories: string[] }
 export type GithubPage<T> = { items: T[]; hasMore: boolean }

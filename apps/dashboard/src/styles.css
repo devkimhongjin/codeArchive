@@ -206,3 +206,14 @@ h1, h2, p { margin-top: 0; }
 .export-settings input[type=checkbox] { accent-color: #7954e8; }
 .export-settings input[type=text], .export-settings input:not([type]) { width: 100%; padding: 10px; border: 1px solid #ddd5ec; border-radius: 8px; }
 .export-settings output { overflow-wrap: anywhere; font-size: 12px; }
+
+.github-create-guide, .github-empty-repository { display: grid; gap: 9px; padding: 12px; background: #faf9fc; border: 1px solid #eeebf2; border-radius: 7px; }
+.github-create-guide > button { justify-self: start; }
+.github-create-guide-body { display: grid; gap: 8px; }
+.github-create-guide-body p, .github-empty-repository p { margin: 0; color: #706a7d; font-size: 10px; line-height: 1.6; }
+.github-create-guide-body > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.github-create-guide-body a { color: #6850bf; font-size: 10px; font-weight: 700; }
+.github-empty-repository > strong { color: #514866; font-size: 11px; }
+.github-empty-repository > label { display: flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: #514866; font-size: 10px; }
+.github-empty-repository pre { max-height: 180px; overflow: auto; margin: 0; padding: 10px; color: #484254; background: #fff; border: 1px solid var(--line); border-radius: 5px; white-space: pre-wrap; font-size: 10px; line-height: 1.5; }
+.github-empty-repository > button { justify-self: start; }

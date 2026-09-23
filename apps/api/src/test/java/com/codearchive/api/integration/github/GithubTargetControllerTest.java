@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
 
 import com.codearchive.api.auth.AppUser;
 import com.codearchive.api.auth.UserRepository;
@@ -55,6 +56,25 @@ class GithubTargetControllerTest {
     assertThat(controller.installations(github("123", "account"), null).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     assertThat(controller.installations(github("123", "account"), "456").getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
     verifyNoInteractions(provider);
+  }
+
+  @Test
+  void readmeInitializationRequiresTheExpectedAuthenticatedAccount() throws Exception {
+    UserRepository users = mock(UserRepository.class);
+    GithubAppProvider provider = mock(GithubAppProvider.class);
+    AppUser user = AppUser.fromGithub("123", "account", "Name", null);
+    when(users.findByGithubId("123")).thenReturn(Optional.of(user));
+    GithubTargetController controller = new GithubTargetController(users, provider);
+
+    assertThat(controller.initializeReadme(null, null, 44L, 7L).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(controller.initializeReadme(github("123", "account"), "456", 44L, 7L).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    verify(provider, never()).initializeReadme("123", 44L, 7L);
+
+    when(provider.browseReady()).thenReturn(true);
+    when(provider.initializeReadme("123", 44L, 7L)).thenReturn("primary");
+    var response = controller.initializeReadme(github("123", "account"), "123", 44L, 7L);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(response.getBody()).isEqualTo(Map.of("defaultBranch", "primary"));
   }
 
   private static OAuth2AuthenticationToken github(String id, String login) {
