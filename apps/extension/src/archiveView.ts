@@ -13,7 +13,7 @@ interface ArchiveServices {
 type PlatformFilter = "ALL" | Capture["platform"];
 type SortOrder = "latest" | "oldest" | "problem" | "title";
 type CaptureGroup = { key: string; captures: Capture[] };
-type Detail = { details: HTMLDetailsElement; source: HTMLElement; viewer: HTMLElement; capture: Capture; generation: number };
+type Detail = { source: HTMLElement; viewer: HTMLElement; capture: Capture; generation: number };
 
 function asDisplayCapture(value: unknown): Capture | null {
   if (!value || typeof value !== "object") return null;
@@ -135,13 +135,12 @@ function renderDetail(document: Document, capture: Capture, group: CaptureGroup,
     item.append(label);
   }
 
-  const details = element(document, "details", "capture-code-details");
-  const toolbar = element(document, "summary", "code-toolbar");
+  const codeBlock = element(document, "div", "capture-code-block");
+  const toolbar = element(document, "div", "code-toolbar");
   const title = element(document, "strong", "code-toolbar-title", "⌘  소스 코드");
   const suffix = element(document, "span", "code-extension", `.${sourceFileExtension(capture.language)}`);
-  const toggle = element(document, "span", "code-toggle", "코드 펼치기");
-  toolbar.append(title, suffix, toggle);
-  details.append(toolbar);
+  toolbar.append(title, suffix);
+  codeBlock.append(toolbar);
   const viewer = element(document, "div", "capture-code-viewer");
   viewer.setAttribute("role", "region");
   viewer.setAttribute("aria-label", "소스 코드");
@@ -150,10 +149,9 @@ function renderDetail(document: Document, capture: Capture, group: CaptureGroup,
   capture.sourceCode.split("\n").forEach((_, index) => gutter.append(element(document, "span", "", String(index + 1))));
   const source = element(document, "pre", "source-code", capture.sourceCode);
   viewer.append(gutter, source);
-  details.append(viewer);
-  details.addEventListener("toggle", () => { toggle.textContent = details.hasAttribute("open") ? "코드 접기" : "코드 펼치기"; });
-  item.append(details);
-  return { item, details, source, viewer, capture, generation: 0 };
+  codeBlock.append(viewer);
+  item.append(codeBlock);
+  return { item, source, viewer, capture, generation: 0 };
 }
 
 function readThemeMode(document: Document): CodeThemeMode {
@@ -208,7 +206,6 @@ export function mountArchive(document: Document, services: ArchiveServices): voi
 
   function highlight(rendered: Detail): void {
     const generation = ++rendered.generation;
-    if (!rendered.details.hasAttribute("open")) return;
     const theme = themeMode === "dark" ? themeSettings.darkTheme! : themeSettings.lightTheme!;
     if (rendered.source.dataset.shikiTheme === theme) return;
     rendered.viewer.style.colorScheme = themeMode;
@@ -219,7 +216,7 @@ export function mountArchive(document: Document, services: ArchiveServices): voi
     rendered.viewer.style.backgroundColor = "";
     rendered.viewer.style.color = "";
     void tokensForSource(rendered.capture.sourceCode, rendered.capture.language, themeSettings, themeMode === "dark").then(result => {
-      if (generation !== rendered.generation || active !== rendered || !rendered.details.hasAttribute("open") || !result || !rendered.source.isConnected) return;
+      if (generation !== rendered.generation || active !== rendered || !result || !rendered.source.isConnected) return;
       rendered.source.replaceChildren();
       rendered.source.dataset.shikiTheme = result.theme;
       rendered.source.style.backgroundColor = result.background ?? "";
@@ -262,8 +259,8 @@ export function mountArchive(document: Document, services: ArchiveServices): voi
     }
     const rendered = renderDetail(document, capture, group, id => { selectedId = id; renderView(); });
     active = rendered;
-    rendered.details.addEventListener("toggle", () => highlight(rendered));
     detail.replaceChildren(rendered.item);
+    highlight(rendered);
   }
 
   async function load(): Promise<void> {
@@ -325,7 +322,7 @@ export function mountArchive(document: Document, services: ArchiveServices): voi
     themeMode = isLightTheme(selected) ? "light" : "dark";
     try { document.defaultView?.localStorage?.setItem(CODE_THEME_MODE_KEY, themeMode); } catch { /* Preview remains active. */ }
     themeSettings = isLightTheme(selected) ? { ...themeSettings, lightTheme: selected } : { ...themeSettings, darkTheme: selected };
-    if (active?.details.hasAttribute("open")) highlight(active);
+    if (active) highlight(active);
     if (services.updateThemes) void services.updateThemes(themeSettings.lightTheme!, themeSettings.darkTheme!).catch(() => {
       error.textContent = "테마를 저장하지 못했어요. 다시 선택해 주세요.";
       error.hidden = false;

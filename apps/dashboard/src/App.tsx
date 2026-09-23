@@ -1440,6 +1440,7 @@ function SolutionsView({
         <select value={languageFilter} onChange={(event) => setLanguageFilter(event.target.value)} aria-label="언어 필터">
           {languages.map((language) => <option key={language.key} value={language.key}>{language.label}</option>)}
         </select>
+        <label className="archive-theme-picker">코드 보기 테마 <CodeThemeSelect value={codeThemeMode === 'dark' ? darkTheme : lightTheme} onChange={onCodeThemeChange} /></label>
         {(query || platformFilter !== 'ALL' || languageFilter !== 'ALL') && <button className="filter-reset" onClick={() => { setQuery(''); setPlatformFilter('ALL'); setLanguageFilter('ALL') }}><Icon name="close" size={13} /> 필터 초기화</button>}
       </div>
 
@@ -1458,7 +1459,7 @@ function SolutionsView({
           </div>
           <div className="list-footer"><span><span className="status-dot" /> {mode === 'local' ? '로컬 기록 · 업로드 전' : '서버와 연결됨'}</span><span>{filteredSolutions.length} / {solutions.length}</span></div>
         </section>
-        <SolutionDetail solution={selectedSolution} group={selectedGroup} onSelectSubmission={setSelectedId} mode={mode} onCopy={onCopy} onDownload={onDownload} lightTheme={lightTheme} darkTheme={darkTheme} codeThemeMode={codeThemeMode} onCodeThemeChange={onCodeThemeChange} onOtherSolutions={onOtherSolutions} />
+        <SolutionDetail solution={selectedSolution} group={selectedGroup} onSelectSubmission={setSelectedId} mode={mode} onCopy={onCopy} onDownload={onDownload} lightTheme={lightTheme} darkTheme={darkTheme} codeThemeMode={codeThemeMode} onOtherSolutions={onOtherSolutions} />
       </div>
     </section>
   )
@@ -1480,7 +1481,7 @@ function SolutionGroupRow({ group, selected, onSelect, onOtherSolutions }: { gro
   )
 }
 
-function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onDownload, lightTheme, darkTheme, codeThemeMode, onCodeThemeChange, onOtherSolutions }: { solution: Solution | null; group: SolutionGroup | null; onSelectSubmission: (captureId: string) => void; mode: 'local' | 'live'; onCopy: () => void; onDownload: () => void; lightTheme: AccountSettings['lightTheme']; darkTheme: AccountSettings['darkTheme']; codeThemeMode: CodeThemeMode; onCodeThemeChange: (theme: CodeTheme) => void; onOtherSolutions: (platform: Solution['platform'], problemNumber: string) => void }) {
+function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onDownload, lightTheme, darkTheme, codeThemeMode, onOtherSolutions }: { solution: Solution | null; group: SolutionGroup | null; onSelectSubmission: (captureId: string) => void; mode: 'local' | 'live'; onCopy: () => void; onDownload: () => void; lightTheme: AccountSettings['lightTheme']; darkTheme: AccountSettings['darkTheme']; codeThemeMode: CodeThemeMode; onOtherSolutions: (platform: Solution['platform'], problemNumber: string) => void }) {
   return (
     <section className="solution-detail" aria-label="선택한 풀이 상세">
       {!solution ? (
@@ -1501,7 +1502,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
             <MetricCard label="풀이 시간" value={formatObservedTime(solution.solvedAt ?? solution.observedAt)} icon="check" />
           </div>
           {group && group.submissions.length > 1 && <label className="submission-picker">제출 기록<select aria-label="제출 기록" value={solution.captureId} onChange={(event) => onSelectSubmission(event.target.value)}>{group.submissions.map((submission, index) => <option key={submission.captureId} value={submission.captureId}>{index + 1}. {formatObservedTime(submission.solvedAt ?? submission.observedAt)} · {canonicalLanguageDisplayName(submission.language)}</option>)}</select></label>}
-          <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><label className="code-toolbar-theme">테마 <CodeThemeSelect value={codeThemeMode === 'dark' ? darkTheme : lightTheme} onChange={onCodeThemeChange} /></label><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
+          <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
           <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} activeMode={codeThemeMode} />
           <div className="detail-note"><Icon name="spark" size={14} /><span>{mode === 'local' ? '이 브라우저의 로컬 기록입니다. 로그인 후 명시적으로 동기화할 수 있습니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
         </>

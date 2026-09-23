@@ -31,7 +31,7 @@ function choose(document: Document, select: HTMLSelectElement, value: string): v
   select.dispatchEvent(new document.defaultView!.Event('change'));
 }
 
-test('local archive mirrors the dashboard list/detail layout, groups submissions, and keeps code collapsed', async () => {
+test('local archive mirrors the dashboard list/detail layout, groups submissions, and shows selected code', async () => {
   const { document } = parseHTML(html);
   mountArchive(document, { load: async () => ({ captures: [
     { ...capture('11111111-1111-4111-8111-111111111111', 'PENDING', 'const first = 1;', { observedAt: '2026-09-15T12:01:00.000Z' }), executionTime: 0, memoryValue: 0, memoryUnit: 'MB' },
@@ -44,8 +44,8 @@ test('local archive mirrors the dashboard list/detail layout, groups submissions
   assert.equal(document.querySelectorAll('.solution-row').length, 2);
   assert.equal(document.querySelectorAll('.solution-row.selected').length, 1);
   assert.equal(document.querySelectorAll('.capture-card').length, 1);
-  assert.equal(document.querySelectorAll('.capture-code-details[open]').length, 0);
-  assert.equal(document.querySelectorAll('.source-code[data-shiki-theme]').length, 0);
+  assert.equal(document.querySelectorAll('.capture-code-details').length, 0);
+  assert.equal(document.querySelectorAll('.capture-code-viewer').length, 1);
   assert.equal(document.querySelectorAll('#archive-code-theme').length, 1);
   assert.equal(document.querySelectorAll('.capture-code-theme').length, 0);
   assert.match(document.querySelector('.archive-list')!.textContent!, /풀이 2개/);
@@ -57,7 +57,7 @@ test('local archive mirrors the dashboard list/detail layout, groups submissions
   assert.equal(source.textContent, '<script>const second = true;</script>');
   assert.equal(source.querySelector('script'), null);
   assert.match(document.querySelector('.archive-detail')!.textContent!, /대시보드 동기화됨/);
-  assert.equal(document.querySelector('.capture-code-details')!.hasAttribute('open'), false);
+  assert.equal(document.querySelectorAll('.code-toggle').length, 0);
 });
 
 test('search, platform filter, sort and refresh keep the local list and detail coherent', async () => {
@@ -95,7 +95,7 @@ test('search, platform filter, sort and refresh keep the local list and detail c
   assert.equal((document.querySelector('#archive-error') as HTMLElement).hidden, false);
 });
 
-test('the single top theme selector highlights only the selected expanded solution', async () => {
+test('the single top theme selector highlights the selected solution only', async () => {
   const { document } = parseHTML(html);
   let settings = { lightTheme: 'github-light', darkTheme: 'github-dark' };
   const updates: Array<[string, string]> = [];
@@ -113,22 +113,13 @@ test('the single top theme selector highlights only the selected expanded soluti
   choose(document, select, 'solarized-light');
   assert.deepEqual(updates, [['solarized-light', 'github-dark']]);
   let source = document.querySelector<HTMLElement>('.source-code')!;
-  assert.equal(source.dataset.shikiTheme, undefined);
-  let details = document.querySelector<HTMLElement>('.capture-code-details')!;
-  details.setAttribute('open', '');
-  details.dispatchEvent(new document.defaultView!.Event('toggle'));
   await waitFor(() => source.dataset.shikiTheme === 'solarized-light');
   const firstSource = source;
   (document.querySelectorAll<HTMLButtonElement>('.solution-row')[1]!).click();
-  assert.equal(document.querySelectorAll('.capture-code-details[open]').length, 0);
+  assert.equal(document.querySelectorAll('.capture-code-viewer').length, 1);
   source = document.querySelector<HTMLElement>('.source-code')!;
   assert.notEqual(source, firstSource);
-  assert.equal(source.dataset.shikiTheme, undefined);
   choose(document, select, 'dracula');
-  assert.equal(source.dataset.shikiTheme, undefined);
-  details = document.querySelector<HTMLElement>('.capture-code-details')!;
-  details.setAttribute('open', '');
-  details.dispatchEvent(new document.defaultView!.Event('toggle'));
   await waitFor(() => source.dataset.shikiTheme === 'dracula');
   assert.equal(document.querySelector<HTMLElement>('.capture-code-viewer')!.style.colorScheme, 'dark');
   assert.deepEqual(updates, [['solarized-light', 'github-dark'], ['solarized-light', 'dracula']]);
