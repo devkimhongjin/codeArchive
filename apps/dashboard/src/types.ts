@@ -1,6 +1,6 @@
 export type Platform = 'SWEA' | 'PROGRAMMERS'
 
-export type ViewName = 'solutions' | 'guide' | 'settings'
+export type ViewName = 'solutions' | 'community' | 'guide' | 'settings'
 
 export type User = {
   id: number
@@ -23,6 +23,7 @@ export type AuthProviders = {
 }
 
 export type Solution = {
+  id?: number
   captureId: string
   platform: Platform
   problemNumber: string
@@ -38,7 +39,14 @@ export type Solution = {
   memoryUsage?: number | string
   memoryValue?: number | string
   memoryUnit?: 'KB' | 'KiB' | 'MB' | 'MiB' | 'UNKNOWN' | string
+  visibility?: 'private' | 'published'
+  publishedAt?: string | null
 }
+
+export type CommunityAuthor = { name: string; nickname: string | null; avatarUrl: string | null }
+export type CommunitySummary = { id: number; platform: Platform; problemNumber: string; title: string; language: string; languageKey: string; solvedAt: string | null; publishedAt: string; author: CommunityAuthor }
+export type CommunityDetail = CommunitySummary & { problemUrl: string; sourceCode: string; executionTime: number | string | null; memoryValue: number | string | null; memoryUnit: string | null }
+export type CommunityPage = { items: CommunitySummary[]; page: number; size: number; total: number; hasMore: boolean }
 
 export type Capture = Solution & {
   captureId: string

@@ -1,4 +1,4 @@
-import { GITHUB_LOGIN_URL, type AccountSettings, type AuthProviders, type BulkResponse, type Capture, type RelayGrant, type Solution, type User, type GithubInstallation, type GithubInstallationStart, type GithubRepositoryTarget, type GithubBranchTarget, type GithubDirectoryTarget, type GithubPage } from './types'
+import { GITHUB_LOGIN_URL, type AccountSettings, type AuthProviders, type BulkResponse, type Capture, type RelayGrant, type Solution, type User, type GithubInstallation, type GithubInstallationStart, type GithubRepositoryTarget, type GithubBranchTarget, type GithubDirectoryTarget, type GithubPage, type CommunityPage, type CommunityDetail, type Platform } from './types'
 
 export { GITHUB_LOGIN_URL } from './types'
 
@@ -119,6 +119,15 @@ export async function getSolutions(expectedGithubId: string): Promise<Solution[]
   })
   return Array.isArray(payload) ? payload : payload.solutions ?? []
 }
+
+export function getCommunitySolutions(expectedGithubId: string, platform: Platform, problemNumber: string, languageKey: string, page: number): Promise<CommunityPage> {
+  const query = new URLSearchParams({ platform, problemNumber, page: String(page), size: '20' })
+  if (languageKey) query.set('languageKey', languageKey)
+  return requestJson<CommunityPage>(`/api/community/solutions?${query}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+}
+
+export const getCommunityDetail = (expectedGithubId: string, id: number) => requestJson<CommunityDetail>(`/api/community/solutions/${id}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const setCommunityVisibility = (expectedGithubId: string, id: number, visibility: 'private' | 'published') => requestJson<{ visibility: 'private' | 'published'; publishedAt: string | null }>(`/api/community/solutions/${id}/visibility`, { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ visibility }) })
 
 export async function bulkUpload(captures: Capture[], expectedGithubId: string): Promise<BulkResponse> {
   return requestJson<BulkResponse>('/api/solutions/bulk', {

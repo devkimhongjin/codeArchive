@@ -35,6 +35,8 @@ import { filterAndSortSolutions, groupSolutions, type SolutionGroup, type Soluti
 import { BUILD_METADATA, buildLabel, updatedLabel } from '../../../shared/buildMetadata'
 import { EXTENSION_RELEASE, fetchLatestExtensionRelease, isVersionAtLeast, type ExtensionReleaseInfo } from './extensionRelease'
 import { formatExecutionTime, formatMemory } from './performancePresentation'
+import { CommunityView } from './CommunityView'
+import { readCommunityRoute, readView, urlForView, type CommunityRoute } from './communityRoute'
 
 type IconName =
   | 'book'
@@ -106,7 +108,11 @@ function normalizeSolution(value: unknown, index = 0): Solution {
   const raw = (value ?? {}) as Record<string, unknown>
   const read = (...keys: string[]) => keys.map((key) => raw[key]).find((item) => item !== undefined && item !== null)
   const platform = String(read('platform') ?? 'SWEA').toUpperCase() === 'PROGRAMMERS' ? 'PROGRAMMERS' : 'SWEA'
+  const rawId = read('id')
+  const id = typeof rawId === 'number' && Number.isSafeInteger(rawId) && rawId > 0 ? rawId : undefined
+  const rawVisibility = read('visibility')
   return {
+    id,
     captureId: String(read('captureId', 'capture_id') ?? `remote-${index}`),
     platform,
     problemNumber: String(read('problemNumber', 'problem_number') ?? '—'),
@@ -122,6 +128,8 @@ function normalizeSolution(value: unknown, index = 0): Solution {
     memoryUsage: read('memoryUsage', 'memory_usage') as number | string | undefined,
     memoryValue: read('memoryValue', 'memory_value') as number | string | undefined,
     memoryUnit: read('memoryUnit', 'memory_unit') as Solution['memoryUnit'],
+    visibility: rawVisibility === 'published' || rawVisibility === 'private' ? rawVisibility : undefined,
+    publishedAt: read('publishedAt', 'published_at') as string | undefined,
   }
 }
 
@@ -213,7 +221,8 @@ function relayDeviceId() {
 
 export default function App() {
   const [githubInstallReturn] = useState(readGithubInstallReturn)
-  const [view, setView] = useState<ViewName>(() => readGithubInstallReturn() ? 'settings' : 'solutions')
+  const [view, setView] = useState<ViewName>(() => readGithubInstallReturn() ? 'settings' : readView())
+  const [communityRoute, setCommunityRoute] = useState<CommunityRoute>(readCommunityRoute)
   const [mode, setMode] = useState<'local' | 'live'>('local')
   // Async bridge/settings work outlives the render that created it. Keep the
   // authorization mode in a ref so a failed API read cannot be followed by a
@@ -507,6 +516,30 @@ export default function App() {
   const changeView = (nextView: ViewName) => {
     setView(nextView)
     setMobileNavOpen(false)
+    window.history.pushState({ codeArchiveView: nextView }, '', urlForView(nextView, communityRoute))
+  }
+  const changeCommunityRoute = (nextRoute: CommunityRoute) => {
+    setCommunityRoute(nextRoute)
+    setView('community')
+    setMobileNavOpen(false)
+    window.history.pushState({ codeArchiveView: 'community' }, '', urlForView('community', nextRoute))
+  }
+  useEffect(() => {
+    const restoreRoute = (event: PopStateEvent) => {
+      const savedView = event.state?.codeArchiveView
+      setView(savedView === 'guide' || savedView === 'settings' ? savedView : readView())
+      setCommunityRoute(readCommunityRoute())
+    }
+    window.addEventListener('popstate', restoreRoute)
+    return () => window.removeEventListener('popstate', restoreRoute)
+  }, [])
+  const returnToArchive = (platform: Solution['platform'], problemNumber: string) => {
+    const own = solutions.find(solution => solution.platform === platform && solution.problemNumber === problemNumber)
+    setQuery('')
+    setPlatformFilter('ALL')
+    setLanguageFilter('ALL')
+    if (own) setSelectedId(own.captureId)
+    changeView('solutions')
   }
 
   const refreshPendingCount = async (
@@ -546,7 +579,11 @@ export default function App() {
         // A reconnect can replace an authenticated identity without a logout.
         // Resetting the bridge first advances the authority generation and
         // fails closed before any A-owned save/grant response can reach B.
-        await resetBridge()
+        const bridgeReset = resetBridge()
+        setMode('local')
+        setSolutions([])
+        setSelectedId('')
+        await bridgeReset
         if (authMutationInFlight.current !== null) return
         clearAccountDraft()
         fence = { generation: accountGeneration.current, operation: ++solutionOperation.current }
@@ -618,10 +655,10 @@ export default function App() {
   const handleExpectedAccountChange = async (error: unknown, expectedGithubId: string) => {
     if (!(error instanceof ApiError) || error.status !== 409 || error.message !== 'GitHub account changed; reconnect required') return false
     // An A-owned response is harmless once B is rendered; never let it clear
-    // B. If A is still current, sever every authority before asking to reconnect.
+    // B. If A is still current, fence its authority and clear its source before
+    // waiting for an extension disconnect that may take several seconds.
     if (userRef.current?.githubId !== expectedGithubId) return true
-    await resetBridge()
-    if (userRef.current?.githubId !== expectedGithubId) return true
+    const bridgeReset = resetBridge()
     clearAccountDraft()
     setUser(null)
     setMode('local')
@@ -630,7 +667,23 @@ export default function App() {
     setView('solutions')
     setLoadError('GitHub 계정이 변경되었습니다. 다시 연결해 주세요.')
     showToast('info', 'GitHub 계정이 변경되었습니다. 다시 연결해 주세요.')
+    await bridgeReset
     return true
+  }
+
+  const invalidateCommunityAuth = (expectedGithubId: string) => {
+    if (userRef.current?.githubId !== expectedGithubId || modeRef.current !== 'live') return
+    // Fence all A-owned requests immediately, then remove A's archive before
+    // any asynchronous bridge disconnect can finish.
+    modeRef.current = 'local'
+    void resetBridge()
+    clearAccountDraft()
+    setMode('local')
+    setSolutions([])
+    setSelectedId('')
+    setUser(null)
+    setLoadError('GitHub 연결이 변경되거나 만료되었습니다. 다시 로그인해 주세요.')
+    showToast('info', 'GitHub 연결이 변경되거나 만료되었습니다. 다시 로그인해 주세요.')
   }
 
   const beginLogoutMutation = () => {
@@ -1144,6 +1197,9 @@ export default function App() {
             <button className={view === 'solutions' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('solutions')}>
               전체 풀이 <span className="nav-count">{solutions.length}</span>
             </button>
+            <button className={view === 'community' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('community')}>
+              커뮤니티
+            </button>
             <button className={view === 'guide' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('guide')}>
               연동 가이드
             </button>
@@ -1228,8 +1284,22 @@ export default function App() {
             darkTheme={accountSettings.darkTheme}
             onLightThemeChange={(lightTheme) => updateCodeThemes({ lightTheme, darkTheme: accountSettingsRef.current.darkTheme })}
             onDarkThemeChange={(darkTheme) => updateCodeThemes({ lightTheme: accountSettingsRef.current.lightTheme, darkTheme })}
+            onOtherSolutions={(platform, problemNumber) => changeCommunityRoute({ platform, problemNumber, languageKey: '', page: 0, detailId: null })}
           />
         )}
+        {view === 'community' && <CommunityView
+          user={user}
+          mode={mode}
+          solutions={solutions}
+          route={communityRoute}
+          onRouteChange={changeCommunityRoute}
+          onReturnToArchive={returnToArchive}
+          onVisibilityChanged={(expectedGithubId, id, visibility, publishedAt) => { if (userRef.current?.githubId === expectedGithubId && modeRef.current === 'live') setSolutions(current => current.map(solution => solution.id === id ? { ...solution, visibility, publishedAt } : solution)) }}
+          onAuthInvalid={invalidateCommunityAuth}
+          onLogin={() => navigateSameTab(GITHUB_LOGIN_URL)}
+          lightTheme={accountSettings.lightTheme}
+          darkTheme={accountSettings.darkTheme}
+        />}
         {view === 'guide' && (
           <GuideView onSettings={() => changeView('settings')} />
         )}
@@ -1292,6 +1362,7 @@ function SolutionsView({
   darkTheme,
   onLightThemeChange,
   onDarkThemeChange,
+  onOtherSolutions,
 }: {
   solutions: Solution[]
   filteredSolutions: Solution[]
@@ -1317,6 +1388,7 @@ function SolutionsView({
   darkTheme: AccountSettings['darkTheme']
   onLightThemeChange: (theme: AccountSettings['lightTheme']) => void
   onDarkThemeChange: (theme: AccountSettings['darkTheme']) => void
+  onOtherSolutions: (platform: Solution['platform'], problemNumber: string) => void
 }) {
   return (
     <section className="solutions-layout" aria-label="풀이 아카이브">
@@ -1358,22 +1430,22 @@ function SolutionsView({
             {loading && <ListSkeleton />}
             {!loading && solutionGroups.length === 0 && <EmptyList mode={mode} />}
             {!loading && solutionGroups.map((group) => (
-              <SolutionGroupRow key={group.key} group={group} selected={group.key === selectedGroup?.key} onSelect={() => setSelectedId(group.submissions[0]!.captureId)} />
+              <SolutionGroupRow key={group.key} group={group} selected={group.key === selectedGroup?.key} onSelect={() => setSelectedId(group.submissions[0]!.captureId)} onOtherSolutions={() => onOtherSolutions(group.platform, group.problemNumber)} />
             ))}
           </div>
           <div className="list-footer"><span><span className="status-dot" /> {mode === 'local' ? '로컬 기록 · 업로드 전' : '서버와 연결됨'}</span><span>{filteredSolutions.length} / {solutions.length}</span></div>
         </section>
-        <SolutionDetail solution={selectedSolution} group={selectedGroup} onSelectSubmission={setSelectedId} mode={mode} onCopy={onCopy} onDownload={onDownload} lightTheme={lightTheme} darkTheme={darkTheme} onLightThemeChange={onLightThemeChange} onDarkThemeChange={onDarkThemeChange} />
+        <SolutionDetail solution={selectedSolution} group={selectedGroup} onSelectSubmission={setSelectedId} mode={mode} onCopy={onCopy} onDownload={onDownload} lightTheme={lightTheme} darkTheme={darkTheme} onLightThemeChange={onLightThemeChange} onDarkThemeChange={onDarkThemeChange} onOtherSolutions={onOtherSolutions} />
       </div>
     </section>
   )
 }
 
-function SolutionGroupRow({ group, selected, onSelect }: { group: SolutionGroup; selected: boolean; onSelect: () => void }) {
+function SolutionGroupRow({ group, selected, onSelect, onOtherSolutions }: { group: SolutionGroup; selected: boolean; onSelect: () => void; onOtherSolutions: () => void }) {
   const latest = group.submissions[0]!
   const languageLabels = Array.from(new Set(group.submissions.map(solution => canonicalLanguageDisplayName(solution.language)))).join(', ')
   return (
-    <button className={`solution-row ${selected ? 'selected' : ''}`} onClick={onSelect}>
+    <div className="solution-group-entry"><button className={`solution-row ${selected ? 'selected' : ''}`} onClick={onSelect}>
       <span className={`platform-logo ${group.platform === 'SWEA' ? 'swea' : 'programmers'}`}>{group.platform === 'SWEA' ? 'S' : 'P'}</span>
       <span className="solution-row-main">
         <span className="solution-row-top"><span className="solution-platform">{group.platform}</span><span className="solution-result">풀이 {group.submissions.length}개</span></span>
@@ -1381,11 +1453,11 @@ function SolutionGroupRow({ group, selected, onSelect }: { group: SolutionGroup;
         <span className="solution-row-bottom"><span>#{group.problemNumber}</span><span className="row-divider" /><span>{languageLabels}</span><span className="row-time"><Icon name="clock" size={12} /> {formatDate(latest.solvedAt ?? latest.observedAt)}</span></span>
       </span>
       <Icon name="chevron" size={17} />
-    </button>
+    </button><button type="button" className="solution-group-community" aria-label={`${group.platform} #${group.problemNumber} 다른 풀이 보기`} onClick={onOtherSolutions}>다른 풀이 보기</button></div>
   )
 }
 
-function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onDownload, lightTheme, darkTheme, onLightThemeChange, onDarkThemeChange }: { solution: Solution | null; group: SolutionGroup | null; onSelectSubmission: (captureId: string) => void; mode: 'local' | 'live'; onCopy: () => void; onDownload: () => void; lightTheme: AccountSettings['lightTheme']; darkTheme: AccountSettings['darkTheme']; onLightThemeChange: (theme: AccountSettings['lightTheme']) => void; onDarkThemeChange: (theme: AccountSettings['darkTheme']) => void }) {
+function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onDownload, lightTheme, darkTheme, onLightThemeChange, onDarkThemeChange, onOtherSolutions }: { solution: Solution | null; group: SolutionGroup | null; onSelectSubmission: (captureId: string) => void; mode: 'local' | 'live'; onCopy: () => void; onDownload: () => void; lightTheme: AccountSettings['lightTheme']; darkTheme: AccountSettings['darkTheme']; onLightThemeChange: (theme: AccountSettings['lightTheme']) => void; onDarkThemeChange: (theme: AccountSettings['darkTheme']) => void; onOtherSolutions: (platform: Solution['platform'], problemNumber: string) => void }) {
   return (
     <section className="solution-detail" aria-label="선택한 풀이 상세">
       {!solution ? (
@@ -1398,7 +1470,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
               <h2>{solution.title}</h2>
               <div className="detail-subline"><span>{canonicalLanguageDisplayName(solution.language)}</span><span className="row-divider" /><span>풀이 시간 {formatObservedTime(solution.solvedAt ?? solution.observedAt)}</span></div>
             </div>
-            <a className="problem-link" href={solution.problemUrl} target="_blank" rel="noreferrer">문제 보기 <Icon name="external" size={14} /></a>
+            <div className="detail-heading-actions"><button type="button" className="problem-link" onClick={() => onOtherSolutions(solution.platform, solution.problemNumber)}>다른 풀이 보기</button><a className="problem-link" href={solution.problemUrl} target="_blank" rel="noreferrer">문제 보기 <Icon name="external" size={14} /></a></div>
           </div>
           <div className="metrics-row">
             <MetricCard label="실행 시간" value={formatExecutionTime(solution.executionTime)} icon="clock" />

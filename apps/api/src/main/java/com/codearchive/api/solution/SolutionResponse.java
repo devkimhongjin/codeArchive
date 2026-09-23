@@ -20,6 +20,8 @@ public class SolutionResponse {
     private final BigDecimal memoryUsage;
     private final BigDecimal memoryValue;
     private final String memoryUnit;
+    private final String visibility;
+    private final Instant publishedAt;
 
     private SolutionResponse(Solution solution) {
         this.id = solution.getId();
@@ -38,6 +40,8 @@ public class SolutionResponse {
         this.memoryUsage = solution.getMemoryUsage();
         this.memoryValue = solution.getMemoryValue();
         this.memoryUnit = solution.getMemoryUnit();
+        this.visibility = solution.isPublished() ? "published" : "private";
+        this.publishedAt = solution.getPublishedAt();
     }
 
     public static SolutionResponse from(Solution solution) {
@@ -60,4 +64,6 @@ public class SolutionResponse {
     public BigDecimal getMemoryUsage() { return memoryUsage; }
     public BigDecimal getMemoryValue() { return memoryValue; }
     public String getMemoryUnit() { return memoryUnit; }
+    public String getVisibility() { return visibility; }
+    public Instant getPublishedAt() { return publishedAt; }
 }
