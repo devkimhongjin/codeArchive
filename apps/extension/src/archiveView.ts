@@ -130,6 +130,7 @@ function renderCapture(document: Document, capture: Capture): { item: HTMLElemen
   populateThemes(document, themeSelect);
   themeLabel.append(themeSelect);
   themeControls.append(themeLabel);
+  toolbar.append(themeControls);
   const gutter = document.createElement("div");
   gutter.className = "capture-code-gutter";
   gutter.setAttribute("aria-hidden", "true");
@@ -142,7 +143,7 @@ function renderCapture(document: Document, capture: Capture): { item: HTMLElemen
   source.className = "source-code";
   source.textContent = capture.sourceCode;
   viewer.append(gutter, source);
-  item.append(themeControls, viewer);
+  item.append(viewer);
   return { item, source, viewer, themeSelect, capture };
 }
 

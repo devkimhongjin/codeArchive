@@ -26,3 +26,8 @@ test('public manifest key pins the same ID used by the dashboard', () => {
   assert.ok(isolated.matches.includes('https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do*'));
   assert.ok(isolated.matches.includes('https://jungol.co.kr/problem/*'));
 });
+
+test('extension pages allow only packaged scripts and the WebAssembly needed for Shiki', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8').replace(/^\uFEFF/, ''));
+  assert.equal(manifest.content_security_policy.extension_pages, "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';");
+});

@@ -44,7 +44,7 @@ test('archive renders pending and retained synced captures with source as text',
   assert.equal(document.querySelector('#archive-updated-label')!.textContent, 'Updated dev');
   assert.equal(document.querySelectorAll('.capture-card').length, 2);
   assert.equal(document.querySelectorAll('.capture-code-viewer .capture-code-theme').length, 0);
-  assert.equal(document.querySelectorAll('.capture-card > .capture-code-theme-controls .capture-code-theme').length, 2);
+  assert.equal(document.querySelectorAll('.capture-code-toolbar .capture-code-theme').length, 2);
   assert.equal(document.querySelectorAll('.archive-card > .archive-theme-controls').length, 0);
   assert.match(document.querySelector('.archive-list')!.textContent!, /대시보드 동기화됨/);
   assert.match(document.querySelector('.archive-list')!.textContent!, /풀이 시간/);

@@ -1501,8 +1501,8 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
             <MetricCard label="풀이 시간" value={formatObservedTime(solution.solvedAt ?? solution.observedAt)} icon="check" />
           </div>
           {group && group.submissions.length > 1 && <label className="submission-picker">제출 기록<select aria-label="제출 기록" value={solution.captureId} onChange={(event) => onSelectSubmission(event.target.value)}>{group.submissions.map((submission, index) => <option key={submission.captureId} value={submission.captureId}>{index + 1}. {formatObservedTime(submission.solvedAt ?? submission.observedAt)} · {canonicalLanguageDisplayName(submission.language)}</option>)}</select></label>}
-          <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
-          <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} activeMode={codeThemeMode} onThemeChange={onCodeThemeChange} />
+          <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><label className="code-toolbar-theme">테마 <CodeThemeSelect value={codeThemeMode === 'dark' ? darkTheme : lightTheme} onChange={onCodeThemeChange} /></label><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
+          <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} activeMode={codeThemeMode} />
           <div className="detail-note"><Icon name="spark" size={14} /><span>{mode === 'local' ? '이 브라우저의 로컬 기록입니다. 로그인 후 명시적으로 동기화할 수 있습니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
         </>
       )}
