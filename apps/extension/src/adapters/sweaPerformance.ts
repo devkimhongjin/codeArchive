@@ -80,14 +80,17 @@ export function parseSweaPerformance(
   const codeLength = sweaDisplayedCodeLength(code);
   if (!Number.isFinite(observedTime) || codeLength === null) return null;
 
-  const candidates = Array.from(document.querySelectorAll(RESULT_ROW_SELECTOR)).flatMap((row) => {
+  const candidates = Array.from(document.querySelectorAll(RESULT_ROW_SELECTOR)).filter((row) => {
     const submitted = submissionTime(row);
     const submitter = normalizeText(row.querySelector(".submitter .smt_txt dt")?.textContent);
-    if (submitter !== nickname || submitted === null || Math.abs(submitted - observedTime) > MAX_CURRENT_SUBMISSION_DELTA_MS) return [];
-    const performance = rowPerformance(row, codeLength);
-    return performance ? [performance] : [];
+    return submitter === nickname &&
+      submitted !== null &&
+      Math.abs(submitted - observedTime) <= MAX_CURRENT_SUBMISSION_DELTA_MS &&
+      parseCodeLength(metricValue(row, "코드길이")) === codeLength;
   });
-  return candidates.length === 1 ? candidates[0] ?? null : null;
+  // A second matching submission is still identity evidence even when its
+  // metric cells are malformed. Never discard it and enrich from the other.
+  return candidates.length === 1 ? rowPerformance(candidates[0]!, codeLength) : null;
 }
 
 async function fetchOnce(
