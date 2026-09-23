@@ -33,7 +33,7 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
-    private static final int LATEST_MIGRATION = 12;
+    private static final int LATEST_MIGRATION = 14;
 
     @Test
     void freshSchemaMigratesTwiceAndPassesHibernateValidation() throws Exception {
@@ -174,7 +174,7 @@ class PostgreSqlMigrationTest {
         LocalContainerEntityManagerFactoryBean entityManagerFactory =
                 new LocalContainerEntityManagerFactoryBean();
         entityManagerFactory.setDataSource(dataSource);
-        entityManagerFactory.setPackagesToScan("com.codearchive.api.auth", "com.codearchive.api.solution", "com.codearchive.api.settings", "com.codearchive.api.relay", "com.codearchive.api.automation");
+        entityManagerFactory.setPackagesToScan("com.codearchive.api.auth", "com.codearchive.api.solution", "com.codearchive.api.settings", "com.codearchive.api.relay", "com.codearchive.api.automation", "com.codearchive.api.community");
         JpaVendorAdapter vendorAdapter = new HibernateJpaVendorAdapter();
         entityManagerFactory.setJpaVendorAdapter(vendorAdapter);
         Properties properties = new Properties();
@@ -437,6 +437,7 @@ class PostgreSqlMigrationTest {
             assertEquals("NO", nullable("solutions", "capture_id"));
             assertEquals("NO", nullable("solutions", "source_code"));
             assertEquals("NO", nullable("solutions", "language_key"));
+            assertEquals("YES", nullable("solutions", "published_at"));
             assertEquals("users", scalar(
                     "SELECT table_name FROM information_schema.tables "
                             + "WHERE table_schema = ? AND table_name = 'users'", schema));
@@ -454,6 +455,12 @@ class PostgreSqlMigrationTest {
             assertEquals(1L, ((Number) scalar(
                     "SELECT COUNT(*) FROM pg_indexes "
                             + "WHERE schemaname = ? AND indexname = 'idx_solutions_language_key'", schema)).longValue());
+            assertEquals(1L, ((Number) scalar(
+                    "SELECT COUNT(*) FROM pg_indexes "
+                            + "WHERE schemaname = ? AND indexname = 'idx_solutions_community_problem'", schema)).longValue());
+            assertEquals(1L, ((Number) scalar(
+                    "SELECT COUNT(*) FROM pg_indexes "
+                            + "WHERE schemaname = ? AND indexname = 'idx_solutions_community_owner'", schema)).longValue());
             assertEquals("YES", nullable("solutions", "memory_value"));
             assertEquals("YES", nullable("solutions", "memory_unit"));
             assertEquals("user_settings", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'user_settings'", schema));
@@ -463,6 +470,7 @@ class PostgreSqlMigrationTest {
                     "SELECT column_default FROM information_schema.columns WHERE table_schema = ? AND table_name = 'user_settings' AND column_name = 'git_path_template'", schema));
             assertEquals("relay_grants", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'relay_grants'", schema));
             assertEquals("github_commit_jobs", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'github_commit_jobs'", schema));
+            assertEquals("community_request_limits", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'community_request_limits'", schema));
             assertEquals("spring_session", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'spring_session'", schema));
             assertEquals("spring_session_attributes", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'spring_session_attributes'", schema));
             assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = ? AND indexname = 'idx_relay_grants_user_device_active'", schema)).longValue());

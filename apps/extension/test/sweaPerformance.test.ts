@@ -48,6 +48,7 @@ test("SWEA performance rejects wrong user, code length, unit, stale and ambiguou
   assert.equal(parseSweaPerformance(parseHTML(resultHtml(resultRow({ memory: "12 MB" }))).document, NICKNAME, "가", OBSERVED_AT), null);
   assert.equal(parseSweaPerformance(parseHTML(resultHtml(resultRow({ time: "08:55" }))).document, NICKNAME, "가", OBSERVED_AT), null);
   assert.equal(parseSweaPerformance(parseHTML(resultHtml(`${resultRow()}${resultRow()}`)).document, NICKNAME, "가", OBSERVED_AT), null);
+  assert.equal(parseSweaPerformance(parseHTML(resultHtml(`${resultRow()}${resultRow({ memory: "unknown" })}`)).document, NICKNAME, "가", OBSERVED_AT), null);
 });
 
 test("SWEA performance retries a delayed result row with same-origin credentials", async () => {

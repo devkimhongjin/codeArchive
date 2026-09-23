@@ -1,9 +1,9 @@
 import type { ThemedToken } from "shiki";
 import { sourceFileExtension } from "./export";
 import type { CaptureSettings } from "./types";
+import { LIGHT_THEMES, DARK_THEMES } from "../../../shared/codeThemes";
 
-export const LIGHT_THEMES = ["github-light", "vitesse-light", "catppuccin-latte", "solarized-light", "one-light"] as const;
-export const DARK_THEMES = ["github-dark", "vitesse-dark", "catppuccin-mocha", "dracula", "one-dark-pro"] as const;
+export { LIGHT_THEMES, DARK_THEMES };
 
 let singleton: ReturnType<typeof loadHighlighter> | undefined;
 
