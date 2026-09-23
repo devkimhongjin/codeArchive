@@ -22,7 +22,7 @@ function asDisplayCapture(value: unknown): CapturePreview | null {
   if (
     typeof candidate.captureId !== "string" ||
     typeof candidate.platform !== "string" ||
-    (candidate.platform !== "SWEA" && candidate.platform !== "PROGRAMMERS") ||
+    (candidate.platform !== "SWEA" && candidate.platform !== "PROGRAMMERS" && candidate.platform !== "JUNGOL") ||
     typeof candidate.problemNumber !== "string" ||
     typeof candidate.title !== "string" ||
     typeof candidate.problemUrl !== "string" ||

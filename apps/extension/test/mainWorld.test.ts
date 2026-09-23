@@ -117,3 +117,19 @@ test("MAIN-world sync fails closed when a platform editor is unavailable", () =>
   assert.equal(syncEditorAtSubmitClick(document, location, {} as Window), false);
   assert.match(document.documentElement.getAttribute(EDITOR_SYNC_ATTRIBUTE) ?? "", /^failed:/);
 });
+
+test("MAIN-world Jungol sync reads only the matching Monaco model at submit", () => {
+  const { document } = parseHTML('<html><body><div class="monaco-editor" data-uri="file:///workspace/problem_4577_JAVA.java"></div><button id="language">language Java 8</button><button id="submit">upload 제출</button></body></html>');
+  const model = { uri: { toString: () => "file:///workspace/problem_4577_JAVA.java" }, getValue: () => "class Main {}" };
+  const window = { monaco: { editor: { getModels: () => [model] } } } as unknown as Window;
+  const location = locationFor("https://jungol.co.kr/problem/4577");
+  assert.equal(syncEditorAtSubmitClick(document, location, window), true);
+  const source = document.querySelector("textarea[data-codearchive-jungol-source]") as HTMLTextAreaElement;
+  assert.equal(source.value, "class Main {}");
+  assert.equal(source.dataset.codearchiveJungolProblem, "4577");
+  assert.equal(source.dataset.codearchiveJungolLanguage, "Java 8");
+  assert.match(document.documentElement.getAttribute(EDITOR_SYNC_ATTRIBUTE) ?? "", /^synced:/);
+  const wrongWindow = { monaco: { editor: { getModels: () => [{ ...model, uri: { toString: () => "file:///workspace/problem_9999_JAVA.java" } }] } } } as unknown as Window;
+  assert.equal(syncEditorAtSubmitClick(document, location, wrongWindow), false);
+  assert.match(document.documentElement.getAttribute(EDITOR_SYNC_ATTRIBUTE) ?? "", /^failed:/);
+});

@@ -1,6 +1,7 @@
 import type { PlatformAdapter } from "../types";
 import { ProgrammersAdapter } from "./programmers";
 import { SweaAdapter } from "./swea";
+import { JungolAdapter } from "./jungol";
 
 export function createAdapter(
   document: Document,
@@ -14,8 +15,12 @@ export function createAdapter(
   if (location.origin === "https://school.programmers.co.kr" && /^\/learn\/courses\/30\/lessons\/\d+\/?$/.test(location.pathname)) {
     return new ProgrammersAdapter(document, location);
   }
+  if (location.origin === "https://jungol.co.kr" && /^\/problem\/\d+\/?$/.test(location.pathname)) {
+    return new JungolAdapter(document, location);
+  }
   return null;
 }
 
 export { ProgrammersAdapter } from "./programmers";
 export { SweaAdapter } from "./swea";
+export { JungolAdapter } from "./jungol";

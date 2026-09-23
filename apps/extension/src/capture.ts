@@ -44,7 +44,7 @@ function nonEmpty(value: unknown, maxLength: number): value is string {
 }
 
 function validPlatform(value: unknown): value is Platform {
-  return value === "SWEA" || value === "PROGRAMMERS";
+  return value === "SWEA" || value === "PROGRAMMERS" || value === "JUNGOL";
 }
 
 function validProblemUrl(value: unknown): value is string {

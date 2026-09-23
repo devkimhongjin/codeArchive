@@ -1,4 +1,4 @@
-export type Platform = "SWEA" | "PROGRAMMERS";
+export type Platform = "SWEA" | "PROGRAMMERS" | "JUNGOL";
 export const DEFAULT_DOWNLOAD_FILENAME_TEMPLATE = "Solution_{number}_{name}";
 
 export const CAPTURE_RESULT = "ACCEPTED" as const;

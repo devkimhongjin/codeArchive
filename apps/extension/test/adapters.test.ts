@@ -3,10 +3,60 @@ import test from "node:test";
 import { parseHTML } from "linkedom";
 import { ProgrammersAdapter, isProgrammersAccepted } from "../src/adapters/programmers";
 import { SweaAdapter, isSweaAccepted } from "../src/adapters/swea";
+import { JungolAdapter, isJungolAccepted } from "../src/adapters/jungol";
 
 function locationFor(href: string): Location {
   return new URL(href) as unknown as Location;
 }
+
+test("Jungol only captures a fresh success for the clicked canonical problem", () => {
+  const { document } = parseHTML('<html><body><h1><span>책 정리 로봇</span><span class="limit">2s</span></h1><button id="submit">upload 제출</button><textarea data-codearchive-jungol-source data-codearchive-jungol-problem="4577" data-codearchive-jungol-language="Java 8"></textarea><h5 id="result">정답이에요!</h5></body></html>');
+  const source = document.querySelector("textarea") as HTMLTextAreaElement;
+  source.value = "class Main {}";
+  document.documentElement.setAttribute("data-codearchive-editor-sync", `synced:${Date.now()}`);
+  const adapter = new JungolAdapter(document, locationFor("https://jungol.co.kr/problem/4577"));
+  assert.equal(adapter.detectProblem()?.problemUrl, "https://jungol.co.kr/problem/4577");
+  assert.equal(adapter.isSubmitControl(document.querySelector("#submit")!), true);
+  adapter.beginSubmissionAttempt();
+  assert.equal(adapter.detectSubmissionResult(), null, "stale success must not count");
+  document.querySelector("#result")!.remove();
+  assert.equal(adapter.detectSubmissionResult(), null);
+  const fresh = document.createElement("h5");
+  fresh.textContent = "정답이에요!";
+  document.body.append(fresh);
+  const detection = adapter.detectSubmissionResult();
+  assert.equal(detection?.accepted, true);
+  assert.deepEqual(adapter.getSubmissionSnapshot()?.editor, { language: "Java 8", sourceCode: "class Main {}" });
+  adapter.consumeSubmissionResult(detection!);
+  assert.equal(adapter.detectSubmissionResult(), null, "consumed result must not repeat");
+  assert.equal(new JungolAdapter(document, locationFor("https://jungol.co.kr/problem/4577/submission")).detectProblem(), null);
+});
+
+test("Jungol rejects public history and mismatched or unsynced editor source", () => {
+  const { document } = parseHTML('<html><body><h1><span>책 정리 로봇</span></h1><table><tr><td>정답 100점</td></tr></table><textarea data-codearchive-jungol-source data-codearchive-jungol-problem="9999" data-codearchive-jungol-language="Java 8"></textarea></body></html>');
+  (document.querySelector("textarea") as HTMLTextAreaElement).value = "wrong problem";
+  document.documentElement.setAttribute("data-codearchive-editor-sync", `synced:${Date.now()}`);
+  const adapter = new JungolAdapter(document, locationFor("https://jungol.co.kr/problem/4577"));
+  adapter.beginSubmissionAttempt();
+  assert.equal(adapter.detectSubmissionResult(), null);
+  assert.equal(adapter.getSubmissionSnapshot()?.editor, null);
+  assert.equal(isJungolAccepted("정답이에요!"), true);
+  assert.equal(isJungolAccepted("정답 100점"), false);
+  assert.equal(isJungolAccepted("이전 제출 정답이에요!"), false);
+});
+
+test("Jungol does not reinterpret duplicate or hidden old success as a new result", () => {
+  const { document } = parseHTML('<html><body><h1><span>책 정리 로봇</span></h1><textarea data-codearchive-jungol-source data-codearchive-jungol-problem="4577" data-codearchive-jungol-language="Java 8"></textarea><h5 id="first">정답이에요!</h5><h5 id="second">정답이에요!</h5><h5 id="hidden" hidden>정답이에요!</h5></body></html>');
+  (document.querySelector("textarea") as HTMLTextAreaElement).value = "class Main {}";
+  document.documentElement.setAttribute("data-codearchive-editor-sync", `synced:${Date.now()}`);
+  const adapter = new JungolAdapter(document, locationFor("https://jungol.co.kr/problem/4577"));
+  adapter.beginSubmissionAttempt();
+  document.querySelector("#first")!.remove();
+  assert.equal(adapter.detectSubmissionResult(), null);
+  document.querySelector("#second")!.remove();
+  document.querySelector("#hidden")!.removeAttribute("hidden");
+  assert.equal(adapter.detectSubmissionResult(), null);
+});
 
 test("SWEA metadata uses the solving heading and fails closed on contest identity conflict", () => {
   const { document } = parseHTML('<div class="problem_box"><h3>1206. View</h3></div><input id="contestProbId" value="current">');

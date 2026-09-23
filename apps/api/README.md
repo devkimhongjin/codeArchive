@@ -74,7 +74,7 @@ principal and returns `409` if another tab changed the session account; the
 header never grants access. Calls without the header remain accepted for
 older clients.
 
-Each capture must include a UUID `captureId`, `platform` (`SWEA` or `PROGRAMMERS`), `problemNumber`, `title`, `problemUrl`, `language`, `sourceCode`, `result` (`ACCEPTED`), `observedAt`, and `solvedAt` as ISO-8601 timestamps. `executionTime` and `memoryUsage` are optional non-negative numbers. Invalid items fail independently so valid items in the same batch remain stored.
+Each capture must include a UUID `captureId`, `platform` (`SWEA`, `PROGRAMMERS`, or `JUNGOL`), `problemNumber`, `title`, `problemUrl`, `language`, `sourceCode`, `result` (`ACCEPTED`), `observedAt`, and `solvedAt` as ISO-8601 timestamps. `executionTime` and `memoryUsage` are optional non-negative numbers. Invalid items fail independently so valid items in the same batch remain stored.
 
 The `(user_id, capture_id)` database constraint makes retries idempotent and prevents one user from reading another user's captures. A replay with changed core solution data is rejected; a replay can enrich missing performance fields.
 

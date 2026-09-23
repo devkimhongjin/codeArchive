@@ -1,4 +1,4 @@
-export type Platform = 'SWEA' | 'PROGRAMMERS'
+export type Platform = 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'
 
 export type ViewName = 'solutions' | 'guide' | 'settings'
 

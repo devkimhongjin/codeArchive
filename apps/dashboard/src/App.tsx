@@ -105,7 +105,8 @@ function ProfileAvatar({ user, large = false }: { user: User; large?: boolean })
 function normalizeSolution(value: unknown, index = 0): Solution {
   const raw = (value ?? {}) as Record<string, unknown>
   const read = (...keys: string[]) => keys.map((key) => raw[key]).find((item) => item !== undefined && item !== null)
-  const platform = String(read('platform') ?? 'SWEA').toUpperCase() === 'PROGRAMMERS' ? 'PROGRAMMERS' : 'SWEA'
+  const rawPlatform = String(read('platform') ?? 'SWEA').toUpperCase()
+  const platform = rawPlatform === 'PROGRAMMERS' || rawPlatform === 'JUNGOL' ? rawPlatform : 'SWEA'
   return {
     captureId: String(read('captureId', 'capture_id') ?? `remote-${index}`),
     platform,
@@ -227,7 +228,7 @@ export default function App() {
   const [solutions, setSolutions] = useState<Solution[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [query, setQuery] = useState('')
-  const [platformFilter, setPlatformFilter] = useState<'ALL' | 'SWEA' | 'PROGRAMMERS'>('ALL')
+  const [platformFilter, setPlatformFilter] = useState<'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'>('ALL')
   const [languageFilter, setLanguageFilter] = useState('ALL')
   const [solutionSort, setSolutionSort] = useState<SolutionSort>('latest')
   const [loading, setLoading] = useState(false)
@@ -1300,14 +1301,14 @@ function SolutionsView({
   selectedGroup: SolutionGroup | null
   selectedId: string
   query: string
-  platformFilter: 'ALL' | 'SWEA' | 'PROGRAMMERS'
+  platformFilter: 'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'
   languageFilter: string
   languages: Array<{ key: string; label: string }>
   solutionSort: SolutionSort
   loading: boolean
   mode: 'local' | 'live'
   setQuery: (value: string) => void
-  setPlatformFilter: (value: 'ALL' | 'SWEA' | 'PROGRAMMERS') => void
+  setPlatformFilter: (value: 'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL') => void
   setLanguageFilter: (value: string) => void
   setSolutionSort: (value: SolutionSort) => void
   setSelectedId: (value: string) => void
@@ -1336,9 +1337,9 @@ function SolutionsView({
         </label>
         <div className="filter-group" role="group" aria-label="플랫폼 필터">
           <span className="filter-label"><Icon name="filter" size={15} /> FILTER</span>
-          {(['ALL', 'SWEA', 'PROGRAMMERS'] as const).map((filter) => (
+          {(['ALL', 'SWEA', 'PROGRAMMERS', 'JUNGOL'] as const).map((filter) => (
             <button key={filter} className={platformFilter === filter ? 'filter-pill active' : 'filter-pill'} onClick={() => setPlatformFilter(filter)}>
-              {filter === 'ALL' ? '전체' : filter === 'PROGRAMMERS' ? '프로그래머스' : filter}
+              {filter === 'ALL' ? '전체' : filter === 'PROGRAMMERS' ? '프로그래머스' : filter === 'JUNGOL' ? '정올' : filter}
             </button>
           ))}
         </div>
@@ -1374,7 +1375,7 @@ function SolutionGroupRow({ group, selected, onSelect }: { group: SolutionGroup;
   const languageLabels = Array.from(new Set(group.submissions.map(solution => canonicalLanguageDisplayName(solution.language)))).join(', ')
   return (
     <button className={`solution-row ${selected ? 'selected' : ''}`} onClick={onSelect}>
-      <span className={`platform-logo ${group.platform === 'SWEA' ? 'swea' : 'programmers'}`}>{group.platform === 'SWEA' ? 'S' : 'P'}</span>
+      <span className={`platform-logo ${group.platform === 'SWEA' ? 'swea' : group.platform === 'JUNGOL' ? 'jungol' : 'programmers'}`}>{group.platform === 'SWEA' ? 'S' : group.platform === 'JUNGOL' ? 'J' : 'P'}</span>
       <span className="solution-row-main">
         <span className="solution-row-top"><span className="solution-platform">{group.platform}</span><span className="solution-result">풀이 {group.submissions.length}개</span></span>
         <span className="solution-title">{group.title}</span>

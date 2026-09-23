@@ -83,7 +83,7 @@ public class SolutionService {
         try {
             platform = Platform.valueOf(platformValue);
         } catch (IllegalArgumentException exception) {
-            throw new CaptureValidationException("platform must be SWEA or PROGRAMMERS");
+            throw new CaptureValidationException("platform must be SWEA, PROGRAMMERS, or JUNGOL");
         }
 
         String problemNumber = required(payload.getProblemNumber(), "problemNumber", 100);
