@@ -25,7 +25,7 @@ import { BridgeError, parseAckResponse, parseBridgeStatusResponse, parseConnectR
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
 import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type BulkResponse, type GithubAddFileRequest, type Solution, type Toast, type User, type ViewName } from './types'
-import { CodeBlock } from './CodeBlock'
+import { CodeBlock, CodeThemeSelect } from './CodeBlock'
 import { EXTENSION_ID, LEGACY_EXTENSION_ID, EXTENSION_CANDIDATES } from './extensionConfig'
 import { readExportSettings, EXPORT_SETTINGS_KEY, exportCode, downloadFilename, githubCommitMessage, gitPath, sourceFileExtension, DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, DEFAULT_GIT_PATH_TEMPLATE, GIT_PATH_TOKENS, hasGitSubmissionIdentityToken, type ExportSettings } from './codeExport'
 import { navigateSameTab } from './navigation'
@@ -37,6 +37,7 @@ import { EXTENSION_RELEASE, fetchLatestExtensionRelease, isVersionAtLeast, type 
 import { formatExecutionTime, formatMemory } from './performancePresentation'
 import { CommunityView } from './CommunityView'
 import { readCommunityRoute, readView, urlForView, type CommunityRoute } from './communityRoute'
+import { CODE_THEME_MODE_KEY, isLightTheme, type CodeTheme, type CodeThemeMode } from '../../../shared/codeThemes'
 
 type IconName =
   | 'book'
@@ -155,6 +156,13 @@ function displayUser(user: User) {
 }
 
 const LOCAL_THEME_KEY = 'codearchive-local-code-themes'
+function readCodeThemeMode(): CodeThemeMode {
+  try {
+    const stored = localStorage.getItem(CODE_THEME_MODE_KEY)
+    if (stored === 'light' || stored === 'dark') return stored
+  } catch { /* Use the system preference when browser storage is unavailable. */ }
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
 function readLocalThemes(): Pick<AccountSettings, 'lightTheme' | 'darkTheme'> {
   try {
     const value = JSON.parse(localStorage.getItem(LOCAL_THEME_KEY) ?? '{}') as Record<string, unknown>
@@ -224,6 +232,7 @@ export default function App() {
   const [view, setView] = useState<ViewName>(() => readGithubInstallReturn() ? 'settings' : readView())
   const [communityRoute, setCommunityRoute] = useState<CommunityRoute>(readCommunityRoute)
   const [mode, setMode] = useState<'local' | 'live'>('local')
+  const [codeThemeMode, setCodeThemeMode] = useState<CodeThemeMode>(readCodeThemeMode)
   // Async bridge/settings work outlives the render that created it. Keep the
   // authorization mode in a ref so a failed API read cannot be followed by a
   // stale live-mode closure issuing relay authority.
@@ -372,6 +381,17 @@ export default function App() {
         setSettingsError(message)
       } finally { if (queueGeneration === themeQueueGeneration.current) themeSaving.current = false }
     })()
+  }
+
+  const chooseCodeTheme = (theme: CodeTheme, persistImmediately: boolean) => {
+    const nextMode = isLightTheme(theme) ? 'light' : 'dark'
+    setCodeThemeMode(nextMode)
+    try { localStorage.setItem(CODE_THEME_MODE_KEY, nextMode) } catch { /* The current preview still updates. */ }
+    const nextThemes = isLightTheme(theme)
+      ? { lightTheme: theme, darkTheme: accountSettingsRef.current.darkTheme }
+      : { lightTheme: accountSettingsRef.current.lightTheme, darkTheme: theme }
+    if (persistImmediately) updateCodeThemes(nextThemes)
+    else updateAccountSettingsDraft({ ...accountSettingsRef.current, ...nextThemes })
   }
 
   const showToast = (kind: Toast['kind'], message: string) => {
@@ -1282,9 +1302,9 @@ export default function App() {
             onDownload={downloadCode}
             lightTheme={accountSettings.lightTheme}
             darkTheme={accountSettings.darkTheme}
-            onLightThemeChange={(lightTheme) => updateCodeThemes({ lightTheme, darkTheme: accountSettingsRef.current.darkTheme })}
-            onDarkThemeChange={(darkTheme) => updateCodeThemes({ lightTheme: accountSettingsRef.current.lightTheme, darkTheme })}
             onOtherSolutions={(platform, problemNumber) => changeCommunityRoute({ platform, problemNumber, languageKey: '', page: 0, detailId: null })}
+            codeThemeMode={codeThemeMode}
+            onCodeThemeChange={(theme) => chooseCodeTheme(theme, true)}
           />
         )}
         {view === 'community' && <CommunityView
@@ -1310,6 +1330,8 @@ export default function App() {
             updateExportSettings={updateExportSettings}
             accountSettings={accountSettings}
             updateAccountSettings={updateAccountSettingsDraft}
+            codeThemeMode={codeThemeMode}
+            onCodeThemeChange={(theme) => chooseCodeTheme(theme, false)}
             settingsBusy={settingsBusy}
             settingsError={settingsError}
             onSaveSettings={() => void saveAccountSettings()}
@@ -1360,9 +1382,9 @@ function SolutionsView({
   onDownload,
   lightTheme,
   darkTheme,
-  onLightThemeChange,
-  onDarkThemeChange,
   onOtherSolutions,
+  codeThemeMode,
+  onCodeThemeChange,
 }: {
   solutions: Solution[]
   filteredSolutions: Solution[]
@@ -1386,9 +1408,9 @@ function SolutionsView({
   onDownload: () => void
   lightTheme: AccountSettings['lightTheme']
   darkTheme: AccountSettings['darkTheme']
-  onLightThemeChange: (theme: AccountSettings['lightTheme']) => void
-  onDarkThemeChange: (theme: AccountSettings['darkTheme']) => void
   onOtherSolutions: (platform: Solution['platform'], problemNumber: string) => void
+  codeThemeMode: CodeThemeMode
+  onCodeThemeChange: (theme: CodeTheme) => void
 }) {
   return (
     <section className="solutions-layout" aria-label="풀이 아카이브">
@@ -1435,7 +1457,7 @@ function SolutionsView({
           </div>
           <div className="list-footer"><span><span className="status-dot" /> {mode === 'local' ? '로컬 기록 · 업로드 전' : '서버와 연결됨'}</span><span>{filteredSolutions.length} / {solutions.length}</span></div>
         </section>
-        <SolutionDetail solution={selectedSolution} group={selectedGroup} onSelectSubmission={setSelectedId} mode={mode} onCopy={onCopy} onDownload={onDownload} lightTheme={lightTheme} darkTheme={darkTheme} onLightThemeChange={onLightThemeChange} onDarkThemeChange={onDarkThemeChange} onOtherSolutions={onOtherSolutions} />
+        <SolutionDetail solution={selectedSolution} group={selectedGroup} onSelectSubmission={setSelectedId} mode={mode} onCopy={onCopy} onDownload={onDownload} lightTheme={lightTheme} darkTheme={darkTheme} codeThemeMode={codeThemeMode} onCodeThemeChange={onCodeThemeChange} onOtherSolutions={onOtherSolutions} />
       </div>
     </section>
   )
@@ -1457,7 +1479,7 @@ function SolutionGroupRow({ group, selected, onSelect, onOtherSolutions }: { gro
   )
 }
 
-function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onDownload, lightTheme, darkTheme, onLightThemeChange, onDarkThemeChange, onOtherSolutions }: { solution: Solution | null; group: SolutionGroup | null; onSelectSubmission: (captureId: string) => void; mode: 'local' | 'live'; onCopy: () => void; onDownload: () => void; lightTheme: AccountSettings['lightTheme']; darkTheme: AccountSettings['darkTheme']; onLightThemeChange: (theme: AccountSettings['lightTheme']) => void; onDarkThemeChange: (theme: AccountSettings['darkTheme']) => void; onOtherSolutions: (platform: Solution['platform'], problemNumber: string) => void }) {
+function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onDownload, lightTheme, darkTheme, codeThemeMode, onCodeThemeChange, onOtherSolutions }: { solution: Solution | null; group: SolutionGroup | null; onSelectSubmission: (captureId: string) => void; mode: 'local' | 'live'; onCopy: () => void; onDownload: () => void; lightTheme: AccountSettings['lightTheme']; darkTheme: AccountSettings['darkTheme']; codeThemeMode: CodeThemeMode; onCodeThemeChange: (theme: CodeTheme) => void; onOtherSolutions: (platform: Solution['platform'], problemNumber: string) => void }) {
   return (
     <section className="solution-detail" aria-label="선택한 풀이 상세">
       {!solution ? (
@@ -1479,7 +1501,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
           </div>
           {group && group.submissions.length > 1 && <label className="submission-picker">제출 기록<select aria-label="제출 기록" value={solution.captureId} onChange={(event) => onSelectSubmission(event.target.value)}>{group.submissions.map((submission, index) => <option key={submission.captureId} value={submission.captureId}>{index + 1}. {formatObservedTime(submission.solvedAt ?? submission.observedAt)} · {canonicalLanguageDisplayName(submission.language)}</option>)}</select></label>}
           <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
-          <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} onLightThemeChange={onLightThemeChange} onDarkThemeChange={onDarkThemeChange} />
+          <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} activeMode={codeThemeMode} onThemeChange={onCodeThemeChange} />
           <div className="detail-note"><Icon name="spark" size={14} /><span>{mode === 'local' ? '이 브라우저의 로컬 기록입니다. 로그인 후 명시적으로 동기화할 수 있습니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
         </>
       )}
@@ -1567,6 +1589,8 @@ function SettingsView({
   updateExportSettings,
   accountSettings,
   updateAccountSettings,
+  codeThemeMode,
+  onCodeThemeChange,
   settingsBusy,
   settingsError,
   onSaveSettings,
@@ -1583,6 +1607,8 @@ function SettingsView({
   updateExportSettings: (settings: ExportSettings) => void
   accountSettings: AccountSettings
   updateAccountSettings: (settings: AccountSettings) => void
+  codeThemeMode: CodeThemeMode
+  onCodeThemeChange: (theme: CodeTheme) => void
   settingsBusy: boolean
   settingsError: string | null
   onSaveSettings: () => void
@@ -1858,7 +1884,7 @@ function SettingsView({
         <div className="settings-column">
           <article className="settings-card export-settings"><h2>계정 · 코드 저장</h2>{settingsError && <p role="alert">{settingsError}</p>}<div className="setting-field"><label htmlFor="profile-name">이름</label><input id="profile-name" value={accountSettings.name ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, name: e.target.value || null })} /><label htmlFor="profile-nickname">닉네임</label><input id="profile-nickname" value={accountSettings.nickname ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, nickname: e.target.value || null })} /></div><p>문제 정보 주석을 추가합니다. 원본 코드는 유지합니다.</p>
             <label><input type="checkbox" checked={accountSettings.copyHeader} onChange={e => updateAccountSettings({ ...accountSettings, copyHeader: e.target.checked })} /> 복사할 때 문제 정보 주석 포함</label><label><input type="checkbox" checked={accountSettings.downloadHeader} onChange={e => updateAccountSettings({ ...accountSettings, downloadHeader: e.target.checked })} /> 다운로드할 때 문제 정보 주석 포함</label><label><input type="checkbox" checked={accountSettings.githubHeader} onChange={e => updateAccountSettings({ ...accountSettings, githubHeader: e.target.checked })} /> GitHub 커밋 시 문제 정보 주석 포함</label>
-            <div className="setting-field"><label htmlFor="filename-template">다운로드 파일명</label><input id="filename-template" maxLength={160} value={accountSettings.downloadFilenameTemplate} onChange={e => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate: e.target.value })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="git-path-template">Git 저장 경로</label><div className="git-path-token-list" aria-label="Git 경로 토큰">{GIT_PATH_TOKENS.map(token => <button type="button" key={token} onClick={() => insertGitPathToken(token)}>{token}</button>)}</div><input ref={gitPathInput} id="git-path-template" maxLength={240} aria-invalid={!gitPathHasIdentity} value={accountSettings.gitPathTemplate} onChange={e => updateAccountSettings({ ...accountSettings, gitPathTemplate: e.target.value })} />{!gitPathHasIdentity && <p className="field-error" role="alert">제출별 파일을 구분하려면 {'{capture_ID}'} 또는 {'{time}'}이 필요합니다.</p>}<p>Git 미리보기: <output>{gitPath(previewSolution, accountSettings.gitPathTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id }) ?? '유효하지 않은 상대 경로'}</output></p><label htmlFor="github-commit-message-template">Git 커밋 메시지</label><input id="github-commit-message-template" maxLength={200} value={accountSettings.githubCommitMessageTemplate} onChange={e => updateAccountSettings({ ...accountSettings, githubCommitMessageTemplate: e.target.value })} /><p>커밋 미리보기: <output>{githubCommitMessage(previewSolution, accountSettings.githubCommitMessageTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="light-theme">밝은 테마</label><select id="light-theme" value={accountSettings.lightTheme} onChange={e => updateAccountSettings({ ...accountSettings, lightTheme: e.target.value as AccountSettings['lightTheme'] })}>{LIGHT_THEMES.map(x => <option key={x}>{x}</option>)}</select><label htmlFor="dark-theme">어두운 테마</label><select id="dark-theme" value={accountSettings.darkTheme} onChange={e => updateAccountSettings({ ...accountSettings, darkTheme: e.target.value as AccountSettings['darkTheme'] })}>{DARK_THEMES.map(x => <option key={x}>{x}</option>)}</select></div><label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label><label><input type="checkbox" disabled={!draftTargetConfigured || providerUnavailable} checked={accountSettings.githubAutoCommitEnabled} onChange={e => updateAccountSettings({ ...accountSettings, githubAutoCommitEnabled: e.target.checked })} /> GitHub 자동 커밋</label><button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy || targetBusy || !gitPathHasIdentity}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
+            <div className="setting-field"><label htmlFor="filename-template">다운로드 파일명</label><input id="filename-template" maxLength={160} value={accountSettings.downloadFilenameTemplate} onChange={e => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate: e.target.value })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="git-path-template">Git 저장 경로</label><div className="git-path-token-list" aria-label="Git 경로 토큰">{GIT_PATH_TOKENS.map(token => <button type="button" key={token} onClick={() => insertGitPathToken(token)}>{token}</button>)}</div><input ref={gitPathInput} id="git-path-template" maxLength={240} aria-invalid={!gitPathHasIdentity} value={accountSettings.gitPathTemplate} onChange={e => updateAccountSettings({ ...accountSettings, gitPathTemplate: e.target.value })} />{!gitPathHasIdentity && <p className="field-error" role="alert">제출별 파일을 구분하려면 {'{capture_ID}'} 또는 {'{time}'}이 필요합니다.</p>}<p>Git 미리보기: <output>{gitPath(previewSolution, accountSettings.gitPathTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id }) ?? '유효하지 않은 상대 경로'}</output></p><label htmlFor="github-commit-message-template">Git 커밋 메시지</label><input id="github-commit-message-template" maxLength={200} value={accountSettings.githubCommitMessageTemplate} onChange={e => updateAccountSettings({ ...accountSettings, githubCommitMessageTemplate: e.target.value })} /><p>커밋 미리보기: <output>{githubCommitMessage(previewSolution, accountSettings.githubCommitMessageTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="settings-code-theme">코드 보기 테마</label><CodeThemeSelect id="settings-code-theme" value={codeThemeMode === 'dark' ? accountSettings.darkTheme : accountSettings.lightTheme} onChange={onCodeThemeChange} /></div><label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label><label><input type="checkbox" disabled={!draftTargetConfigured || providerUnavailable} checked={accountSettings.githubAutoCommitEnabled} onChange={e => updateAccountSettings({ ...accountSettings, githubAutoCommitEnabled: e.target.checked })} /> GitHub 자동 커밋</label><button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy || targetBusy || !gitPathHasIdentity}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
           </article>
           <article className={`settings-card github-card ${targetPanelExpanded ? 'is-expanded' : 'is-collapsed'}`} aria-busy={targetBusy}>
             <div className="github-card-heading">

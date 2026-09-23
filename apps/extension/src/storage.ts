@@ -1,9 +1,7 @@
 import { DEFAULT_CAPTURE_SETTINGS, type Capture, type CaptureSettings, type SyncState } from "./types";
 import type { SweaProblemContext } from "./sweaProblemContext";
 import { canonicalLanguageKey } from "../../../shared/language";
-
-const LIGHT_THEMES = ["github-light", "vitesse-light", "catppuccin-latte", "solarized-light", "one-light"] as const;
-const DARK_THEMES = ["github-dark", "vitesse-dark", "catppuccin-mocha", "dracula", "one-dark-pro"] as const;
+import { LIGHT_THEMES, DARK_THEMES } from "../../../shared/codeThemes";
 
 export const DATABASE_NAME = "codearchive-local";
 export const DATABASE_VERSION = 3;
