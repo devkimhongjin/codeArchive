@@ -53,6 +53,11 @@ test('the browser archive bundle applies a selected Shiki palette to Java source
   const source = document.querySelector<HTMLElement>('.source-code');
   assert.ok(source);
   assert.equal(source.isConnected, true);
+  assert.equal(source.dataset.shikiTheme, undefined);
+  const details = document.querySelector<HTMLElement>('.capture-code-details')!;
+  assert.equal(details.hasAttribute('open'), false);
+  details.setAttribute('open', '');
+  details.dispatchEvent(new document.defaultView!.Event('toggle'));
   const readTheme = (): string | undefined => source.dataset.shikiTheme;
   const deadline = Date.now() + 5_000;
   while (readTheme() !== 'solarized-light' && Date.now() < deadline) {
@@ -62,7 +67,7 @@ test('the browser archive bundle applies a selected Shiki palette to Java source
   assert.notEqual(source.style.backgroundColor, '');
   assert.ok(source.querySelector('span[style]'));
   const lightBackground = source.style.backgroundColor;
-  const select = document.querySelector<HTMLSelectElement>('.capture-code-theme')!;
+  const select = document.querySelector<HTMLSelectElement>('#archive-code-theme')!;
   select.querySelector('option[value="solarized-light"]')!.removeAttribute('selected');
   select.querySelector('option[value="dracula"]')!.setAttribute('selected', '');
   select.dispatchEvent(new document.defaultView!.Event('change'));
