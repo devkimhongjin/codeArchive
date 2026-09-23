@@ -119,6 +119,20 @@ class GithubTargetControllerTest {
     assertThat(response.getBody().toString()).doesNotContain("secret source");
   }
 
+  @Test
+  void treeOperationPreviewRequiresTheExpectedAccountBeforeProviderAccess() {
+    UserRepository users = mock(UserRepository.class);
+    GithubAppProvider provider = mock(GithubAppProvider.class);
+    AppUser user = AppUser.fromGithub("123", "account", "Name", null);
+    when(users.findByGithubId("123")).thenReturn(Optional.of(user));
+    GithubTargetController controller = new GithubTargetController(users, provider);
+    var request = new GithubTargetController.TreeOperationPreviewRequest("DELETE", "main", "old.txt", null, "Delete old.txt", "a".repeat(40));
+
+    assertThat(controller.previewTreeOperation(null, null, 44L, 7L, request).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(controller.previewTreeOperation(github("123", "account"), "456", 44L, 7L, request).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    verifyNoInteractions(provider);
+  }
+
   private static OAuth2AuthenticationToken github(String id, String login) {
     var principal = new DefaultOAuth2User(List.of(new SimpleGrantedAuthority("ROLE_USER")),
         Map.of("id", id, "login", login), "id");

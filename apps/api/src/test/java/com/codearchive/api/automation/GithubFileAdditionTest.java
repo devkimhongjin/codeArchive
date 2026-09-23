@@ -25,17 +25,23 @@ class GithubFileAdditionTest {
   private static final String CHILD = "c".repeat(40);
   private static final String NEW_TREE = "d".repeat(40);
   private static final String NEW_COMMIT = "e".repeat(40);
+  private static final String FILE = "1".repeat(40);
+  private static final String RESULT_CHILD = "2".repeat(40);
   private final ObjectMapper json = new ObjectMapper();
   private final AtomicInteger mutations = new AtomicInteger();
   private final AtomicInteger refReads = new AtomicInteger();
   private final AtomicInteger refUpdates = new AtomicInteger();
   private HttpServer server;
   private boolean protectedBranch;
+  private boolean truncatedChild, oversizedChild, unsafeChild, staleOperationTree;
   private int moveAtRefRead;
   private JsonNode treeRequest;
   private JsonNode refUpdateRequest;
+  private String pem;
 
   @BeforeEach void start() throws Exception {
+    var keys = KeyPairGenerator.getInstance("RSA"); keys.initialize(2048);
+    pem = "-----BEGIN PRIVATE KEY-----\n" + Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(keys.generateKeyPair().getPrivate().getEncoded()) + "\n-----END PRIVATE KEY-----";
     server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     server.createContext("/", this::respond);
     server.start();
@@ -106,9 +112,106 @@ class GithubFileAdditionTest {
     assertThat(refUpdates).hasValue(0);
   }
 
+  @Test void previewsThenMovesAnExistingFileWithOneNonForceCommit() throws Exception {
+    GithubAppProvider provider = provider();
+    var preview = provider.previewOperation("123", 44, 7,
+        new GithubAppProvider.OperationPreviewRequest("MOVE", "main", "src/File.java", "src/Archived.java", "Move file", HEAD));
+
+    assertThat(preview.changes()).containsExactly(new GithubAppProvider.TreeChange("src/File.java", "src/Archived.java"));
+    assertThat(mutations).hasValue(0);
+    assertThat(refUpdates).hasValue(0);
+
+    assertThat(provider.commitOperation("123", 44, 7, preview.previewId())).isEqualTo(NEW_COMMIT);
+    assertThat(mutations).hasValue(2);
+    assertThat(refUpdates).hasValue(1);
+    assertThat(treeRequest.path("tree").get(0).path("path").asText()).isEqualTo("src/Archived.java");
+    assertThat(treeRequest.path("tree").get(0).path("sha").asText()).isEqualTo(FILE);
+    assertThat(treeRequest.path("tree").get(1).path("path").asText()).isEqualTo("src/File.java");
+    assertThat(treeRequest.path("tree").get(1).path("sha").isNull()).isTrue();
+    assertThat(refUpdateRequest.path("force").asBoolean(true)).isFalse();
+  }
+
+  @Test void rejectsUnsafeTreeOperationBeforeAnyRefUpdate() throws Exception {
+    GithubAppProvider provider = provider();
+    assertThatThrownBy(() -> provider.previewOperation("123", 44, 7,
+        new GithubAppProvider.OperationPreviewRequest("MOVE", "main", "src", "src/again", "Move", HEAD)))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> provider.previewOperation("123", 44, 7,
+        new GithubAppProvider.OperationPreviewRequest("MOVE", "main", "src/File.java", "README.md", "Move", HEAD)))
+        .isInstanceOf(GithubAppProvider.TargetConflictException.class);
+    assertThat(mutations).hasValue(0);
+    assertThat(refUpdates).hasValue(0);
+  }
+
+  @Test void movesAndDeletesACompleteFolderWithTreeIdentityAndOneRefUpdate() throws Exception {
+    GithubAppProvider provider = provider();
+    var move = provider.previewOperation("123", 44, 7,
+        new GithubAppProvider.OperationPreviewRequest("MOVE", "main", "src", "archive", "Move folder", HEAD));
+    assertThat(move.changes()).containsExactly(new GithubAppProvider.TreeChange("src/File.java", "archive/File.java"));
+    assertThat(mutations).hasValue(0);
+
+    // A separately constructed provider proves that a preview token is not
+    // bound to process-local memory (as it cannot be on Cloud Run).
+    assertThat(provider().commitOperation("123", 44, 7, move.previewId())).isEqualTo(NEW_COMMIT);
+    assertThat(treeRequest.path("tree").get(0).path("path").asText()).isEqualTo("archive/File.java");
+    assertThat(treeRequest.path("tree").get(0).path("type").asText()).isEqualTo("blob");
+    assertThat(treeRequest.path("tree").get(0).path("mode").asText()).isEqualTo("100644");
+    assertThat(treeRequest.path("tree").get(0).path("sha").asText()).isEqualTo(FILE);
+    assertThat(treeRequest.path("tree").get(1).path("path").asText()).isEqualTo("src/File.java");
+    assertThat(treeRequest.path("tree").get(1).path("type").asText()).isEqualTo("blob");
+    assertThat(treeRequest.path("tree").get(1).path("sha").isNull()).isTrue();
+    assertThat(refUpdates).hasValue(1);
+
+    mutations.set(0); refUpdates.set(0);
+    var delete = provider.previewOperation("123", 44, 7,
+        new GithubAppProvider.OperationPreviewRequest("DELETE", "main", "src", null, "Delete folder", HEAD));
+    assertThat(delete.changes()).containsExactly(new GithubAppProvider.TreeChange("src/File.java", null));
+    assertThat(provider.commitOperation("123", 44, 7, delete.previewId())).isEqualTo(NEW_COMMIT);
+    assertThat(treeRequest.path("tree")).hasSize(1);
+    assertThat(treeRequest.path("tree").get(0).path("path").asText()).isEqualTo("src/File.java");
+    assertThat(treeRequest.path("tree").get(0).path("type").asText()).isEqualTo("blob");
+    assertThat(treeRequest.path("tree").get(0).path("sha").isNull()).isTrue();
+    assertThat(refUpdates).hasValue(1);
+  }
+
+  @Test void rejectsFolderStaleHeadProtectedAndBoundedTraversalBeforeMutation() throws Exception {
+    GithubAppProvider provider = provider();
+    assertThatThrownBy(() -> provider.previewOperation("123", 44, 7,
+        new GithubAppProvider.OperationPreviewRequest("DELETE", "main", "src", null, "Delete", MOVED)))
+        .isInstanceOf(GithubAppProvider.TargetConflictException.class).hasMessageContaining("branch moved");
+    protectedBranch = true;
+    assertThatThrownBy(() -> provider.previewOperation("123", 44, 7,
+        new GithubAppProvider.OperationPreviewRequest("DELETE", "main", "src", null, "Delete", HEAD)))
+        .isInstanceOf(GithubAppProvider.TargetConflictException.class).hasMessageContaining("protected");
+    protectedBranch = false; truncatedChild = true;
+    assertThatThrownBy(() -> provider.previewOperation("123", 44, 7,
+        new GithubAppProvider.OperationPreviewRequest("DELETE", "main", "src", null, "Delete", HEAD)))
+        .isInstanceOf(GithubAppProvider.ProviderUnavailableException.class).hasMessageContaining("truncated");
+    truncatedChild = false; oversizedChild = true;
+    assertThatThrownBy(() -> provider.previewOperation("123", 44, 7,
+        new GithubAppProvider.OperationPreviewRequest("DELETE", "main", "src", null, "Delete", HEAD)))
+        .isInstanceOf(GithubAppProvider.TargetConflictException.class).hasMessageContaining("file limit");
+    oversizedChild = false; unsafeChild = true;
+    assertThatThrownBy(() -> provider.previewOperation("123", 44, 7,
+        new GithubAppProvider.OperationPreviewRequest("DELETE", "main", "src", null, "Delete", HEAD)))
+        .isInstanceOf(GithubAppProvider.TargetConflictException.class).hasMessageContaining("unsafe repository entry");
+    assertThat(mutations).hasValue(0);
+    assertThat(refUpdates).hasValue(0);
+  }
+
+  @Test void rejectsA201TreeThatStillContainsTheSourceBeforeCommitOrRefUpdate() throws Exception {
+    GithubAppProvider provider = provider();
+    var preview = provider.previewOperation("123", 44, 7,
+        new GithubAppProvider.OperationPreviewRequest("DELETE", "main", "src", null, "Delete", HEAD));
+    staleOperationTree = true;
+
+    assertThatThrownBy(() -> provider.commitOperation("123", 44, 7, preview.previewId()))
+        .isInstanceOf(GithubAppProvider.TargetConflictException.class);
+    assertThat(mutations).hasValue(1); // orphan tree object only; no visible Git ref mutation
+    assertThat(refUpdates).hasValue(0);
+  }
+
   private GithubAppProvider provider() throws Exception {
-    var keys = KeyPairGenerator.getInstance("RSA"); keys.initialize(2048);
-    String pem = "-----BEGIN PRIVATE KEY-----\n" + Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(keys.generateKeyPair().getPrivate().getEncoded()) + "\n-----END PRIVATE KEY-----";
     return new GithubAppProvider("99", pem, "http://127.0.0.1:" + server.getAddress().getPort(), HttpClient.newHttpClient(), json);
   }
 
@@ -122,12 +225,28 @@ class GithubFileAdditionTest {
       int read = refReads.incrementAndGet();
       reply(exchange, 200, "{\"ref\":\"refs/heads/main\",\"object\":{\"sha\":\"" + (moveAtRefRead > 0 && read >= moveAtRefRead ? MOVED : HEAD) + "\"}}");
     } else if (path.equals("/repos/owner/repo/git/commits/" + HEAD) && method.equals("GET")) reply(exchange, 200, "{\"tree\":{\"sha\":\"" + ROOT + "\"}}");
-    else if (path.equals("/repos/owner/repo/git/trees/" + ROOT) && method.equals("GET")) reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"type\":\"tree\",\"sha\":\"" + CHILD + "\"},{\"path\":\"README.md\",\"type\":\"blob\"}]}");
-    else if (path.equals("/repos/owner/repo/git/trees/" + CHILD) && method.equals("GET")) reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"File.java\",\"type\":\"blob\"}]}");
+    else if (path.equals("/repos/owner/repo/git/trees/" + ROOT) && method.equals("GET")) reply(exchange, 200, rootTree());
+    else if (path.equals("/repos/owner/repo/git/trees/" + NEW_TREE) && method.equals("GET")) reply(exchange, 200, operationResultTree());
+    else if (path.equals("/repos/owner/repo/git/trees/" + RESULT_CHILD) && method.equals("GET")) reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"Archived.java\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}");
+    else if (path.equals("/repos/owner/repo/git/trees/" + CHILD) && method.equals("GET")) {
+      if (truncatedChild) reply(exchange, 200, "{\"truncated\":true,\"tree\":[]}");
+      else if (oversizedChild) { StringBuilder files = new StringBuilder("{\"truncated\":false,\"tree\":["); for (int i = 0; i < 101; i++) { if (i > 0) files.append(','); files.append("{\"path\":\"F").append(i).append(".java\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"").append(FILE).append("\"}"); } reply(exchange, 200, files.append("]}").toString()); }
+      else if (unsafeChild) reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"foo..bar\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}");
+      else reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"File.java\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}");
+    }
     else if (path.equals("/repos/owner/repo/git/trees") && method.equals("POST")) { mutations.incrementAndGet(); treeRequest = json.readTree(exchange.getRequestBody()); reply(exchange, 201, "{\"sha\":\"" + NEW_TREE + "\"}"); }
     else if (path.equals("/repos/owner/repo/git/commits") && method.equals("POST")) { mutations.incrementAndGet(); reply(exchange, 201, "{\"sha\":\"" + NEW_COMMIT + "\"}"); }
     else if (path.equals("/repos/owner/repo/git/refs/heads/main") && method.equals("PATCH")) { refUpdates.incrementAndGet(); refUpdateRequest = json.readTree(exchange.getRequestBody()); reply(exchange, 200, "{\"ref\":\"refs/heads/main\",\"object\":{\"sha\":\"" + NEW_COMMIT + "\"}}"); }
     else reply(exchange, 404, "{}");
+  }
+
+  private String rootTree() { return "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"mode\":\"040000\",\"type\":\"tree\",\"sha\":\"" + CHILD + "\"},{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}"; }
+  private String operationResultTree() {
+    if (staleOperationTree || treeRequest == null) return rootTree();
+    String first = treeRequest.path("tree").get(0).path("path").asText();
+    if ("archive/File.java".equals(first)) return "{\"truncated\":false,\"tree\":[{\"path\":\"archive\",\"mode\":\"040000\",\"type\":\"tree\",\"sha\":\"" + CHILD + "\"},{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}";
+    if ("src/Archived.java".equals(first)) return "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"mode\":\"040000\",\"type\":\"tree\",\"sha\":\"" + RESULT_CHILD + "\"},{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}";
+    return "{\"truncated\":false,\"tree\":[{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}";
   }
 
   private static void reply(HttpExchange exchange, int status, String body) throws IOException {

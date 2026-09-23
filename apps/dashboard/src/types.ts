@@ -113,6 +113,9 @@ export type GithubDirectoryTarget = { currentPath: string; parentPath: string; d
 export type GithubTreeEntry = { name: string; path: string; type: 'tree' | 'blob' | 'commit'; size: number }
 export type GithubTreePage = { path: string; headSha: string | null; items: GithubTreeEntry[]; page: number; hasMore: boolean; truncated: boolean }
 export type GithubAddFileRequest = { branch: string; path: string; content: string; message: string; expectedHeadSha: string; placeholder: boolean }
+export type GithubTreeOperationPreviewRequest = { operation: 'MOVE' | 'DELETE'; branch: string; sourcePath: string; destinationPath: string | null; message: string; expectedHeadSha: string }
+export type GithubTreeChange = { fromPath: string; toPath: string | null }
+export type GithubTreeOperationPreview = GithubTreeOperationPreviewRequest & { previewId: string; changes: GithubTreeChange[] }
 export type GithubPage<T> = { items: T[]; hasMore: boolean }
 export { LIGHT_THEMES, DARK_THEMES } from '../../../shared/codeThemes'
 export type { LightTheme, DarkTheme } from '../../../shared/codeThemes'
