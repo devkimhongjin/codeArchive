@@ -211,3 +211,39 @@ h1, h2, p { margin-top: 0; }
 .export-settings input[type=checkbox] { accent-color: #7954e8; }
 .export-settings input[type=text], .export-settings input:not([type]) { width: 100%; padding: 10px; border: 1px solid #ddd5ec; border-radius: 8px; }
 .export-settings output { overflow-wrap: anywhere; font-size: 12px; }
+
+.github-create-guide, .github-empty-repository { display: grid; gap: 9px; padding: 12px; background: #faf9fc; border: 1px solid #eeebf2; border-radius: 7px; }
+.github-create-guide > button { justify-self: start; }
+.github-create-guide-body { display: grid; gap: 8px; }
+.github-create-guide-body p, .github-empty-repository p { margin: 0; color: #706a7d; font-size: 10px; line-height: 1.6; }
+.github-create-guide-body > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.github-create-guide-body a { color: #6850bf; font-size: 10px; font-weight: 700; }
+.github-empty-repository > strong { color: #514866; font-size: 11px; }
+.github-empty-repository > label { display: flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: #514866; font-size: 10px; }
+.github-empty-repository pre { max-height: 180px; overflow: auto; margin: 0; padding: 10px; color: #484254; background: #fff; border: 1px solid var(--line); border-radius: 5px; white-space: pre-wrap; font-size: 10px; line-height: 1.5; }
+.github-empty-repository > button { justify-self: start; }
+
+.github-tree { display: grid; gap: 8px; padding: 12px; background: #faf9fc; border: 1px solid #eeebf2; border-radius: 7px; }
+.github-tree > strong { color: #514866; font-size: 10px; }
+.github-tree ul { display: grid; gap: 4px; max-height: 220px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.github-tree li { padding: 5px 7px; color: #625c70; background: #fff; border-radius: 4px; overflow-wrap: anywhere; font-size: 10px; }
+.github-tree li button { padding: 0; color: #685ca9; background: transparent; font-size: inherit; text-align: left; }
+.github-tree li button:disabled { color: #9992a4; cursor: not-allowed; }
+.github-tree li.is-selected { background: #e8f6f0; box-shadow: inset 0 0 0 1px #b9e1d0; }
+.github-tree li.is-selected button { color: #14715c; font-weight: 700; }
+.github-directory .github-select-directory { justify-self: start; color: #fff; background: #685ca9; font-weight: 700; }
+.github-directory .github-select-directory:disabled { color: #7d758c; background: #eeebf2; cursor: not-allowed; }
+.github-tree p { margin: 0; color: #84613e; font-size: 9px; line-height: 1.5; }
+.github-tree p button { color: #685ca9; text-decoration: underline; }
+.github-tree > .ghost-button { justify-self: start; }
+.github-add-file { display: grid; gap: 9px; padding: 12px; background: #faf9fc; border: 1px solid #eeebf2; border-radius: 7px; }
+.github-add-file > strong, .github-add-preview strong { color: #514866; font-size: 10px; }
+.github-add-file label { display: grid; gap: 5px; padding: 0; border: 0; color: #625c70; font-size: 10px; font-weight: 700; }
+.github-add-file input, .github-add-file textarea { width: 100%; padding: 8px; color: #484254; background: #fff; border: 1px solid var(--line-strong); border-radius: 5px; font: 10px 'DM Mono', monospace; }
+.github-add-file > .ghost-button, .github-add-preview > .primary-button { justify-self: start; }
+.github-add-file p { margin: 0; color: #84613e; font-size: 9px; line-height: 1.5; }
+.github-add-mode { display: flex; gap: 6px; }
+.github-add-mode button { padding: 6px 10px; color: #685ca9; background: #f1eeff; border-radius: 4px; font-size: 9px; }
+.github-add-mode button[aria-pressed="true"] { color: #fff; background: #685ca9; }
+.github-add-preview { display: grid; gap: 7px; padding: 10px; background: #fff; border: 1px solid #ded8ef; border-radius: 5px; }
+.github-add-preview pre { max-height: 180px; overflow: auto; margin: 0; padding: 8px; background: #f5f3f9; color: #4f485f; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 9px; }
