@@ -459,6 +459,21 @@ class CodeArchiveApiIntegrationTest {
     }
 
     @Test
+    void githubFileAdditionRequiresCsrfAndFailsClosedWhenProviderIsUnavailable() throws Exception {
+        githubAccountService.upsert(principal("805", "file-user", "File", null));
+        String payload = "{\"branch\":\"main\",\"path\":\"new.txt\",\"content\":\"secret source\",\"message\":\"Add file\",\"expectedHeadSha\":\"" + "a".repeat(40) + "\",\"placeholder\":false}";
+        mockMvc.perform(post("/api/github/targets/installations/44/repositories/7/files")
+                        .with(githubLogin("805", "file-user", "File", null))
+                        .header("X-CodeArchive-Github-Id", "805").contentType("application/json").content(payload))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/github/targets/installations/44/repositories/7/files").with(csrf().asHeader())
+                        .with(githubLogin("805", "file-user", "File", null))
+                        .header("X-CodeArchive-Github-Id", "805").contentType("application/json").content(payload))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.message", is("GitHub App provider is unavailable")));
+    }
+
+    @Test
     void githubInstallationStartIsCsrfProtectedAndFailsClosedWhenProviderIsUnavailable() throws Exception {
         githubAccountService.upsert(principal("804", "install-user", "Install", null));
         mockMvc.perform(post("/api/github/installations/start")

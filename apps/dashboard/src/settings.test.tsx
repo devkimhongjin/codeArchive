@@ -6,7 +6,7 @@ import { ApiError } from './api'
 import type { AccountSettings } from './types'
 
 const mocks = vi.hoisted(() => ({
-  me: vi.fn(), list: vi.fn(), settings: vi.fn(), save: vi.fn(), grant: vi.fn(), revoke: vi.fn(), logout: vi.fn(), bridge: vi.fn(), installations: vi.fn(), startInstallation: vi.fn(), repositories: vi.fn(), branches: vi.fn(), directories: vi.fn(), tree: vi.fn(), emptyBranch: vi.fn(), readmePreview: vi.fn(), initializeReadme: vi.fn(), navigate: vi.fn(),
+  me: vi.fn(), list: vi.fn(), settings: vi.fn(), save: vi.fn(), grant: vi.fn(), revoke: vi.fn(), logout: vi.fn(), bridge: vi.fn(), installations: vi.fn(), startInstallation: vi.fn(), repositories: vi.fn(), branches: vi.fn(), directories: vi.fn(), tree: vi.fn(), addFile: vi.fn(), emptyBranch: vi.fn(), readmePreview: vi.fn(), initializeReadme: vi.fn(), navigate: vi.fn(),
 }))
 
 vi.mock('./api', async (original) => ({
@@ -18,7 +18,7 @@ vi.mock('./api', async (original) => ({
   issueRelayGrant: mocks.grant,
   revokeRelayGrant: mocks.revoke,
   logout: mocks.logout,
-  getGithubInstallations: mocks.installations, startGithubInstallation: mocks.startInstallation, getGithubRepositories: mocks.repositories, getGithubBranches: mocks.branches, getGithubDirectories: mocks.directories, getGithubTree: mocks.tree, getGithubEmptyDefaultBranch: mocks.emptyBranch, getGithubReadmePreview: mocks.readmePreview, initializeGithubReadme: mocks.initializeReadme,
+  getGithubInstallations: mocks.installations, startGithubInstallation: mocks.startInstallation, getGithubRepositories: mocks.repositories, getGithubBranches: mocks.branches, getGithubDirectories: mocks.directories, getGithubTree: mocks.tree, addGithubFile: mocks.addFile, getGithubEmptyDefaultBranch: mocks.emptyBranch, getGithubReadmePreview: mocks.readmePreview, initializeGithubReadme: mocks.initializeReadme,
 }))
 vi.mock('./bridge', async (original) => ({ ...await original<typeof import('./bridge')>(), requestBridge: mocks.bridge }))
 vi.mock('./navigation', () => ({ navigateSameTab: mocks.navigate }))
@@ -290,6 +290,36 @@ it('browses folders without changing the draft target until explicitly selected'
   expect(screen.getByText('선택한 저장 위치').parentElement?.textContent).toContain('src')
   fireEvent.click(screen.getByRole('button', { name: '설정 저장' }))
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ githubRootPath: 'src', githubAutoCommitEnabled: false }), 'account-17'))
+})
+
+it('previews a new file before making one explicit GitHub commit request', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false })
+  mocks.installations.mockResolvedValue([{ id: 9, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue([{ id: 11, owner: 'archive-user', name: 'repo', fullName: 'archive-user/repo', privateRepository: true, defaultBranch: 'main' }]); mocks.branches.mockResolvedValue([{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }]); mocks.directories.mockResolvedValue({ currentPath: '', parentPath: '', directories: ['src'] }); mocks.addFile.mockResolvedValue({ commitSha: 'e'.repeat(40) })
+  mocks.bridge.mockResolvedValue({ capability: 'file-add' }); await openSettings()
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' })); await screen.findByRole('option', { name: 'archive-user' }); fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '9' } }); await screen.findByRole('option', { name: 'archive-user/repo' }); fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } }); await screen.findByRole('option', { name: 'main' }); fireEvent.change(screen.getByLabelText('브랜치'), { target: { value: 'main' } })
+  await screen.findByRole('button', { name: '변경 미리보기' })
+  fireEvent.change(screen.getByLabelText('새 파일 이름'), { target: { value: 'src' } }); fireEvent.click(screen.getByRole('button', { name: '변경 미리보기' }))
+  expect(screen.getByRole('alert').textContent).toContain('이미 있습니다')
+  expect(mocks.addFile).not.toHaveBeenCalled()
+  fireEvent.change(screen.getByLabelText('새 파일 이름'), { target: { value: 'Notes.md' } }); fireEvent.change(screen.getByLabelText('새 파일 내용'), { target: { value: '# Notes' } }); fireEvent.click(screen.getByRole('button', { name: '변경 미리보기' }))
+  expect(screen.getByText('새 파일: Notes.md')).toBeTruthy()
+  expect(screen.getByLabelText('추가 파일 diff').textContent).toBe('+# Notes')
+  expect(mocks.addFile).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: '이 변경을 커밋' }))
+  await waitFor(() => expect(mocks.addFile).toHaveBeenCalledWith('account-17', 9, 11, { branch: 'main', path: 'Notes.md', content: '# Notes', message: 'Add Notes.md', expectedHeadSha: 'a'.repeat(40), placeholder: false }))
+  expect(await screen.findByText('커밋 완료 · eeeeeee')).toBeTruthy()
+})
+
+it('previews an empty folder as a consented .gitkeep file', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false })
+  mocks.installations.mockResolvedValue([{ id: 9, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue([{ id: 11, owner: 'archive-user', name: 'repo', fullName: 'archive-user/repo', privateRepository: true, defaultBranch: 'main' }]); mocks.branches.mockResolvedValue([{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }]); mocks.directories.mockResolvedValue({ currentPath: '', parentPath: '', directories: ['src'] })
+  mocks.bridge.mockResolvedValue({ capability: 'folder-add' }); await openSettings()
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' })); await screen.findByRole('option', { name: 'archive-user' }); fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '9' } }); await screen.findByRole('option', { name: 'archive-user/repo' }); fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } }); await screen.findByRole('option', { name: 'main' }); fireEvent.change(screen.getByLabelText('브랜치'), { target: { value: 'main' } })
+  await screen.findByRole('button', { name: '변경 미리보기' })
+  fireEvent.click(screen.getByRole('button', { name: '폴더' })); fireEvent.change(screen.getByLabelText('새 폴더 이름'), { target: { value: 'new-folder' } }); fireEvent.click(screen.getByRole('button', { name: '변경 미리보기' }))
+  expect(screen.getByText('새 파일: new-folder/.gitkeep')).toBeTruthy()
+  expect(screen.getByLabelText('추가 파일 diff').textContent).toContain('빈 .gitkeep')
+  expect(mocks.addFile).not.toHaveBeenCalled()
 })
 
 it('clears cascade placeholders without browsing id zero or an empty branch', async () => {

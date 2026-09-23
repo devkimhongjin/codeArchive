@@ -10,6 +10,18 @@ import com.codearchive.api.auth.*;import com.codearchive.api.automation.GithubAp
  @GetMapping("/installations/{id}/repositories/{repo}/branches") public ResponseEntity<?> branches(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected,@PathVariable long id,@PathVariable long repo,@RequestParam(defaultValue="1") int page){return call(a,expected,githubId->github.branchesPage(githubId,id,repo,page));}
  @GetMapping("/installations/{id}/repositories/{repo}/directories") public ResponseEntity<?> dirs(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected,@PathVariable long id,@PathVariable long repo,@RequestParam String branch,@RequestParam(defaultValue="") String path){return call(a,expected,githubId->github.directories(githubId,id,repo,branch,path));}
  @GetMapping("/installations/{id}/repositories/{repo}/tree") public ResponseEntity<?> tree(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected,@PathVariable long id,@PathVariable long repo,@RequestParam String branch,@RequestParam(defaultValue="") String path,@RequestParam(defaultValue="1") int page){return call(a,expected,githubId->github.treePage(githubId,id,repo,branch,path,page));}
+ public record AddFileRequest(String branch,String path,String content,String message,String expectedHeadSha,boolean placeholder){}
+ @PostMapping("/installations/{id}/repositories/{repo}/files") public ResponseEntity<?> addFile(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected,@PathVariable long id,@PathVariable long repo,@RequestBody AddFileRequest request){
+  var checked=GithubAccountAssertion.require(a,expected,users);
+  if(!checked.accepted())return checked.failure();
+  if(request==null)return ResponseEntity.badRequest().body(new ApiError("Invalid file request"));
+  if(!github.browseReady())return ResponseEntity.status(503).body(new ApiError("GitHub App provider is unavailable"));
+  try{return ResponseEntity.ok(Map.of("commitSha",github.addFile(checked.account().githubId(),id,repo,request.branch(),request.path(),request.content(),request.message(),request.expectedHeadSha(),request.placeholder())));}
+  catch(GithubAppProvider.TargetConflictException e){return ResponseEntity.status(409).body(new ApiError("Repository changed or target path is unavailable; refresh before retrying"));}
+  catch(IllegalArgumentException e){return ResponseEntity.badRequest().body(new ApiError("Invalid file request"));}
+  catch(SecurityException e){return ResponseEntity.status(403).body(new ApiError("Repository is not available to this account"));}
+  catch(Exception e){return ResponseEntity.status(503).body(new ApiError("File commit outcome could not be confirmed; refresh before retrying"));}
+ }
  @GetMapping("/readme-preview") public ResponseEntity<?> readmePreview(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected){return call(a,expected,id->Map.of("content",GithubAppProvider.INITIAL_README));}
  @GetMapping("/installations/{id}/repositories/{repo}/empty-default-branch") public ResponseEntity<?> emptyDefaultBranch(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected,@PathVariable long id,@PathVariable long repo){return call(a,expected,githubId->Map.of("defaultBranch",github.emptyDefaultBranch(githubId,id,repo)));}
  @PostMapping("/installations/{id}/repositories/{repo}/initialize-readme") public ResponseEntity<?> initializeReadme(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected,@PathVariable long id,@PathVariable long repo){

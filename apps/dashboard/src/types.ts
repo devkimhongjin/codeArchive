@@ -102,6 +102,7 @@ export type GithubBranchTarget = { name: string; protectedBranch: boolean; commi
 export type GithubDirectoryTarget = { currentPath: string; parentPath: string; directories: string[] }
 export type GithubTreeEntry = { name: string; path: string; type: 'tree' | 'blob' | 'commit'; size: number }
 export type GithubTreePage = { path: string; headSha: string | null; items: GithubTreeEntry[]; page: number; hasMore: boolean; truncated: boolean }
+export type GithubAddFileRequest = { branch: string; path: string; content: string; message: string; expectedHeadSha: string; placeholder: boolean }
 export type GithubPage<T> = { items: T[]; hasMore: boolean }
 export const LIGHT_THEMES = ['github-light', 'vitesse-light', 'catppuccin-latte', 'solarized-light', 'one-light'] as const
 export const DARK_THEMES = ['github-dark', 'vitesse-dark', 'catppuccin-mocha', 'dracula', 'one-dark-pro'] as const

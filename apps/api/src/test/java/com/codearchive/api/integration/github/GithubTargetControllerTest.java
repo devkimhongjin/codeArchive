@@ -98,6 +98,27 @@ class GithubTargetControllerTest {
         .isEqualTo(tree);
   }
 
+  @Test
+  void fileAdditionRequiresTheExpectedAccountAndReportsConflictsWithoutSource() throws Exception {
+    UserRepository users = mock(UserRepository.class);
+    GithubAppProvider provider = mock(GithubAppProvider.class);
+    AppUser user = AppUser.fromGithub("123", "account", "Name", null);
+    when(users.findByGithubId("123")).thenReturn(Optional.of(user));
+    GithubTargetController controller = new GithubTargetController(users, provider);
+    var request = new GithubTargetController.AddFileRequest("main", "new.txt", "secret source", "Add file", "a".repeat(40), false);
+
+    assertThat(controller.addFile(null, null, 44L, 7L, request).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(controller.addFile(github("123", "account"), "456", 44L, 7L, request).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    verifyNoInteractions(provider);
+
+    when(provider.browseReady()).thenReturn(true);
+    when(provider.addFile("123", 44L, 7L, "main", "new.txt", "secret source", "Add file", "a".repeat(40), false))
+        .thenThrow(new GithubAppProvider.TargetConflictException("path collision"));
+    var response = controller.addFile(github("123", "account"), "123", 44L, 7L, request);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    assertThat(response.getBody().toString()).doesNotContain("secret source");
+  }
+
   private static OAuth2AuthenticationToken github(String id, String login) {
     var principal = new DefaultOAuth2User(List.of(new SimpleGrantedAuthority("ROLE_USER")),
         Map.of("id", id, "login", login), "id");
