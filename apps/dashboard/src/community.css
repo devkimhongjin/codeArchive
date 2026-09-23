@@ -1,0 +1,38 @@
+.community-page { width: min(1240px, calc(100% - 64px)); margin: 0 auto; padding: 36px 0 80px; display: grid; gap: 20px; }
+.community-heading h1 { margin: 8px 0; font-size: 29px; letter-spacing: -.04em; }
+.community-heading p:last-child { margin: 0; color: var(--muted); font-size: 13px; }
+.community-notice, .community-search, .community-own-problems, .community-visibility, .community-results-heading, .community-detail { padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.community-notice strong, .community-own-problems strong, .community-visibility strong, .community-results-heading strong, .community-detail strong { color: var(--ink); font-size: 14px; }
+.community-notice p, .community-own-problems p, .community-visibility p, .community-detail p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.community-search { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.community-search label, .community-results-heading label, .community-list-search { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.community-search label:nth-child(2) { flex: 1; min-width: 160px; }
+.community-search input, .community-search select, .community-own-problems input, .community-results-heading select, .community-list-search input { min-height: 36px; width: 100%; padding: 7px 10px; color: var(--ink); background: #fff; border: 1px solid var(--line-strong); border-radius: 6px; font-size: 12px; }
+.community-own-problems { display: grid; gap: 10px; }
+.community-own-problems > div { display: flex; flex-wrap: wrap; gap: 7px; max-height: 115px; overflow: auto; }
+.community-own-problems > div button { max-width: 100%; padding: 7px 10px; color: var(--purple-ink); background: var(--purple-soft); border-radius: 6px; overflow-wrap: anywhere; text-align: left; font-size: 11px; }
+.community-problem-heading, .community-results-heading, .community-detail > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.community-problem-heading span { color: var(--purple); font: 700 11px 'DM Mono', monospace; }
+.community-problem-heading h2 { margin: 5px 0 0; font-size: 20px; }
+.community-visibility { display: grid; gap: 9px; }
+.community-visibility p { margin: 0; }
+.community-own-solution { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 11px; background: #faf9fc; border-radius: 6px; font-size: 11px; }
+.community-own-solution button { padding: 7px 10px; color: var(--purple-ink); background: var(--purple-soft); border-radius: 5px; font-size: 11px; }
+.community-confirm { display: grid; gap: 10px; padding: 14px; background: #f8f5ff; border: 1px solid #ddd5f5; border-radius: 8px; }
+.community-confirm pre { max-height: 180px; overflow: auto; margin: 0; padding: 10px; white-space: pre-wrap; overflow-wrap: anywhere; background: #fff; border: 1px solid var(--line); border-radius: 5px; font-size: 11px; }
+.community-confirm > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.community-results-heading > div { display: flex; align-items: end; gap: 8px; }
+.community-list-search { max-width: 350px; }
+.community-status { padding: 18px; color: var(--muted); background: #fff; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; }
+.community-results { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.community-results > button { display: grid; gap: 6px; min-width: 0; padding: 15px; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 9px; text-align: left; }
+.community-results > button.selected { border-color: var(--purple); background: #f8f6ff; }
+.community-results > button span { color: var(--purple); font-size: 11px; }
+.community-results > button strong { overflow-wrap: anywhere; font-size: 13px; }
+.community-results > button small { color: var(--muted); font-size: 10px; }
+.community-results > p { color: var(--muted); font-size: 12px; }
+.community-pages { display: flex; align-items: center; justify-content: flex-end; gap: 8px; color: var(--muted); font-size: 11px; }
+.community-pages button { padding: 7px 11px; color: var(--purple-ink); background: var(--purple-soft); border-radius: 5px; }
+.community-detail { display: grid; gap: 12px; }
+.community-detail h3 { margin: 0; font-size: 16px; }
+@media (max-width: 680px) { .community-page { width: min(100% - 28px, 1240px); padding-top: 24px; } .community-search > button { width: 100%; } .community-problem-heading, .community-results-heading { align-items: stretch; flex-direction: column; } .community-results-heading > div { justify-content: space-between; } }

@@ -75,6 +75,10 @@ public class Solution {
     @Column(name = "memory_unit", length = 10)
     private String memoryUnit;
 
+    /** Null is the default and means private, including every pre-community row. */
+    @Column(name = "published_at")
+    private Instant publishedAt;
+
     protected Solution() {
     }
 
@@ -174,4 +178,10 @@ public class Solution {
     public BigDecimal getMemoryValue() { return memoryValue; }
     public String getMemoryUnit() { return memoryUnit; }
     public void setMemoryMeasurement(BigDecimal value, String unit) { this.memoryValue = value; this.memoryUnit = unit == null || unit.isBlank() ? "UNKNOWN" : unit; }
+    public Instant getPublishedAt() { return publishedAt; }
+    public boolean isPublished() { return publishedAt != null; }
+    public void setPublished(boolean published, Instant now) {
+        if (published && publishedAt == null) publishedAt = now;
+        if (!published) publishedAt = null;
+    }
 }

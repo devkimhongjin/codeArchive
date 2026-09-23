@@ -37,3 +37,4 @@ await cp(resolve(root, "src/popup.css"), resolve(dist, "popup.css"));
 await cp(resolve(root, "src/popup-layout.css"), resolve(dist, "popup-layout.css"));
 await cp(resolve(root, "src/archive.html"), resolve(dist, "archive.html"));
 await cp(resolve(root, "src/archive.css"), resolve(dist, "archive.css"));
+await cp(resolve(root, "src/archive-viewer.css"), resolve(dist, "archive-viewer.css"));

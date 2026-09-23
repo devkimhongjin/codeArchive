@@ -1,6 +1,8 @@
+import type { LightTheme, DarkTheme } from '../../../shared/codeThemes'
+
 export type Platform = 'SWEA' | 'PROGRAMMERS'
 
-export type ViewName = 'solutions' | 'guide' | 'settings'
+export type ViewName = 'solutions' | 'community' | 'guide' | 'settings'
 
 export type User = {
   id: number
@@ -23,6 +25,7 @@ export type AuthProviders = {
 }
 
 export type Solution = {
+  id?: number
   captureId: string
   platform: Platform
   problemNumber: string
@@ -38,7 +41,14 @@ export type Solution = {
   memoryUsage?: number | string
   memoryValue?: number | string
   memoryUnit?: 'KB' | 'KiB' | 'MB' | 'MiB' | 'UNKNOWN' | string
+  visibility?: 'private' | 'published'
+  publishedAt?: string | null
 }
+
+export type CommunityAuthor = { name: string; nickname: string | null; avatarUrl: string | null }
+export type CommunitySummary = { id: number; platform: Platform; problemNumber: string; title: string; language: string; languageKey: string; solvedAt: string | null; publishedAt: string; author: CommunityAuthor }
+export type CommunityDetail = CommunitySummary & { problemUrl: string; sourceCode: string; executionTime: number | string | null; memoryValue: number | string | null; memoryUnit: string | null }
+export type CommunityPage = { items: CommunitySummary[]; page: number; size: number; total: number; hasMore: boolean }
 
 export type Capture = Solution & {
   captureId: string
@@ -97,11 +107,15 @@ export type GithubInstallationStart = {
   installations: GithubInstallation[]
   installUrl: string | null
 }
-export type GithubRepositoryTarget = { id: number; owner: string; name: string; fullName: string; privateRepository: boolean; defaultBranch: string }
+export type GithubRepositoryTarget = { id: number; owner: string; name: string; fullName: string; privateRepository: boolean; defaultBranch: string | null }
 export type GithubBranchTarget = { name: string; protectedBranch: boolean; commitSha: string }
 export type GithubDirectoryTarget = { currentPath: string; parentPath: string; directories: string[] }
+export type GithubTreeEntry = { name: string; path: string; type: 'tree' | 'blob' | 'commit'; size: number }
+export type GithubTreePage = { path: string; headSha: string | null; items: GithubTreeEntry[]; page: number; hasMore: boolean; truncated: boolean }
+export type GithubAddFileRequest = { branch: string; path: string; content: string; message: string; expectedHeadSha: string; placeholder: boolean }
+export type GithubTreeOperationPreviewRequest = { operation: 'MOVE' | 'DELETE'; branch: string; sourcePath: string; destinationPath: string | null; message: string; expectedHeadSha: string }
+export type GithubTreeChange = { fromPath: string; toPath: string | null }
+export type GithubTreeOperationPreview = GithubTreeOperationPreviewRequest & { previewId: string; changes: GithubTreeChange[] }
 export type GithubPage<T> = { items: T[]; hasMore: boolean }
-export const LIGHT_THEMES = ['github-light', 'vitesse-light', 'catppuccin-latte', 'solarized-light', 'one-light'] as const
-export const DARK_THEMES = ['github-dark', 'vitesse-dark', 'catppuccin-mocha', 'dracula', 'one-dark-pro'] as const
-export type LightTheme = typeof LIGHT_THEMES[number]
-export type DarkTheme = typeof DARK_THEMES[number]
+export { LIGHT_THEMES, DARK_THEMES } from '../../../shared/codeThemes'
+export type { LightTheme, DarkTheme } from '../../../shared/codeThemes'

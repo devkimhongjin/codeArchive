@@ -20,12 +20,12 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { ApiError, bulkUpload, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories } from './api'
+import { ApiError, addGithubFile, bulkUpload, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories, getGithubTree, getGithubEmptyDefaultBranch, getGithubReadmePreview, initializeGithubReadme, previewGithubTreeOperation, commitGithubTreeOperation } from './api'
 import { BridgeError, parseAckResponse, parseBridgeStatusResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
-import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type BulkResponse, type Solution, type Toast, type User, type ViewName } from './types'
-import { CodeBlock } from './CodeBlock'
+import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type BulkResponse, type GithubAddFileRequest, type GithubTreeOperationPreview, type Solution, type Toast, type User, type ViewName } from './types'
+import { CodeBlock, CodeThemeSelect } from './CodeBlock'
 import { EXTENSION_ID, LEGACY_EXTENSION_ID, EXTENSION_CANDIDATES } from './extensionConfig'
 import { readExportSettings, EXPORT_SETTINGS_KEY, exportCode, downloadFilename, githubCommitMessage, gitPath, sourceFileExtension, DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, DEFAULT_GIT_PATH_TEMPLATE, GIT_PATH_TOKENS, hasGitSubmissionIdentityToken, type ExportSettings } from './codeExport'
 import { navigateSameTab } from './navigation'
@@ -35,6 +35,9 @@ import { filterAndSortSolutions, groupSolutions, type SolutionGroup, type Soluti
 import { BUILD_METADATA, buildLabel, updatedLabel } from '../../../shared/buildMetadata'
 import { EXTENSION_RELEASE, fetchLatestExtensionRelease, isVersionAtLeast, type ExtensionReleaseInfo } from './extensionRelease'
 import { formatExecutionTime, formatMemory } from './performancePresentation'
+import { CommunityView } from './CommunityView'
+import { readCommunityRoute, readView, urlForView, type CommunityRoute } from './communityRoute'
+import { CODE_THEME_MODE_KEY, isLightTheme, type CodeTheme, type CodeThemeMode } from '../../../shared/codeThemes'
 
 type IconName =
   | 'book'
@@ -106,7 +109,11 @@ function normalizeSolution(value: unknown, index = 0): Solution {
   const raw = (value ?? {}) as Record<string, unknown>
   const read = (...keys: string[]) => keys.map((key) => raw[key]).find((item) => item !== undefined && item !== null)
   const platform = String(read('platform') ?? 'SWEA').toUpperCase() === 'PROGRAMMERS' ? 'PROGRAMMERS' : 'SWEA'
+  const rawId = read('id')
+  const id = typeof rawId === 'number' && Number.isSafeInteger(rawId) && rawId > 0 ? rawId : undefined
+  const rawVisibility = read('visibility')
   return {
+    id,
     captureId: String(read('captureId', 'capture_id') ?? `remote-${index}`),
     platform,
     problemNumber: String(read('problemNumber', 'problem_number') ?? '—'),
@@ -122,6 +129,8 @@ function normalizeSolution(value: unknown, index = 0): Solution {
     memoryUsage: read('memoryUsage', 'memory_usage') as number | string | undefined,
     memoryValue: read('memoryValue', 'memory_value') as number | string | undefined,
     memoryUnit: read('memoryUnit', 'memory_unit') as Solution['memoryUnit'],
+    visibility: rawVisibility === 'published' || rawVisibility === 'private' ? rawVisibility : undefined,
+    publishedAt: read('publishedAt', 'published_at') as string | undefined,
   }
 }
 
@@ -147,6 +156,13 @@ function displayUser(user: User) {
 }
 
 const LOCAL_THEME_KEY = 'codearchive-local-code-themes'
+function readCodeThemeMode(): CodeThemeMode {
+  try {
+    const stored = localStorage.getItem(CODE_THEME_MODE_KEY)
+    if (stored === 'light' || stored === 'dark') return stored
+  } catch { /* Use the system preference when browser storage is unavailable. */ }
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
 function readLocalThemes(): Pick<AccountSettings, 'lightTheme' | 'darkTheme'> {
   try {
     const value = JSON.parse(localStorage.getItem(LOCAL_THEME_KEY) ?? '{}') as Record<string, unknown>
@@ -213,8 +229,10 @@ function relayDeviceId() {
 
 export default function App() {
   const [githubInstallReturn] = useState(readGithubInstallReturn)
-  const [view, setView] = useState<ViewName>(() => readGithubInstallReturn() ? 'settings' : 'solutions')
+  const [view, setView] = useState<ViewName>(() => readGithubInstallReturn() ? 'settings' : readView())
+  const [communityRoute, setCommunityRoute] = useState<CommunityRoute>(readCommunityRoute)
   const [mode, setMode] = useState<'local' | 'live'>('local')
+  const [codeThemeMode, setCodeThemeMode] = useState<CodeThemeMode>(readCodeThemeMode)
   // Async bridge/settings work outlives the render that created it. Keep the
   // authorization mode in a ref so a failed API read cannot be followed by a
   // stale live-mode closure issuing relay authority.
@@ -365,6 +383,17 @@ export default function App() {
     })()
   }
 
+  const chooseCodeTheme = (theme: CodeTheme, persistImmediately: boolean) => {
+    const nextMode = isLightTheme(theme) ? 'light' : 'dark'
+    setCodeThemeMode(nextMode)
+    try { localStorage.setItem(CODE_THEME_MODE_KEY, nextMode) } catch { /* The current preview still updates. */ }
+    const nextThemes = isLightTheme(theme)
+      ? { lightTheme: theme, darkTheme: accountSettingsRef.current.darkTheme }
+      : { lightTheme: accountSettingsRef.current.lightTheme, darkTheme: theme }
+    if (persistImmediately) updateCodeThemes(nextThemes)
+    else updateAccountSettingsDraft({ ...accountSettingsRef.current, ...nextThemes })
+  }
+
   const showToast = (kind: Toast['kind'], message: string) => {
     toastId.current += 1
     setToast({ id: toastId.current, kind, message })
@@ -507,6 +536,30 @@ export default function App() {
   const changeView = (nextView: ViewName) => {
     setView(nextView)
     setMobileNavOpen(false)
+    window.history.pushState({ codeArchiveView: nextView }, '', urlForView(nextView, communityRoute))
+  }
+  const changeCommunityRoute = (nextRoute: CommunityRoute) => {
+    setCommunityRoute(nextRoute)
+    setView('community')
+    setMobileNavOpen(false)
+    window.history.pushState({ codeArchiveView: 'community' }, '', urlForView('community', nextRoute))
+  }
+  useEffect(() => {
+    const restoreRoute = (event: PopStateEvent) => {
+      const savedView = event.state?.codeArchiveView
+      setView(savedView === 'guide' || savedView === 'settings' ? savedView : readView())
+      setCommunityRoute(readCommunityRoute())
+    }
+    window.addEventListener('popstate', restoreRoute)
+    return () => window.removeEventListener('popstate', restoreRoute)
+  }, [])
+  const returnToArchive = (platform: Solution['platform'], problemNumber: string) => {
+    const own = solutions.find(solution => solution.platform === platform && solution.problemNumber === problemNumber)
+    setQuery('')
+    setPlatformFilter('ALL')
+    setLanguageFilter('ALL')
+    if (own) setSelectedId(own.captureId)
+    changeView('solutions')
   }
 
   const refreshPendingCount = async (
@@ -546,7 +599,11 @@ export default function App() {
         // A reconnect can replace an authenticated identity without a logout.
         // Resetting the bridge first advances the authority generation and
         // fails closed before any A-owned save/grant response can reach B.
-        await resetBridge()
+        const bridgeReset = resetBridge()
+        setMode('local')
+        setSolutions([])
+        setSelectedId('')
+        await bridgeReset
         if (authMutationInFlight.current !== null) return
         clearAccountDraft()
         fence = { generation: accountGeneration.current, operation: ++solutionOperation.current }
@@ -618,10 +675,10 @@ export default function App() {
   const handleExpectedAccountChange = async (error: unknown, expectedGithubId: string) => {
     if (!(error instanceof ApiError) || error.status !== 409 || error.message !== 'GitHub account changed; reconnect required') return false
     // An A-owned response is harmless once B is rendered; never let it clear
-    // B. If A is still current, sever every authority before asking to reconnect.
+    // B. If A is still current, fence its authority and clear its source before
+    // waiting for an extension disconnect that may take several seconds.
     if (userRef.current?.githubId !== expectedGithubId) return true
-    await resetBridge()
-    if (userRef.current?.githubId !== expectedGithubId) return true
+    const bridgeReset = resetBridge()
     clearAccountDraft()
     setUser(null)
     setMode('local')
@@ -630,7 +687,23 @@ export default function App() {
     setView('solutions')
     setLoadError('GitHub 계정이 변경되었습니다. 다시 연결해 주세요.')
     showToast('info', 'GitHub 계정이 변경되었습니다. 다시 연결해 주세요.')
+    await bridgeReset
     return true
+  }
+
+  const invalidateCommunityAuth = (expectedGithubId: string) => {
+    if (userRef.current?.githubId !== expectedGithubId || modeRef.current !== 'live') return
+    // Fence all A-owned requests immediately, then remove A's archive before
+    // any asynchronous bridge disconnect can finish.
+    modeRef.current = 'local'
+    void resetBridge()
+    clearAccountDraft()
+    setMode('local')
+    setSolutions([])
+    setSelectedId('')
+    setUser(null)
+    setLoadError('GitHub 연결이 변경되거나 만료되었습니다. 다시 로그인해 주세요.')
+    showToast('info', 'GitHub 연결이 변경되거나 만료되었습니다. 다시 로그인해 주세요.')
   }
 
   const beginLogoutMutation = () => {
@@ -1144,6 +1217,9 @@ export default function App() {
             <button className={view === 'solutions' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('solutions')}>
               전체 풀이 <span className="nav-count">{solutions.length}</span>
             </button>
+            <button className={view === 'community' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('community')}>
+              커뮤니티
+            </button>
             <button className={view === 'guide' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('guide')}>
               연동 가이드
             </button>
@@ -1226,10 +1302,24 @@ export default function App() {
             onDownload={downloadCode}
             lightTheme={accountSettings.lightTheme}
             darkTheme={accountSettings.darkTheme}
-            onLightThemeChange={(lightTheme) => updateCodeThemes({ lightTheme, darkTheme: accountSettingsRef.current.darkTheme })}
-            onDarkThemeChange={(darkTheme) => updateCodeThemes({ lightTheme: accountSettingsRef.current.lightTheme, darkTheme })}
+            onOtherSolutions={(platform, problemNumber) => changeCommunityRoute({ platform, problemNumber, languageKey: '', page: 0, detailId: null })}
+            codeThemeMode={codeThemeMode}
+            onCodeThemeChange={(theme) => chooseCodeTheme(theme, true)}
           />
         )}
+        {view === 'community' && <CommunityView
+          user={user}
+          mode={mode}
+          solutions={solutions}
+          route={communityRoute}
+          onRouteChange={changeCommunityRoute}
+          onReturnToArchive={returnToArchive}
+          onVisibilityChanged={(expectedGithubId, id, visibility, publishedAt) => { if (userRef.current?.githubId === expectedGithubId && modeRef.current === 'live') setSolutions(current => current.map(solution => solution.id === id ? { ...solution, visibility, publishedAt } : solution)) }}
+          onAuthInvalid={invalidateCommunityAuth}
+          onLogin={() => navigateSameTab(GITHUB_LOGIN_URL)}
+          lightTheme={accountSettings.lightTheme}
+          darkTheme={accountSettings.darkTheme}
+        />}
         {view === 'guide' && (
           <GuideView onSettings={() => changeView('settings')} />
         )}
@@ -1240,6 +1330,8 @@ export default function App() {
             updateExportSettings={updateExportSettings}
             accountSettings={accountSettings}
             updateAccountSettings={updateAccountSettingsDraft}
+            codeThemeMode={codeThemeMode}
+            onCodeThemeChange={(theme) => chooseCodeTheme(theme, false)}
             settingsBusy={settingsBusy}
             settingsError={settingsError}
             onSaveSettings={() => void saveAccountSettings()}
@@ -1290,8 +1382,9 @@ function SolutionsView({
   onDownload,
   lightTheme,
   darkTheme,
-  onLightThemeChange,
-  onDarkThemeChange,
+  onOtherSolutions,
+  codeThemeMode,
+  onCodeThemeChange,
 }: {
   solutions: Solution[]
   filteredSolutions: Solution[]
@@ -1315,8 +1408,9 @@ function SolutionsView({
   onDownload: () => void
   lightTheme: AccountSettings['lightTheme']
   darkTheme: AccountSettings['darkTheme']
-  onLightThemeChange: (theme: AccountSettings['lightTheme']) => void
-  onDarkThemeChange: (theme: AccountSettings['darkTheme']) => void
+  onOtherSolutions: (platform: Solution['platform'], problemNumber: string) => void
+  codeThemeMode: CodeThemeMode
+  onCodeThemeChange: (theme: CodeTheme) => void
 }) {
   return (
     <section className="solutions-layout" aria-label="풀이 아카이브">
@@ -1358,22 +1452,22 @@ function SolutionsView({
             {loading && <ListSkeleton />}
             {!loading && solutionGroups.length === 0 && <EmptyList mode={mode} />}
             {!loading && solutionGroups.map((group) => (
-              <SolutionGroupRow key={group.key} group={group} selected={group.key === selectedGroup?.key} onSelect={() => setSelectedId(group.submissions[0]!.captureId)} />
+              <SolutionGroupRow key={group.key} group={group} selected={group.key === selectedGroup?.key} onSelect={() => setSelectedId(group.submissions[0]!.captureId)} onOtherSolutions={() => onOtherSolutions(group.platform, group.problemNumber)} />
             ))}
           </div>
           <div className="list-footer"><span><span className="status-dot" /> {mode === 'local' ? '로컬 기록 · 업로드 전' : '서버와 연결됨'}</span><span>{filteredSolutions.length} / {solutions.length}</span></div>
         </section>
-        <SolutionDetail solution={selectedSolution} group={selectedGroup} onSelectSubmission={setSelectedId} mode={mode} onCopy={onCopy} onDownload={onDownload} lightTheme={lightTheme} darkTheme={darkTheme} onLightThemeChange={onLightThemeChange} onDarkThemeChange={onDarkThemeChange} />
+        <SolutionDetail solution={selectedSolution} group={selectedGroup} onSelectSubmission={setSelectedId} mode={mode} onCopy={onCopy} onDownload={onDownload} lightTheme={lightTheme} darkTheme={darkTheme} codeThemeMode={codeThemeMode} onCodeThemeChange={onCodeThemeChange} onOtherSolutions={onOtherSolutions} />
       </div>
     </section>
   )
 }
 
-function SolutionGroupRow({ group, selected, onSelect }: { group: SolutionGroup; selected: boolean; onSelect: () => void }) {
+function SolutionGroupRow({ group, selected, onSelect, onOtherSolutions }: { group: SolutionGroup; selected: boolean; onSelect: () => void; onOtherSolutions: () => void }) {
   const latest = group.submissions[0]!
   const languageLabels = Array.from(new Set(group.submissions.map(solution => canonicalLanguageDisplayName(solution.language)))).join(', ')
   return (
-    <button className={`solution-row ${selected ? 'selected' : ''}`} onClick={onSelect}>
+    <div className="solution-group-entry"><button className={`solution-row ${selected ? 'selected' : ''}`} onClick={onSelect}>
       <span className={`platform-logo ${group.platform === 'SWEA' ? 'swea' : 'programmers'}`}>{group.platform === 'SWEA' ? 'S' : 'P'}</span>
       <span className="solution-row-main">
         <span className="solution-row-top"><span className="solution-platform">{group.platform}</span><span className="solution-result">풀이 {group.submissions.length}개</span></span>
@@ -1381,11 +1475,11 @@ function SolutionGroupRow({ group, selected, onSelect }: { group: SolutionGroup;
         <span className="solution-row-bottom"><span>#{group.problemNumber}</span><span className="row-divider" /><span>{languageLabels}</span><span className="row-time"><Icon name="clock" size={12} /> {formatDate(latest.solvedAt ?? latest.observedAt)}</span></span>
       </span>
       <Icon name="chevron" size={17} />
-    </button>
+    </button><button type="button" className="solution-group-community" aria-label={`${group.platform} #${group.problemNumber} 다른 풀이 보기`} onClick={onOtherSolutions}>다른 풀이 보기</button></div>
   )
 }
 
-function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onDownload, lightTheme, darkTheme, onLightThemeChange, onDarkThemeChange }: { solution: Solution | null; group: SolutionGroup | null; onSelectSubmission: (captureId: string) => void; mode: 'local' | 'live'; onCopy: () => void; onDownload: () => void; lightTheme: AccountSettings['lightTheme']; darkTheme: AccountSettings['darkTheme']; onLightThemeChange: (theme: AccountSettings['lightTheme']) => void; onDarkThemeChange: (theme: AccountSettings['darkTheme']) => void }) {
+function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onDownload, lightTheme, darkTheme, codeThemeMode, onCodeThemeChange, onOtherSolutions }: { solution: Solution | null; group: SolutionGroup | null; onSelectSubmission: (captureId: string) => void; mode: 'local' | 'live'; onCopy: () => void; onDownload: () => void; lightTheme: AccountSettings['lightTheme']; darkTheme: AccountSettings['darkTheme']; codeThemeMode: CodeThemeMode; onCodeThemeChange: (theme: CodeTheme) => void; onOtherSolutions: (platform: Solution['platform'], problemNumber: string) => void }) {
   return (
     <section className="solution-detail" aria-label="선택한 풀이 상세">
       {!solution ? (
@@ -1398,7 +1492,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
               <h2>{solution.title}</h2>
               <div className="detail-subline"><span>{canonicalLanguageDisplayName(solution.language)}</span><span className="row-divider" /><span>풀이 시간 {formatObservedTime(solution.solvedAt ?? solution.observedAt)}</span></div>
             </div>
-            <a className="problem-link" href={solution.problemUrl} target="_blank" rel="noreferrer">문제 보기 <Icon name="external" size={14} /></a>
+            <div className="detail-heading-actions"><button type="button" className="problem-link" onClick={() => onOtherSolutions(solution.platform, solution.problemNumber)}>다른 풀이 보기</button><a className="problem-link" href={solution.problemUrl} target="_blank" rel="noreferrer">문제 보기 <Icon name="external" size={14} /></a></div>
           </div>
           <div className="metrics-row">
             <MetricCard label="실행 시간" value={formatExecutionTime(solution.executionTime)} icon="clock" />
@@ -1407,7 +1501,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
           </div>
           {group && group.submissions.length > 1 && <label className="submission-picker">제출 기록<select aria-label="제출 기록" value={solution.captureId} onChange={(event) => onSelectSubmission(event.target.value)}>{group.submissions.map((submission, index) => <option key={submission.captureId} value={submission.captureId}>{index + 1}. {formatObservedTime(submission.solvedAt ?? submission.observedAt)} · {canonicalLanguageDisplayName(submission.language)}</option>)}</select></label>}
           <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
-          <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} onLightThemeChange={onLightThemeChange} onDarkThemeChange={onDarkThemeChange} />
+          <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} activeMode={codeThemeMode} onThemeChange={onCodeThemeChange} />
           <div className="detail-note"><Icon name="spark" size={14} /><span>{mode === 'local' ? '이 브라우저의 로컬 기록입니다. 로그인 후 명시적으로 동기화할 수 있습니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
         </>
       )}
@@ -1495,6 +1589,8 @@ function SettingsView({
   updateExportSettings,
   accountSettings,
   updateAccountSettings,
+  codeThemeMode,
+  onCodeThemeChange,
   settingsBusy,
   settingsError,
   onSaveSettings,
@@ -1511,6 +1607,8 @@ function SettingsView({
   updateExportSettings: (settings: ExportSettings) => void
   accountSettings: AccountSettings
   updateAccountSettings: (settings: AccountSettings) => void
+  codeThemeMode: CodeThemeMode
+  onCodeThemeChange: (theme: CodeTheme) => void
   settingsBusy: boolean
   settingsError: string | null
   onSaveSettings: () => void
@@ -1526,13 +1624,36 @@ function SettingsView({
   const [repositories, setRepositories] = useState<import('./types').GithubRepositoryTarget[]>([])
   const [branches, setBranches] = useState<import('./types').GithubBranchTarget[]>([])
   const [directory, setDirectory] = useState<import('./types').GithubDirectoryTarget | null>(null)
+  const [tree, setTree] = useState<import('./types').GithubTreePage | null>(null)
+  const [treeError, setTreeError] = useState<string | null>(null)
+  const [additionMode, setAdditionMode] = useState<'file' | 'folder'>('file')
+  const [additionName, setAdditionName] = useState('')
+  const [additionContent, setAdditionContent] = useState('')
+  const [additionMessage, setAdditionMessage] = useState('')
+  const [additionPreview, setAdditionPreview] = useState<GithubAddFileRequest | null>(null)
+  const [additionError, setAdditionError] = useState<string | null>(null)
+  const [additionSuccess, setAdditionSuccess] = useState<string | null>(null)
+  const [treeOperation, setTreeOperation] = useState<'MOVE' | 'DELETE'>('MOVE')
+  const [treeOperationSource, setTreeOperationSource] = useState('')
+  const [treeOperationDestination, setTreeOperationDestination] = useState('')
+  const [treeOperationMessage, setTreeOperationMessage] = useState('')
+  const [treeOperationPreview, setTreeOperationPreview] = useState<GithubTreeOperationPreview | null>(null)
+  const [treeOperationError, setTreeOperationError] = useState<string | null>(null)
+  const [treeOperationSuccess, setTreeOperationSuccess] = useState<string | null>(null)
+  const treeOperationPreviewGeneration = useRef(0)
+  const clearTreeOperationPreview = () => { treeOperationPreviewGeneration.current += 1; setTreeOperationPreview(null); setTreeOperationError(null); setTreeOperationSuccess(null) }
   const [targetBusy, setTargetBusy] = useState(false)
-  const [targetStep, setTargetStep] = useState<'idle' | 'connecting' | 'repositories' | 'branches' | 'directories'>('idle')
+  const [targetStep, setTargetStep] = useState<'idle' | 'connecting' | 'repositories' | 'branches' | 'directories' | 'initializing' | 'adding'>('idle')
   const [targetError, setTargetError] = useState<string | null>(null)
   const [targetErrorStep, setTargetErrorStep] = useState<'connecting' | 'repositories' | 'branches' | 'directories' | null>(null)
   const [repositoriesLoaded, setRepositoriesLoaded] = useState(false)
   const [branchesLoaded, setBranchesLoaded] = useState(false)
   const [repositoryId, setRepositoryId] = useState<number | null>(null)
+  const [emptyDefaultBranch, setEmptyDefaultBranch] = useState<string | null>(null)
+  const [readmePreview, setReadmePreview] = useState<string | null>(null)
+  const [includeReadme, setIncludeReadme] = useState(true)
+  const [createGuideOpen, setCreateGuideOpen] = useState(false)
+  const [awaitingRepositoryCreation, setAwaitingRepositoryCreation] = useState(false)
   const targetOperation = useRef(0)
   const gitPathInput = useRef<HTMLInputElement>(null)
   const gitPathHasIdentity = hasGitSubmissionIdentityToken(accountSettings.gitPathTemplate)
@@ -1553,16 +1674,18 @@ function SettingsView({
   }
   const chooseInstallation = async (id: number | null) => {
     const operation = ++targetOperation.current
+    setAdditionPreview(null); setAdditionError(null); setAdditionSuccess(null)
+    clearTreeOperationPreview()
     if (id === null) {
       updateAccountSettings({ ...accountSettings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
-      setRepositoryId(null); setRepositories([]); setBranches([]); setDirectory(null)
+      setRepositoryId(null); setRepositories([]); setBranches([]); setDirectory(null); setTree(null); setTreeError(null); setEmptyDefaultBranch(null); setReadmePreview(null)
       setRepositoriesLoaded(false); setBranchesLoaded(false); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
       return
     }
     if (!user) return
     const githubId = user.githubId
     updateAccountSettings({ ...accountSettings, githubInstallationId: id, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
-    setRepositoryId(null); setRepositories([]); setBranches([]); setDirectory(null)
+    setRepositoryId(null); setRepositories([]); setBranches([]); setDirectory(null); setTree(null); setTreeError(null); setEmptyDefaultBranch(null); setReadmePreview(null)
     setRepositoriesLoaded(false); setBranchesLoaded(false); setTargetBusy(true); setTargetStep('repositories'); clearTargetFeedback()
     try {
       const values = await loadAllPages(page => getGithubRepositories(githubId, id, page), repo => repo.id)
@@ -1574,9 +1697,11 @@ function SettingsView({
   }
   const chooseRepository = async (id: number | null) => {
     const operation = ++targetOperation.current
+    setAdditionPreview(null); setAdditionError(null); setAdditionSuccess(null)
+    clearTreeOperationPreview()
     if (id === null) {
       updateAccountSettings({ ...accountSettings, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
-      setRepositoryId(null); setBranches([]); setDirectory(null); setBranchesLoaded(false); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
+      setRepositoryId(null); setBranches([]); setDirectory(null); setTree(null); setTreeError(null); setEmptyDefaultBranch(null); setReadmePreview(null); setBranchesLoaded(false); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
       return
     }
     const repo = repositories.find(value => value.id === id)
@@ -1585,34 +1710,155 @@ function SettingsView({
     const installation = accountSettings.githubInstallationId
     setRepositoryId(id)
     updateAccountSettings({ ...accountSettings, githubOwner: repo.owner, githubRepository: repo.name, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
-    setBranches([]); setDirectory(null); setBranchesLoaded(false); setTargetBusy(true); setTargetStep('branches'); clearTargetFeedback()
+    setBranches([]); setDirectory(null); setTree(null); setTreeError(null); setEmptyDefaultBranch(null); setReadmePreview(null); setBranchesLoaded(false); setTargetBusy(true); setTargetStep('branches'); clearTargetFeedback()
     try {
       const values = await loadAllPages(page => getGithubBranches(githubId, installation, id, page), branch => branch.name)
-      if (operation === targetOperation.current) { setBranches(values); setBranchesLoaded(true) }
+      if (operation !== targetOperation.current) return
+      setBranches(values); setBranchesLoaded(true)
+      if (values.length === 0) {
+        const [empty, preview] = await Promise.all([getGithubEmptyDefaultBranch(githubId, installation, id), getGithubReadmePreview(githubId)])
+        if (operation === targetOperation.current) {
+          setEmptyDefaultBranch(empty.defaultBranch)
+          setReadmePreview(preview.content)
+        }
+      }
     } catch (error) {
       if (error instanceof ApiError && error.message === 'GitHub account changed; reconnect required') { onExpectedAccountChange(githubId); return }
       if (operation === targetOperation.current) { setTargetError(githubTargetErrorMessage(error, '브랜치를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.')); setTargetErrorStep('branches') }
     } finally { finishTargetOperation(operation) }
   }
-  const chooseBranch = async (branch: string, path = '') => {
+  const chooseBranch = async (branch: string, path = '', selectPath = true) => {
     const operation = ++targetOperation.current
+    setAdditionPreview(null); setAdditionError(null); setAdditionSuccess(null)
+    clearTreeOperationPreview()
     if (!branch) {
       updateAccountSettings({ ...accountSettings, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
-      setDirectory(null); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
+      setDirectory(null); setTree(null); setTreeError(null); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
       return
     }
     if (!accountSettings.githubInstallationId || !repositoryId || !user) return
     const githubId = user.githubId
     const installation = accountSettings.githubInstallationId
     const repository = repositoryId
-    updateAccountSettings({ ...accountSettings, githubBranch: branch, githubRootPath: path || null, githubAutoCommitEnabled: false })
-    setTargetBusy(true); setTargetStep('directories'); clearTargetFeedback()
+    if (selectPath) updateAccountSettings({ ...accountSettings, githubBranch: branch, githubRootPath: path || null, githubAutoCommitEnabled: false })
+    setDirectory(null); setTree(null); setTreeError(null); setTargetBusy(true); setTargetStep('directories'); clearTargetFeedback()
     try {
       const value = await getGithubDirectories(githubId, installation, repository, branch, path)
       if (operation === targetOperation.current) setDirectory(value)
+      try {
+        const files = await getGithubTree(githubId, installation, repository, branch, path)
+        if (operation === targetOperation.current) setTree(files)
+      } catch (error) {
+        if (error instanceof ApiError && error.message === 'GitHub account changed; reconnect required') { onExpectedAccountChange(githubId); return }
+        if (operation === targetOperation.current) setTreeError(githubTargetErrorMessage(error, '파일 구조를 불러오지 못했습니다. 다시 시도해 주세요.'))
+      }
     } catch (error) {
       if (error instanceof ApiError && error.message === 'GitHub account changed; reconnect required') { onExpectedAccountChange(githubId); return }
       if (operation === targetOperation.current) { setTargetError(githubTargetErrorMessage(error, '폴더를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.')); setTargetErrorStep('directories') }
+    } finally { finishTargetOperation(operation) }
+  }
+  const loadMoreTree = async () => {
+    const current = tree
+    if (!current?.hasMore || !accountSettings.githubInstallationId || !repositoryId || !accountSettings.githubBranch || !user || targetBusy) return
+    const operation = ++targetOperation.current
+    setAdditionPreview(null)
+    clearTreeOperationPreview()
+    setTargetBusy(true); setTargetStep('directories'); setTreeError(null)
+    try {
+      const next = await getGithubTree(user.githubId, accountSettings.githubInstallationId,
+        repositoryId, accountSettings.githubBranch, current.path, current.page + 1)
+      if (operation !== targetOperation.current) return
+      if (next.headSha !== current.headSha || next.path !== current.path) {
+        setTree(null)
+        setTreeError('브랜치 내용이 변경됐습니다. 현재 폴더를 다시 확인해 주세요.')
+      } else setTree({ ...next, items: [...current.items, ...next.items] })
+    } catch (error) {
+      if (error instanceof ApiError && error.message === 'GitHub account changed; reconnect required') { onExpectedAccountChange(user.githubId); return }
+      if (operation === targetOperation.current) setTreeError(githubTargetErrorMessage(error, '다음 파일 목록을 불러오지 못했습니다. 다시 시도해 주세요.'))
+    } finally { finishTargetOperation(operation) }
+  }
+  const previewAddition = () => {
+    setAdditionError(null); setAdditionSuccess(null); setAdditionPreview(null)
+    if (!tree?.headSha || !directory || !accountSettings.githubBranch || tree.path !== directory.currentPath || tree.hasMore || tree.truncated) { setAdditionError('파일 목록을 끝까지 확인한 뒤 다시 시도해 주세요.'); return }
+    if (branches.find(value => value.name === accountSettings.githubBranch)?.protectedBranch) { setAdditionError('보호된 브랜치에는 여기서 파일을 추가할 수 없습니다.'); return }
+    const name = additionName.trim()
+    if (!/^[A-Za-z0-9_.-]{1,100}$/.test(name) || name.includes('..') || name.toLowerCase() === '.git' || (additionMode === 'file' && name.toLowerCase() === '.gitkeep')) { setAdditionError('이름은 영문·숫자·점·밑줄·하이픈만 사용하고 100자 이내로 입력해 주세요.'); return }
+    if (tree.items.some(entry => entry.name.toLowerCase() === name.toLowerCase())) { setAdditionError('같은 이름의 파일이나 폴더가 이미 있습니다.'); return }
+    if (new TextEncoder().encode(additionContent).length > 65536) { setAdditionError('파일 내용은 64KB 이내로 입력해 주세요.'); return }
+    const path = [directory.currentPath, name, additionMode === 'folder' ? '.gitkeep' : ''].filter(Boolean).join('/')
+    const message = additionMessage.trim() || `Add ${path}`
+    if (message.length > 200 || /[\x00-\x1f\x7f]/.test(message)) { setAdditionError('커밋 메시지는 한 줄, 200자 이내로 입력해 주세요.'); return }
+    setAdditionPreview({ branch: accountSettings.githubBranch, path, content: additionMode === 'folder' ? '' : additionContent, message, expectedHeadSha: tree.headSha, placeholder: additionMode === 'folder' })
+  }
+  const confirmAddition = async () => {
+    if (!additionPreview || !user || !accountSettings.githubInstallationId || !repositoryId || !tree || !directory || targetBusy) return
+    if (additionPreview.branch !== accountSettings.githubBranch || additionPreview.expectedHeadSha !== tree.headSha || (additionPreview.placeholder ? !additionPreview.path.startsWith(directory.currentPath ? `${directory.currentPath}/` : '') : false)) { setAdditionPreview(null); setAdditionError('선택한 브랜치나 폴더가 변경됐습니다. 다시 미리보기 해주세요.'); return }
+    // The file commit changes this tree's HEAD. Any move/delete preview tied to
+    // the old tree must disappear before the write request starts.
+    clearTreeOperationPreview()
+    const operation = ++targetOperation.current
+    setTargetBusy(true); setTargetStep('adding'); setAdditionError(null); setAdditionSuccess(null)
+    try {
+      const result = await addGithubFile(user.githubId, accountSettings.githubInstallationId, repositoryId, additionPreview)
+      if (operation !== targetOperation.current) return
+      setAdditionPreview(null); setAdditionContent(''); setAdditionName(''); setAdditionMessage('')
+      setAdditionSuccess(`커밋 완료 · ${result.commitSha.slice(0, 7)}`)
+      try {
+        const updated = await getGithubTree(user.githubId, accountSettings.githubInstallationId, repositoryId, accountSettings.githubBranch!, directory.currentPath)
+        if (operation === targetOperation.current) setTree(updated)
+      } catch {
+        if (operation === targetOperation.current) { setTree(null); setTreeError('커밋은 완료됐지만 파일 목록을 새로 불러오지 못했습니다. 다시 확인해 주세요.') }
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.message === 'GitHub account changed; reconnect required') { onExpectedAccountChange(user.githubId); return }
+      if (operation === targetOperation.current) setAdditionError(error instanceof ApiError && error.status === 409 ? '파일·폴더가 이미 있거나 브랜치가 변경됐습니다. 파일 목록을 새로 확인해 주세요.' : githubTargetErrorMessage(error, '커밋 결과를 확인하지 못했습니다. 저장소를 새로고침한 뒤 재시도해 주세요.'))
+    } finally { finishTargetOperation(operation) }
+  }
+  const previewTreeOperation = async () => {
+    setTreeOperationError(null); setTreeOperationSuccess(null); setTreeOperationPreview(null)
+    if (!tree?.headSha || !user || !accountSettings.githubInstallationId || !repositoryId || !accountSettings.githubBranch || tree.hasMore || tree.truncated || !!treeError) { setTreeOperationError('파일 목록을 끝까지 확인한 뒤 다시 시도해 주세요.'); return }
+    if (branches.find(value => value.name === accountSettings.githubBranch)?.protectedBranch) { setTreeOperationError('보호된 브랜치에서는 파일 이동이나 삭제를 할 수 없습니다.'); return }
+    const sourcePath = treeOperationSource.trim(), destinationPath = treeOperationDestination.trim()
+    if (!/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(sourcePath) || sourcePath.split('/').some(part => part === '.' || part === '..' || part.toLowerCase() === '.git')) { setTreeOperationError('원본 경로는 저장소의 안전한 상대 경로여야 합니다.'); return }
+    if (treeOperation === 'MOVE' && (!/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(destinationPath) || destinationPath === sourcePath || destinationPath.startsWith(`${sourcePath}/`))) { setTreeOperationError('이동할 위치는 원본 외부의 안전한 상대 경로여야 합니다.'); return }
+    const message = treeOperationMessage.trim() || `${treeOperation === 'MOVE' ? 'Move' : 'Delete'} ${sourcePath}`
+    if (message.length > 200 || /[\x00-\x1f\x7f]/.test(message)) { setTreeOperationError('커밋 메시지는 한 줄, 200자 이내로 입력해 주세요.'); return }
+    const previewGeneration = ++treeOperationPreviewGeneration.current
+    const operation = ++targetOperation.current
+    setTargetBusy(true); setTargetStep('adding')
+    try {
+      const preview = await previewGithubTreeOperation(user.githubId, accountSettings.githubInstallationId, repositoryId, { operation: treeOperation, branch: accountSettings.githubBranch, sourcePath, destinationPath: treeOperation === 'MOVE' ? destinationPath : null, message, expectedHeadSha: tree.headSha })
+      if (operation === targetOperation.current && previewGeneration === treeOperationPreviewGeneration.current) setTreeOperationPreview(preview)
+    } catch (error) {
+      if (error instanceof ApiError && error.message === 'GitHub account changed; reconnect required') { onExpectedAccountChange(user.githubId); return }
+      if (operation === targetOperation.current) setTreeOperationError(githubTargetErrorMessage(error, '변경 미리보기를 만들지 못했습니다. 파일 목록을 새로고침한 뒤 다시 시도해 주세요.'))
+    } finally { finishTargetOperation(operation) }
+  }
+  const confirmTreeOperation = async () => {
+    if (!treeOperationPreview || !user || !accountSettings.githubInstallationId || !repositoryId || targetBusy) return
+    if (!tree?.headSha || !accountSettings.githubBranch || treeOperationPreview.branch !== accountSettings.githubBranch || treeOperationPreview.expectedHeadSha !== tree.headSha) {
+      treeOperationPreviewGeneration.current += 1
+      setTreeOperationPreview(null)
+      setTreeOperationError('브랜치나 파일 목록이 변경됐습니다. 변경 미리보기를 다시 만들어 주세요.')
+      return
+    }
+    const preview = treeOperationPreview
+    // A confirmation can be ambiguous after the request leaves the browser.
+    // Remove the action immediately so it cannot become a retry affordance.
+    treeOperationPreviewGeneration.current += 1
+    setTreeOperationPreview(null)
+    const operation = ++targetOperation.current
+    setTargetBusy(true); setTargetStep('adding'); setTreeOperationError(null); setTreeOperationSuccess(null)
+    try {
+      const result = await commitGithubTreeOperation(user.githubId, accountSettings.githubInstallationId, repositoryId, preview.previewId)
+      if (operation !== targetOperation.current) return
+      setTreeOperationSource(''); setTreeOperationDestination(''); setTreeOperationMessage('')
+      setTreeOperationSuccess(`커밋 완료 · ${result.commitSha.slice(0, 7)}. 복구가 필요하면 GitHub에서 이 커밋을 되돌리세요.`)
+      try { const updated = await getGithubTree(user.githubId, accountSettings.githubInstallationId, repositoryId, accountSettings.githubBranch!, directory?.currentPath ?? ''); if (operation === targetOperation.current) setTree(updated) }
+      catch { if (operation === targetOperation.current) { setTree(null); setTreeError('커밋 결과를 확인했지만 파일 목록을 새로 불러오지 못했습니다. GitHub에서 커밋 SHA를 확인해 주세요.') } }
+    } catch (error) {
+      if (error instanceof ApiError && error.message === 'GitHub account changed; reconnect required') { onExpectedAccountChange(user.githubId); return }
+      if (operation === targetOperation.current) setTreeOperationError(githubTargetErrorMessage(error, '커밋 결과를 확인하지 못했습니다. GitHub에서 변경 여부를 확인하고 다시 시도하지 마세요.'))
     } finally { finishTargetOperation(operation) }
   }
   const loadInstallations = async (preferredInstallationId?: number | null) => {
@@ -1655,11 +1901,37 @@ function SettingsView({
       if (operation === targetOperation.current) { setTargetError(githubTargetErrorMessage(error, 'GitHub App 연결을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.')); setTargetErrorStep('connecting') }
     } finally { finishTargetOperation(operation) }
   }
+  const initializeEmptyRepository = async () => {
+    const installation = accountSettings.githubInstallationId
+    const repository = repositoryId
+    if (!user || !installation || !repository || !emptyDefaultBranch || !readmePreview || !includeReadme) return
+    const githubId = user.githubId
+    const operation = ++targetOperation.current
+    setTargetBusy(true); setTargetStep('initializing'); clearTargetFeedback()
+    try {
+      const result = await initializeGithubReadme(githubId, installation, repository)
+      if (operation !== targetOperation.current) return
+      if (result.defaultBranch !== emptyDefaultBranch) throw new Error('GitHub 기본 브랜치가 변경되었습니다. 저장소를 다시 확인해 주세요.')
+      await chooseRepository(repository)
+    } catch (error) {
+      if (error instanceof ApiError && error.message === 'GitHub account changed; reconnect required') { onExpectedAccountChange(githubId); return }
+      if (operation === targetOperation.current) { setTargetError(githubTargetErrorMessage(error, 'README 초기화 결과를 확인하지 못했습니다. 브랜치를 다시 확인해 주세요.')); setTargetErrorStep('branches') }
+    } finally { finishTargetOperation(operation) }
+  }
   useEffect(() => { if(!accountSettingsReady||!user||githubInstallReturn?.result!=='success'||!githubInstallReturn.installationId)return;void loadInstallations(githubInstallReturn.installationId) }, [accountSettingsReady,user?.id,githubInstallReturn?.result,githubInstallReturn?.installationId])
+  useEffect(() => {
+    if (!awaitingRepositoryCreation || !accountSettings.githubInstallationId || !user) return
+    const resume = () => {
+      setAwaitingRepositoryCreation(false)
+      void chooseInstallation(accountSettings.githubInstallationId)
+    }
+    window.addEventListener('focus', resume)
+    return () => window.removeEventListener('focus', resume)
+  }, [awaitingRepositoryCreation, accountSettings.githubInstallationId, user?.id])
   const draftTargetConfigured = Boolean(accountSettings.githubInstallationId && accountSettings.githubOwner?.trim() && accountSettings.githubRepository?.trim() && accountSettings.githubBranch?.trim())
   const providerUnavailable = accountSettings.githubStatus === 'PROVIDER_UNAVAILABLE'
   const targetPanelExpanded = draftTargetConfigured || installations.length > 0 || accountSettings.githubInstallationId !== null || targetBusy || targetError !== null
-  const targetLoadingText = targetStep === 'connecting' ? '연결 중' : targetStep === 'repositories' ? '저장소 확인 중' : targetStep === 'branches' ? '브랜치 확인 중' : targetStep === 'directories' ? '폴더 확인 중' : null
+  const targetLoadingText = targetStep === 'connecting' ? '연결 중' : targetStep === 'repositories' ? '저장소 확인 중' : targetStep === 'branches' ? '브랜치 확인 중' : targetStep === 'directories' ? '폴더 확인 중' : targetStep === 'initializing' ? 'README 초기화 중' : targetStep === 'adding' ? '파일 커밋 중' : null
   const targetStateText = targetLoadingText ?? (targetError ? '재시도 필요' : draftTargetConfigured ? '연결 완료' : targetPanelExpanded ? '저장 위치 선택 중' : user ? '연결 필요' : 'GitHub 로그인 필요')
   const githubStatusText = providerUnavailable ? '현재 GitHub App 연결을 사용할 수 없습니다. 서버 설정이 복구된 뒤 다시 시도해 주세요.' : draftTargetConfigured ? '저장하면 선택한 GitHub 대상을 다시 확인합니다.' : 'GitHub App을 연결하고 풀이를 저장할 위치를 선택하세요.'
   const retryTarget = () => {
@@ -1675,7 +1947,7 @@ function SettingsView({
         <div className="settings-column">
           <article className="settings-card export-settings"><h2>계정 · 코드 저장</h2>{settingsError && <p role="alert">{settingsError}</p>}<div className="setting-field"><label htmlFor="profile-name">이름</label><input id="profile-name" value={accountSettings.name ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, name: e.target.value || null })} /><label htmlFor="profile-nickname">닉네임</label><input id="profile-nickname" value={accountSettings.nickname ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, nickname: e.target.value || null })} /></div><p>문제 정보 주석을 추가합니다. 원본 코드는 유지합니다.</p>
             <label><input type="checkbox" checked={accountSettings.copyHeader} onChange={e => updateAccountSettings({ ...accountSettings, copyHeader: e.target.checked })} /> 복사할 때 문제 정보 주석 포함</label><label><input type="checkbox" checked={accountSettings.downloadHeader} onChange={e => updateAccountSettings({ ...accountSettings, downloadHeader: e.target.checked })} /> 다운로드할 때 문제 정보 주석 포함</label><label><input type="checkbox" checked={accountSettings.githubHeader} onChange={e => updateAccountSettings({ ...accountSettings, githubHeader: e.target.checked })} /> GitHub 커밋 시 문제 정보 주석 포함</label>
-            <div className="setting-field"><label htmlFor="filename-template">다운로드 파일명</label><input id="filename-template" maxLength={160} value={accountSettings.downloadFilenameTemplate} onChange={e => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate: e.target.value })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="git-path-template">Git 저장 경로</label><div className="git-path-token-list" aria-label="Git 경로 토큰">{GIT_PATH_TOKENS.map(token => <button type="button" key={token} onClick={() => insertGitPathToken(token)}>{token}</button>)}</div><input ref={gitPathInput} id="git-path-template" maxLength={240} aria-invalid={!gitPathHasIdentity} value={accountSettings.gitPathTemplate} onChange={e => updateAccountSettings({ ...accountSettings, gitPathTemplate: e.target.value })} />{!gitPathHasIdentity && <p className="field-error" role="alert">제출별 파일을 구분하려면 {'{capture_ID}'} 또는 {'{time}'}이 필요합니다.</p>}<p>Git 미리보기: <output>{gitPath(previewSolution, accountSettings.gitPathTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id }) ?? '유효하지 않은 상대 경로'}</output></p><label htmlFor="github-commit-message-template">Git 커밋 메시지</label><input id="github-commit-message-template" maxLength={200} value={accountSettings.githubCommitMessageTemplate} onChange={e => updateAccountSettings({ ...accountSettings, githubCommitMessageTemplate: e.target.value })} /><p>커밋 미리보기: <output>{githubCommitMessage(previewSolution, accountSettings.githubCommitMessageTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="light-theme">밝은 테마</label><select id="light-theme" value={accountSettings.lightTheme} onChange={e => updateAccountSettings({ ...accountSettings, lightTheme: e.target.value as AccountSettings['lightTheme'] })}>{LIGHT_THEMES.map(x => <option key={x}>{x}</option>)}</select><label htmlFor="dark-theme">어두운 테마</label><select id="dark-theme" value={accountSettings.darkTheme} onChange={e => updateAccountSettings({ ...accountSettings, darkTheme: e.target.value as AccountSettings['darkTheme'] })}>{DARK_THEMES.map(x => <option key={x}>{x}</option>)}</select></div><label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label><label><input type="checkbox" disabled={!draftTargetConfigured || providerUnavailable} checked={accountSettings.githubAutoCommitEnabled} onChange={e => updateAccountSettings({ ...accountSettings, githubAutoCommitEnabled: e.target.checked })} /> GitHub 자동 커밋</label><button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy || targetBusy || !gitPathHasIdentity}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
+            <div className="setting-field"><label htmlFor="filename-template">다운로드 파일명</label><input id="filename-template" maxLength={160} value={accountSettings.downloadFilenameTemplate} onChange={e => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate: e.target.value })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="git-path-template">Git 저장 경로</label><div className="git-path-token-list" aria-label="Git 경로 토큰">{GIT_PATH_TOKENS.map(token => <button type="button" key={token} onClick={() => insertGitPathToken(token)}>{token}</button>)}</div><input ref={gitPathInput} id="git-path-template" maxLength={240} aria-invalid={!gitPathHasIdentity} value={accountSettings.gitPathTemplate} onChange={e => updateAccountSettings({ ...accountSettings, gitPathTemplate: e.target.value })} />{!gitPathHasIdentity && <p className="field-error" role="alert">제출별 파일을 구분하려면 {'{capture_ID}'} 또는 {'{time}'}이 필요합니다.</p>}<p>Git 미리보기: <output>{gitPath(previewSolution, accountSettings.gitPathTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id }) ?? '유효하지 않은 상대 경로'}</output></p><label htmlFor="github-commit-message-template">Git 커밋 메시지</label><input id="github-commit-message-template" maxLength={200} value={accountSettings.githubCommitMessageTemplate} onChange={e => updateAccountSettings({ ...accountSettings, githubCommitMessageTemplate: e.target.value })} /><p>커밋 미리보기: <output>{githubCommitMessage(previewSolution, accountSettings.githubCommitMessageTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="settings-code-theme">코드 보기 테마</label><CodeThemeSelect id="settings-code-theme" value={codeThemeMode === 'dark' ? accountSettings.darkTheme : accountSettings.lightTheme} onChange={onCodeThemeChange} /></div><label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label><label><input type="checkbox" disabled={!draftTargetConfigured || providerUnavailable} checked={accountSettings.githubAutoCommitEnabled} onChange={e => updateAccountSettings({ ...accountSettings, githubAutoCommitEnabled: e.target.checked })} /> GitHub 자동 커밋</label><button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy || targetBusy || !gitPathHasIdentity}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
           </article>
           <article className={`settings-card github-card ${targetPanelExpanded ? 'is-expanded' : 'is-collapsed'}`} aria-busy={targetBusy}>
             <div className="github-card-heading">
@@ -1695,9 +1967,39 @@ function SettingsView({
                 {targetError && <div className="github-target-feedback is-error" role="alert"><div><strong>재시도 필요</strong><p>{targetError}</p></div><button type="button" className="ghost-button" onClick={retryTarget} disabled={targetBusy}>이 단계 다시 시도</button></div>}
                 <div className="github-target-steps">
                   <label><span><b>1</b> GitHub 설치</span><select aria-label="GitHub 설치" disabled={targetBusy} value={accountSettings.githubInstallationId ?? ''} onChange={event => void chooseInstallation(event.target.value ? Number(event.target.value) : null)}><option value="">선택하세요</option>{installations.map(value => <option key={value.id} value={value.id}>{value.accountLogin}</option>)}</select></label>
-                  {accountSettings.githubInstallationId && <label><span><b>2</b> 저장소</span><select aria-label="저장소" disabled={targetBusy} value={repositoryId ?? ''} onChange={event => void chooseRepository(event.target.value ? Number(event.target.value) : null)}><option value="">선택하세요</option>{repositories.map(value => <option key={value.id} value={value.id}>{value.fullName}</option>)}</select>{repositoriesLoaded && repositories.length === 0 && <small role="status">이 설치에서 선택할 수 있는 저장소가 없습니다. GitHub App의 저장소 접근 권한을 확인하세요.</small>}</label>}
-                  {repositoryId && <label><span><b>3</b> 브랜치</span><select aria-label="브랜치" disabled={targetBusy} value={accountSettings.githubBranch ?? ''} onChange={event => void chooseBranch(event.target.value)}><option value="">선택하세요</option>{branches.map(value => <option key={value.name} value={value.name}>{value.name}{value.protectedBranch ? ' (보호됨)' : ''}</option>)}</select>{branchesLoaded && branches.length === 0 && <small role="status">브랜치가 없습니다. 비어 있는 저장소 초기화는 신규 저장소 작업에서 지원할 예정입니다.</small>}</label>}
-                  {directory && <div className="github-directory"><span><b>4</b> 폴더</span><p>현재 위치 <strong>{directory.currentPath || '/'}</strong></p><div>{directory.currentPath && <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.parentPath)} disabled={targetBusy}>상위 폴더</button>}{directory.directories.map(name => <button type="button" key={name} onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath ? `${directory.currentPath}/${name}` : name)} disabled={targetBusy}>{name}/</button>)}</div>{directory.directories.length === 0 && <small>하위 폴더가 없습니다. 현재 위치를 저장 경로로 사용할 수 있습니다.</small>}</div>}
+                  {accountSettings.githubInstallationId && <>
+                    <label><span><b>2</b> 저장소</span><select aria-label="저장소" disabled={targetBusy} value={repositoryId ?? ''} onChange={event => void chooseRepository(event.target.value ? Number(event.target.value) : null)}><option value="">선택하세요</option>{repositories.map(value => <option key={value.id} value={value.id}>{value.fullName}</option>)}</select>{repositoriesLoaded && repositories.length === 0 && <small role="status">이 설치에서 선택할 수 있는 저장소가 없습니다. 새 저장소를 만든 경우 목록을 새로고침하고 GitHub App의 접근 권한을 확인하세요.</small>}</label>
+                    <div className="github-create-guide">
+                      <button type="button" className="ghost-button" disabled={targetBusy} onClick={() => setCreateGuideOpen(!createGuideOpen)} aria-expanded={createGuideOpen}>새 저장소 만들기</button>
+                      {createGuideOpen && <div className="github-create-guide-body"><p>GitHub에서 이름, 공개 범위, 설명을 선택해 저장소를 만드세요. CodeArchive README를 추가하려면 GitHub의 README 초기화는 선택하지 말고, 생성 후 여기서 저장소를 선택하세요.</p><p>GitHub App을 일부 저장소에만 설치했다면 새 저장소 접근 권한도 추가해야 합니다.</p><div><a href="https://github.com/new" target="_blank" rel="noopener noreferrer" onClick={() => setAwaitingRepositoryCreation(true)}>GitHub에서 저장소 만들기</a><a href="https://github.com/settings/installations" target="_blank" rel="noopener noreferrer">App 접근 권한 확인</a><button type="button" className="ghost-button" disabled={targetBusy} onClick={() => void chooseInstallation(accountSettings.githubInstallationId)}>저장소 목록 새로고침</button></div></div>}
+                    </div>
+                  </>}
+                  {repositoryId && <>
+                    <label><span><b>3</b> 브랜치</span><select aria-label="브랜치" disabled={targetBusy} value={accountSettings.githubBranch ?? ''} onChange={event => void chooseBranch(event.target.value)}><option value="">선택하세요</option>{branches.map(value => <option key={value.name} value={value.name}>{value.name}{value.protectedBranch ? ' (보호됨)' : ''}</option>)}{emptyDefaultBranch && !includeReadme && <option value={emptyDefaultBranch}>{emptyDefaultBranch} (첫 풀이 커밋 시 생성)</option>}</select>{branchesLoaded && branches.length === 0 && <small role="status">브랜치가 없습니다. {emptyDefaultBranch ? '비어 있는 저장소입니다.' : '저장소 상태를 확인하지 못했습니다. 다시 시도해 주세요.'}</small>}</label>
+                    {branchesLoaded && branches.length === 0 && emptyDefaultBranch && <div className="github-empty-repository"><strong>비어 있는 저장소 시작하기</strong><label><input type="checkbox" checked={includeReadme} onChange={event => setIncludeReadme(event.target.checked)} /> CodeArchive README 추가</label>{includeReadme ? <><pre aria-label="README 미리보기">{readmePreview}</pre><button type="button" className="primary-button" disabled={targetBusy || !readmePreview} onClick={() => void initializeEmptyRepository()}>README로 초기화</button></> : <p>첫 풀이가 성공적으로 커밋될 때 기본 브랜치가 생성됩니다. 위 브랜치를 선택하고 저장하세요.</p>}</div>}
+                  </>}
+                  {directory && <div className="github-directory"><span><b>4</b> 폴더</span><p>둘러보는 폴더 <strong>{directory.currentPath || '/'}</strong></p><p>선택한 저장 위치 <strong>{accountSettings.githubRootPath || '/'}</strong></p><div>{directory.currentPath && <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.parentPath, false)} disabled={targetBusy}>상위 폴더</button>}{!tree && directory.directories.map(name => <button type="button" key={name} onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath ? `${directory.currentPath}/${name}` : name, false)} disabled={targetBusy}>{name}/</button>)}</div><button type="button" className="github-select-directory" disabled={targetBusy || !!treeError || !tree || accountSettings.githubRootPath === (directory.currentPath || null)} onClick={() => updateAccountSettings({ ...accountSettings, githubRootPath: directory.currentPath || null, githubAutoCommitEnabled: false })}>이 폴더를 저장 위치로 선택</button><small>선택한 위치를 적용하려면 아래의 설정 저장을 누르세요.</small></div>}
+                  {directory && <div className="github-tree"><strong>파일·폴더 구조</strong>{treeError && <p role="alert">{treeError} <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath, false)} disabled={targetBusy}>다시 확인</button></p>}{tree && <><ul>{tree.items.map(entry => <li key={`${entry.path}:${entry.type}`} className={entry.type === 'tree' && accountSettings.githubRootPath === entry.path ? 'is-selected' : ''}>{entry.type === 'tree' ? <button type="button" aria-current={accountSettings.githubRootPath === entry.path ? 'location' : undefined} disabled={targetBusy || !/^[A-Za-z0-9_.-]+$/.test(entry.name)} onClick={() => void chooseBranch(accountSettings.githubBranch!, entry.path, false)}>{entry.name}/</button> : <span>{entry.name}{entry.type === 'commit' ? ' (서브모듈)' : ''}</span>}</li>)}</ul>{tree.items.length === 0 && <p>이 폴더에 파일이 없습니다.</p>}{tree.hasMore && <button type="button" className="ghost-button" disabled={targetBusy} onClick={() => void loadMoreTree()}>파일 더 보기</button>}{tree.truncated && <p role="status">GitHub가 일부 항목만 반환했습니다. 더 작은 하위 폴더에서 확인해 주세요.</p>}</>}</div>}
+                  {directory && tree?.headSha && <div className="github-add-file">
+                    <strong>이 폴더에 새 항목 추가</strong>
+                    <div className="github-add-mode" role="group" aria-label="추가할 항목"><button type="button" aria-pressed={additionMode === 'file'} onClick={() => { setAdditionMode('file'); setAdditionPreview(null); setAdditionError(null); setAdditionSuccess(null) }}>파일</button><button type="button" aria-pressed={additionMode === 'folder'} onClick={() => { setAdditionMode('folder'); setAdditionPreview(null); setAdditionError(null); setAdditionSuccess(null) }}>폴더</button></div>
+                    <label>이름<input aria-label={additionMode === 'file' ? '새 파일 이름' : '새 폴더 이름'} maxLength={100} value={additionName} onChange={event => { setAdditionName(event.target.value); setAdditionPreview(null); setAdditionError(null); setAdditionSuccess(null) }} /></label>
+                    {additionMode === 'file' ? <label>파일 내용<textarea aria-label="새 파일 내용" value={additionContent} onChange={event => { setAdditionContent(event.target.value); setAdditionPreview(null); setAdditionError(null); setAdditionSuccess(null) }} rows={5} /></label> : <p>Git은 빈 폴더를 저장하지 못합니다. 확인하면 새 폴더에 빈 .gitkeep 파일을 만듭니다.</p>}
+                    <label>커밋 메시지<input aria-label="새 항목 커밋 메시지" maxLength={200} placeholder="비워두면 Add 경로 사용" value={additionMessage} onChange={event => { setAdditionMessage(event.target.value); setAdditionPreview(null); setAdditionError(null); setAdditionSuccess(null) }} /></label>
+                    <button type="button" className="ghost-button" disabled={targetBusy || !!treeError || tree.hasMore || tree.truncated} onClick={previewAddition}>변경 미리보기</button>
+                    {additionError && <p role="alert">{additionError}</p>}{additionSuccess && <p role="status">{additionSuccess}</p>}
+                    {additionPreview && <div className="github-add-preview"><strong>추가될 변경 (미리보기)</strong><p>브랜치: {additionPreview.branch} · 기준 HEAD: {additionPreview.expectedHeadSha.slice(0, 7)}</p><p>새 파일: {additionPreview.path}</p><p>커밋: {additionPreview.message}</p><pre aria-label="추가 파일 diff">{additionPreview.placeholder ? '+ (빈 .gitkeep 파일)' : additionPreview.content.split('\n').map(line => `+${line}`).join('\n')}</pre><button type="button" className="primary-button" disabled={targetBusy} onClick={() => void confirmAddition()}>이 변경을 커밋</button></div>}
+                  </div>}
+                  {directory && tree?.headSha && <div className="github-tree-operation">
+                    <strong>기존 항목 이동·삭제</strong><p>선택만으로는 변경되지 않습니다. GitHub에서 전체 변경을 다시 확인한 뒤 별도로 커밋을 확인합니다.</p>
+                    <div className="github-add-mode" role="group" aria-label="기존 항목 작업"><button type="button" aria-pressed={treeOperation === 'MOVE'} onClick={() => { setTreeOperation('MOVE'); clearTreeOperationPreview() }}>이동</button><button type="button" aria-pressed={treeOperation === 'DELETE'} onClick={() => { setTreeOperation('DELETE'); clearTreeOperationPreview() }}>삭제</button></div>
+                    <label>원본 경로<input aria-label="이동 또는 삭제할 원본 경로" maxLength={1024} value={treeOperationSource} onChange={event => { setTreeOperationSource(event.target.value); clearTreeOperationPreview() }} placeholder="src/Old.java" /></label>
+                    {treeOperation === 'MOVE' && <label>새 경로<input aria-label="이동할 새 경로" maxLength={1024} value={treeOperationDestination} onChange={event => { setTreeOperationDestination(event.target.value); clearTreeOperationPreview() }} placeholder="archive/Old.java" /></label>}
+                    <label>커밋 메시지<input aria-label="이동 또는 삭제 커밋 메시지" maxLength={200} value={treeOperationMessage} onChange={event => { setTreeOperationMessage(event.target.value); clearTreeOperationPreview() }} placeholder="비워두면 작업 경로 사용" /></label>
+                    <button type="button" aria-label="기존 항목 변경 미리보기" className="ghost-button" disabled={targetBusy || !!treeError || tree.hasMore || tree.truncated} onClick={() => void previewTreeOperation()}>변경 미리보기</button>
+                    {treeOperationError && <p role="alert">{treeOperationError}</p>}{treeOperationSuccess && <p role="status">{treeOperationSuccess}</p>}
+                    {treeOperationPreview && <div className="github-add-preview"><strong>{treeOperationPreview.operation === 'MOVE' ? '이동' : '삭제'}될 변경 (미리보기)</strong><p>브랜치: {treeOperationPreview.branch} · 기준 HEAD: {treeOperationPreview.expectedHeadSha.slice(0, 7)}</p><p>파일 {treeOperationPreview.changes.length}개 · 원본: {treeOperationPreview.sourcePath}{treeOperationPreview.destinationPath ? ` → ${treeOperationPreview.destinationPath}` : ''}</p><pre aria-label="이동 또는 삭제 변경 경로">{treeOperationPreview.changes.map(change => `${change.fromPath}${change.toPath ? ` → ${change.toPath}` : ' 삭제'}`).join('\n')}</pre><button type="button" className="primary-button" disabled={targetBusy} onClick={() => void confirmTreeOperation()}>이 변경을 커밋</button></div>}
+                  </div>}
                 </div>
                 {draftTargetConfigured && <div className="github-target-current"><Icon name="check" size={15} /><span><strong>현재 대상</strong>{accountSettings.githubOwner}/{accountSettings.githubRepository} · {accountSettings.githubBranch}{accountSettings.githubRootPath ? `/${accountSettings.githubRootPath}` : ''}</span></div>}
               </div>
