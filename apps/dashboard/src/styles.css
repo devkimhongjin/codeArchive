@@ -224,6 +224,10 @@ h1, h2, p { margin-top: 0; }
 .github-tree li { padding: 5px 7px; color: #625c70; background: #fff; border-radius: 4px; overflow-wrap: anywhere; font-size: 10px; }
 .github-tree li button { padding: 0; color: #685ca9; background: transparent; font-size: inherit; text-align: left; }
 .github-tree li button:disabled { color: #9992a4; cursor: not-allowed; }
+.github-tree li.is-selected { background: #e8f6f0; box-shadow: inset 0 0 0 1px #b9e1d0; }
+.github-tree li.is-selected button { color: #14715c; font-weight: 700; }
+.github-directory .github-select-directory { justify-self: start; color: #fff; background: #685ca9; font-weight: 700; }
+.github-directory .github-select-directory:disabled { color: #7d758c; background: #eeebf2; cursor: not-allowed; }
 .github-tree p { margin: 0; color: #84613e; font-size: 9px; line-height: 1.5; }
 .github-tree p button { color: #685ca9; text-decoration: underline; }
 .github-tree > .ghost-button { justify-self: start; }
