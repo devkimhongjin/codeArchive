@@ -77,6 +77,27 @@ class GithubTargetControllerTest {
     assertThat(response.getBody()).isEqualTo(Map.of("defaultBranch", "primary"));
   }
 
+  @Test
+  void treeBrowseRequiresTheExpectedAuthenticatedAccount() throws Exception {
+    UserRepository users = mock(UserRepository.class);
+    GithubAppProvider provider = mock(GithubAppProvider.class);
+    AppUser user = AppUser.fromGithub("123", "account", "Name", null);
+    when(users.findByGithubId("123")).thenReturn(Optional.of(user));
+    GithubTargetController controller = new GithubTargetController(users, provider);
+
+    assertThat(controller.tree(null, null, 44L, 7L, "main", "", 1).getStatusCode())
+        .isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(controller.tree(github("123", "account"), "456", 44L, 7L, "main", "", 1).getStatusCode())
+        .isEqualTo(HttpStatus.CONFLICT);
+    verifyNoInteractions(provider);
+
+    when(provider.browseReady()).thenReturn(true);
+    var tree = new GithubAppProvider.TreePage("", "a".repeat(40), List.of(), 1, false, false);
+    when(provider.treePage("123", 44L, 7L, "main", "", 1)).thenReturn(tree);
+    assertThat(controller.tree(github("123", "account"), "123", 44L, 7L, "main", "", 1).getBody())
+        .isEqualTo(tree);
+  }
+
   private static OAuth2AuthenticationToken github(String id, String login) {
     var principal = new DefaultOAuth2User(List.of(new SimpleGrantedAuthority("ROLE_USER")),
         Map.of("id", id, "login", login), "id");

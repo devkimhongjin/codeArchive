@@ -23,6 +23,7 @@ class GithubBrowseFacadeTest {
   private final AtomicInteger requests = new AtomicInteger();
   private boolean paginateTarget;
   private boolean includeEmptyRepository;
+  private boolean largeTree;
 
   @BeforeEach
   void start() throws Exception {
@@ -104,6 +105,35 @@ class GithubBrowseFacadeTest {
         .containsExactly("src");
   }
 
+  @Test
+  void browsesFilesAndDirectoriesLazilyWithBoundedPages() throws Exception {
+    GithubAppProvider provider = provider();
+    var root = provider.treePage("123", 44L, 7L, "main", "", 1);
+    assertThat(root.headSha()).isEqualTo("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assertThat(root.items()).extracting(GithubAppProvider.TreeEntry::name,
+        GithubAppProvider.TreeEntry::type)
+        .containsExactly(org.assertj.core.groups.Tuple.tuple("src", "tree"),
+            org.assertj.core.groups.Tuple.tuple("README.md", "blob"));
+    assertThat(provider.treePage("123", 44L, 7L, "main", "src", 1).items())
+        .extracting(GithubAppProvider.TreeEntry::path)
+        .containsExactly("src/File.java");
+
+    largeTree = true;
+    assertThat(provider.treePage("123", 44L, 7L, "main", "", 1).hasMore()).isTrue();
+    assertThat(provider.treePage("123", 44L, 7L, "main", "", 2).items()).hasSize(1);
+    assertThat(provider.treePage("123", 44L, 7L, "main", "", 2).hasMore()).isFalse();
+  }
+
+  @Test
+  void treeRejectsUnsafePathsBeforeNetworkAndUnknownDirectories() throws Exception {
+    GithubAppProvider provider = provider();
+    assertThatThrownBy(() -> provider.treePage("123", 44L, 7L, "main", "../secret", 1))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(requests.get()).isZero();
+    assertThatThrownBy(() -> provider.treePage("123", 44L, 7L, "main", "missing", 1))
+        .isInstanceOf(SecurityException.class);
+  }
+
   private GithubAppProvider provider() throws Exception {
     return new GithubAppProvider("99", pem(), base(), HttpClient.newHttpClient(), new ObjectMapper());
   }
@@ -152,6 +182,21 @@ class GithubBrowseFacadeTest {
     } else if (path.equals("/repos/owner/repo/contents")) {
       reply(exchange, 200, "[{\"name\":\"src\",\"type\":\"dir\"},{\"name\":\"File.java\",\"type\":\"file\"},"
           + "{\"name\":\"link\",\"type\":\"symlink\"},{\"name\":\"sub\",\"type\":\"submodule\"}]");
+    } else if (path.equals("/repos/owner/repo/git/ref/heads/main")) {
+      reply(exchange, 200, "{\"object\":{\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}");
+    } else if (path.equals("/repos/owner/repo/git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")) {
+      reply(exchange, 200, "{\"tree\":{\"sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}");
+    } else if (path.equals("/repos/owner/repo/git/trees/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")) {
+      if (largeTree) {
+        StringBuilder body = new StringBuilder("{\"truncated\":false,\"tree\":[");
+        for (int index = 0; index < 101; index++) {
+          if (index > 0) body.append(',');
+          body.append("{\"path\":\"file-").append(index).append(".java\",\"type\":\"blob\",\"size\":1}");
+        }
+        reply(exchange, 200, body.append("]}").toString());
+      } else reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"type\":\"tree\",\"sha\":\"cccccccccccccccccccccccccccccccccccccccc\"},{\"path\":\"README.md\",\"type\":\"blob\",\"size\":42}]}");
+    } else if (path.equals("/repos/owner/repo/git/trees/cccccccccccccccccccccccccccccccccccccccc")) {
+      reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"File.java\",\"type\":\"blob\",\"size\":9}]}");
     } else {
       reply(exchange, 404, "{}");
     }

@@ -20,7 +20,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { ApiError, bulkUpload, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories, getGithubEmptyDefaultBranch, getGithubReadmePreview, initializeGithubReadme } from './api'
+import { ApiError, bulkUpload, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories, getGithubTree, getGithubEmptyDefaultBranch, getGithubReadmePreview, initializeGithubReadme } from './api'
 import { BridgeError, parseAckResponse, parseBridgeStatusResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
@@ -1526,6 +1526,8 @@ function SettingsView({
   const [repositories, setRepositories] = useState<import('./types').GithubRepositoryTarget[]>([])
   const [branches, setBranches] = useState<import('./types').GithubBranchTarget[]>([])
   const [directory, setDirectory] = useState<import('./types').GithubDirectoryTarget | null>(null)
+  const [tree, setTree] = useState<import('./types').GithubTreePage | null>(null)
+  const [treeError, setTreeError] = useState<string | null>(null)
   const [targetBusy, setTargetBusy] = useState(false)
   const [targetStep, setTargetStep] = useState<'idle' | 'connecting' | 'repositories' | 'branches' | 'directories' | 'initializing'>('idle')
   const [targetError, setTargetError] = useState<string | null>(null)
@@ -1560,14 +1562,14 @@ function SettingsView({
     const operation = ++targetOperation.current
     if (id === null) {
       updateAccountSettings({ ...accountSettings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
-      setRepositoryId(null); setRepositories([]); setBranches([]); setDirectory(null); setEmptyDefaultBranch(null); setReadmePreview(null)
+      setRepositoryId(null); setRepositories([]); setBranches([]); setDirectory(null); setTree(null); setTreeError(null); setEmptyDefaultBranch(null); setReadmePreview(null)
       setRepositoriesLoaded(false); setBranchesLoaded(false); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
       return
     }
     if (!user) return
     const githubId = user.githubId
     updateAccountSettings({ ...accountSettings, githubInstallationId: id, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
-    setRepositoryId(null); setRepositories([]); setBranches([]); setDirectory(null); setEmptyDefaultBranch(null); setReadmePreview(null)
+    setRepositoryId(null); setRepositories([]); setBranches([]); setDirectory(null); setTree(null); setTreeError(null); setEmptyDefaultBranch(null); setReadmePreview(null)
     setRepositoriesLoaded(false); setBranchesLoaded(false); setTargetBusy(true); setTargetStep('repositories'); clearTargetFeedback()
     try {
       const values = await loadAllPages(page => getGithubRepositories(githubId, id, page), repo => repo.id)
@@ -1581,7 +1583,7 @@ function SettingsView({
     const operation = ++targetOperation.current
     if (id === null) {
       updateAccountSettings({ ...accountSettings, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
-      setRepositoryId(null); setBranches([]); setDirectory(null); setEmptyDefaultBranch(null); setReadmePreview(null); setBranchesLoaded(false); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
+      setRepositoryId(null); setBranches([]); setDirectory(null); setTree(null); setTreeError(null); setEmptyDefaultBranch(null); setReadmePreview(null); setBranchesLoaded(false); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
       return
     }
     const repo = repositories.find(value => value.id === id)
@@ -1590,7 +1592,7 @@ function SettingsView({
     const installation = accountSettings.githubInstallationId
     setRepositoryId(id)
     updateAccountSettings({ ...accountSettings, githubOwner: repo.owner, githubRepository: repo.name, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
-    setBranches([]); setDirectory(null); setEmptyDefaultBranch(null); setReadmePreview(null); setBranchesLoaded(false); setTargetBusy(true); setTargetStep('branches'); clearTargetFeedback()
+    setBranches([]); setDirectory(null); setTree(null); setTreeError(null); setEmptyDefaultBranch(null); setReadmePreview(null); setBranchesLoaded(false); setTargetBusy(true); setTargetStep('branches'); clearTargetFeedback()
     try {
       const values = await loadAllPages(page => getGithubBranches(githubId, installation, id, page), branch => branch.name)
       if (operation !== targetOperation.current) return
@@ -1611,7 +1613,7 @@ function SettingsView({
     const operation = ++targetOperation.current
     if (!branch) {
       updateAccountSettings({ ...accountSettings, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
-      setDirectory(null); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
+      setDirectory(null); setTree(null); setTreeError(null); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
       return
     }
     if (!accountSettings.githubInstallationId || !repositoryId || !user) return
@@ -1619,13 +1621,38 @@ function SettingsView({
     const installation = accountSettings.githubInstallationId
     const repository = repositoryId
     updateAccountSettings({ ...accountSettings, githubBranch: branch, githubRootPath: path || null, githubAutoCommitEnabled: false })
-    setTargetBusy(true); setTargetStep('directories'); clearTargetFeedback()
+    setDirectory(null); setTree(null); setTreeError(null); setTargetBusy(true); setTargetStep('directories'); clearTargetFeedback()
     try {
       const value = await getGithubDirectories(githubId, installation, repository, branch, path)
       if (operation === targetOperation.current) setDirectory(value)
+      try {
+        const files = await getGithubTree(githubId, installation, repository, branch, path)
+        if (operation === targetOperation.current) setTree(files)
+      } catch (error) {
+        if (error instanceof ApiError && error.message === 'GitHub account changed; reconnect required') { onExpectedAccountChange(githubId); return }
+        if (operation === targetOperation.current) setTreeError(githubTargetErrorMessage(error, '파일 구조를 불러오지 못했습니다. 다시 시도해 주세요.'))
+      }
     } catch (error) {
       if (error instanceof ApiError && error.message === 'GitHub account changed; reconnect required') { onExpectedAccountChange(githubId); return }
       if (operation === targetOperation.current) { setTargetError(githubTargetErrorMessage(error, '폴더를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.')); setTargetErrorStep('directories') }
+    } finally { finishTargetOperation(operation) }
+  }
+  const loadMoreTree = async () => {
+    const current = tree
+    if (!current?.hasMore || !accountSettings.githubInstallationId || !repositoryId || !accountSettings.githubBranch || !user || targetBusy) return
+    const operation = ++targetOperation.current
+    setTargetBusy(true); setTargetStep('directories'); setTreeError(null)
+    try {
+      const next = await getGithubTree(user.githubId, accountSettings.githubInstallationId,
+        repositoryId, accountSettings.githubBranch, current.path, current.page + 1)
+      if (operation !== targetOperation.current) return
+      if (next.headSha !== current.headSha || next.path !== current.path) {
+        setTree(null)
+        setTreeError('브랜치 내용이 변경됐습니다. 현재 폴더를 다시 확인해 주세요.')
+      } else setTree({ ...next, items: [...current.items, ...next.items] })
+    } catch (error) {
+      if (error instanceof ApiError && error.message === 'GitHub account changed; reconnect required') { onExpectedAccountChange(user.githubId); return }
+      if (operation === targetOperation.current) setTreeError(githubTargetErrorMessage(error, '다음 파일 목록을 불러오지 못했습니다. 다시 시도해 주세요.'))
     } finally { finishTargetOperation(operation) }
   }
   const loadInstallations = async (preferredInstallationId?: number | null) => {
@@ -1745,7 +1772,8 @@ function SettingsView({
                     <label><span><b>3</b> 브랜치</span><select aria-label="브랜치" disabled={targetBusy} value={accountSettings.githubBranch ?? ''} onChange={event => void chooseBranch(event.target.value)}><option value="">선택하세요</option>{branches.map(value => <option key={value.name} value={value.name}>{value.name}{value.protectedBranch ? ' (보호됨)' : ''}</option>)}{emptyDefaultBranch && !includeReadme && <option value={emptyDefaultBranch}>{emptyDefaultBranch} (첫 풀이 커밋 시 생성)</option>}</select>{branchesLoaded && branches.length === 0 && <small role="status">브랜치가 없습니다. {emptyDefaultBranch ? '비어 있는 저장소입니다.' : '저장소 상태를 확인하지 못했습니다. 다시 시도해 주세요.'}</small>}</label>
                     {branchesLoaded && branches.length === 0 && emptyDefaultBranch && <div className="github-empty-repository"><strong>비어 있는 저장소 시작하기</strong><label><input type="checkbox" checked={includeReadme} onChange={event => setIncludeReadme(event.target.checked)} /> CodeArchive README 추가</label>{includeReadme ? <><pre aria-label="README 미리보기">{readmePreview}</pre><button type="button" className="primary-button" disabled={targetBusy || !readmePreview} onClick={() => void initializeEmptyRepository()}>README로 초기화</button></> : <p>첫 풀이가 성공적으로 커밋될 때 기본 브랜치가 생성됩니다. 위 브랜치를 선택하고 저장하세요.</p>}</div>}
                   </>}
-                  {directory && <div className="github-directory"><span><b>4</b> 폴더</span><p>현재 위치 <strong>{directory.currentPath || '/'}</strong></p><div>{directory.currentPath && <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.parentPath)} disabled={targetBusy}>상위 폴더</button>}{directory.directories.map(name => <button type="button" key={name} onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath ? `${directory.currentPath}/${name}` : name)} disabled={targetBusy}>{name}/</button>)}</div>{directory.directories.length === 0 && <small>하위 폴더가 없습니다. 현재 위치를 저장 경로로 사용할 수 있습니다.</small>}</div>}
+                  {directory && <div className="github-directory"><span><b>4</b> 폴더</span><p>현재 저장 위치 <strong>{directory.currentPath || '/'}</strong></p><div>{directory.currentPath && <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.parentPath)} disabled={targetBusy}>상위 폴더</button>}{!tree && directory.directories.map(name => <button type="button" key={name} onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath ? `${directory.currentPath}/${name}` : name)} disabled={targetBusy}>{name}/</button>)}</div><small>이 폴더를 저장 위치로 사용하려면 아래의 설정 저장을 누르세요.</small></div>}
+                  {directory && <div className="github-tree"><strong>파일·폴더 구조</strong>{treeError && <p role="alert">{treeError} <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath)} disabled={targetBusy}>다시 확인</button></p>}{tree && <><ul>{tree.items.map(entry => <li key={`${entry.path}:${entry.type}`}>{entry.type === 'tree' ? <button type="button" disabled={targetBusy || !/^[A-Za-z0-9_.-]+$/.test(entry.name)} onClick={() => void chooseBranch(accountSettings.githubBranch!, entry.path)}>{entry.name}/</button> : <span>{entry.name}{entry.type === 'commit' ? ' (서브모듈)' : ''}</span>}</li>)}</ul>{tree.items.length === 0 && <p>이 폴더에 파일이 없습니다.</p>}{tree.hasMore && <button type="button" className="ghost-button" disabled={targetBusy} onClick={() => void loadMoreTree()}>파일 더 보기</button>}{tree.truncated && <p role="status">GitHub가 일부 항목만 반환했습니다. 더 작은 하위 폴더에서 확인해 주세요.</p>}</>}</div>}
                 </div>
                 {draftTargetConfigured && <div className="github-target-current"><Icon name="check" size={15} /><span><strong>현재 대상</strong>{accountSettings.githubOwner}/{accountSettings.githubRepository} · {accountSettings.githubBranch}{accountSettings.githubRootPath ? `/${accountSettings.githubRootPath}` : ''}</span></div>}
               </div>

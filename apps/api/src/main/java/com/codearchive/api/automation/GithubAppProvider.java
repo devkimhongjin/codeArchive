@@ -14,6 +14,7 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
  GithubAppProvider(String appId,String key,String base,HttpClient http,ObjectMapper json,long requestTimeoutMs){this.appId=appId;this.key=key;this.base=base.replaceAll("/$","");this.http=http;this.json=json;this.requestTimeout=timeout(requestTimeoutMs);}
  public Result createOnly(UserSettings s,Solution solution){ return createOnly(s,solution,()->true); }
  public record InstallationChoice(long id,String accountLogin){} public record RepositoryChoice(long id,String owner,String name,String fullName,boolean privateRepository,String defaultBranch){} public record BranchChoice(String name,boolean protectedBranch,String commitSha){} public record DirectoryChoice(String currentPath,String parentPath,List<String> directories){} public record PageResult<T>(List<T> items,boolean hasMore){}
+ public record TreeEntry(String name,String path,String type,long size){} public record TreePage(String path,String headSha,List<TreeEntry> items,int page,boolean hasMore,boolean truncated){}
  public static final class ProviderUnavailableException extends IllegalStateException { public ProviderUnavailableException(String message){super(message);} }
  public static final class EmptyRepositoryConflictException extends IllegalStateException { public EmptyRepositoryConflictException(){super("repository is not empty");} }
  public boolean browseReady(){return !appId.isBlank()&&!key.isBlank();}
@@ -40,6 +41,55 @@ import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; im
  }
  public List<BranchChoice> branches(String githubId,long installation,long repository,int page)throws Exception{return branchesPage(githubId,installation,repository,page).items();} public PageResult<BranchChoice> branchesPage(String githubId,long installation,long repository,int page)throws Exception{checkPage(page);RepositoryChoice r=repository(githubId,installation,repository);Response x=send("GET","/repos/"+segment(r.owner())+"/"+segment(r.name())+"/branches?per_page=100&page="+page,installationToken(installation),null);if(x.code==409)return new PageResult<>(List.of(),false);if(x.code!=200)throw new IllegalStateException("branches unavailable");JsonNode raw=json.readTree(x.body);if(!raw.isArray())throw new ProviderUnavailableException("branches response invalid");List<BranchChoice> out=new ArrayList<>();int count=0;for(JsonNode n:raw){count++;String name=n.path("name").asText(),sha=n.path("commit").path("sha").asText();if(safeBranch(name)&&sha.matches("[0-9a-fA-F]{40}"))out.add(new BranchChoice(name,n.path("protected").asBoolean(),sha));}return new PageResult<>(out,count==100&&page<100);}
  public DirectoryChoice directories(String githubId,long installation,long repository,String branch,String path)throws Exception{if(!safeBranch(branch)||!safePath(path))throw new IllegalArgumentException("unsafe path");RepositoryChoice r=repository(githubId,installation,repository);if(!branchExists(githubId,installation,repository,branch)){if(path.isBlank()&&branch.equals(emptyDefaultBranch(githubId,installation,repository,installationToken(installation))))return new DirectoryChoice("","",List.of());throw new SecurityException("branch mismatch");}String p=path.isBlank()?"": "/"+Arrays.stream(path.split("/")).map(GithubAppProvider::segment).collect(java.util.stream.Collectors.joining("/"));Response x=send("GET","/repos/"+segment(r.owner())+"/"+segment(r.name())+"/contents"+p+"?ref="+segment(branch),installationToken(installation),null);if(x.code!=200)throw new IllegalStateException("directory unavailable");List<String> dirs=new ArrayList<>();JsonNode body=json.readTree(x.body);if(!body.isArray())throw new IllegalArgumentException("not directory");for(JsonNode n:body){String name=n.path("name").asText();if("dir".equals(n.path("type").asText())&&safe(name)&&dirs.size()<100)dirs.add(name);}String parent=path.isBlank()?"":path.contains("/")?path.substring(0,path.lastIndexOf('/')):"";return new DirectoryChoice(path,parent,dirs);}
+ public TreePage treePage(String githubId,long installation,long repository,String branch,String path,int page)throws Exception{
+  checkPage(page);
+  if(page>50)throw new IllegalArgumentException("tree page out of range");
+  if(!safeBranch(branch)||!safePath(path))throw new IllegalArgumentException("unsafe tree path");
+  RepositoryChoice target=repository(githubId,installation,repository);
+  String token=installationToken(installation);
+  String basePath="/repos/"+segment(target.owner())+"/"+segment(target.name());
+  Response ref=send("GET",basePath+"/git/ref/heads/"+segment(branch),token,null);
+  if(ref.code==404||ref.code==409){
+   if(path.isBlank()&&page==1&&branch.equals(emptyDefaultBranch(githubId,installation,repository,token)))return new TreePage("",null,List.of(),1,false,false);
+   throw new SecurityException("branch unavailable");
+  }
+  if(ref.code!=200)throw new ProviderUnavailableException("branch reference unavailable");
+  String head=json.readTree(ref.body).path("object").path("sha").asText();
+  if(!sha(head))throw new ProviderUnavailableException("branch reference invalid");
+  Response commit=send("GET",basePath+"/git/commits/"+head,token,null);
+  if(commit.code!=200)throw new ProviderUnavailableException("branch commit unavailable");
+  String treeSha=json.readTree(commit.body).path("tree").path("sha").asText();
+  if(!sha(treeSha))throw new ProviderUnavailableException("branch tree invalid");
+  JsonNode tree=readTree(basePath,treeSha,token);
+  if(!path.isBlank())for(String part:path.split("/")){
+   String next=null;
+   for(JsonNode entry:tree.path("tree"))if("tree".equals(entry.path("type").asText())&&part.equals(entry.path("path").asText())){next=entry.path("sha").asText();break;}
+   if(!sha(next)){
+    if(tree.path("truncated").asBoolean())throw new ProviderUnavailableException("tree traversal truncated");
+    throw new SecurityException("directory unavailable");
+   }
+   tree=readTree(basePath,next,token);
+  }
+  JsonNode raw=tree.path("tree");
+  if(!raw.isArray())throw new ProviderUnavailableException("tree response invalid");
+  int available=Math.min(raw.size(),5000),start=(page-1)*100,end=Math.min(start+100,available);
+  List<TreeEntry> items=new ArrayList<>();
+  boolean omitted=false;
+  for(int index=start;index<end;index++){
+   JsonNode entry=raw.get(index);String name=entry.path("path").asText(),type=entry.path("type").asText();
+   if(name.isBlank()||name.length()>255||name.contains("/")||name.contains("\\")||name.equals(".")||name.equals("..")||name.chars().anyMatch(c->c<32)||!(type.equals("tree")||type.equals("blob")||type.equals("commit"))){omitted=true;continue;}
+   items.add(new TreeEntry(name,path.isBlank()?name:path+"/"+name,type,Math.max(0,entry.path("size").asLong(0))));
+  }
+  return new TreePage(path,head,items,page,end<available,tree.path("truncated").asBoolean()||raw.size()>available||omitted);
+ }
+ private JsonNode readTree(String basePath,String sha,String token)throws Exception{
+  Response result=send("GET",basePath+"/git/trees/"+sha,token,null);
+  if(result.code!=200)throw new ProviderUnavailableException("repository tree unavailable");
+  JsonNode body=json.readTree(result.body);
+  if(!body.isObject()||!body.path("tree").isArray()||!body.path("truncated").isBoolean())throw new ProviderUnavailableException("tree response invalid");
+  return body;
+ }
+ private static boolean sha(String value){return value!=null&&value.matches("[0-9a-fA-F]{40}");}
  public void validateTarget(String githubId,long installation,long repository,String branch,String root)throws Exception{directories(githubId,installation,repository,branch,root==null?"":root);}
  public String initializeReadme(String githubId,long installation,long repository)throws Exception{
   String token=installationToken(installation);
