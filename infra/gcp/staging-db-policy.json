@@ -1,10 +1,47 @@
 {
   "schemaVersion": 1,
-  "inventoryStatus": "blocked_pending_verified_inventory",
-  "reviewedAt": null,
-  "validUntil": null,
-  "services": [],
-  "datasourceAliases": [],
-  "approvedNonproductionDatabases": [],
-  "protectedProductionDatabases": []
+  "inventoryStatus": "verified",
+  "reviewedAt": "2026-09-23T04:46:34Z",
+  "validUntil": "2026-09-30T04:46:34Z",
+  "services": [
+    {
+      "project": "project-eab5ae90-9598-4b25-92f",
+      "region": "asia-southeast1",
+      "service": "codearchive-api-stg",
+      "role": "nonproduction",
+      "datasourceAlias": "staging-direct",
+      "evidence": "GCP Cloud Run codearchive-api-stg service description and staging deployment target reviewed 2026-09-23",
+      "springProfile": "prod"
+    },
+    {
+      "project": "project-eab5ae90-9598-4b25-92f",
+      "region": "asia-southeast1",
+      "service": "codearchive-github-worker-stg",
+      "role": "nonproduction",
+      "datasourceAlias": "staging-direct",
+      "evidence": "GCP Cloud Run codearchive-github-worker-stg service description and staging deployment target reviewed 2026-09-23",
+      "springProfile": "prod"
+    }
+  ],
+  "datasourceAliases": [
+    {
+      "alias": "staging-direct",
+      "canonicalDatabaseId": "neon:old-sea-48302710:br-damp-sun-azcrpfkb:neondb:codearchive_v2",
+      "evidence": "Neon staging direct compute ep-polished-field-az66tpuq and GCP staging datasource Secret Manager versions 1 verified 2026-09-23",
+      "secretVersions": {
+        "url": { "name": "codearchive-staging-datasource-url", "version": "1" },
+        "username": { "name": "codearchive-staging-datasource-username", "version": "1" },
+        "password": { "name": "codearchive-staging-datasource-password", "version": "1" }
+      }
+    }
+  ],
+  "approvedNonproductionDatabases": [
+    {
+      "canonicalDatabaseId": "neon:old-sea-48302710:br-damp-sun-azcrpfkb:neondb:codearchive_v2",
+      "evidence": "Neon codearchive-beta staging branch br-damp-sun-azcrpfkb forked from production 2026-09-23; codearchive_v2 Flyway rank 12 and 5 users/99 solutions observed"
+    }
+  ],
+  "protectedProductionDatabases": [
+    "neon:old-sea-48302710:br-old-dust-aztcw6u8:neondb:codearchive_v2"
+  ]
 }
