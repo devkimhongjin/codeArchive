@@ -105,10 +105,36 @@ export async function storeCaptureWithRetry(
   return response;
 }
 
-function startCapture(adapter: PlatformAdapter, document: Document): void {
+export function startCapture(adapter: PlatformAdapter, document: Document, send: SendRuntimeMessage): void {
   let processing = false;
   let checkScheduled = false;
   let checkAfterProcessing = false;
+  let resultPoll: ReturnType<typeof setInterval> | null = null;
+  let activeAttemptId: string | null = null;
+
+  function reportProgress(attemptId: string | null, phase: "CAPTURING" | "SAVING" | "CLEAR"): void {
+    if (!attemptId) return;
+    const problem = adapter.detectProblem();
+    if (phase === "CAPTURING" && !problem) return;
+    void send({
+      type: "SET_SUBMISSION_PROGRESS", attemptId, platform: adapter.platform, phase,
+      ...(problem ? { problemNumber: problem.problemNumber, title: problem.title } : {})
+    }).catch(() => undefined);
+  }
+
+  function ensureResultPoll(): void {
+    if (!adapter.hasPendingSubmissionAttempt || resultPoll !== null) return;
+    resultPoll = setInterval(() => {
+      if (!adapter.hasPendingSubmissionAttempt?.()) {
+        clearInterval(resultPoll!);
+        resultPoll = null;
+        reportProgress(activeAttemptId, "CLEAR");
+        activeAttemptId = null;
+        return;
+      }
+      scheduleCaptureCheck();
+    }, 300);
+  }
 
   const runCaptureCheck = async (): Promise<void> => {
     if (processing) {
@@ -117,9 +143,16 @@ function startCapture(adapter: PlatformAdapter, document: Document): void {
     }
     const collected = collectAcceptedCaptureAttempt(adapter);
     if (!collected) return;
+    const progressAttemptId = activeAttemptId;
 
     processing = true;
     try {
+      if (adapter.confirmCaptureAsync) {
+        const confirmed = await adapter.confirmCaptureAsync(collected.capture, collected.detection);
+        if (!confirmed) return;
+        Object.assign(collected.capture, confirmed);
+      }
+      reportProgress(progressAttemptId, "SAVING");
       if (
         adapter.collectPerformanceAsync &&
         collected.capture.executionTime === undefined &&
@@ -138,6 +171,8 @@ function startCapture(adapter: PlatformAdapter, document: Document): void {
       if ((response as { ok?: unknown } | null)?.ok === true) {
         adapter.consumeSubmissionResult(collected.detection);
       }
+      reportProgress(progressAttemptId, "CLEAR");
+      if (activeAttemptId === progressAttemptId) activeAttemptId = null;
     } finally {
       processing = false;
       if (checkAfterProcessing) {
@@ -174,6 +209,10 @@ function startCapture(adapter: PlatformAdapter, document: Document): void {
           // document_idle listener and synchronously updates the platform's
           // source textarea at this click boundary.
           adapter.beginSubmissionAttempt(new Date());
+          activeAttemptId = crypto.randomUUID();
+          reportProgress(activeAttemptId, "CAPTURING");
+          ensureResultPoll();
+          scheduleCaptureCheck();
           break;
         }
         current = current.parentElement;
@@ -181,6 +220,11 @@ function startCapture(adapter: PlatformAdapter, document: Document): void {
     },
     true
   );
+
+  document.defaultView?.addEventListener("pagehide", () => {
+    reportProgress(activeAttemptId, "CLEAR");
+    activeAttemptId = null;
+  });
 
   const root = document.body ?? document.documentElement;
   if (root) {
@@ -217,7 +261,7 @@ export async function bootstrapContent(
   }
 
   const adapter = createAdapter(document, location, sweaProblemUrl, allowSweaQuerylessFallback);
-  if (adapter) startCapture(adapter, document);
+  if (adapter) startCapture(adapter, document, send);
 }
 
 if (typeof document !== "undefined" && typeof window !== "undefined") {

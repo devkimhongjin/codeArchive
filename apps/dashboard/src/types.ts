@@ -1,6 +1,6 @@
 import type { LightTheme, DarkTheme } from '../../../shared/codeThemes'
 
-export type Platform = 'SWEA' | 'PROGRAMMERS'
+export type Platform = 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'
 
 export type ViewName = 'solutions' | 'community' | 'guide' | 'settings'
 

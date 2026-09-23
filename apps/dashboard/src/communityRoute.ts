@@ -12,7 +12,8 @@ export function readView(search = window.location.search): ViewName {
 
 export function readCommunityRoute(search = window.location.search): CommunityRoute {
   const params = new URLSearchParams(search)
-  const platform = params.get('platform') === 'PROGRAMMERS' ? 'PROGRAMMERS' : 'SWEA'
+  const rawPlatform = params.get('platform')
+  const platform = rawPlatform === 'PROGRAMMERS' || rawPlatform === 'JUNGOL' ? rawPlatform : 'SWEA'
   const problem = params.get('problemNumber') ?? ''
   const language = params.get('languageKey') ?? ''
   const rawPage = params.get('page') ?? '0'

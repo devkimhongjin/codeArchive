@@ -6,9 +6,11 @@ import {
   loadSweaProblemContext,
   loadSweaProblemContextForReferrer,
   storeCaptureWithRetry,
+  startCapture,
   storeSweaProblemContext
 } from "../src/content";
 import { SWEA_CONTEXT_LOOKUP_ERROR } from "../src/sweaProblemContext";
+import type { PlatformAdapter } from "../src/types";
 
 function locationFor(href: string): Location {
   return new URL(href) as unknown as Location;
@@ -27,6 +29,37 @@ function capture() {
   assert.ok(result);
   return result;
 }
+
+test("a submit click reports collecting immediately and clears a failed attempt", async () => {
+  const { document } = parseHTML("<html><body><button id='submit'>제출</button></body></html>");
+  const previousElement = globalThis.Element;
+  const previousObserver = globalThis.MutationObserver;
+  Object.assign(globalThis, { Element: document.defaultView!.Element, MutationObserver: document.defaultView!.MutationObserver });
+  let pending = false;
+  const messages: Array<{ type: string; phase: string }> = [];
+  const adapter: PlatformAdapter = {
+    platform: "JUNGOL",
+    detectProblem: () => ({ problemNumber: "1520", title: "테스트", problemUrl: "https://jungol.co.kr/problem/1520" }),
+    detectSubmissionResult: () => null,
+    detectEditor: () => null,
+    collectPerformance: () => null,
+    isSubmitControl: element => element.id === "submit",
+    beginSubmissionAttempt: () => { pending = true; },
+    hasPendingSubmissionAttempt: () => pending,
+    consumeSubmissionResult: () => undefined
+  };
+  try {
+    startCapture(adapter, document, async message => { messages.push(message as { type: string; phase: string }); return { ok: true }; });
+    (document.querySelector("#submit") as HTMLButtonElement).click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(messages[0]?.phase, "CAPTURING");
+    pending = false;
+    await new Promise(resolve => setTimeout(resolve, 350));
+    assert.equal(messages.at(-1)?.phase, "CLEAR");
+  } finally {
+    Object.assign(globalThis, { Element: previousElement, MutationObserver: previousObserver });
+  }
+});
 
 test("content capture retries transient worker failures and preserves the same payload", async () => {
   const delays: number[] = [];

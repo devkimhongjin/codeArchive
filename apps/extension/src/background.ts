@@ -9,6 +9,8 @@ import {
   validateSweaProblemContext
 } from "./sweaProblemContext";
 import { SWEA_ORIGIN, SWEA_SOLVING_PATH } from "./adapters/sweaSelectors";
+import { activeSubmissionProgress, SUBMISSION_PROGRESS_KEY, updateSubmissionProgress } from "./submissionProgress";
+import type { Platform } from "./types";
 
 const store = new IndexedDbCaptureStore();
 const bridge = new DashboardBridge(store, {
@@ -87,6 +89,7 @@ requestRelayDrain();
 
 type InternalMessage =
   | { type: "STORE_CAPTURE"; capture: unknown }
+  | { type: "SET_SUBMISSION_PROGRESS"; attemptId: unknown; platform?: unknown; problemNumber?: unknown; title?: unknown; phase: unknown }
   | { type: "GET_POPUP_STATE" }
   | { type: "RETRY_RELAY" }
   | { type: "GET_GITHUB_COMMIT_STATUSES"; captureIds: unknown }
@@ -130,6 +133,23 @@ function isSweaSolvingPageSender(sender: chrome.runtime.MessageSender): boolean 
   return !!url && url.origin === SWEA_ORIGIN && url.pathname === SWEA_SOLVING_PATH;
 }
 
+function isSupportedCaptureSender(sender: chrome.runtime.MessageSender, platform: Platform): boolean {
+  const url = senderUrl(sender);
+  if (!url || !Number.isSafeInteger(sender.tab?.id) || sender.frameId !== 0) return false;
+  if (platform === "SWEA") return url.origin === SWEA_ORIGIN && url.pathname === SWEA_SOLVING_PATH;
+  if (platform === "PROGRAMMERS") return url.origin === "https://school.programmers.co.kr" && /^\/learn\/courses\/30\/lessons\/\d+$/.test(url.pathname);
+  return url.origin === "https://jungol.co.kr" && /^\/problem\/\d+$/.test(url.pathname);
+}
+
+let progressWrite: Promise<void> = Promise.resolve();
+function mutateProgress(update: Parameters<typeof updateSubmissionProgress>[1]): Promise<void> {
+  progressWrite = progressWrite.catch(() => undefined).then(async () => {
+    const current = (await chrome.storage.session.get(SUBMISSION_PROGRESS_KEY))[SUBMISSION_PROGRESS_KEY];
+    await chrome.storage.session.set({ [SUBMISSION_PROGRESS_KEY]: updateSubmissionProgress(current, update) });
+  });
+  return progressWrite;
+}
+
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
   const object = asObject(message) as Partial<InternalMessage> | null;
   if (!object?.type) return false;
@@ -146,9 +166,28 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     return true;
   }
 
+  if (object.type === "SET_SUBMISSION_PROGRESS") {
+    const tabId = sender.tab?.id;
+    const platform = object.platform;
+    const phase = object.phase;
+    if (!Number.isSafeInteger(tabId) || typeof object.attemptId !== "string" || !/^[0-9a-f-]{36}$/i.test(object.attemptId) ||
+        (platform !== "SWEA" && platform !== "PROGRAMMERS" && platform !== "JUNGOL") ||
+        !isSupportedCaptureSender(sender, platform) ||
+        (phase !== "CAPTURING" && phase !== "SAVING" && phase !== "CLEAR") ||
+        (phase === "CAPTURING" && (typeof object.problemNumber !== "string" || !/^\d{1,40}$/.test(object.problemNumber) ||
+          typeof object.title !== "string" || !object.title.trim() || object.title.length > 200))) {
+      sendResponse({ ok: false, error: "BAD_REQUEST" });
+      return false;
+    }
+    void mutateProgress({ tabId: tabId!, attemptId: object.attemptId, platform, problemNumber: object.problemNumber as string | undefined, title: object.title as string | undefined, phase })
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
+    return true;
+  }
+
   if (object.type === "GET_POPUP_STATE") {
-    void loadPopupLocalState(store)
-      .then(sendResponse)
+    void Promise.all([loadPopupLocalState(store), chrome.storage.session.get(SUBMISSION_PROGRESS_KEY).catch(() => ({} as Record<string, unknown>))])
+      .then(([state, progress]) => sendResponse({ ...state, submissionProgress: activeSubmissionProgress(progress[SUBMISSION_PROGRESS_KEY]) }))
       .catch(() => sendResponse({ pendingCount: 0, settings: null, recentCaptures: [], error: "STORAGE_ERROR" }));
     return true;
   }

@@ -293,6 +293,26 @@ class CodeArchiveApiIntegrationTest {
     }
 
     @Test
+    void jungolCaptureSyncsWithItsCanonicalProblemLink() throws Exception {
+        githubAccountService.upsert(principal("311", "jungol-user", "Jungol", null));
+        String payload = capture(UUID.randomUUID().toString(), "class Main {}")
+                .replace("\"platform\":\"SWEA\"", "\"platform\":\"JUNGOL\"")
+                .replace("\"problemNumber\":\"1234\"", "\"problemNumber\":\"4577\"")
+                .replace("\"problemUrl\":\"https://swexpertacademy.com/problem/1234\"",
+                        "\"problemUrl\":\"https://jungol.co.kr/problem/4577\"");
+        mockMvc.perform(post("/api/solutions/bulk").with(csrf().asHeader())
+                        .with(githubLogin("311", "jungol-user", "Jungol", null))
+                        .contentType("application/json")
+                        .content("{\"captures\":[" + payload + "]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.acceptedCaptureIds", hasSize(1)));
+        mockMvc.perform(get("/api/solutions").with(githubLogin("311", "jungol-user", "Jungol", null)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].platform", is("JUNGOL")))
+                .andExpect(jsonPath("$[0].problemUrl", is("https://jungol.co.kr/problem/4577")));
+    }
+
+    @Test
     @org.springframework.transaction.annotation.Transactional
     void bulkSyncEnqueuesTheSameDurableGithubJobAsRelayDelivery() throws Exception {
         AppUser user = githubAccountService.upsert(principal("304", "manual-recovery", "Manual", null));

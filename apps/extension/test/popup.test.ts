@@ -5,6 +5,31 @@ import { parseHTML } from 'linkedom';
 import { mountPopup } from '../src/popupView';
 const html = readFileSync(new URL('../src/popup.html', import.meta.url), 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
+test('popup shows an immediate non-actionable submission row, then removes it on failure', async () => {
+  const { document } = parseHTML(html);
+  const startedAt = Date.now();
+  let progress: unknown[] = [{ tabId: 1, attemptId: '11111111-1111-4111-8111-111111111111', platform: 'JUNGOL', problemNumber: '1520', title: '정올 문제', phase: 'CAPTURING', startedAt }];
+  let refreshProgress: (() => void) | undefined;
+  mountPopup(document, {
+    copy: async () => {},
+    load: async () => ({ pendingCount: 0, settings: {}, recentCaptures: [], submissionProgress: progress }),
+    subscribeProgress: refresh => { refreshProgress = refresh; }
+  });
+  await settle();
+  assert.match(document.querySelector('#recent-list')!.textContent!, /정올 문제/);
+  assert.match(document.querySelector('#recent-list')!.textContent!, /수집 중/);
+  assert.equal(document.querySelector('#recent-list button'), null);
+  assert.equal(document.querySelector('#recent-list a'), null);
+  assert.equal(document.querySelector('#pending-count')!.textContent, '0');
+  progress = [{ ...(progress[0] as object), phase: 'SAVING' }];
+  refreshProgress?.(); await settle();
+  assert.match(document.querySelector('#recent-list')!.textContent!, /저장 중/);
+  progress = [];
+  refreshProgress?.(); await settle();
+  assert.equal(document.querySelector('.recent-progress'), null);
+  assert.equal(document.querySelector('#recent-count')!.textContent, '없음');
+});
+
 test('popup distinguishes loading, empty, pending and storage failure with retry', async () => {
   const { document } = parseHTML(html);
   let resolve!: (value: unknown) => void;

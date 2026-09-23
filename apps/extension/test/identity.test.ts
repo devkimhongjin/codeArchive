@@ -16,6 +16,7 @@ test('public manifest key pins the same ID used by the dashboard', () => {
   assert.deepEqual(manifest.host_permissions, [
     'https://swexpertacademy.com/*',
     'https://school.programmers.co.kr/*',
+    'https://jungol.co.kr/*',
     'https://codearchive-dashboard-beta.netlify.app/*',
     'http://localhost:5173/*'
   ]);
@@ -23,4 +24,5 @@ test('public manifest key pins the same ID used by the dashboard', () => {
   assert.ok(isolated);
   assert.ok(isolated.matches.includes('https://swexpertacademy.com/main/code/problem/problemDetail.do*'));
   assert.ok(isolated.matches.includes('https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do*'));
+  assert.ok(isolated.matches.includes('https://jungol.co.kr/problem/*'));
 });

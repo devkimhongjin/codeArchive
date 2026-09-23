@@ -4,10 +4,11 @@
   "version": "0.2.0",
   "description": "Capture accepted algorithm solutions locally for CodeArchive.",
   "minimum_chrome_version": "120",
-  "permissions": ["downloads", "alarms"],
+  "permissions": ["downloads", "alarms", "storage"],
   "host_permissions": [
     "https://swexpertacademy.com/*",
     "https://school.programmers.co.kr/*",
+    "https://jungol.co.kr/*",
     "https://codearchive-dashboard-beta.netlify.app/*",
     "http://localhost:5173/*"
   ],
@@ -23,7 +24,8 @@
     {
       "matches": [
         "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do*",
-        "https://school.programmers.co.kr/learn/courses/30/lessons/*"
+        "https://school.programmers.co.kr/learn/courses/30/lessons/*",
+        "https://jungol.co.kr/problem/*"
       ],
       "world": "MAIN",
       "js": [
@@ -36,7 +38,8 @@
         "https://swexpertacademy.com/main/code/problem/problemDetail.do*",
         "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do*",
         "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do*",
-        "https://school.programmers.co.kr/learn/courses/30/lessons/*"
+        "https://school.programmers.co.kr/learn/courses/30/lessons/*",
+        "https://jungol.co.kr/problem/*"
       ],
       "js": [
         "content.js"

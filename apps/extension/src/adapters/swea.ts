@@ -197,6 +197,11 @@ export class SweaAdapter implements PlatformAdapter {
     };
   }
 
+  hasPendingSubmissionAttempt(): boolean {
+    this.expireAttempt();
+    return this.pendingAttempt !== null;
+  }
+
   getSubmissionSnapshot(): SubmissionSnapshot | null {
     this.expireAttempt();
     return this.pendingAttempt?.snapshot ?? null;

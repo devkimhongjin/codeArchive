@@ -3,11 +3,13 @@ import type { GithubCommitStatus } from "./relay";
 import { canonicalLanguageDisplayName } from "../../../shared/language";
 import { formatCaptureMemory, formatExecutionTime, formatSolutionTime } from "./capturePresentation";
 import { buildLabel, updatedLabel } from "../../../shared/buildMetadata";
+import { activeSubmissionProgress, type SubmissionProgress } from "./submissionProgress";
 
 type CapturePreview = Omit<Capture, "sourceCode"> & { githubCommitStatus?: GithubCommitStatus };
 
 interface PopupServices {
   load: () => Promise<unknown>;
+  subscribeProgress?: (refresh: () => void) => void;
   copy: (text: string) => Promise<void>;
   copyCapture?: (captureId: string) => Promise<{ ok?: boolean; text?: string }>;
   downloadCapture?: (captureId: string) => Promise<{ ok?: boolean }>;
@@ -22,7 +24,7 @@ function asDisplayCapture(value: unknown): CapturePreview | null {
   if (
     typeof candidate.captureId !== "string" ||
     typeof candidate.platform !== "string" ||
-    (candidate.platform !== "SWEA" && candidate.platform !== "PROGRAMMERS") ||
+    (candidate.platform !== "SWEA" && candidate.platform !== "PROGRAMMERS" && candidate.platform !== "JUNGOL") ||
     typeof candidate.problemNumber !== "string" ||
     typeof candidate.title !== "string" ||
     typeof candidate.problemUrl !== "string" ||
@@ -51,10 +53,32 @@ function appendCaptureTitle(document: Document, item: HTMLElement, capture: Capt
   item.append(title);
 }
 
-function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement, captures: CapturePreview[], services: PopupServices): void {
+function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement, captures: CapturePreview[], progress: SubmissionProgress[], services: PopupServices): void {
   list.replaceChildren();
-  empty.hidden = captures.length !== 0;
-  for (const capture of captures) {
+  const entries = [
+    ...progress.map(item => ({ kind: "progress" as const, item })),
+    ...captures.map(item => ({ kind: "capture" as const, item }))
+  ].slice(0, 3);
+  empty.hidden = entries.length !== 0;
+  for (const entry of entries) {
+    if (entry.kind === "progress") {
+      const item = document.createElement("article");
+      item.className = "recent-item recent-progress";
+      item.setAttribute("aria-live", "polite");
+      const heading = document.createElement("div"); heading.className = "recent-item-heading";
+      const platform = document.createElement("span"); platform.className = "platform-label"; platform.textContent = entry.item.platform;
+      const phase = document.createElement("span"); phase.className = "sync-label progress-label";
+      phase.textContent = entry.item.phase === "SAVING" ? "저장 중" : "수집 중";
+      heading.append(platform, phase);
+      const title = document.createElement("p"); title.className = "recent-title";
+      title.textContent = `#${entry.item.problemNumber} · ${entry.item.title}`;
+      const help = document.createElement("p"); help.className = "recent-meta";
+      help.textContent = "판정과 로컬 저장을 확인하고 있어요.";
+      item.append(heading, title, help);
+      list.append(item);
+      continue;
+    }
+    const capture = entry.item;
     const item = document.createElement("article");
     item.className = "recent-item";
 
@@ -129,6 +153,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
   let loading = false;
   let retrying = false;
   let loadGeneration = 0;
+  let reloadPending = false;
 
   function resetRecent(): void {
     recentList.replaceChildren();
@@ -160,6 +185,10 @@ export function mountPopup(document: Document, services: PopupServices): void {
       const recentCaptures = Array.isArray(state.recentCaptures)
         ? state.recentCaptures.map(asDisplayCapture).filter((capture): capture is CapturePreview => capture !== null).slice(0, 3)
         : [];
+      const submissionProgress = activeSubmissionProgress((state as { submissionProgress?: unknown }).submissionProgress);
+      const visibleProgress = submissionProgress.filter(item => !recentCaptures.some(capture =>
+        capture.platform === item.platform && capture.problemNumber === item.problemNumber && Date.parse(capture.observedAt) >= item.startedAt
+      ));
       count.textContent = String(state.pendingCount);
       const settings = state.settings as { autoDownloadEnabled?: boolean; autoSyncEnabled?: boolean; githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; relay?: { status?: string } };
       if (autoDownload) {
@@ -191,9 +220,13 @@ export function mountPopup(document: Document, services: PopupServices): void {
         ? "통과한 풀이가 기다리고 있어요. 대시보드로 가져가세요."
         : recentCaptures.length
           ? "대기 중인 풀이는 없어요. 저장한 풀이는 아래에서 확인하세요."
-          : "아직 저장된 풀이가 없어요. 첫 통과 풀이를 모아보세요.";
-      recentCount.textContent = recentCaptures.length ? `${recentCaptures.length}개` : "없음";
-      renderRecent(document, recentList, recentEmpty, recentCaptures, services);
+          : visibleProgress.length
+            ? "제출 결과를 확인하고 있어요. 저장되면 아래 기록으로 바뀝니다."
+            : "아직 저장된 풀이가 없어요. 첫 통과 풀이를 모아보세요.";
+      recentCount.textContent = visibleProgress.length
+        ? `${recentCaptures.length}개 저장 · ${visibleProgress.length}개 처리 중`
+        : recentCaptures.length ? `${recentCaptures.length}개` : "없음";
+      renderRecent(document, recentList, recentEmpty, recentCaptures, visibleProgress, services);
       const syncedIds = recentCaptures.filter(capture => capture.syncState === "SYNCED").map(capture => capture.captureId);
       if (syncedIds.length && services.loadGithubStatuses) {
         // Remote enrichment is intentionally detached from the local render.
@@ -205,7 +238,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
           renderRecent(document, recentList, recentEmpty, recentCaptures.map(capture => ({
             ...capture,
             ...(statuses[capture.captureId] ? { githubCommitStatus: statuses[capture.captureId] } : {})
-          })), services);
+          })), visibleProgress, services);
         }).catch(() => undefined);
       }
     } catch {
@@ -220,8 +253,17 @@ export function mountPopup(document: Document, services: PopupServices): void {
       refresh.disabled = false;
       card.setAttribute("aria-busy", "false");
       recentCard.setAttribute("aria-busy", "false");
+      if (reloadPending) {
+        reloadPending = false;
+        queueMicrotask(() => void load());
+      }
     }
   }
+
+  services.subscribeProgress?.(() => {
+    if (loading) reloadPending = true;
+    else void load();
+  });
 
   refresh.addEventListener("click", () => void load());
   retryRelay?.addEventListener("click", () => {
