@@ -20,11 +20,11 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { ApiError, addGithubFile, bulkUpload, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories, getGithubTree, getGithubEmptyDefaultBranch, getGithubReadmePreview, initializeGithubReadme } from './api'
+import { ApiError, addGithubFile, bulkUpload, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories, getGithubTree, getGithubEmptyDefaultBranch, getGithubReadmePreview, initializeGithubReadme, previewGithubTreeOperation, commitGithubTreeOperation } from './api'
 import { BridgeError, parseAckResponse, parseBridgeStatusResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
-import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type BulkResponse, type GithubAddFileRequest, type Solution, type Toast, type User, type ViewName } from './types'
+import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type BulkResponse, type GithubAddFileRequest, type GithubTreeOperationPreview, type Solution, type Toast, type User, type ViewName } from './types'
 import { CodeBlock } from './CodeBlock'
 import { EXTENSION_ID, LEGACY_EXTENSION_ID, EXTENSION_CANDIDATES } from './extensionConfig'
 import { readExportSettings, EXPORT_SETTINGS_KEY, exportCode, downloadFilename, githubCommitMessage, gitPath, sourceFileExtension, DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, DEFAULT_GIT_PATH_TEMPLATE, GIT_PATH_TOKENS, hasGitSubmissionIdentityToken, type ExportSettings } from './codeExport'
@@ -1535,6 +1535,15 @@ function SettingsView({
   const [additionPreview, setAdditionPreview] = useState<GithubAddFileRequest | null>(null)
   const [additionError, setAdditionError] = useState<string | null>(null)
   const [additionSuccess, setAdditionSuccess] = useState<string | null>(null)
+  const [treeOperation, setTreeOperation] = useState<'MOVE' | 'DELETE'>('MOVE')
+  const [treeOperationSource, setTreeOperationSource] = useState('')
+  const [treeOperationDestination, setTreeOperationDestination] = useState('')
+  const [treeOperationMessage, setTreeOperationMessage] = useState('')
+  const [treeOperationPreview, setTreeOperationPreview] = useState<GithubTreeOperationPreview | null>(null)
+  const [treeOperationError, setTreeOperationError] = useState<string | null>(null)
+  const [treeOperationSuccess, setTreeOperationSuccess] = useState<string | null>(null)
+  const treeOperationPreviewGeneration = useRef(0)
+  const clearTreeOperationPreview = () => { treeOperationPreviewGeneration.current += 1; setTreeOperationPreview(null); setTreeOperationError(null); setTreeOperationSuccess(null) }
   const [targetBusy, setTargetBusy] = useState(false)
   const [targetStep, setTargetStep] = useState<'idle' | 'connecting' | 'repositories' | 'branches' | 'directories' | 'initializing' | 'adding'>('idle')
   const [targetError, setTargetError] = useState<string | null>(null)
@@ -1568,6 +1577,7 @@ function SettingsView({
   const chooseInstallation = async (id: number | null) => {
     const operation = ++targetOperation.current
     setAdditionPreview(null); setAdditionError(null); setAdditionSuccess(null)
+    clearTreeOperationPreview()
     if (id === null) {
       updateAccountSettings({ ...accountSettings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
       setRepositoryId(null); setRepositories([]); setBranches([]); setDirectory(null); setTree(null); setTreeError(null); setEmptyDefaultBranch(null); setReadmePreview(null)
@@ -1590,6 +1600,7 @@ function SettingsView({
   const chooseRepository = async (id: number | null) => {
     const operation = ++targetOperation.current
     setAdditionPreview(null); setAdditionError(null); setAdditionSuccess(null)
+    clearTreeOperationPreview()
     if (id === null) {
       updateAccountSettings({ ...accountSettings, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
       setRepositoryId(null); setBranches([]); setDirectory(null); setTree(null); setTreeError(null); setEmptyDefaultBranch(null); setReadmePreview(null); setBranchesLoaded(false); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
@@ -1621,6 +1632,7 @@ function SettingsView({
   const chooseBranch = async (branch: string, path = '', selectPath = true) => {
     const operation = ++targetOperation.current
     setAdditionPreview(null); setAdditionError(null); setAdditionSuccess(null)
+    clearTreeOperationPreview()
     if (!branch) {
       updateAccountSettings({ ...accountSettings, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
       setDirectory(null); setTree(null); setTreeError(null); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
@@ -1652,6 +1664,7 @@ function SettingsView({
     if (!current?.hasMore || !accountSettings.githubInstallationId || !repositoryId || !accountSettings.githubBranch || !user || targetBusy) return
     const operation = ++targetOperation.current
     setAdditionPreview(null)
+    clearTreeOperationPreview()
     setTargetBusy(true); setTargetStep('directories'); setTreeError(null)
     try {
       const next = await getGithubTree(user.githubId, accountSettings.githubInstallationId,
@@ -1682,6 +1695,9 @@ function SettingsView({
   const confirmAddition = async () => {
     if (!additionPreview || !user || !accountSettings.githubInstallationId || !repositoryId || !tree || !directory || targetBusy) return
     if (additionPreview.branch !== accountSettings.githubBranch || additionPreview.expectedHeadSha !== tree.headSha || (additionPreview.placeholder ? !additionPreview.path.startsWith(directory.currentPath ? `${directory.currentPath}/` : '') : false)) { setAdditionPreview(null); setAdditionError('선택한 브랜치나 폴더가 변경됐습니다. 다시 미리보기 해주세요.'); return }
+    // The file commit changes this tree's HEAD. Any move/delete preview tied to
+    // the old tree must disappear before the write request starts.
+    clearTreeOperationPreview()
     const operation = ++targetOperation.current
     setTargetBusy(true); setTargetStep('adding'); setAdditionError(null); setAdditionSuccess(null)
     try {
@@ -1698,6 +1714,53 @@ function SettingsView({
     } catch (error) {
       if (error instanceof ApiError && error.message === 'GitHub account changed; reconnect required') { onExpectedAccountChange(user.githubId); return }
       if (operation === targetOperation.current) setAdditionError(error instanceof ApiError && error.status === 409 ? '파일·폴더가 이미 있거나 브랜치가 변경됐습니다. 파일 목록을 새로 확인해 주세요.' : githubTargetErrorMessage(error, '커밋 결과를 확인하지 못했습니다. 저장소를 새로고침한 뒤 재시도해 주세요.'))
+    } finally { finishTargetOperation(operation) }
+  }
+  const previewTreeOperation = async () => {
+    setTreeOperationError(null); setTreeOperationSuccess(null); setTreeOperationPreview(null)
+    if (!tree?.headSha || !user || !accountSettings.githubInstallationId || !repositoryId || !accountSettings.githubBranch || tree.hasMore || tree.truncated || !!treeError) { setTreeOperationError('파일 목록을 끝까지 확인한 뒤 다시 시도해 주세요.'); return }
+    if (branches.find(value => value.name === accountSettings.githubBranch)?.protectedBranch) { setTreeOperationError('보호된 브랜치에서는 파일 이동이나 삭제를 할 수 없습니다.'); return }
+    const sourcePath = treeOperationSource.trim(), destinationPath = treeOperationDestination.trim()
+    if (!/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(sourcePath) || sourcePath.split('/').some(part => part === '.' || part === '..' || part.toLowerCase() === '.git')) { setTreeOperationError('원본 경로는 저장소의 안전한 상대 경로여야 합니다.'); return }
+    if (treeOperation === 'MOVE' && (!/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(destinationPath) || destinationPath === sourcePath || destinationPath.startsWith(`${sourcePath}/`))) { setTreeOperationError('이동할 위치는 원본 외부의 안전한 상대 경로여야 합니다.'); return }
+    const message = treeOperationMessage.trim() || `${treeOperation === 'MOVE' ? 'Move' : 'Delete'} ${sourcePath}`
+    if (message.length > 200 || /[\x00-\x1f\x7f]/.test(message)) { setTreeOperationError('커밋 메시지는 한 줄, 200자 이내로 입력해 주세요.'); return }
+    const previewGeneration = ++treeOperationPreviewGeneration.current
+    const operation = ++targetOperation.current
+    setTargetBusy(true); setTargetStep('adding')
+    try {
+      const preview = await previewGithubTreeOperation(user.githubId, accountSettings.githubInstallationId, repositoryId, { operation: treeOperation, branch: accountSettings.githubBranch, sourcePath, destinationPath: treeOperation === 'MOVE' ? destinationPath : null, message, expectedHeadSha: tree.headSha })
+      if (operation === targetOperation.current && previewGeneration === treeOperationPreviewGeneration.current) setTreeOperationPreview(preview)
+    } catch (error) {
+      if (error instanceof ApiError && error.message === 'GitHub account changed; reconnect required') { onExpectedAccountChange(user.githubId); return }
+      if (operation === targetOperation.current) setTreeOperationError(githubTargetErrorMessage(error, '변경 미리보기를 만들지 못했습니다. 파일 목록을 새로고침한 뒤 다시 시도해 주세요.'))
+    } finally { finishTargetOperation(operation) }
+  }
+  const confirmTreeOperation = async () => {
+    if (!treeOperationPreview || !user || !accountSettings.githubInstallationId || !repositoryId || targetBusy) return
+    if (!tree?.headSha || !accountSettings.githubBranch || treeOperationPreview.branch !== accountSettings.githubBranch || treeOperationPreview.expectedHeadSha !== tree.headSha) {
+      treeOperationPreviewGeneration.current += 1
+      setTreeOperationPreview(null)
+      setTreeOperationError('브랜치나 파일 목록이 변경됐습니다. 변경 미리보기를 다시 만들어 주세요.')
+      return
+    }
+    const preview = treeOperationPreview
+    // A confirmation can be ambiguous after the request leaves the browser.
+    // Remove the action immediately so it cannot become a retry affordance.
+    treeOperationPreviewGeneration.current += 1
+    setTreeOperationPreview(null)
+    const operation = ++targetOperation.current
+    setTargetBusy(true); setTargetStep('adding'); setTreeOperationError(null); setTreeOperationSuccess(null)
+    try {
+      const result = await commitGithubTreeOperation(user.githubId, accountSettings.githubInstallationId, repositoryId, preview.previewId)
+      if (operation !== targetOperation.current) return
+      setTreeOperationSource(''); setTreeOperationDestination(''); setTreeOperationMessage('')
+      setTreeOperationSuccess(`커밋 완료 · ${result.commitSha.slice(0, 7)}. 복구가 필요하면 GitHub에서 이 커밋을 되돌리세요.`)
+      try { const updated = await getGithubTree(user.githubId, accountSettings.githubInstallationId, repositoryId, accountSettings.githubBranch!, directory?.currentPath ?? ''); if (operation === targetOperation.current) setTree(updated) }
+      catch { if (operation === targetOperation.current) { setTree(null); setTreeError('커밋 결과를 확인했지만 파일 목록을 새로 불러오지 못했습니다. GitHub에서 커밋 SHA를 확인해 주세요.') } }
+    } catch (error) {
+      if (error instanceof ApiError && error.message === 'GitHub account changed; reconnect required') { onExpectedAccountChange(user.githubId); return }
+      if (operation === targetOperation.current) setTreeOperationError(githubTargetErrorMessage(error, '커밋 결과를 확인하지 못했습니다. GitHub에서 변경 여부를 확인하고 다시 시도하지 마세요.'))
     } finally { finishTargetOperation(operation) }
   }
   const loadInstallations = async (preferredInstallationId?: number | null) => {
@@ -1828,6 +1891,16 @@ function SettingsView({
                     <button type="button" className="ghost-button" disabled={targetBusy || !!treeError || tree.hasMore || tree.truncated} onClick={previewAddition}>변경 미리보기</button>
                     {additionError && <p role="alert">{additionError}</p>}{additionSuccess && <p role="status">{additionSuccess}</p>}
                     {additionPreview && <div className="github-add-preview"><strong>추가될 변경 (미리보기)</strong><p>브랜치: {additionPreview.branch} · 기준 HEAD: {additionPreview.expectedHeadSha.slice(0, 7)}</p><p>새 파일: {additionPreview.path}</p><p>커밋: {additionPreview.message}</p><pre aria-label="추가 파일 diff">{additionPreview.placeholder ? '+ (빈 .gitkeep 파일)' : additionPreview.content.split('\n').map(line => `+${line}`).join('\n')}</pre><button type="button" className="primary-button" disabled={targetBusy} onClick={() => void confirmAddition()}>이 변경을 커밋</button></div>}
+                  </div>}
+                  {directory && tree?.headSha && <div className="github-tree-operation">
+                    <strong>기존 항목 이동·삭제</strong><p>선택만으로는 변경되지 않습니다. GitHub에서 전체 변경을 다시 확인한 뒤 별도로 커밋을 확인합니다.</p>
+                    <div className="github-add-mode" role="group" aria-label="기존 항목 작업"><button type="button" aria-pressed={treeOperation === 'MOVE'} onClick={() => { setTreeOperation('MOVE'); clearTreeOperationPreview() }}>이동</button><button type="button" aria-pressed={treeOperation === 'DELETE'} onClick={() => { setTreeOperation('DELETE'); clearTreeOperationPreview() }}>삭제</button></div>
+                    <label>원본 경로<input aria-label="이동 또는 삭제할 원본 경로" maxLength={1024} value={treeOperationSource} onChange={event => { setTreeOperationSource(event.target.value); clearTreeOperationPreview() }} placeholder="src/Old.java" /></label>
+                    {treeOperation === 'MOVE' && <label>새 경로<input aria-label="이동할 새 경로" maxLength={1024} value={treeOperationDestination} onChange={event => { setTreeOperationDestination(event.target.value); clearTreeOperationPreview() }} placeholder="archive/Old.java" /></label>}
+                    <label>커밋 메시지<input aria-label="이동 또는 삭제 커밋 메시지" maxLength={200} value={treeOperationMessage} onChange={event => { setTreeOperationMessage(event.target.value); clearTreeOperationPreview() }} placeholder="비워두면 작업 경로 사용" /></label>
+                    <button type="button" aria-label="기존 항목 변경 미리보기" className="ghost-button" disabled={targetBusy || !!treeError || tree.hasMore || tree.truncated} onClick={() => void previewTreeOperation()}>변경 미리보기</button>
+                    {treeOperationError && <p role="alert">{treeOperationError}</p>}{treeOperationSuccess && <p role="status">{treeOperationSuccess}</p>}
+                    {treeOperationPreview && <div className="github-add-preview"><strong>{treeOperationPreview.operation === 'MOVE' ? '이동' : '삭제'}될 변경 (미리보기)</strong><p>브랜치: {treeOperationPreview.branch} · 기준 HEAD: {treeOperationPreview.expectedHeadSha.slice(0, 7)}</p><p>파일 {treeOperationPreview.changes.length}개 · 원본: {treeOperationPreview.sourcePath}{treeOperationPreview.destinationPath ? ` → ${treeOperationPreview.destinationPath}` : ''}</p><pre aria-label="이동 또는 삭제 변경 경로">{treeOperationPreview.changes.map(change => `${change.fromPath}${change.toPath ? ` → ${change.toPath}` : ' 삭제'}`).join('\n')}</pre><button type="button" className="primary-button" disabled={targetBusy} onClick={() => void confirmTreeOperation()}>이 변경을 커밋</button></div>}
                   </div>}
                 </div>
                 {draftTargetConfigured && <div className="github-target-current"><Icon name="check" size={15} /><span><strong>현재 대상</strong>{accountSettings.githubOwner}/{accountSettings.githubRepository} · {accountSettings.githubBranch}{accountSettings.githubRootPath ? `/${accountSettings.githubRootPath}` : ''}</span></div>}
