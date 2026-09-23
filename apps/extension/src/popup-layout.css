@@ -46,6 +46,16 @@
   line-height: 1.4;
 }
 
+.recent-progress .recent-title {
+  display: block;
+  margin: 5px 0 0;
+  color: #56476b;
+}
+
+.progress-label {
+  color: #6847c7;
+}
+
 .release-badge {
   display: grid;
   justify-items: end;
