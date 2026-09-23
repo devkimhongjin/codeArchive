@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it } from 'vitest'
 import { CodeBlock } from './CodeBlock'
 afterEach(cleanup)
@@ -38,5 +38,21 @@ it('applies the active Shiki light and dark foreground/background palettes to th
     const dark = container.querySelector<HTMLElement>('.code-viewer')!
     expect(dark.style.backgroundColor).not.toBe('')
     expect(dark.style.backgroundColor).not.toBe(lightBackground)
+  } finally { window.matchMedia = original }
+})
+
+it('selects a dark theme from the single picker while the system is light', async () => {
+  const original = window.matchMedia
+  try {
+    window.matchMedia = (() => ({ matches: false })) as unknown as typeof window.matchMedia
+    let chosen = ''
+    const { container, rerender } = render(<CodeBlock code="const value = 1" language="JavaScript" lightTheme="github-light" darkTheme="dracula" activeMode="light" onThemeChange={theme => { chosen = theme }} />)
+    const select = screen.getByLabelText('코드 보기 테마') as HTMLSelectElement
+    expect(select.querySelectorAll('option')).toHaveLength(10)
+    fireEvent.change(select, { target: { value: 'dracula' } })
+    expect(chosen).toBe('dracula')
+    rerender(<CodeBlock code="const value = 1" language="JavaScript" lightTheme="github-light" darkTheme="dracula" activeMode="dark" onThemeChange={theme => { chosen = theme }} />)
+    await waitFor(() => expect(container.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe('dracula'))
+    expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe('dracula')
   } finally { window.matchMedia = original }
 })

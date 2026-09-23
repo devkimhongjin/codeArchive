@@ -1,0 +1,141 @@
+.capture-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.capture-heading,
+.capture-title,
+.capture-title-text,
+.capture-meta {
+  margin-left: 16px;
+  margin-right: 16px;
+}
+
+.capture-heading {
+  padding-top: 16px;
+}
+
+.capture-title,
+.capture-title-text {
+  max-width: calc(100% - 32px);
+  margin-top: 8px;
+}
+
+.capture-meta {
+  margin-top: 7px;
+}
+
+.capture-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 16px;
+}
+
+.capture-metric {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #eeeaf7;
+  border-radius: 7px;
+  background: #fbfaff;
+}
+
+.capture-metric span {
+  color: #aaa6b6;
+  font-size: 9px;
+}
+
+.capture-metric strong {
+  overflow-wrap: anywhere;
+  color: #464155;
+  font: 600 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.capture-code-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 39px;
+  padding: 0 12px;
+  color: #eeeaff;
+  background: #232139;
+  font-size: 10px;
+}
+
+.capture-code-toolbar span {
+  padding: 3px 5px;
+  border-radius: 3px;
+  color: #a9a4bf;
+  background: #292745;
+  font: 500 8px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.capture-code-viewer {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  min-height: 130px;
+  max-height: 500px;
+  overflow: auto;
+  color: #f5f1ff;
+  background: #282437;
+}
+
+.capture-code-theme-controls {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 10px;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  font-size: 10px;
+}
+
+.capture-code-theme-controls label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.capture-code-theme-controls select {
+  max-width: 150px;
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+
+.capture-code-gutter {
+  display: flex;
+  flex-direction: column;
+  padding: 13px 8px 13px 0;
+  border-right: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  opacity: .55;
+  text-align: right;
+  user-select: none;
+  font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.capture-code-gutter span {
+  height: 1.6em;
+}
+
+.source-code {
+  max-height: none;
+  min-width: 0;
+  margin: 0;
+  padding: 13px;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+@media (max-width: 700px) {
+  .capture-metrics {
+    grid-template-columns: 1fr;
+  }
+}

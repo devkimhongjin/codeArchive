@@ -1,3 +1,5 @@
+import type { LightTheme, DarkTheme } from '../../../shared/codeThemes'
+
 export type Platform = 'SWEA' | 'PROGRAMMERS'
 
 export type ViewName = 'solutions' | 'guide' | 'settings'
@@ -101,7 +103,5 @@ export type GithubRepositoryTarget = { id: number; owner: string; name: string; 
 export type GithubBranchTarget = { name: string; protectedBranch: boolean; commitSha: string }
 export type GithubDirectoryTarget = { currentPath: string; parentPath: string; directories: string[] }
 export type GithubPage<T> = { items: T[]; hasMore: boolean }
-export const LIGHT_THEMES = ['github-light', 'vitesse-light', 'catppuccin-latte', 'solarized-light', 'one-light'] as const
-export const DARK_THEMES = ['github-dark', 'vitesse-dark', 'catppuccin-mocha', 'dracula', 'one-dark-pro'] as const
-export type LightTheme = typeof LIGHT_THEMES[number]
-export type DarkTheme = typeof DARK_THEMES[number]
+export { LIGHT_THEMES, DARK_THEMES } from '../../../shared/codeThemes'
+export type { LightTheme, DarkTheme } from '../../../shared/codeThemes'
