@@ -43,10 +43,13 @@ class CommunityIntegrationTest {
     @Autowired SolutionRepository solutions;
     @Autowired com.codearchive.api.relay.RelayGrantRepository relayGrants;
     @Autowired com.codearchive.api.automation.GithubCommitJobRepository commitJobs;
+    @Autowired CommunityRequestLimitRepository requestLimits;
+    @Autowired CommunityRateLimiter rateLimiter;
 
     @BeforeEach void clear() {
         commitJobs.deleteAll();
         relayGrants.deleteAll();
+        requestLimits.deleteAll();
         settings.deleteAll();
         solutions.deleteAll();
         users.deleteAll();
@@ -179,6 +182,19 @@ class CommunityIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON).content("{\"visibility\":\"PUBLIC\"}"))
                 .andExpect(status().isBadRequest());
         org.assertj.core.api.Assertions.assertThat(solutions.findById(legacy.getId()).orElseThrow().getPublishedAt()).isNull();
+    }
+
+    @Test void accountQuotaPersistsAndRejectsTheEleventhWrite() throws Exception {
+        AppUser owner = account("5005");
+        Solution answer = solution(owner, Platform.SWEA, "1234", "Java", "class Main {}");
+        for (int n = 0; n < 10; n++) org.junit.jupiter.api.Assertions.assertTrue(rateLimiter.allowWrite(owner.getId()));
+        org.junit.jupiter.api.Assertions.assertFalse(rateLimiter.allowWrite(owner.getId()));
+        org.assertj.core.api.Assertions.assertThat(requestLimits.findById(owner.getId())).isPresent();
+        mvc.perform(put("/api/community/solutions/{id}/visibility", answer.getId())
+                .with(login("5005")).with(csrf().asHeader()).header("X-CodeArchive-Github-Id", "5005")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"visibility\":\"published\"}"))
+                .andExpect(status().isTooManyRequests());
+        org.assertj.core.api.Assertions.assertThat(solutions.findById(answer.getId()).orElseThrow().getPublishedAt()).isNull();
     }
 
     private AppUser account(String id) {
