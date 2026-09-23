@@ -141,8 +141,8 @@ function renderCapture(document: Document, capture: Capture): { item: HTMLElemen
   const source = document.createElement("pre");
   source.className = "source-code";
   source.textContent = capture.sourceCode;
-  viewer.append(themeControls, gutter, source);
-  item.append(viewer);
+  viewer.append(gutter, source);
+  item.append(themeControls, viewer);
   return { item, source, viewer, themeSelect, capture };
 }
 

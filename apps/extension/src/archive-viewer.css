@@ -83,12 +83,14 @@
 }
 
 .capture-code-theme-controls {
-  grid-column: 1 / -1;
   display: flex;
   justify-content: flex-end;
   padding: 8px 10px;
-  border-bottom: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border-bottom: 1px solid #e5e0ed;
+  color: #514b61;
+  background: #f8f7fb;
   font-size: 10px;
+  color-scheme: light;
 }
 
 .capture-code-theme-controls label {
@@ -99,10 +101,11 @@
 
 .capture-code-theme-controls select {
   max-width: 150px;
-  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  padding: 3px 5px;
+  border: 1px solid #c9c3d6;
   border-radius: 4px;
-  color: inherit;
-  background: transparent;
+  color: #2a2740;
+  background: #fff;
   font: inherit;
 }
 

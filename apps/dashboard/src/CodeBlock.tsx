@@ -44,9 +44,11 @@ export function CodeBlock({ code, language, lightTheme = 'github-light', darkThe
   const highlighted = result?.code === code && result.language === language && result.theme === theme ? result : null
   const tokens = highlighted?.tokens ?? null
   const lines = code.split('\n')
-  return <div className="code-viewer" role="region" aria-label="소스 코드" data-shiki-theme={highlighted?.theme} style={{ backgroundColor: highlighted?.background, color: highlighted?.foreground, colorScheme: dark ? 'dark' : 'light' }}>
+  return <>
     {onThemeChange && <div className="code-theme-controls"><label>테마 <CodeThemeSelect value={theme} onChange={onThemeChange} /></label></div>}
-    <div className="code-gutter" aria-hidden="true" style={{ color: highlighted?.foreground }}>{lines.map((_, index) => <span className="code-gutter-line" key={index}>{index + 1}</span>)}</div>
-    <pre style={{ backgroundColor: highlighted?.background, color: highlighted?.foreground }}><code>{lines.map((line, index) => <span className="code-line" key={index}><span className="code-content">{tokens?.[index] ? tokens[index].map((token, i) => <span key={i} style={{ color: token.color, fontStyle: token.fontStyle && token.fontStyle & 1 ? 'italic' : undefined, fontWeight: token.fontStyle && token.fontStyle & 2 ? 'bold' : undefined }}>{token.content}</span>) : line}</span>{index < lines.length - 1 ? '\n' : ''}</span>)}</code></pre>
-  </div>
+    <div className="code-viewer" role="region" aria-label="소스 코드" data-shiki-theme={highlighted?.theme} style={{ backgroundColor: highlighted?.background, color: highlighted?.foreground, colorScheme: dark ? 'dark' : 'light' }}>
+      <div className="code-gutter" aria-hidden="true" style={{ color: highlighted?.foreground }}>{lines.map((_, index) => <span className="code-gutter-line" key={index}>{index + 1}</span>)}</div>
+      <pre style={{ backgroundColor: highlighted?.background, color: highlighted?.foreground }}><code>{lines.map((line, index) => <span className="code-line" key={index}><span className="code-content">{tokens?.[index] ? tokens[index].map((token, i) => <span key={i} style={{ color: token.color, fontStyle: token.fontStyle && token.fontStyle & 1 ? 'italic' : undefined, fontWeight: token.fontStyle && token.fontStyle & 2 ? 'bold' : undefined }}>{token.content}</span>) : line}</span>{index < lines.length - 1 ? '\n' : ''}</span>)}</code></pre>
+    </div>
+  </>
 }
