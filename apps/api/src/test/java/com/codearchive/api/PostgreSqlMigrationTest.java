@@ -33,7 +33,7 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
-    private static final int LATEST_MIGRATION = 12;
+    private static final int LATEST_MIGRATION = 13;
 
     @Test
     void freshSchemaMigratesTwiceAndPassesHibernateValidation() throws Exception {
@@ -437,6 +437,7 @@ class PostgreSqlMigrationTest {
             assertEquals("NO", nullable("solutions", "capture_id"));
             assertEquals("NO", nullable("solutions", "source_code"));
             assertEquals("NO", nullable("solutions", "language_key"));
+            assertEquals("YES", nullable("solutions", "published_at"));
             assertEquals("users", scalar(
                     "SELECT table_name FROM information_schema.tables "
                             + "WHERE table_schema = ? AND table_name = 'users'", schema));
@@ -454,6 +455,12 @@ class PostgreSqlMigrationTest {
             assertEquals(1L, ((Number) scalar(
                     "SELECT COUNT(*) FROM pg_indexes "
                             + "WHERE schemaname = ? AND indexname = 'idx_solutions_language_key'", schema)).longValue());
+            assertEquals(1L, ((Number) scalar(
+                    "SELECT COUNT(*) FROM pg_indexes "
+                            + "WHERE schemaname = ? AND indexname = 'idx_solutions_community_problem'", schema)).longValue());
+            assertEquals(1L, ((Number) scalar(
+                    "SELECT COUNT(*) FROM pg_indexes "
+                            + "WHERE schemaname = ? AND indexname = 'idx_solutions_community_owner'", schema)).longValue());
             assertEquals("YES", nullable("solutions", "memory_value"));
             assertEquals("YES", nullable("solutions", "memory_unit"));
             assertEquals("user_settings", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'user_settings'", schema));
