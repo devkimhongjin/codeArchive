@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { parseHTML } from "linkedom";
 import {
   EDITOR_SYNC_ATTRIBUTE,
+  installJungolJudgeObserver,
   installMainWorldSync,
   syncEditorAtSubmitClick
 } from "../src/mainWorld";
@@ -132,4 +133,29 @@ test("MAIN-world Jungol sync reads only the matching Monaco model at submit", ()
   const wrongWindow = { monaco: { editor: { getModels: () => [{ ...model, uri: { toString: () => "file:///workspace/problem_9999_JAVA.java" } }] } } } as unknown as Window;
   assert.equal(syncEditorAtSubmitClick(document, location, wrongWindow), false);
   assert.match(document.documentElement.getAttribute(EDITOR_SYNC_ATTRIBUTE) ?? "", /^failed:/);
+});
+
+test("MAIN-world Jungol observer reads only the unchanged exact judge POST", async () => {
+  const { document } = parseHTML('<html><body><button>language Java 8</button></body></html>');
+  const calls: Array<{ input: string; body: string | undefined }> = [];
+  const originalFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input: String(input), body: typeof init?.body === "string" ? init.body : undefined });
+    return new Response("ok");
+  }) as typeof fetch;
+  const fakeWindow = { fetch: originalFetch } as unknown as Window;
+  const cleanup = installJungolJudgeObserver(document, locationFor("https://jungol.co.kr/problem/4577"), fakeWindow);
+  const body = JSON.stringify({ problemId: 4577, language: "JAVA", altLanguage: "JAVA8", sourceText: "class Main {}" });
+  await fakeWindow.fetch("https://saet.jungol.co.kr/judge", { method: "POST", headers: { "content-type": "application/json" }, body });
+  const source = document.querySelector("textarea[data-codearchive-jungol-source]") as HTMLTextAreaElement;
+  assert.equal(source.value, "class Main {}");
+  assert.equal(source.dataset.codearchiveJungolLanguage, "Java 8");
+  assert.match(source.dataset.codearchiveJungolRequestAt ?? "", /^\d+$/);
+  assert.match(document.documentElement.getAttribute(EDITOR_SYNC_ATTRIBUTE) ?? "", /^synced:/);
+  await fakeWindow.fetch("https://saet.jungol.co.kr/judge", { method: "POST", headers: { "content-type": "application/json" }, body: body.replace("4577", "9999") });
+  await fakeWindow.fetch("https://saet.jungol.co.kr/other", { method: "POST", headers: { "content-type": "application/json" }, body: body.replace("class Main {}", "wrong") });
+  assert.equal(source.value, "class Main {}", "another problem or endpoint must not replace the snapshot");
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0]?.body, body, "the platform request must be forwarded unchanged");
+  cleanup();
+  assert.equal(fakeWindow.fetch, originalFetch);
 });

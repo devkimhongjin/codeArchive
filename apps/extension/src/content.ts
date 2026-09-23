@@ -109,6 +109,19 @@ function startCapture(adapter: PlatformAdapter, document: Document): void {
   let processing = false;
   let checkScheduled = false;
   let checkAfterProcessing = false;
+  let resultPoll: ReturnType<typeof setInterval> | null = null;
+
+  function ensureResultPoll(): void {
+    if (!adapter.hasPendingSubmissionAttempt || resultPoll !== null) return;
+    resultPoll = setInterval(() => {
+      if (!adapter.hasPendingSubmissionAttempt?.()) {
+        clearInterval(resultPoll!);
+        resultPoll = null;
+        return;
+      }
+      scheduleCaptureCheck();
+    }, 300);
+  }
 
   const runCaptureCheck = async (): Promise<void> => {
     if (processing) {
@@ -120,6 +133,11 @@ function startCapture(adapter: PlatformAdapter, document: Document): void {
 
     processing = true;
     try {
+      if (adapter.confirmCaptureAsync) {
+        const confirmed = await adapter.confirmCaptureAsync(collected.capture, collected.detection);
+        if (!confirmed) return;
+        Object.assign(collected.capture, confirmed);
+      }
       if (
         adapter.collectPerformanceAsync &&
         collected.capture.executionTime === undefined &&
@@ -174,6 +192,8 @@ function startCapture(adapter: PlatformAdapter, document: Document): void {
           // document_idle listener and synchronously updates the platform's
           // source textarea at this click boundary.
           adapter.beginSubmissionAttempt(new Date());
+          ensureResultPoll();
+          scheduleCaptureCheck();
           break;
         }
         current = current.parentElement;

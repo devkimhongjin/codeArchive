@@ -116,6 +116,62 @@ function syncJungol(document: Document, location: Location, window: MainWorldWin
   }
 }
 
+/** Observe only the platform's own JSON judge POST, without changing it. */
+export function installJungolJudgeObserver(document: Document, location: Location, window: MainWorldWindow): () => void {
+  const originalFetch = window.fetch;
+  const observedFetch: typeof fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    try {
+      if (isJungol(location) && (typeof input === "string" || input instanceof URL) && init?.method?.toUpperCase() === "POST" && typeof init.body === "string") {
+        const url = new URL(String(input), location.href);
+        const headers = new Headers(init.headers);
+        if (
+          ((url.origin === "https://saet.jungol.co.kr" && url.pathname === "/judge") ||
+            (url.origin === JUNGOL_ORIGIN && url.pathname === "/saet/judge")) &&
+          headers.get("content-type")?.startsWith("application/json")
+        ) {
+          const payload: unknown = JSON.parse(init.body);
+          if (payload && typeof payload === "object") {
+            const judge = payload as Record<string, unknown>;
+            const problemNumber = location.pathname.match(JUNGOL_PROBLEM_PATH)?.[1];
+            const sourceCode = judge.sourceText;
+            const altLanguage = judge.altLanguage;
+            const languageButtons = [...document.querySelectorAll("button")].filter((button) =>
+              /^language\s+\S/.test(button.textContent?.replace(/\s+/g, " ").trim() ?? "")
+            );
+            const language = languageButtons.length === 1
+              ? languageButtons[0]?.textContent?.replace(/\s+/g, " ").trim().replace(/^language\s+/, "")
+              : null;
+            if (
+              problemNumber && Number(judge.problemId) === Number(problemNumber) &&
+              typeof sourceCode === "string" && sourceCode.trim() && sourceCode.length <= 1_000_000 &&
+              typeof altLanguage === "string" && typeof language === "string" &&
+              altLanguage.replace(/[^a-z0-9]/gi, "").toUpperCase() === language.replace(/[^a-z0-9]/gi, "").toUpperCase()
+            ) {
+              let source = document.querySelector<HTMLTextAreaElement>(JUNGOL_SOURCE_SELECTOR);
+              if (!source) {
+                source = document.createElement("textarea");
+                source.dataset.codearchiveJungolSource = "";
+                source.hidden = true;
+                (document.body ?? document.documentElement).append(source);
+              }
+              source.value = sourceCode;
+              source.dataset.codearchiveJungolProblem = problemNumber;
+              source.dataset.codearchiveJungolLanguage = language;
+              source.dataset.codearchiveJungolRequestAt = String(Date.now());
+              setSyncStatus(document, "synced");
+            }
+          }
+        }
+      }
+    } catch {
+      // Never interfere with the site's own submission request.
+    }
+    return originalFetch.call(window, input, init);
+  }) as typeof fetch;
+  window.fetch = observedFetch;
+  return () => { if (window.fetch === observedFetch) window.fetch = originalFetch; };
+}
+
 export function syncEditorAtSubmitClick(document: Document, location: Location, window: MainWorldWindow = globalThis as unknown as MainWorldWindow): boolean {
   const synced = isSwea(location)
     ? syncSwea(document, window)
@@ -151,11 +207,15 @@ function submitTarget(target: EventTarget | null, document: Document, location: 
 }
 
 export function installMainWorldSync(document: Document, location: Location, window: MainWorldWindow = globalThis as unknown as MainWorldWindow): () => void {
+  const removeJungolObserver = location && isJungol(location) ? installJungolJudgeObserver(document, location, window) : () => {};
   const onClick = (event: Event) => {
     if (submitTarget(event.target, document, location)) void syncEditorAtSubmitClick(document, location, window);
   };
   document.addEventListener("click", onClick, true);
-  return () => document.removeEventListener("click", onClick, true);
+  return () => {
+    document.removeEventListener("click", onClick, true);
+    removeJungolObserver();
+  };
 }
 
 if (typeof document !== "undefined" && typeof window !== "undefined") {

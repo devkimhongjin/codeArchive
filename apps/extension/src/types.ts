@@ -83,10 +83,14 @@ export interface PlatformAdapter {
   detectEditor(): EditorData | null;
   collectPerformance(): PerformanceData | null;
   collectPerformanceAsync?(capture: Capture): Promise<PerformanceData | null>;
+  /** Mandatory, site-backed confirmation before a candidate can be persisted. */
+  confirmCaptureAsync?(capture: Capture, detection: SubmissionResultDetection): Promise<Capture | null>;
   isSubmitControl(element: Element): boolean;
   beginSubmissionAttempt(now?: Date): void;
   consumeSubmissionResult(detection: SubmissionResultDetection): void;
   getSubmissionSnapshot?(): SubmissionSnapshot | null;
+  /** Keep a bounded result check alive when CSS or SPA state changes without DOM mutations. */
+  hasPendingSubmissionAttempt?(): boolean;
 }
 
 export interface CaptureSettings {

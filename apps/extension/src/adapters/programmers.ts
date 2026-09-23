@@ -6,7 +6,7 @@ import type {
   SubmissionSnapshot,
   SubmissionResultDetection
 } from "../types";
-import { elementText, firstElement, isVisible, mainWorldSyncFailed, normalizeText, parseFiniteNonNegative } from "./dom";
+import { elementText, firstElement, mainWorldSyncFailed, normalizeText, parseFiniteNonNegative } from "./dom";
 import {
   PROGRAMMERS_ACCEPTED_DIALOG_SELECTOR,
   PROGRAMMERS_ACCEPTED_TITLE_SELECTOR,
@@ -29,7 +29,13 @@ function exactLessonPage(location: Location): boolean {
 
 function acceptedDialog(document: Document): Element | null {
   const dialog = document.querySelector(PROGRAMMERS_ACCEPTED_DIALOG_SELECTOR);
-  if (!dialog || !isVisible(dialog)) return null;
+  // Bootstrap's .show/aria-modal mutation precedes the CSS opacity transition.
+  // Opacity can still be zero at the only observer callback for this dialog.
+  if (!dialog || dialog.hasAttribute("hidden") || dialog.getAttribute("aria-hidden") === "true") return null;
+  const style = (dialog as HTMLElement).style;
+  if (style?.display === "none" || style?.visibility === "hidden") return null;
+  const computed = dialog.ownerDocument.defaultView?.getComputedStyle?.(dialog);
+  if (computed?.display === "none" || computed?.visibility === "hidden") return null;
   const title = normalizeText(dialog.querySelector(PROGRAMMERS_ACCEPTED_TITLE_SELECTOR)?.textContent);
   return title === "정답입니다!" ? dialog : null;
 }
@@ -87,6 +93,12 @@ function resultGroupSignature(document: Document): string | null {
   return group ? elementText(group) : null;
 }
 
+function duplicateCodeNotice(document: Document): Element | null {
+  const notices = [...document.querySelectorAll(".console-content .console-failed")]
+    .filter((element) => normalizeText(element.textContent) === "같은 코드로 채점한 결과가 있습니다.");
+  return notices.length === 1 ? notices[0] ?? null : null;
+}
+
 function parseResultGroup(group: Element): PerformanceData | null {
   const cells = Array.from(group.querySelectorAll(PROGRAMMERS_RESULT_CELL_SELECTOR));
   if (cells.length === 0) return null;
@@ -117,6 +129,8 @@ interface PendingAttempt {
   context: string;
   baselineDialog: WeakMap<Element, string>;
   baselineResultGroup: string | null;
+  baselineResultElement: Element | null;
+  baselineDuplicateNotice: Element | null;
   consumed: WeakSet<Element>;
   observedNoDialog: boolean;
   snapshot: SubmissionSnapshot;
@@ -164,8 +178,20 @@ export class ProgrammersAdapter implements PlatformAdapter {
     const attempt = this.pendingAttempt;
     if (!attempt) return null;
     const signature = resultGroupSignature(this.document);
-    if (signature === null || signature === attempt.baselineResultGroup) return null;
-    return parseResultGroup(resultGroup(this.document)!);
+    const group = resultGroup(this.document);
+    if (signature === null || !group) return null;
+    const freshGroup = group !== attempt.baselineResultElement || signature !== attempt.baselineResultGroup;
+    const notice = duplicateCodeNotice(this.document);
+    const freshDuplicateNotice = notice !== null && notice !== attempt.baselineDuplicateNotice;
+    // The site may reuse identical test results for a duplicate-code submit.
+    // A new exact duplicate notice is evidence that the result belongs to this click.
+    if (!freshGroup && !freshDuplicateNotice) return null;
+    return parseResultGroup(group);
+  }
+
+  hasPendingSubmissionAttempt(): boolean {
+    this.expireAttempt();
+    return this.pendingAttempt !== null;
   }
 
   isSubmitControl(element: Element): boolean {
@@ -181,6 +207,8 @@ export class ProgrammersAdapter implements PlatformAdapter {
       context: this.location.href,
       baselineDialog,
       baselineResultGroup: resultGroupSignature(this.document),
+      baselineResultElement: resultGroup(this.document),
+      baselineDuplicateNotice: duplicateCodeNotice(this.document),
       consumed: new WeakSet<Element>(),
       observedNoDialog: false,
       // Read metadata and the hidden source textarea at the click boundary.
