@@ -1,10 +1,9 @@
 import type { Capture, EditorData, PerformanceData, PlatformAdapter, ProblemMetadata, SubmissionResultDetection, SubmissionSnapshot } from "../types";
 import { mainWorldSyncFailed, normalizeText } from "./dom";
 import { JUNGOL_ORIGIN, JUNGOL_PROBLEM_PATH, JUNGOL_SOURCE_SELECTOR, jungolSubmitControl } from "./jungolSelectors";
-import { jungolSignedInHandle, verifyJungolCapture } from "./jungolVerification";
+import { jungolAcceptedResult, type JungolAcceptedResult } from "./jungolResult";
 
 export const JUNGOL_ATTEMPT_TTL_MS = 120_000;
-const VERIFY_INTERVAL_MS = 3_000;
 
 function problem(document: Document, location: Location): ProblemMetadata | null {
   const number = location.pathname.match(JUNGOL_PROBLEM_PATH)?.[1];
@@ -30,8 +29,9 @@ function editor(document: Document, problemNumber: string, startedAt: number, no
 interface PendingAttempt {
   startedAt: number;
   context: string;
-  account: string | null;
-  nextVerifyAt: number;
+  baselineResult: JungolAcceptedResult | null;
+  result: JungolAcceptedResult | null;
+  requestAt: number | null;
   snapshot: SubmissionSnapshot;
 }
 
@@ -43,8 +43,7 @@ export class JungolAdapter implements PlatformAdapter {
     private readonly document: Document,
     private readonly location: Location,
     private readonly attemptTtlMs = JUNGOL_ATTEMPT_TTL_MS,
-    private readonly clock: () => number = () => Date.now(),
-    private readonly request: typeof fetch = fetch
+    private readonly clock: () => number = () => Date.now()
   ) {}
 
   detectProblem(): ProblemMetadata | null { return problem(this.document, this.location); }
@@ -67,8 +66,9 @@ export class JungolAdapter implements PlatformAdapter {
     this.pendingAttempt = {
       startedAt: now.getTime(),
       context: this.location.href,
-      account: jungolSignedInHandle(this.document),
-      nextVerifyAt: now.getTime() + 500,
+      baselineResult: jungolAcceptedResult(this.document),
+      result: null,
+      requestAt: null,
       snapshot
     };
   }
@@ -80,14 +80,22 @@ export class JungolAdapter implements PlatformAdapter {
       attempt.snapshot.editor = this.detectEditor();
       if (attempt.snapshot.editor) {
         const source = this.document.querySelector<HTMLTextAreaElement>(JUNGOL_SOURCE_SELECTOR);
-        if (source) source.value = "";
+        if (source) {
+          attempt.requestAt = Number(source.dataset.codearchiveJungolRequestAt);
+          source.value = "";
+        }
       }
     }
-    if (!attempt?.account || !attempt.snapshot.problem || !attempt.snapshot.editor || this.clock() < attempt.nextVerifyAt) return null;
-    attempt.nextVerifyAt = this.clock() + VERIFY_INTERVAL_MS;
-    // This is a verification candidate, not acceptance. The actual record is
-    // checked against the site's own submission ID/account/problem/code/verdict.
-    return { accepted: true, resultText: "정답", attemptToken: attempt };
+    if (!attempt?.snapshot.problem || !attempt.snapshot.editor || attempt.requestAt === null) return null;
+    const source = this.document.querySelector<HTMLTextAreaElement>(JUNGOL_SOURCE_SELECTOR);
+    if (!source || Number(source.dataset.codearchiveJungolRequestAt) !== attempt.requestAt ||
+        source.dataset.codearchiveJungolProblem !== attempt.snapshot.problem.problemNumber ||
+        source.dataset.codearchiveJungolLanguage !== attempt.snapshot.editor.language ||
+        (source.value !== "" && source.value !== attempt.snapshot.editor.sourceCode)) return null;
+    const result = jungolAcceptedResult(this.document);
+    if (!result || (result.element === attempt.baselineResult?.element && result.signature === attempt.baselineResult.signature)) return null;
+    attempt.result = result;
+    return { accepted: true, resultText: "정답 100점", element: result.element, attemptToken: attempt };
   }
 
   getSubmissionSnapshot(): SubmissionSnapshot | null {
@@ -100,18 +108,20 @@ export class JungolAdapter implements PlatformAdapter {
     return this.pendingAttempt !== null;
   }
 
-  collectPerformance(): PerformanceData | null { return null; }
+  collectPerformance(): PerformanceData | null { return this.pendingAttempt?.result?.performance ?? null; }
 
   async confirmCaptureAsync(capture: Capture, detection: SubmissionResultDetection): Promise<Capture | null> {
     const attempt = this.pendingAttempt;
-    if (!attempt?.account || detection.attemptToken !== attempt || !attempt.snapshot.problem || !attempt.snapshot.editor) return null;
-    try {
-      const confirmed = await verifyJungolCapture(capture, attempt.account, attempt.startedAt, this.request);
-      this.expireAttempt();
-      return this.pendingAttempt === attempt ? confirmed : null;
-    } catch {
-      return null;
-    }
+    const requestAt = attempt?.requestAt;
+    if (!attempt || detection.attemptToken !== attempt || !attempt.snapshot.problem || !attempt.snapshot.editor || !attempt.result ||
+        requestAt === null || requestAt === undefined || !Number.isSafeInteger(requestAt) ||
+        requestAt < attempt.startedAt || requestAt > this.clock() + 1_000 ||
+        capture.problemNumber !== attempt.snapshot.problem.problemNumber || capture.sourceCode !== attempt.snapshot.editor.sourceCode ||
+        capture.language !== attempt.snapshot.editor.language) return null;
+    this.expireAttempt();
+    return this.pendingAttempt === attempt
+      ? { ...capture, ...attempt.result.performance, solvedAt: new Date(requestAt).toISOString() }
+      : null;
   }
 
   consumeSubmissionResult(detection: SubmissionResultDetection): void {
