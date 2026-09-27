@@ -13,14 +13,16 @@ function problem(document: Document, location: Location): ProblemMetadata | null
   return { problemNumber: number, title, problemUrl: `${JUNGOL_ORIGIN}/problem/${number}` };
 }
 
-function editor(document: Document, problemNumber: string, startedAt: number, now: number): EditorData | null {
+function editor(document: Document, problemNumber: string, startedAt: number, now: number, requireRequest: boolean): EditorData | null {
   if (mainWorldSyncFailed(document)) return null;
   const status = document.documentElement.getAttribute("data-codearchive-editor-sync")?.match(/^synced:(\d+)$/);
-  if (!status || Math.abs(now - Number(status[1])) > 5_000) return null;
+  const syncedAt = Number(status?.[1]);
+  if (!status || !Number.isSafeInteger(syncedAt) ||
+      (requireRequest ? Math.abs(now - syncedAt) > 5_000 : Math.abs(startedAt - syncedAt) > 1_000)) return null;
   const source = document.querySelector<HTMLTextAreaElement>(JUNGOL_SOURCE_SELECTOR);
   const requestAt = Number(source?.dataset.codearchiveJungolRequestAt);
   if (!source || source.dataset.codearchiveJungolProblem !== problemNumber || !source.value.trim() ||
-      !Number.isSafeInteger(requestAt) || requestAt < startedAt || requestAt > now + 1_000) return null;
+      (requireRequest && (!Number.isSafeInteger(requestAt) || requestAt < startedAt || requestAt > now + 1_000))) return null;
   const language = source.dataset.codearchiveJungolLanguage;
   if (!language) return null;
   return { language, sourceCode: source.value };
@@ -51,16 +53,20 @@ export class JungolAdapter implements PlatformAdapter {
   detectEditor(): EditorData | null {
     const current = this.detectProblem();
     return current && this.pendingAttempt
-      ? editor(this.document, current.problemNumber, this.pendingAttempt.startedAt, this.clock())
+      ? editor(this.document, current.problemNumber, this.pendingAttempt.startedAt, this.clock(), true)
       : null;
   }
 
   isSubmitControl(element: Element): boolean { return jungolSubmitControl(element); }
 
   beginSubmissionAttempt(now = new Date()): void {
-    // The authoritative source is the site's /judge POST, emitted after its
-    // async Monaco model read. A click-time DOM snapshot can be stale.
     const snapshot: SubmissionSnapshot = { problem: this.detectProblem(), editor: null };
+    // MAIN world reads the matching Monaco model before this click listener.
+    // Keep that exact source for site revisions that no longer send the old
+    // /judge JSON shape. A matching observed request still takes precedence.
+    if (snapshot.problem) {
+      snapshot.editor = editor(this.document, snapshot.problem.problemNumber, now.getTime(), this.clock(), false);
+    }
     const source = this.document.querySelector<HTMLTextAreaElement>(JUNGOL_SOURCE_SELECTOR);
     if (source) source.value = "";
     this.pendingAttempt = {
@@ -68,7 +74,7 @@ export class JungolAdapter implements PlatformAdapter {
       context: this.location.href,
       baselineResult: jungolAcceptedResult(this.document),
       result: null,
-      requestAt: null,
+      requestAt: snapshot.editor ? now.getTime() : null,
       snapshot
     };
   }
@@ -76,9 +82,10 @@ export class JungolAdapter implements PlatformAdapter {
   detectSubmissionResult(): SubmissionResultDetection | null {
     this.expireAttempt();
     const attempt = this.pendingAttempt;
-    if (attempt && !attempt.snapshot.editor) {
-      attempt.snapshot.editor = this.detectEditor();
-      if (attempt.snapshot.editor) {
+    if (attempt) {
+      const requestEditor = this.detectEditor();
+      if (requestEditor) {
+        attempt.snapshot.editor = requestEditor;
         const source = this.document.querySelector<HTMLTextAreaElement>(JUNGOL_SOURCE_SELECTOR);
         if (source) {
           attempt.requestAt = Number(source.dataset.codearchiveJungolRequestAt);
@@ -88,9 +95,10 @@ export class JungolAdapter implements PlatformAdapter {
     }
     if (!attempt?.snapshot.problem || !attempt.snapshot.editor || attempt.requestAt === null) return null;
     const source = this.document.querySelector<HTMLTextAreaElement>(JUNGOL_SOURCE_SELECTOR);
-    if (!source || Number(source.dataset.codearchiveJungolRequestAt) !== attempt.requestAt ||
-        source.dataset.codearchiveJungolProblem !== attempt.snapshot.problem.problemNumber ||
+    if (!source || source.dataset.codearchiveJungolProblem !== attempt.snapshot.problem.problemNumber ||
         source.dataset.codearchiveJungolLanguage !== attempt.snapshot.editor.language ||
+        (Number(source.dataset.codearchiveJungolRequestAt) >= attempt.startedAt &&
+          Number(source.dataset.codearchiveJungolRequestAt) !== attempt.requestAt) ||
         (source.value !== "" && source.value !== attempt.snapshot.editor.sourceCode)) return null;
     const result = jungolAcceptedResult(this.document);
     if (!result || (result.element === attempt.baselineResult?.element && result.signature === attempt.baselineResult.signature)) return null;

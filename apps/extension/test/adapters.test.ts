@@ -10,10 +10,10 @@ function locationFor(href: string): Location {
   return new URL(href) as unknown as Location;
 }
 
-test("Jungol saves only a fresh 100-point result paired with the exact judge request", async () => {
+test("Jungol prefers an exact judge request when available", async () => {
   const { document } = parseHTML('<html><body><h1><span>책 정리 로봇</span><span class="limit">2s</span></h1><button id="submit">upload 제출</button><textarea data-codearchive-jungol-source data-codearchive-jungol-problem="4577" data-codearchive-jungol-language="Java 8"></textarea></body></html>');
   const source = document.querySelector("textarea") as HTMLTextAreaElement;
-  source.value = "class Main {}";
+  source.value = "class Click {}";
   let now = Date.now();
   document.documentElement.setAttribute("data-codearchive-editor-sync", `synced:${now}`);
   const adapter = new JungolAdapter(document, locationFor("https://jungol.co.kr/problem/4577"), 120_000, () => now);
@@ -21,9 +21,9 @@ test("Jungol saves only a fresh 100-point result paired with the exact judge req
   assert.equal(adapter.isSubmitControl(document.querySelector("#submit")!), true);
   adapter.beginSubmissionAttempt(new Date(now));
   assert.equal(adapter.detectSubmissionResult(), null, "a click alone must not count");
-  assert.equal(adapter.getSubmissionSnapshot()?.editor, null, "click-time source is not authoritative");
+  assert.equal(adapter.getSubmissionSnapshot()?.editor?.sourceCode, "class Click {}");
   now += 250;
-  source.value = "class Main {}";
+  source.value = "class Request {}";
   source.dataset.codearchiveJungolRequestAt = String(now);
   document.documentElement.setAttribute("data-codearchive-editor-sync", `synced:${now}`);
   now += 250;
@@ -31,9 +31,9 @@ test("Jungol saves only a fresh 100-point result paired with the exact judge req
   document.body.insertAdjacentHTML("beforeend", '<div class="result-dialog"><h2 id="dialog-title-0">정답이에요!</h2><div id="dialog-desc-0">정답 100점 474ms 34,544MB</div><button>닫기</button></div>');
   const detection = adapter.detectSubmissionResult();
   assert.equal(detection?.accepted, true);
-  assert.deepEqual(adapter.getSubmissionSnapshot()?.editor, { language: "Java 8", sourceCode: "class Main {}" });
+  assert.deepEqual(adapter.getSubmissionSnapshot()?.editor, { language: "Java 8", sourceCode: "class Request {}" });
   assert.deepEqual(adapter.collectPerformance(), { executionTime: 474, memoryValue: 34544, memoryUnit: "MB", memoryUsage: 34544 });
-  const capture = { problemNumber: "4577", language: "Java 8", sourceCode: "class Main {}" } as Parameters<NonNullable<typeof adapter.confirmCaptureAsync>>[0];
+  const capture = { problemNumber: "4577", language: "Java 8", sourceCode: "class Request {}" } as Parameters<NonNullable<typeof adapter.confirmCaptureAsync>>[0];
   const confirmed = await adapter.confirmCaptureAsync(capture, detection!);
   assert.equal(confirmed?.solvedAt, new Date(now - 250).toISOString());
   assert.equal(confirmed?.memoryUnit, "MB");
@@ -41,6 +41,28 @@ test("Jungol saves only a fresh 100-point result paired with the exact judge req
   adapter.consumeSubmissionResult(detection!);
   assert.equal(adapter.detectSubmissionResult(), null);
   assert.equal(new JungolAdapter(document, locationFor("https://jungol.co.kr/problem/4577/submission")).detectProblem(), null);
+});
+
+test("Jungol saves a fresh accepted dialog with the matching click-time Monaco source when the old judge POST is absent", async () => {
+  const { document } = parseHTML('<html><body><h1><span class="name">계단 오르기</span></h1><textarea data-codearchive-jungol-source data-codearchive-jungol-problem="1520" data-codearchive-jungol-language="Java 8"></textarea></body></html>');
+  const source = document.querySelector("textarea") as HTMLTextAreaElement;
+  const now = Date.now();
+  source.value = "class Main {}";
+  document.documentElement.setAttribute("data-codearchive-editor-sync", `synced:${now}`);
+  const adapter = new JungolAdapter(document, locationFor("https://jungol.co.kr/problem/1520"), 120_000, () => now);
+  adapter.beginSubmissionAttempt(new Date(now));
+  assert.deepEqual(adapter.getSubmissionSnapshot()?.editor, { language: "Java 8", sourceCode: "class Main {}" });
+  assert.equal(source.value, "", "the click-time code remains frozen in the attempt, not in the page DOM");
+  assert.equal(adapter.detectSubmissionResult(), null, "code without a new accepted result is insufficient");
+  document.body.insertAdjacentHTML("beforeend", '<div class="result-dialog"><h2 id="dialog-title-0">정답이에요!</h2><div id="dialog-desc-0">정답 100점 474ms 34,544MB</div><button>닫기</button></div>');
+  const detection = adapter.detectSubmissionResult();
+  assert.equal(detection?.accepted, true);
+  const capture = { problemNumber: "1520", language: "Java 8", sourceCode: "class Main {}" } as Parameters<NonNullable<typeof adapter.confirmCaptureAsync>>[0];
+  assert.deepEqual(await adapter.confirmCaptureAsync(capture, detection!), {
+    ...capture, executionTime: 474, memoryValue: 34544, memoryUnit: "MB", memoryUsage: 34544,
+    solvedAt: new Date(now).toISOString()
+  });
+  assert.equal(await adapter.confirmCaptureAsync({ ...capture, sourceCode: "other" }, detection!), null);
 });
 
 test("Jungol rejects public history and mismatched or unsynced editor source", () => {

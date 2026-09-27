@@ -106,6 +106,7 @@ function syncJungol(document: Document, location: Location, window: MainWorldWin
     source.value = sourceCode;
     source.dataset.codearchiveJungolProblem = problemNumber;
     source.dataset.codearchiveJungolLanguage = language;
+    delete source.dataset.codearchiveJungolRequestAt;
     return true;
   } catch {
     return false;

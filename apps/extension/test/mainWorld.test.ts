@@ -129,6 +129,9 @@ test("MAIN-world Jungol sync reads only the matching Monaco model at submit", ()
   assert.equal(source.value, "class Main {}");
   assert.equal(source.dataset.codearchiveJungolProblem, "4577");
   assert.equal(source.dataset.codearchiveJungolLanguage, "Java 8");
+  source.dataset.codearchiveJungolRequestAt = "1";
+  assert.equal(syncEditorAtSubmitClick(document, location, window), true);
+  assert.equal(source.dataset.codearchiveJungolRequestAt, undefined, "a new click must not inherit the previous judge request");
   assert.match(document.documentElement.getAttribute(EDITOR_SYNC_ATTRIBUTE) ?? "", /^synced:/);
   const wrongWindow = { monaco: { editor: { getModels: () => [{ ...model, uri: { toString: () => "file:///workspace/problem_9999_JAVA.java" } }] } } } as unknown as Window;
   assert.equal(syncEditorAtSubmitClick(document, location, wrongWindow), false);
