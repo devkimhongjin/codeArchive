@@ -29,7 +29,7 @@ export function jungolAcceptedResult(document: Document): JungolAcceptedResult |
   if (closeButtons.length !== 1) return null;
 
   const signature = normalizeText(description.textContent);
-  const match = signature.match(/^정답\s*100점\s*(\d+(?:\.\d+)?)\s*ms\s*(\d[\d,]*(?:\.\d+)?)\s*(KB|KiB|MB|MiB)$/);
+  const match = signature.match(/^정답\s*100점\s*(\d+(?:\.\d+)?)\s*ms\s*(\d[\d,]*(?:\.\d+)?)\s*(KB|KiB|MB|MiB)(?:\s*다음 문제도 풀어볼까요\?(?:\s*다음 문제[\s\S]*)?)?$/);
   if (!match) return null;
   const executionTime = Number(match[1]);
   const memoryValue = Number(match[2]!.replace(/,/g, ""));

@@ -65,7 +65,9 @@ test("Jungol result requires one visible complete success dialog", () => {
   document.body.insertAdjacentHTML("beforeend", '<div id="result"><h2 id="dialog-title-0">정답이에요!</h2><div id="dialog-desc-0"><span>정답</span><b>100점</b><span>474ms</span><span>34,544MB</span></div><button aria-label="닫기"></button></div>');
   assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 474, memoryValue: 34544, memoryUnit: "MB", memoryUsage: 34544 });
   const description = document.querySelector("#dialog-desc-0")!;
-  for (const invalid of ["오답 100점 474ms 34,544MB", "정답 99점 474ms 34,544MB", "정답 100점 미측정 34,544MB", "정답 100점 474ms 34,544"] ) {
+  description.textContent = "정답 100점 213 ms 34,184 MB 다음 문제도 풀어볼까요? 다음 문제 요플레 공장 #2194";
+  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 213, memoryValue: 34184, memoryUnit: "MB", memoryUsage: 34184 }, "the live dialog includes a next-problem suggestion after the metrics");
+  for (const invalid of ["오답 100점 474ms 34,544MB", "정답 99점 474ms 34,544MB", "정답 100점 미측정 34,544MB", "정답 100점 474ms 34,544", "정답 100점 474ms 34,544MB 오답"]) {
     description.textContent = invalid;
     assert.equal(jungolAcceptedResult(document), null, invalid);
   }
