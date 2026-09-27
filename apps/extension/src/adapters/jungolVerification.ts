@@ -16,11 +16,13 @@ export function jungolAcceptedIds(html: string, account: string, problemNumber: 
   for (const row of page.querySelectorAll("table tbody tr")) {
     const cells = row.querySelectorAll("td");
     if (cells.length < 8) continue;
-    const href = cells[0]?.querySelector("a[href]")?.getAttribute("href");
-    const link = href ? new URL(href, ORIGIN) : null;
+    const href = (cells[0]?.querySelector("a[href]") ?? cells[6]?.querySelector("a[href]"))?.getAttribute("href");
+    const link = href ? new URL(href, `${ORIGIN}/submission`) : null;
     const sid = link?.searchParams.get("sid");
+    const displayedId = cells[0]?.textContent?.replace(/\s+/g, " ").trim().match(/^(\d+)(?:\s*\+\d+)?$/)?.[1];
     const problemHref = cells[1]?.querySelector("a[href^='/problem/']")?.getAttribute("href");
-    if (!sid || !/^\d+$/.test(sid) || link?.origin !== ORIGIN || link.searchParams.get("account") !== account || problemHref !== `/problem/${problemNumber}`) continue;
+    if (!sid || !/^\d+$/.test(sid) || displayedId !== sid || link?.origin !== ORIGIN || link.pathname !== "/submission" ||
+        link.searchParams.get("account") !== account || problemHref !== `/problem/${problemNumber}`) continue;
     if (cells[2]?.textContent?.replace(/\s+/g, " ").trim() !== "정답 100점") continue;
     const relativeTime = cells[7]?.textContent?.replace(/\s+/g, " ").trim() ?? "";
     const minutes = relativeTime.match(/^(\d+)분 전$/);

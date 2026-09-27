@@ -47,11 +47,25 @@ test("Jungol rejects public history and mismatched or unsynced editor source", (
   assert.equal(jungolSignedInHandle(document), null);
 });
 
+test("Jungol reads the title only from the new problem heading", () => {
+  const { document } = parseHTML('<h1><span class="head"><span class="name">계단 오르기</span><span class="limit">1s 128MB</span></span></h1>');
+  const adapter = new JungolAdapter(document, locationFor("https://jungol.co.kr/problem/1520?cursor=abc"));
+  assert.equal(adapter.detectProblem()?.title, "계단 오르기");
+});
+
 test("Jungol verifies exact account/problem/code/verdict/time and authoritative metrics", () => {
   globalThis.DOMParser = DOMParser as typeof globalThis.DOMParser;
   const list = '<table><tbody><tr><td><a href="?account=alice&sid=42">42</a></td><td><a href="/problem/4577">책 정리 로봇 #4577</a></td><td>정답 100점</td><td>12ms</td><td>32MB</td><td>10B</td><td>Java 8</td><td>방금 전</td></tr></tbody></table>';
   assert.deepEqual(jungolAcceptedIds(list, "alice", "4577"), [42]);
   assert.deepEqual(jungolAcceptedIds(list, "alice", "9999"), []);
+  const updatedList = '<table><tbody><tr><td>42 <button>+1</button></td><td><a href="/problem/4577">책 정리 로봇 #4577</a></td><td>정답 100점</td><td>12ms</td><td>32MB</td><td>10B</td><td><a href="?account=alice&sid=42">Java 8</a></td><td>방금 전</td></tr></tbody></table>';
+  assert.deepEqual(jungolAcceptedIds(updatedList, "alice", "4577"), [42]);
+  assert.deepEqual(jungolAcceptedIds(updatedList.replace('42 <button>', '42<button>'), "alice", "4577"), [42]);
+  assert.deepEqual(jungolAcceptedIds(updatedList.replace('sid=42', 'sid=43'), "alice", "4577"), [], "displayed submission ID must match the detail link");
+  assert.deepEqual(jungolAcceptedIds(updatedList.replace('account=alice', 'account=bob'), "alice", "4577"), []);
+  assert.deepEqual(jungolAcceptedIds(updatedList.replace('/problem/4577', '/problem/9999'), "alice", "4577"), []);
+  assert.deepEqual(jungolAcceptedIds(updatedList.replace('정답 100점', '오답 0점'), "alice", "4577"), []);
+  assert.deepEqual(jungolAcceptedIds(updatedList.replace('방금 전', '4분 전'), "alice", "4577"), []);
   const capture = { platform: "JUNGOL", problemNumber: "4577", language: "Java 8", sourceCode: "class Main {}" } as Parameters<typeof parseVerifiedJungolDetail>[3];
   const detail = '"$/submission/42":{data:{m_reason:"AC",score:100,m_time:12,m_memory:32768,language:"JAVA",altLanguage:"JAVA8",additional:{account:"alice",time:100000,submissionId:42},source:[{name:"Main.java",source:"class Main {}"}],size:13,submissionId:42,problemId:4577,accountInfo:{handle:"alice"},problemInfo:{title:"책 정리 로봇"}}';
   assert.deepEqual(parseVerifiedJungolDetail(detail, 42, "alice", capture, 99000, 101000), {
@@ -68,7 +82,7 @@ test("Jungol does not persist on a toast or unverifiable page; a matching new de
   globalThis.DOMParser = DOMParser as typeof globalThis.DOMParser;
   const now = Date.now();
   const capture = { platform: "JUNGOL", problemNumber: "1520", language: "Java 8", sourceCode: "class Main {}", solvedAt: new Date(now).toISOString() } as Parameters<typeof verifyJungolCapture>[0];
-  const list = `<table><tbody><tr><td><a href="?account=alice&sid=43">43</a></td><td><a href="/problem/1520">계단 오르기 #1520</a></td><td>정답 100점</td><td>208ms</td><td>33.2MB</td><td>13B</td><td>Java 8</td><td>방금 전</td></tr></tbody></table><script>window.x={list:[{p:1520,id:43,r:"AC",s:100,d:208,m:34040,u:"alice",l:"JAVA",t:${now},c:null}]}</script>`;
+  const list = `<table><tbody><tr><td>43 <button>+1</button></td><td><a href="/problem/1520">계단 오르기 #1520</a></td><td>정답 100점</td><td>208ms</td><td>33.2MB</td><td>13B</td><td><a href="?account=alice&sid=43">Java 8</a></td><td>방금 전</td></tr></tbody></table><script>window.x={list:[{p:1520,id:43,r:"AC",s:100,d:208,m:34040,u:"alice",l:"JAVA",t:${now},c:null}]}</script>`;
   const detail = `"$/submission/43":{data:{m_reason:"AC",score:100,m_time:208,m_memory:34040,language:"JAVA",altLanguage:"JAVA8",additional:{account:"alice",time:${now},submissionId:43},source:[{name:"Main.java",source:"class Main {}"}],size:13,submissionId:43,problemId:1520,accountInfo:{handle:"alice"},problemInfo:{title:"계단 오르기"}}`;
   let calls = 0;
   const request = (async (url: string | URL | Request) => {

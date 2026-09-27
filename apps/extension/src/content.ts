@@ -1,6 +1,7 @@
 import { createAdapter } from "./adapters";
 import { collectAcceptedCaptureAttempt } from "./capture";
 import type { Capture, PlatformAdapter } from "./types";
+import { canonicalLanguageKey } from "../../../shared/language";
 import {
   createSweaProblemContext,
   normalizeSweaDetailUrl,
@@ -90,10 +91,15 @@ export async function storeCaptureWithRetry(
   send: SendRuntimeMessage = (message) => chrome.runtime.sendMessage(message),
   sleep: Sleep = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))
 ): Promise<unknown> {
+  // Keep the site's exact language through submission verification, then store
+  // Java versions under one name across all platforms.
+  const storedCapture = canonicalLanguageKey(capture.language) === "java"
+    ? { ...capture, language: "Java", languageKey: "java" }
+    : capture;
   let response: unknown;
   for (let attempt = 0; attempt <= STORE_CAPTURE_RETRY_DELAYS_MS.length; attempt += 1) {
     try {
-      response = await send({ type: "STORE_CAPTURE", capture });
+      response = await send({ type: "STORE_CAPTURE", capture: storedCapture });
       if ((response as { ok?: unknown } | null)?.ok === true) return response;
     } catch {
       response = undefined;

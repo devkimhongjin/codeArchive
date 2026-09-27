@@ -83,6 +83,20 @@ test("content capture retries transient worker failures and preserves the same p
   assert.deepEqual(messages[1], messages[2]);
 });
 
+test("Java versions are stored as Java only after site verification", async () => {
+  for (const language of ["Java 8", "Java 15", "JAVA15", "Java 17 (OpenJDK)"]) {
+    const original = { ...capture(), language, languageKey: "java" };
+    let stored: typeof original | undefined;
+    await storeCaptureWithRetry(original, async message => {
+      stored = (message as { capture: typeof original }).capture;
+      return { ok: true };
+    });
+    assert.equal(original.language, language, "the submission's exact language remains available for verification");
+    assert.equal(stored?.language, "Java");
+    assert.equal(stored?.languageKey, "java");
+  }
+});
+
 test("content capture stops after the bounded retry budget", async () => {
   const delays: number[] = [];
   let calls = 0;

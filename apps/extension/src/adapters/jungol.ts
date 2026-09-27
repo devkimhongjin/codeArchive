@@ -9,7 +9,7 @@ const VERIFY_INTERVAL_MS = 3_000;
 function problem(document: Document, location: Location): ProblemMetadata | null {
   const number = location.pathname.match(JUNGOL_PROBLEM_PATH)?.[1];
   if (location.origin !== JUNGOL_ORIGIN || !number) return null;
-  const title = normalizeText(document.querySelector("h1 > span")?.textContent);
+  const title = normalizeText(document.querySelector("h1 .name")?.textContent ?? document.querySelector("h1 > span")?.textContent);
   if (!title) return null;
   return { problemNumber: number, title, problemUrl: `${JUNGOL_ORIGIN}/problem/${number}` };
 }

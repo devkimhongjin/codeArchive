@@ -135,8 +135,19 @@ test("MAIN-world Jungol sync reads only the matching Monaco model at submit", ()
   assert.match(document.documentElement.getAttribute(EDITOR_SYNC_ATTRIBUTE) ?? "", /^failed:/);
 });
 
+test("MAIN-world Jungol sync accepts the new language chip but rejects ambiguous chips", () => {
+  const { document } = parseHTML('<html><body><div class="monaco-editor" data-uri="file:///workspace/problem_4577_JAVA.java"></div><button class="lang-chip">Java 8</button><button>제출</button></body></html>');
+  const model = { uri: { toString: () => "file:///workspace/problem_4577_JAVA.java" }, getValue: () => "class Main {}" };
+  const window = { monaco: { editor: { getModels: () => [model] } } } as unknown as Window;
+  const location = locationFor("https://jungol.co.kr/problem/4577");
+  assert.equal(syncEditorAtSubmitClick(document, location, window), true);
+  assert.equal(document.querySelector<HTMLTextAreaElement>("textarea[data-codearchive-jungol-source]")?.dataset.codearchiveJungolLanguage, "Java 8");
+  document.body.append(document.querySelector(".lang-chip")!.cloneNode(true));
+  assert.equal(syncEditorAtSubmitClick(document, location, window), false);
+});
+
 test("MAIN-world Jungol observer reads only the unchanged exact judge POST", async () => {
-  const { document } = parseHTML('<html><body><button>language Java 8</button></body></html>');
+  const { document } = parseHTML('<html><body><button class="lang-chip">Java 8</button></body></html>');
   const calls: Array<{ input: string; body: string | undefined }> = [];
   const originalFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push({ input: String(input), body: typeof init?.body === "string" ? init.body : undefined });
