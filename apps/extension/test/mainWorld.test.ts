@@ -149,6 +149,25 @@ test("MAIN-world Jungol sync accepts the new language chip but rejects ambiguous
   assert.equal(syncEditorAtSubmitClick(document, location, window), false);
 });
 
+test("MAIN-world Jungol listener remains ready after same-document list-to-problem navigation", () => {
+  const { document } = parseHTML('<html><body><div class="monaco-editor" data-uri="file:///workspace/problem_1073_JAVA.java"></div><button class="lang-chip">Java 8</button><button id="submit">제출</button></body></html>');
+  const model = { uri: { toString: () => "file:///workspace/problem_1073_JAVA.java" }, getValue: () => "class Main {}" };
+  const originalFetch = (async () => new Response("ok")) as typeof fetch;
+  const window = { fetch: originalFetch, monaco: { editor: { getModels: () => [model] } } } as unknown as Window;
+  const location = locationFor("https://jungol.co.kr/problem");
+  const cleanup = installMainWorldSync(document, location, window);
+  const click = document.createEvent("Event");
+  click.initEvent("click", true, true);
+  document.querySelector("#submit")!.dispatchEvent(click);
+  assert.equal(document.documentElement.getAttribute(EDITOR_SYNC_ATTRIBUTE), null);
+  (location as unknown as URL).pathname = "/problem/1073";
+  document.querySelector("#submit")!.dispatchEvent(click);
+  assert.match(document.documentElement.getAttribute(EDITOR_SYNC_ATTRIBUTE) ?? "", /^synced:/);
+  assert.equal(document.querySelector<HTMLTextAreaElement>("textarea[data-codearchive-jungol-source]")?.dataset.codearchiveJungolProblem, "1073");
+  cleanup();
+  assert.equal(window.fetch, originalFetch);
+});
+
 test("MAIN-world Jungol observer reads only the unchanged exact judge POST", async () => {
   const { document } = parseHTML('<html><body><button class="lang-chip">Java 8</button></body></html>');
   const calls: Array<{ input: string; body: string | undefined }> = [];

@@ -4,6 +4,7 @@ import { parseHTML } from "linkedom";
 import { ProgrammersAdapter, isProgrammersAccepted } from "../src/adapters/programmers";
 import { SweaAdapter, isSweaAccepted } from "../src/adapters/swea";
 import { JungolAdapter } from "../src/adapters/jungol";
+import { createAdapter } from "../src/adapters";
 import { jungolAcceptedResult } from "../src/adapters/jungolResult";
 
 function locationFor(href: string): Location {
@@ -28,7 +29,7 @@ test("Jungol prefers an exact judge request when available", async () => {
   document.documentElement.setAttribute("data-codearchive-editor-sync", `synced:${now}`);
   now += 250;
   assert.equal(adapter.detectSubmissionResult(), null, "the judge request alone must not count");
-  document.body.insertAdjacentHTML("beforeend", '<div class="result-dialog"><h2 id="dialog-title-0">정답이에요!</h2><div id="dialog-desc-0">정답 100점 474ms 34,544MB</div><button>닫기</button></div>');
+  document.body.insertAdjacentHTML("beforeend", '<div class="result-dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title-0" aria-describedby="dialog-desc-0"><h2 id="dialog-title-0">정답이에요!</h2><div id="dialog-desc-0">정답 100점 474ms 34,544MB</div><button>닫기</button></div>');
   const detection = adapter.detectSubmissionResult();
   assert.equal(detection?.accepted, true);
   assert.deepEqual(adapter.getSubmissionSnapshot()?.editor, { language: "Java 8", sourceCode: "class Request {}" });
@@ -54,7 +55,7 @@ test("Jungol saves a fresh accepted dialog with the matching click-time Monaco s
   assert.deepEqual(adapter.getSubmissionSnapshot()?.editor, { language: "Java 8", sourceCode: "class Main {}" });
   assert.equal(source.value, "", "the click-time code remains frozen in the attempt, not in the page DOM");
   assert.equal(adapter.detectSubmissionResult(), null, "code without a new accepted result is insufficient");
-  document.body.insertAdjacentHTML("beforeend", '<div class="result-dialog"><h2 id="dialog-title-0">정답이에요!</h2><div id="dialog-desc-0">정답 100점 474ms 34,544MB</div><button>닫기</button></div>');
+  document.body.insertAdjacentHTML("beforeend", '<div class="result-dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title-0" aria-describedby="dialog-desc-0"><h2 id="dialog-title-0">정답이에요!</h2><div id="dialog-desc-0">정답 100점 474ms 34,544MB</div><button>닫기</button></div>');
   const detection = adapter.detectSubmissionResult();
   assert.equal(detection?.accepted, true);
   const capture = { problemNumber: "1520", language: "Java 8", sourceCode: "class Main {}" } as Parameters<NonNullable<typeof adapter.confirmCaptureAsync>>[0];
@@ -81,15 +82,24 @@ test("Jungol reads the title only from the new problem heading", () => {
   assert.equal(adapter.detectProblem()?.title, "계단 오르기");
 });
 
+test("Jungol adapter survives a list-to-problem navigation in the same document", () => {
+  const { document } = parseHTML('<html><body><h1><span class="name">삼각형둘레</span></h1></body></html>');
+  const location = locationFor("https://jungol.co.kr/problem");
+  const adapter = createAdapter(document, location);
+  assert.equal(adapter?.platform, "JUNGOL");
+  assert.equal(adapter.detectProblem(), null, "a list page is not itself a problem capture");
+  (location as unknown as URL).pathname = "/problem/1073";
+  assert.equal(adapter.detectProblem()?.problemNumber, "1073");
+});
+
 test("Jungol result requires one visible complete success dialog", () => {
   const { document } = parseHTML('<html><body><h5>정답이에요!</h5><table><tr><td>정답 100점</td></tr></table></body></html>');
   assert.equal(jungolAcceptedResult(document), null);
-  document.body.insertAdjacentHTML("beforeend", '<div id="result"><div class="content"><h2 id="dialog-title-0">정답이에요!</h2><div id="dialog-desc-0"><span>정답</span><b>100점</b><span>474ms</span><span>34,544MB</span></div></div><footer><button aria-label="닫기"></button></footer></div>');
+  document.body.insertAdjacentHTML("beforeend", '<div id="result" role="dialog" aria-modal="true" aria-labelledby="dialog-title-0" aria-describedby="dialog-desc-0"><button aria-label="닫기"></button><div class="content"><h2 id="dialog-title-0">정답이에요!</h2><div id="dialog-desc-0"><span>정답</span><b>100점</b><span>474ms</span><span>34,544MB</span></div></div><footer><button>닫기</button></footer></div>');
   assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 474, memoryValue: 34544, memoryUnit: "MB", memoryUsage: 34544 });
-  const close = document.querySelector("#result button")!;
-  close.removeAttribute("aria-label");
+  const close = document.querySelector("#result footer button")!;
   close.innerHTML = '<span class="material-symbols-outlined">close</span>닫기';
-  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 474, memoryValue: 34544, memoryUnit: "MB", memoryUsage: 34544 }, "an icon plus close label is still the live result dialog");
+  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 474, memoryValue: 34544, memoryUnit: "MB", memoryUsage: 34544 }, "the live dialog has both an icon close control and a footer close button");
   const description = document.querySelector("#dialog-desc-0")!;
   description.innerHTML = '<span>정답 100점 474ms 34,544MB</span><div>다음 문제도 풀어볼까요?</div><button>다음 문제</button>';
   assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 474, memoryValue: 34544, memoryUnit: "MB", memoryUsage: 34544 }, "a next-problem button must not be mistaken for the dialog close control");
@@ -102,12 +112,15 @@ test("Jungol result requires one visible complete success dialog", () => {
     assert.equal(jungolAcceptedResult(document), null, invalid);
   }
   description.textContent = "정답 100점 474ms 34,544MB";
+  document.querySelector("#result")!.setAttribute("aria-labelledby", "dialog-title-999");
+  assert.equal(jungolAcceptedResult(document), null, "a dialog linked to a different title cannot be accepted");
+  document.querySelector("#result")!.setAttribute("aria-labelledby", "dialog-title-0");
   document.querySelector("#result")!.setAttribute("hidden", "");
   assert.equal(jungolAcceptedResult(document), null, "hidden history is not a fresh result");
 });
 
 test("Jungol rejects a pre-existing result and a second judge request", () => {
-  const { document } = parseHTML('<html><body><h1><span>계단 오르기</span></h1><div class="result-dialog"><h2 id="dialog-title-0">정답이에요!</h2><div id="dialog-desc-0">정답 100점 474ms 34,544MB</div><button>닫기</button></div><textarea data-codearchive-jungol-source data-codearchive-jungol-problem="1520" data-codearchive-jungol-language="Java 8"></textarea></body></html>');
+  const { document } = parseHTML('<html><body><h1><span>계단 오르기</span></h1><div class="result-dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title-0" aria-describedby="dialog-desc-0"><h2 id="dialog-title-0">정답이에요!</h2><div id="dialog-desc-0">정답 100점 474ms 34,544MB</div><button>닫기</button></div><textarea data-codearchive-jungol-source data-codearchive-jungol-problem="1520" data-codearchive-jungol-language="Java 8"></textarea></body></html>');
   const source = document.querySelector("textarea") as HTMLTextAreaElement;
   const now = Date.now();
   const adapter = new JungolAdapter(document, locationFor("https://jungol.co.kr/problem/1520"), 120_000, () => now);

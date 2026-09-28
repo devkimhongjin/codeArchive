@@ -1,6 +1,7 @@
 import { PROGRAMMERS_CODE_SELECTOR, PROGRAMMERS_LESSON_PATH, PROGRAMMERS_ORIGIN, PROGRAMMERS_SUBMIT_SELECTOR } from "./adapters/programmersSelectors";
 import { SWEA_EDITOR_SELECTORS, SWEA_ORIGIN, SWEA_SOLVING_PATH, SWEA_SUBMIT_SELECTORS } from "./adapters/sweaSelectors";
 import { JUNGOL_ORIGIN, JUNGOL_PROBLEM_PATH, JUNGOL_SOURCE_SELECTOR, jungolSelectedLanguage, jungolSubmitControl } from "./adapters/jungolSelectors";
+import { BUILD_METADATA } from "../../../shared/buildMetadata";
 
 export const EDITOR_SYNC_ATTRIBUTE = "data-codearchive-editor-sync";
 
@@ -199,7 +200,10 @@ function submitTarget(target: EventTarget | null, document: Document, location: 
 }
 
 export function installMainWorldSync(document: Document, location: Location, window: MainWorldWindow = globalThis as unknown as MainWorldWindow): () => void {
-  const removeJungolObserver = location && isJungol(location) ? installJungolJudgeObserver(document, location, window) : () => {};
+  const markReady = () => document.documentElement?.setAttribute("data-codearchive-main-world-build", BUILD_METADATA.buildId);
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", markReady, { once: true });
+  else markReady();
+  const removeJungolObserver = location?.origin === JUNGOL_ORIGIN ? installJungolJudgeObserver(document, location, window) : () => {};
   const onClick = (event: Event) => {
     if (submitTarget(event.target, document, location)) void syncEditorAtSubmitClick(document, location, window);
   };

@@ -2,6 +2,7 @@ import { createAdapter } from "./adapters";
 import { collectAcceptedCaptureAttempt } from "./capture";
 import type { Capture, PlatformAdapter } from "./types";
 import { canonicalLanguageKey } from "../../../shared/language";
+import { BUILD_METADATA } from "../../../shared/buildMetadata";
 import {
   createSweaProblemContext,
   normalizeSweaDetailUrl,
@@ -119,6 +120,7 @@ export async function storeCaptureWithRetry(
 }
 
 export function startCapture(adapter: PlatformAdapter, document: Document, send: SendRuntimeMessage): void {
+  document.documentElement?.setAttribute("data-codearchive-content-build", BUILD_METADATA.buildId);
   let processing = false;
   let invalidated = false;
   let checkScheduled = false;
@@ -248,6 +250,7 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
       let current: Element | null = target;
       while (current) {
         if (adapter.isSubmitControl(current)) {
+          if (adapter.platform === "JUNGOL" && !adapter.detectProblem()) break;
           // The MAIN-world document_start listener runs before this isolated
           // document_idle listener and synchronously updates the platform's
           // source textarea at this click boundary.
@@ -271,7 +274,9 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
 
   const root = document.body ?? document.documentElement;
   if (root) {
-    observer = new MutationObserver(() => scheduleCaptureCheck());
+    observer = new MutationObserver(() => {
+      if (adapter.platform !== "JUNGOL" || adapter.hasPendingSubmissionAttempt?.()) scheduleCaptureCheck();
+    });
     observer.observe(root, {
       subtree: true,
       childList: true,

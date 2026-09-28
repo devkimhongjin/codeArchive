@@ -15,7 +15,10 @@ export function createAdapter(
   if (location.origin === "https://school.programmers.co.kr" && /^\/learn\/courses\/30\/lessons\/\d+\/?$/.test(location.pathname)) {
     return new ProgrammersAdapter(document, location);
   }
-  if (location.origin === "https://jungol.co.kr" && /^\/problem\/\d+\/?$/.test(location.pathname)) {
+  // Jungol navigates from lists to problems without reloading the document.
+  // Keep the adapter alive across that route change; its problem detection
+  // remains restricted to an exact /problem/<number> path.
+  if (location.origin === "https://jungol.co.kr") {
     return new JungolAdapter(document, location);
   }
   return null;

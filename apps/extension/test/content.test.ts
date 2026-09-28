@@ -83,6 +83,48 @@ test("content capture retries transient worker failures and preserves the same p
   assert.deepEqual(messages[1], messages[2]);
 });
 
+test("Jungol ignores list-page submit controls but starts collecting after SPA navigation to a problem", async () => {
+  const { document } = parseHTML("<html><body><button id='submit'>제출</button></body></html>");
+  const previousElement = globalThis.Element;
+  const previousObserver = globalThis.MutationObserver;
+  Object.assign(globalThis, { Element: document.defaultView!.Element, MutationObserver: document.defaultView!.MutationObserver });
+  const location = new URL("https://jungol.co.kr/problem");
+  let pending = false;
+  let begun = 0;
+  const phases: string[] = [];
+  const adapter: PlatformAdapter = {
+    platform: "JUNGOL",
+    detectProblem: () => location.pathname === "/problem/1073"
+      ? { problemNumber: "1073", title: "삼각형둘레", problemUrl: location.href }
+      : null,
+    detectSubmissionResult: () => null,
+    detectEditor: () => null,
+    collectPerformance: () => null,
+    isSubmitControl: element => element.id === "submit",
+    beginSubmissionAttempt: () => { begun += 1; pending = true; },
+    hasPendingSubmissionAttempt: () => pending,
+    consumeSubmissionResult: () => undefined
+  };
+  try {
+    startCapture(adapter, document, async message => {
+      phases.push((message as { phase: string }).phase);
+      return { ok: true };
+    });
+    (document.querySelector("#submit") as HTMLButtonElement).click();
+    assert.equal(begun, 0);
+    assert.deepEqual(phases, []);
+    location.pathname = "/problem/1073";
+    (document.querySelector("#submit") as HTMLButtonElement).click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(begun, 1);
+    assert.equal(phases[0], "CAPTURING");
+    pending = false;
+    await new Promise(resolve => setTimeout(resolve, 350));
+  } finally {
+    Object.assign(globalThis, { Element: previousElement, MutationObserver: previousObserver });
+  }
+});
+
 test("an invalidated extension context stops retrying the old tab", async () => {
   let calls = 0;
   const delays: number[] = [];
