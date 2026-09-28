@@ -24,8 +24,8 @@
     {
       "matches": [
         "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do*",
-        "https://school.programmers.co.kr/learn/courses/30/lessons/*",
-        "https://jungol.co.kr/problem/*"
+        "https://school.programmers.co.kr/*",
+        "https://jungol.co.kr/*"
       ],
       "world": "MAIN",
       "js": [
@@ -38,8 +38,8 @@
         "https://swexpertacademy.com/main/code/problem/problemDetail.do*",
         "https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do*",
         "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do*",
-        "https://school.programmers.co.kr/learn/courses/30/lessons/*",
-        "https://jungol.co.kr/problem/*"
+        "https://school.programmers.co.kr/*",
+        "https://jungol.co.kr/*"
       ],
       "js": [
         "content.js"

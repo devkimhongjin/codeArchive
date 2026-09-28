@@ -48,6 +48,8 @@ it('selects a dark theme from the single picker while the system is light', asyn
     let chosen = ''
     const { container, rerender } = render(<CodeBlock code="const value = 1" language="JavaScript" lightTheme="github-light" darkTheme="dracula" activeMode="light" onThemeChange={theme => { chosen = theme }} />)
     const select = screen.getByLabelText('코드 보기 테마') as HTMLSelectElement
+    expect(container.querySelector('.code-viewer .code-theme-controls')).toBeNull()
+    expect(container.querySelector('.code-theme-controls + .code-viewer')).not.toBeNull()
     expect(select.querySelectorAll('option')).toHaveLength(10)
     fireEvent.change(select, { target: { value: 'dracula' } })
     expect(chosen).toBe('dracula')

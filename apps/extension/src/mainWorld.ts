@@ -1,6 +1,7 @@
 import { PROGRAMMERS_CODE_SELECTOR, PROGRAMMERS_LESSON_PATH, PROGRAMMERS_ORIGIN, PROGRAMMERS_SUBMIT_SELECTOR } from "./adapters/programmersSelectors";
 import { SWEA_EDITOR_SELECTORS, SWEA_ORIGIN, SWEA_SOLVING_PATH, SWEA_SUBMIT_SELECTORS } from "./adapters/sweaSelectors";
-import { JUNGOL_ORIGIN, JUNGOL_PROBLEM_PATH, JUNGOL_SOURCE_SELECTOR, jungolSubmitControl } from "./adapters/jungolSelectors";
+import { JUNGOL_ORIGIN, JUNGOL_PROBLEM_PATH, JUNGOL_SOURCE_SELECTOR, jungolSelectedLanguage, jungolSubmitControl } from "./adapters/jungolSelectors";
+import { BUILD_METADATA } from "../../../shared/buildMetadata";
 
 export const EDITOR_SYNC_ATTRIBUTE = "data-codearchive-editor-sync";
 
@@ -94,12 +95,8 @@ function syncJungol(document: Document, location: Location, window: MainWorldWin
     if (matches.length !== 1) return false;
     const sourceCode = matches[0]?.getValue();
     if (!sourceCode?.trim()) return false;
-    const languageButtons = [...document.querySelectorAll("button")].filter((button) =>
-      /^language\s+\S/.test(button.textContent?.replace(/\s+/g, " ").trim() ?? "")
-    );
-    if (languageButtons.length !== 1) return false;
-    const language = languageButtons[0]?.textContent?.replace(/\s+/g, " ").trim().replace(/^language\s+/, "");
-    if (!language || language.length > 100) return false;
+    const language = jungolSelectedLanguage(document);
+    if (!language) return false;
     let source = document.querySelector<HTMLTextAreaElement>(JUNGOL_SOURCE_SELECTOR);
     if (!source) {
       source = document.createElement("textarea");
@@ -110,6 +107,7 @@ function syncJungol(document: Document, location: Location, window: MainWorldWin
     source.value = sourceCode;
     source.dataset.codearchiveJungolProblem = problemNumber;
     source.dataset.codearchiveJungolLanguage = language;
+    delete source.dataset.codearchiveJungolRequestAt;
     return true;
   } catch {
     return false;
@@ -135,12 +133,7 @@ export function installJungolJudgeObserver(document: Document, location: Locatio
             const problemNumber = location.pathname.match(JUNGOL_PROBLEM_PATH)?.[1];
             const sourceCode = judge.sourceText;
             const altLanguage = judge.altLanguage;
-            const languageButtons = [...document.querySelectorAll("button")].filter((button) =>
-              /^language\s+\S/.test(button.textContent?.replace(/\s+/g, " ").trim() ?? "")
-            );
-            const language = languageButtons.length === 1
-              ? languageButtons[0]?.textContent?.replace(/\s+/g, " ").trim().replace(/^language\s+/, "")
-              : null;
+            const language = jungolSelectedLanguage(document);
             if (
               problemNumber && Number(judge.problemId) === Number(problemNumber) &&
               typeof sourceCode === "string" && sourceCode.trim() && sourceCode.length <= 1_000_000 &&
@@ -207,7 +200,10 @@ function submitTarget(target: EventTarget | null, document: Document, location: 
 }
 
 export function installMainWorldSync(document: Document, location: Location, window: MainWorldWindow = globalThis as unknown as MainWorldWindow): () => void {
-  const removeJungolObserver = location && isJungol(location) ? installJungolJudgeObserver(document, location, window) : () => {};
+  const markReady = () => document.documentElement?.setAttribute("data-codearchive-main-world-build", BUILD_METADATA.buildId);
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", markReady, { once: true });
+  else markReady();
+  const removeJungolObserver = location?.origin === JUNGOL_ORIGIN ? installJungolJudgeObserver(document, location, window) : () => {};
   const onClick = (event: Event) => {
     if (submitTarget(event.target, document, location)) void syncEditorAtSubmitClick(document, location, window);
   };

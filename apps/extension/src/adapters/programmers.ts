@@ -79,7 +79,7 @@ function detectEditor(document: Document): EditorData | null {
   // it may be hidden, so visibility is deliberately not a trust signal here.
   const language = normalizeProgrammersLanguage(document.querySelector(PROGRAMMERS_LANGUAGE_SELECTOR)?.textContent);
   const codeElement = firstElement<HTMLTextAreaElement>(document, [PROGRAMMERS_CODE_SELECTOR]);
-  if (!language || !codeElement || typeof codeElement.value !== "string") return null;
+  if (!language || !codeElement || typeof codeElement.value !== "string" || !codeElement.value.trim()) return null;
   return { language, sourceCode: codeElement.value };
 }
 

@@ -1,6 +1,8 @@
 import { createAdapter } from "./adapters";
 import { collectAcceptedCaptureAttempt } from "./capture";
 import type { Capture, PlatformAdapter } from "./types";
+import { canonicalLanguageKey } from "../../../shared/language";
+import { BUILD_METADATA } from "../../../shared/buildMetadata";
 import {
   createSweaProblemContext,
   normalizeSweaDetailUrl,
@@ -19,6 +21,10 @@ const STORE_CAPTURE_RETRY_DELAYS_MS = [50, 150, 500] as const;
 
 type SendRuntimeMessage = (message: unknown) => Promise<unknown>;
 type Sleep = (delayMs: number) => Promise<void>;
+
+function extensionContextInvalidated(error: unknown): boolean {
+  return error instanceof Error && /extension context invalidated/i.test(error.message);
+}
 
 export async function storeSweaProblemContext(
   document: Document,
@@ -90,12 +96,20 @@ export async function storeCaptureWithRetry(
   send: SendRuntimeMessage = (message) => chrome.runtime.sendMessage(message),
   sleep: Sleep = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))
 ): Promise<unknown> {
+  // Keep the site's exact language through submission verification, then store
+  // Java versions under one name across all platforms.
+  const storedCapture = canonicalLanguageKey(capture.language) === "java"
+    ? { ...capture, language: "Java", languageKey: "java" }
+    : capture;
   let response: unknown;
   for (let attempt = 0; attempt <= STORE_CAPTURE_RETRY_DELAYS_MS.length; attempt += 1) {
     try {
-      response = await send({ type: "STORE_CAPTURE", capture });
+      response = await send({ type: "STORE_CAPTURE", capture: storedCapture });
       if ((response as { ok?: unknown } | null)?.ok === true) return response;
-    } catch {
+    } catch (error) {
+      // Reloading an unpacked extension permanently invalidates the old tab's
+      // content-script context. Retrying that context cannot reach the worker.
+      if (extensionContextInvalidated(error)) return undefined;
       response = undefined;
     }
 
@@ -106,29 +120,68 @@ export async function storeCaptureWithRetry(
 }
 
 export function startCapture(adapter: PlatformAdapter, document: Document, send: SendRuntimeMessage): void {
+  document.documentElement?.setAttribute("data-codearchive-content-build", BUILD_METADATA.buildId);
   let processing = false;
+  let invalidated = false;
   let checkScheduled = false;
   let checkAfterProcessing = false;
   let resultPoll: ReturnType<typeof setInterval> | null = null;
+  let observer: MutationObserver | null = null;
   let activeAttemptId: string | null = null;
 
+  function markCaptureStage(stage: string, attemptId: string | null = activeAttemptId): void {
+    if (adapter.platform !== "PROGRAMMERS" || (attemptId && attemptId !== activeAttemptId)) return;
+    // A non-sensitive, page-local diagnostic for the next real submission.
+    // Never include source, identity, capture IDs, or runtime error messages.
+    document.documentElement?.setAttribute("data-codearchive-capture-stage", stage);
+  }
+
+  function stopInvalidatedContext(): void {
+    if (invalidated) return;
+    invalidated = true;
+    markCaptureStage("context-invalidated");
+    if (resultPoll !== null) clearInterval(resultPoll);
+    resultPoll = null;
+    observer?.disconnect();
+    const root = document.body ?? document.documentElement;
+    if (!root || document.getElementById("codearchive-reload-required")) return;
+    const notice = document.createElement("div");
+    notice.id = "codearchive-reload-required";
+    notice.setAttribute("role", "alert");
+    notice.style.cssText = "position:fixed;z-index:2147483647;bottom:16px;left:16px;right:16px;padding:14px 18px;background:#fff4e5;color:#442b08;border:2px solid #c77700;border-radius:8px;font:14px/1.5 sans-serif;box-shadow:0 4px 16px #0003";
+    notice.textContent = "CodeArchive 확장 프로그램이 갱신되어 이 탭의 자동 수집이 중단되었습니다. 코드와 저장 여부를 확인한 뒤 이 문제 탭을 새로고침하고 다시 제출해 주세요.";
+    root.prepend(notice);
+  }
+
+  async function sendTracked(message: unknown): Promise<unknown> {
+    try {
+      return await send(message);
+    } catch (error) {
+      if (extensionContextInvalidated(error)) stopInvalidatedContext();
+      throw error;
+    }
+  }
+
   function reportProgress(attemptId: string | null, phase: "CAPTURING" | "SAVING" | "CLEAR"): void {
-    if (!attemptId) return;
+    if (!attemptId || invalidated) return;
     const problem = adapter.detectProblem();
     if (phase === "CAPTURING" && !problem) return;
-    void send({
+    void sendTracked({
       type: "SET_SUBMISSION_PROGRESS", attemptId, platform: adapter.platform, phase,
       ...(problem ? { problemNumber: problem.problemNumber, title: problem.title } : {})
     }).catch(() => undefined);
   }
 
   function ensureResultPoll(): void {
-    if (!adapter.hasPendingSubmissionAttempt || resultPoll !== null) return;
+    if (invalidated || !adapter.hasPendingSubmissionAttempt || resultPoll !== null) return;
     resultPoll = setInterval(() => {
       if (!adapter.hasPendingSubmissionAttempt?.()) {
         clearInterval(resultPoll!);
         resultPoll = null;
         reportProgress(activeAttemptId, "CLEAR");
+        if (document.documentElement?.getAttribute("data-codearchive-capture-stage") !== "store-acknowledged") {
+          markCaptureStage("result-timeout");
+        }
         activeAttemptId = null;
         return;
       }
@@ -137,6 +190,7 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
   }
 
   const runCaptureCheck = async (): Promise<void> => {
+    if (invalidated) return;
     if (processing) {
       checkAfterProcessing = true;
       return;
@@ -145,14 +199,20 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
     if (!collected) return;
     const progressAttemptId = activeAttemptId;
 
+    markCaptureStage("accepted", progressAttemptId);
+
     processing = true;
     try {
       if (adapter.confirmCaptureAsync) {
         const confirmed = await adapter.confirmCaptureAsync(collected.capture, collected.detection);
-        if (!confirmed) return;
+        if (!confirmed) {
+          markCaptureStage("result-unverified", progressAttemptId);
+          return;
+        }
         Object.assign(collected.capture, confirmed);
       }
       reportProgress(progressAttemptId, "SAVING");
+      markCaptureStage("saving", progressAttemptId);
       if (
         adapter.collectPerformanceAsync &&
         collected.capture.executionTime === undefined &&
@@ -165,11 +225,14 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
           // Optional metrics must never prevent the accepted source capture.
         }
       }
-      const response = await storeCaptureWithRetry(collected.capture);
+      const response = await storeCaptureWithRetry(collected.capture, sendTracked);
       // A capture is consumed only after the service worker confirms local
       // persistence. Storage or channel failures remain retryable.
       if ((response as { ok?: unknown } | null)?.ok === true) {
         adapter.consumeSubmissionResult(collected.detection);
+        markCaptureStage("store-acknowledged", progressAttemptId);
+      } else {
+        markCaptureStage("store-unavailable", progressAttemptId);
       }
       reportProgress(progressAttemptId, "CLEAR");
       if (activeAttemptId === progressAttemptId) activeAttemptId = null;
@@ -183,6 +246,7 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
   };
 
   function scheduleCaptureCheck(): void {
+    if (invalidated) return;
     if (processing) {
       checkAfterProcessing = true;
       return;
@@ -200,16 +264,22 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
   document.addEventListener(
     "click",
     (event) => {
+      if (invalidated) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
       let current: Element | null = target;
       while (current) {
         if (adapter.isSubmitControl(current)) {
+          if ((adapter.platform === "JUNGOL" || adapter.platform === "PROGRAMMERS") && !adapter.detectProblem()) break;
           // The MAIN-world document_start listener runs before this isolated
           // document_idle listener and synchronously updates the platform's
           // source textarea at this click boundary.
           adapter.beginSubmissionAttempt(new Date());
           activeAttemptId = crypto.randomUUID();
+          if (adapter.platform === "PROGRAMMERS") {
+            const snapshot = adapter.getSubmissionSnapshot?.();
+            markCaptureStage(!snapshot?.problem || !snapshot.editor ? "snapshot-missing" : "waiting-result");
+          }
           reportProgress(activeAttemptId, "CAPTURING");
           ensureResultPoll();
           scheduleCaptureCheck();
@@ -228,7 +298,9 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
 
   const root = document.body ?? document.documentElement;
   if (root) {
-    const observer = new MutationObserver(() => scheduleCaptureCheck());
+    observer = new MutationObserver(() => {
+      if (adapter.platform === "SWEA" || adapter.hasPendingSubmissionAttempt?.()) scheduleCaptureCheck();
+    });
     observer.observe(root, {
       subtree: true,
       childList: true,

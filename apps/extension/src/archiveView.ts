@@ -10,147 +10,155 @@ interface ArchiveServices {
   load: () => Promise<unknown>;
   updateThemes?: (lightTheme: string, darkTheme: string) => Promise<unknown>;
 }
+type PlatformFilter = "ALL" | Capture["platform"];
+type SortOrder = "latest" | "oldest" | "problem" | "title";
+type CaptureGroup = { key: string; captures: Capture[] };
+type Detail = { source: HTMLElement; viewer: HTMLElement; capture: Capture; generation: number };
 
 function asDisplayCapture(value: unknown): Capture | null {
   if (!value || typeof value !== "object") return null;
-  const candidate = value as Partial<Capture>;
-  if (
-    typeof candidate.captureId !== "string" ||
-    typeof candidate.platform !== "string" ||
-    (candidate.platform !== "SWEA" && candidate.platform !== "PROGRAMMERS" && candidate.platform !== "JUNGOL") ||
-    typeof candidate.problemNumber !== "string" ||
-    typeof candidate.title !== "string" ||
-    typeof candidate.problemUrl !== "string" ||
-    typeof candidate.language !== "string" ||
-    typeof candidate.sourceCode !== "string" ||
-    candidate.result !== "ACCEPTED" ||
-    (candidate.syncState !== "PENDING" && candidate.syncState !== "SYNCED") ||
-    typeof candidate.observedAt !== "string" ||
-    Number.isNaN(Date.parse(candidate.observedAt))
-  ) {
-    return null;
-  }
-  return candidate as Capture;
+  const c = value as Partial<Capture>;
+  if (typeof c.captureId !== "string" ||
+      (c.platform !== "SWEA" && c.platform !== "PROGRAMMERS" && c.platform !== "JUNGOL") ||
+      typeof c.problemNumber !== "string" || typeof c.title !== "string" ||
+      typeof c.problemUrl !== "string" || typeof c.language !== "string" ||
+      typeof c.sourceCode !== "string" || c.result !== "ACCEPTED" ||
+      (c.syncState !== "PENDING" && c.syncState !== "SYNCED") ||
+      typeof c.observedAt !== "string" || Number.isNaN(Date.parse(c.observedAt))) return null;
+  return c as Capture;
 }
 
-function isSafeProblemUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:";
-  } catch {
-    return false;
+function safeProblemUrl(value: string): boolean {
+  try { return ["http:", "https:"].includes(new URL(value).protocol); } catch { return false; }
+}
+
+function element<K extends keyof HTMLElementTagNameMap>(document: Document, tag: K, className: string, content?: string): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  node.className = className;
+  if (content !== undefined) node.textContent = content;
+  return node;
+}
+
+function selectOption(select: HTMLSelectElement, value: string): void {
+  try { select.value = value; return; } catch {
+    for (const option of Array.from(select.querySelectorAll("option"))) {
+      if (option.value === value) option.setAttribute("selected", "");
+      else option.removeAttribute("selected");
+    }
   }
 }
 
-function appendTitle(document: Document, item: HTMLElement, capture: Capture): void {
-  const text = `#${capture.problemNumber} · ${capture.title}`;
-  if (!isSafeProblemUrl(capture.problemUrl)) {
-    const title = document.createElement("span");
-    title.className = "capture-title-text";
-    title.textContent = text;
-    item.append(title);
-    return;
+function groupsFor(captures: Capture[], query: string, platform: PlatformFilter, language: string, sort: SortOrder): CaptureGroup[] {
+  const grouped = new Map<string, Capture[]>();
+  for (const capture of captures) {
+    if (platform !== "ALL" && capture.platform !== platform) continue;
+    const key = `${capture.platform}:${capture.problemNumber}`;
+    const existing = grouped.get(key) ?? [];
+    existing.push(capture);
+    grouped.set(key, existing);
   }
-  const link = document.createElement("a");
-  link.className = "capture-title";
-  link.href = capture.problemUrl;
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  link.textContent = text;
-  item.append(link);
+  const needle = query.trim().toLocaleLowerCase();
+  return Array.from(grouped, ([key, records]) => ({ key, captures: records.sort((a, b) => Date.parse(b.observedAt) - Date.parse(a.observedAt)) }))
+    .filter(group => (language === "ALL" || group.captures.some(c => canonicalLanguageDisplayName(c.language) === language)) &&
+      (!needle || group.captures.some(c =>
+        [c.platform, c.problemNumber, c.title, canonicalLanguageDisplayName(c.language)].some(value => value.toLocaleLowerCase().includes(needle)))))
+    .sort((a, b) => sort === "title" ? a.captures[0]!.title.localeCompare(b.captures[0]!.title, "ko")
+      : sort === "problem" ? a.captures[0]!.problemNumber.localeCompare(b.captures[0]!.problemNumber, "ko", { numeric: true })
+      : (Date.parse(b.captures[0]!.observedAt) - Date.parse(a.captures[0]!.observedAt)) * (sort === "oldest" ? -1 : 1));
 }
 
-function renderCapture(document: Document, capture: Capture): { item: HTMLElement; source: HTMLElement; viewer: HTMLElement; themeSelect: HTMLSelectElement; capture: Capture } {
-  const item = document.createElement("article");
-  item.className = "capture-card";
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(capture.captureId)) {
-    item.id = `capture-${capture.captureId}`;
-  }
+function renderRow(document: Document, group: CaptureGroup, selected: boolean, onSelect: () => void): HTMLElement {
+  const latest = group.captures[0]!;
+  const row = element(document, "button", `solution-row${selected ? " selected" : ""}`);
+  row.type = "button";
+  row.dataset.captureId = latest.captureId;
+  row.setAttribute("aria-pressed", String(selected));
+  const logo = element(document, "span", `platform-logo ${latest.platform.toLowerCase()}`, latest.platform === "PROGRAMMERS" ? "P" : latest.platform === "JUNGOL" ? "J" : "S");
+  const main = element(document, "span", "solution-row-main");
+  const top = element(document, "span", "solution-row-top");
+  top.append(element(document, "span", "solution-platform", latest.platform), element(document, "span", "solution-result", `풀이 ${group.captures.length}개`));
+  const languages = Array.from(new Set(group.captures.map(c => canonicalLanguageDisplayName(c.language)))).join(", ");
+  main.append(top, element(document, "span", "solution-title", latest.title),
+    element(document, "span", "solution-row-bottom", `#${latest.problemNumber} · ${languages} · ${formatSolutionTime(latest.solvedAt ?? latest.observedAt)}`));
+  const chevron = element(document, "span", "solution-chevron", "›");
+  chevron.setAttribute("aria-hidden", "true");
+  row.append(logo, main, chevron);
+  row.addEventListener("click", onSelect);
+  return row;
+}
 
-  const heading = document.createElement("div");
-  heading.className = "capture-heading";
-  const platform = document.createElement("span");
-  platform.className = "platform-label";
-  platform.textContent = capture.platform;
-  const sync = document.createElement("span");
-  sync.className = "sync-label";
-  sync.textContent = capture.syncState === "SYNCED" ? "대시보드 동기화됨" : "동기화 대기";
-  heading.append(platform, sync);
+function renderDetail(document: Document, capture: Capture, group: CaptureGroup, onSelectSubmission: (id: string) => void): { item: HTMLElement } & Detail {
+  const item = element(document, "article", "capture-card");
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(capture.captureId)) item.id = `capture-${capture.captureId}`;
+  const heading = element(document, "div", "detail-heading");
+  const headingMain = element(document, "div", "detail-heading-main");
+  headingMain.append(element(document, "div", "detail-breadcrumb", `${capture.platform}  ›  #${capture.problemNumber}`),
+    element(document, "h2", "detail-title", capture.title),
+    element(document, "div", "detail-subline", `${canonicalLanguageDisplayName(capture.language)} · 풀이 시간 ${formatSolutionTime(capture.solvedAt ?? capture.observedAt)}`));
+  const actions = element(document, "div", "detail-heading-actions");
+  actions.append(element(document, "span", `sync-label ${capture.syncState.toLowerCase()}`, capture.syncState === "SYNCED" ? "대시보드 동기화됨" : "동기화 대기"));
+  if (safeProblemUrl(capture.problemUrl)) {
+    const link = element(document, "a", "problem-link", "문제 보기 ↗");
+    link.href = capture.problemUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    actions.append(link);
+  }
+  heading.append(headingMain, actions);
   item.append(heading);
 
-  appendTitle(document, item, capture);
-
-  const metadata = document.createElement("p");
-  metadata.className = "capture-meta";
-  const language = document.createElement("span");
-  language.textContent = canonicalLanguageDisplayName(capture.language);
-  const date = document.createElement("span");
-  date.textContent = `풀이 시간 ${formatSolutionTime(capture.solvedAt ?? capture.observedAt)}`;
-  metadata.append(language, date);
-  item.append(metadata);
-
-  const metricLine = document.createElement("div");
-  metricLine.className = "capture-metrics";
+  const metrics = element(document, "div", "metrics-row");
   for (const [label, value] of [
     ["실행 시간", formatExecutionTime(capture.executionTime)],
     ["메모리 사용량", formatCaptureMemory(capture)],
     ["풀이 시간", formatSolutionTime(capture.solvedAt ?? capture.observedAt)]
   ] as Array<[string, string]>) {
-    const metric = document.createElement("div");
-    metric.className = "capture-metric";
-    const caption = document.createElement("span");
-    caption.textContent = label;
-    const amount = document.createElement("strong");
-    amount.textContent = value;
-    metric.append(caption, amount);
-    metricLine.append(metric);
+    const metric = element(document, "div", "metric-card");
+    metric.append(element(document, "span", "metric-label", label), element(document, "strong", "", value));
+    metrics.append(metric);
   }
-  item.append(metricLine);
+  item.append(metrics);
 
-  const toolbar = document.createElement("div");
-  toolbar.className = "capture-code-toolbar";
-  const toolbarTitle = document.createElement("strong");
-  toolbarTitle.textContent = "소스 코드";
-  const extension = document.createElement("span");
-  extension.textContent = `.${sourceFileExtension(capture.language)}`;
-  toolbar.append(toolbarTitle, extension);
-  item.append(toolbar);
+  if (group.captures.length > 1) {
+    const label = element(document, "label", "submission-picker", "제출 기록 ");
+    const picker = element(document, "select", "");
+    picker.setAttribute("aria-label", "제출 기록");
+    group.captures.forEach((c, index) => {
+      const option = document.createElement("option");
+      option.value = c.captureId;
+      option.textContent = `${index + 1}. ${formatSolutionTime(c.solvedAt ?? c.observedAt)} · ${canonicalLanguageDisplayName(c.language)}`;
+      picker.append(option);
+    });
+    selectOption(picker, capture.captureId);
+    picker.addEventListener("change", () => onSelectSubmission(picker.value));
+    label.append(picker);
+    item.append(label);
+  }
 
-  const viewer = document.createElement("div");
-  viewer.className = "capture-code-viewer";
+  const codeBlock = element(document, "div", "capture-code-block");
+  const toolbar = element(document, "div", "code-toolbar");
+  const title = element(document, "strong", "code-toolbar-title", "⌘  소스 코드");
+  const suffix = element(document, "span", "code-extension", `.${sourceFileExtension(capture.language)}`);
+  toolbar.append(title, suffix);
+  codeBlock.append(toolbar);
+  const viewer = element(document, "div", "capture-code-viewer");
   viewer.setAttribute("role", "region");
   viewer.setAttribute("aria-label", "소스 코드");
-  const themeControls = document.createElement("div");
-  themeControls.className = "capture-code-theme-controls";
-  const themeLabel = document.createElement("label");
-  themeLabel.textContent = "테마 ";
-  const themeSelect = document.createElement("select");
-  themeSelect.className = "capture-code-theme";
-  themeSelect.setAttribute("aria-label", "코드 보기 테마");
-  populateThemes(document, themeSelect);
-  themeLabel.append(themeSelect);
-  themeControls.append(themeLabel);
-  const gutter = document.createElement("div");
-  gutter.className = "capture-code-gutter";
+  const gutter = element(document, "div", "capture-code-gutter");
   gutter.setAttribute("aria-hidden", "true");
-  capture.sourceCode.split("\n").forEach((_, index) => {
-    const number = document.createElement("span");
-    number.textContent = String(index + 1);
-    gutter.append(number);
-  });
-  const source = document.createElement("pre");
-  source.className = "source-code";
-  source.textContent = capture.sourceCode;
-  viewer.append(themeControls, gutter, source);
-  item.append(viewer);
-  return { item, source, viewer, themeSelect, capture };
+  capture.sourceCode.split("\n").forEach((_, index) => gutter.append(element(document, "span", "", String(index + 1))));
+  const source = element(document, "pre", "source-code", capture.sourceCode);
+  viewer.append(gutter, source);
+  codeBlock.append(viewer);
+  item.append(codeBlock);
+  return { item, source, viewer, capture, generation: 0 };
 }
 
 function readThemeMode(document: Document): CodeThemeMode {
   try {
     const value = document.defaultView?.localStorage?.getItem(CODE_THEME_MODE_KEY);
     if (value === "light" || value === "dark") return value;
-  } catch { /* The viewer remains usable without local storage. */ }
+  } catch { /* Local storage is optional. */ }
   return document.defaultView?.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
@@ -168,17 +176,6 @@ function populateThemes(document: Document, select: HTMLSelectElement): void {
   }
 }
 
-function selectTheme(select: HTMLSelectElement, value: string): void {
-  try { select.value = value; return; } catch {
-    // Browser selects support value assignment; the lightweight archive test DOM
-    // exposes a getter only, so preserve the same selected-option semantics.
-    for (const option of Array.from(select.querySelectorAll('option'))) {
-      if (option.getAttribute('value') === value) option.setAttribute('selected', '');
-      else option.removeAttribute('selected');
-    }
-  }
-}
-
 export function mountArchive(document: Document, services: ArchiveServices): void {
   const build = document.querySelector<HTMLElement>("#archive-build-label");
   const updated = document.querySelector<HTMLElement>("#archive-updated-label");
@@ -187,45 +184,83 @@ export function mountArchive(document: Document, services: ArchiveServices): voi
   const card = document.querySelector<HTMLElement>(".archive-card")!;
   const refresh = document.querySelector<HTMLButtonElement>("#archive-refresh")!;
   const count = document.querySelector<HTMLElement>("#archive-count")!;
+  const filteredCount = document.querySelector<HTMLElement>("#archive-filtered-count")!;
+  const search = document.querySelector<HTMLInputElement>("#archive-search")!;
+  const languageSelect = document.querySelector<HTMLSelectElement>("#archive-language")!;
+  const sortSelect = document.querySelector<HTMLSelectElement>("#archive-sort")!;
+  const themeSelect = document.querySelector<HTMLSelectElement>("#archive-code-theme")!;
   const error = document.querySelector<HTMLElement>("#archive-error")!;
   const list = document.querySelector<HTMLElement>("#archive-list")!;
+  const detail = document.querySelector<HTMLElement>("#archive-detail")!;
   const empty = document.querySelector<HTMLElement>("#archive-empty")!;
+  const platformButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-platform]"));
+  populateThemes(document, themeSelect);
+  let captures: Capture[] = [];
+  let selectedId = "";
+  let platformFilter: PlatformFilter = "ALL";
+  let sort: SortOrder = "latest";
   let themeMode = readThemeMode(document);
   let themeSettings: Pick<CaptureSettings, "lightTheme" | "darkTheme"> = { lightTheme: "github-light", darkTheme: "github-dark" };
-  let renderedSources: ReturnType<typeof renderCapture>[] = [];
+  let active: Detail | null = null;
   let loading = false;
-  let renderGeneration = 0;
 
-  function renderHighlights(): void {
-    const generation = ++renderGeneration;
-    for (const rendered of renderedSources) {
-      selectTheme(rendered.themeSelect, themeMode === "dark" ? themeSettings.darkTheme! : themeSettings.lightTheme!);
-      rendered.viewer.style.colorScheme = themeMode;
-      rendered.source.textContent = rendered.capture.sourceCode;
-      rendered.source.removeAttribute("data-shiki-theme");
-      rendered.source.style.backgroundColor = "";
-      rendered.source.style.color = "";
-      rendered.viewer.style.backgroundColor = "";
-      rendered.viewer.style.color = "";
-      void tokensForSource(rendered.capture.sourceCode, rendered.capture.language, themeSettings, themeMode === "dark").then(highlighted => {
-        if (generation !== renderGeneration || !highlighted || !rendered.source.isConnected) return;
-        rendered.source.replaceChildren();
-        rendered.source.dataset.shikiTheme = highlighted.theme;
-        rendered.source.style.backgroundColor = highlighted.background ?? "";
-        rendered.source.style.color = highlighted.foreground ?? "";
-        rendered.viewer.style.backgroundColor = highlighted.background ?? "";
-        rendered.viewer.style.color = highlighted.foreground ?? "";
-        highlighted.tokens.forEach((line, lineIndex) => {
-          line.forEach(token => {
-            const span = document.createElement("span");
-            span.textContent = token.content;
-            if (token.color) span.style.color = token.color;
-            rendered.source.append(span);
-          });
-          if (lineIndex < highlighted.tokens.length - 1) rendered.source.append("\n");
+  function highlight(rendered: Detail): void {
+    const generation = ++rendered.generation;
+    const theme = themeMode === "dark" ? themeSettings.darkTheme! : themeSettings.lightTheme!;
+    if (rendered.source.dataset.shikiTheme === theme) return;
+    rendered.viewer.style.colorScheme = themeMode;
+    rendered.source.textContent = rendered.capture.sourceCode;
+    rendered.source.removeAttribute("data-shiki-theme");
+    rendered.source.style.backgroundColor = "";
+    rendered.source.style.color = "";
+    rendered.viewer.style.backgroundColor = "";
+    rendered.viewer.style.color = "";
+    void tokensForSource(rendered.capture.sourceCode, rendered.capture.language, themeSettings, themeMode === "dark").then(result => {
+      if (generation !== rendered.generation || active !== rendered || !result || !rendered.source.isConnected) return;
+      rendered.source.replaceChildren();
+      rendered.source.dataset.shikiTheme = result.theme;
+      rendered.source.style.backgroundColor = result.background ?? "";
+      rendered.source.style.color = result.foreground ?? "";
+      rendered.viewer.style.backgroundColor = result.background ?? "";
+      rendered.viewer.style.color = result.foreground ?? "";
+      result.tokens.forEach((line, index) => {
+        line.forEach(token => {
+          const span = document.createElement("span");
+          span.textContent = token.content;
+          if (token.color) span.style.color = token.color;
+          rendered.source.append(span);
         });
-      }).catch(() => undefined);
+        if (index < result.tokens.length - 1) rendered.source.append("\n");
+      });
+    }).catch(() => undefined);
+  }
+
+  function renderView(forceDetail = false): void {
+    const groups = groupsFor(captures, search.value ?? "", platformFilter, languageSelect.value || "ALL", sort);
+    filteredCount.textContent = String(groups.length);
+    empty.hidden = groups.length !== 0;
+    empty.textContent = captures.length ? "조건에 맞는 풀이가 없어요." : "아직 저장된 풀이가 없어요.";
+    const language = languageSelect.value || "ALL";
+    if (!groups.some(group => group.captures.some(c => c.captureId === selectedId && (language === "ALL" || canonicalLanguageDisplayName(c.language) === language)))) {
+      selectedId = (groups[0]?.captures.find(c => language === "ALL" || canonicalLanguageDisplayName(c.language) === language) ?? groups[0]?.captures[0])?.captureId ?? "";
     }
+    list.replaceChildren(...groups.map(group => renderRow(document, group, group.captures.some(c => c.captureId === selectedId), () => {
+      selectedId = group.captures[0]!.captureId;
+      renderView();
+    })));
+    const group = groups.find(g => g.captures.some(c => c.captureId === selectedId));
+    const capture = group?.captures.find(c => c.captureId === selectedId);
+    if (active && capture && active.capture.captureId === capture.captureId && !forceDetail) return;
+    if (active) ++active.generation;
+    if (!group || !capture) {
+      active = null;
+      detail.replaceChildren(element(document, "div", "detail-empty", "왼쪽 목록에서 풀이를 선택하면 실행 정보와 코드를 볼 수 있어요."));
+      return;
+    }
+    const rendered = renderDetail(document, capture, group, id => { selectedId = id; renderView(); });
+    active = rendered;
+    detail.replaceChildren(rendered.item);
+    highlight(rendered);
   }
 
   async function load(): Promise<void> {
@@ -235,41 +270,35 @@ export function mountArchive(document: Document, services: ArchiveServices): voi
     card.setAttribute("aria-busy", "true");
     error.textContent = "저장된 풀이를 불러오지 못했어요. 새로고침으로 다시 확인해 주세요.";
     error.hidden = true;
-    empty.hidden = true;
-    ++renderGeneration;
-    renderedSources = [];
-    list.replaceChildren();
-    count.textContent = "—";
     try {
       const state = await services.load() as { captures?: unknown; settings?: unknown; error?: unknown } | null;
       if (!state || state.error || !Array.isArray(state.captures)) throw new Error("Invalid state");
-      const captures = state.captures.map(asDisplayCapture).filter((capture): capture is Capture => capture !== null);
+      captures = state.captures.map(asDisplayCapture).filter((c): c is Capture => c !== null);
+      const previousLanguage = languageSelect.value || "ALL";
+      const languageOptions = Array.from(new Set(captures.map(c => canonicalLanguageDisplayName(c.language)))).sort((a, b) => a.localeCompare(b, "ko"));
+      languageSelect.replaceChildren(element(document, "option", "", "모든 언어"), ...languageOptions.map(language => {
+        const option = element(document, "option", "", language);
+        option.value = language;
+        return option;
+      }));
+      languageSelect.querySelector("option")!.value = "ALL";
+      selectOption(languageSelect, languageOptions.includes(previousLanguage) ? previousLanguage : "ALL");
       const settings = state.settings && typeof state.settings === "object" ? state.settings as Partial<CaptureSettings> : {};
       themeSettings = {
         lightTheme: settings.lightTheme && isLightTheme(settings.lightTheme) ? settings.lightTheme : "github-light",
         darkTheme: settings.darkTheme && isDarkTheme(settings.darkTheme) ? settings.darkTheme : "github-dark"
       };
+      selectOption(themeSelect, themeMode === "dark" ? themeSettings.darkTheme! : themeSettings.lightTheme!);
       count.textContent = String(captures.length);
-      empty.hidden = captures.length !== 0;
-      for (const capture of captures) {
-        const rendered = renderCapture(document, capture);
-        rendered.themeSelect.addEventListener("change", () => saveTheme(rendered.themeSelect));
-        renderedSources.push(rendered);
-        list.append(rendered.item);
+      const hash = document.defaultView?.location?.hash?.slice(1) ?? "";
+      if (hash && !selectedId) {
+        try { selectedId = decodeURIComponent(hash); } catch { /* Ignore malformed fragments. */ }
       }
-      renderHighlights();
-      const rawHash = document.defaultView?.location.hash.slice(1) ?? "";
-      if (rawHash) {
-        try {
-          const target = document.getElementById(`capture-${decodeURIComponent(rawHash)}`);
-          if (target) {
-            target.scrollIntoView?.({ block: "start" });
-          }
-        } catch {
-          // Ignore malformed fragments; the archive remains fully usable.
-        }
-      }
+      renderView(true);
     } catch {
+      captures = [];
+      count.textContent = "—";
+      renderView();
       error.hidden = false;
     } finally {
       loading = false;
@@ -279,21 +308,25 @@ export function mountArchive(document: Document, services: ArchiveServices): voi
   }
 
   refresh.addEventListener("click", () => void load());
-  const saveTheme = (themeSelect: HTMLSelectElement) => {
+  search.addEventListener("input", () => renderView());
+  languageSelect.addEventListener("change", () => renderView());
+  sortSelect.addEventListener("change", () => { sort = sortSelect.value as SortOrder; renderView(); });
+  platformButtons.forEach(button => button.addEventListener("click", () => {
+    platformFilter = button.dataset.platform as PlatformFilter;
+    platformButtons.forEach(candidate => candidate.classList.toggle("active", candidate === button));
+    renderView();
+  }));
+  themeSelect.addEventListener("change", () => {
     const selected = themeSelect.value;
     if (!isLightTheme(selected) && !isDarkTheme(selected)) return;
     themeMode = isLightTheme(selected) ? "light" : "dark";
     try { document.defaultView?.localStorage?.setItem(CODE_THEME_MODE_KEY, themeMode); } catch { /* Preview remains active. */ }
-    themeSettings = isLightTheme(selected)
-      ? { ...themeSettings, lightTheme: selected }
-      : { ...themeSettings, darkTheme: selected };
-    renderHighlights();
-    if (services.updateThemes) {
-      void services.updateThemes(themeSettings.lightTheme!, themeSettings.darkTheme!).catch(() => {
-        error.textContent = "테마를 저장하지 못했어요. 다시 선택해 주세요.";
-        error.hidden = false;
-      });
-    }
-  };
+    themeSettings = isLightTheme(selected) ? { ...themeSettings, lightTheme: selected } : { ...themeSettings, darkTheme: selected };
+    if (active) highlight(active);
+    if (services.updateThemes) void services.updateThemes(themeSettings.lightTheme!, themeSettings.darkTheme!).catch(() => {
+      error.textContent = "테마를 저장하지 못했어요. 다시 선택해 주세요.";
+      error.hidden = false;
+    });
+  });
   void load();
 }

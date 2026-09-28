@@ -14,115 +14,113 @@ async function waitFor(condition: () => boolean, timeoutMs = 5_000): Promise<voi
   }
 }
 
-function capture(captureId: string, syncState: 'PENDING' | 'SYNCED', sourceCode: string) {
+function capture(captureId: string, syncState: 'PENDING' | 'SYNCED', sourceCode: string, overrides = {}) {
   return {
-    captureId,
-    platform: 'PROGRAMMERS',
-    problemNumber: '42586',
-    title: '기능 개발',
+    captureId, platform: 'PROGRAMMERS', problemNumber: '42586', title: '기능 개발',
     problemUrl: 'https://school.programmers.co.kr/learn/courses/30/lessons/42586',
-    language: 'JavaScript',
-    sourceCode,
-    result: 'ACCEPTED',
-    observedAt: '2026-09-15T12:00:00.000Z',
-    solvedAt: '2026-09-15T12:00:00.000Z',
-    syncState
+    language: 'JavaScript', sourceCode, result: 'ACCEPTED',
+    observedAt: '2026-09-15T12:00:00.000Z', solvedAt: '2026-09-15T12:00:00.000Z', syncState, ...overrides
   };
 }
 
-test('archive renders pending and retained synced captures with source as text', async () => {
-  const { document } = parseHTML(html);
-  mountArchive(document, {
-    load: async () => ({ captures: [
-      { ...capture('11111111-1111-4111-8111-111111111111', 'PENDING', 'const pending = true;'), executionTime: 0, memoryValue: 0, memoryUnit: 'MB' },
-      capture('22222222-2222-4222-8222-222222222222', 'SYNCED', '<script>const synced = true;</script>')
-    ] })
+function choose(document: Document, select: HTMLSelectElement, value: string): void {
+  Array.from(select.querySelectorAll('option')).forEach(option => {
+    if (option.value === value) option.setAttribute('selected', '');
+    else option.removeAttribute('selected');
   });
+  select.dispatchEvent(new document.defaultView!.Event('change'));
+}
+
+test('local archive mirrors the dashboard list/detail layout, groups submissions, and shows selected code', async () => {
+  const { document } = parseHTML(html);
+  mountArchive(document, { load: async () => ({ captures: [
+    { ...capture('11111111-1111-4111-8111-111111111111', 'PENDING', 'const first = 1;', { observedAt: '2026-09-15T12:01:00.000Z' }), executionTime: 0, memoryValue: 0, memoryUnit: 'MB' },
+    capture('22222222-2222-4222-8222-222222222222', 'SYNCED', '<script>const second = true;</script>'),
+    capture('33333333-3333-4333-8333-333333333333', 'SYNCED', 'class Main {}', { platform: 'JUNGOL', problemNumber: '1520', title: '계단 오르기', language: 'Java' })
+  ] }) });
   await settle();
-  assert.equal(document.querySelector('#archive-count')!.textContent, '2');
-  assert.equal(document.querySelector('#archive-build-label')!.textContent, 'vdev · dev+source-unknown');
-  assert.equal(document.querySelector('#archive-updated-label')!.textContent, 'Updated dev');
-  assert.equal(document.querySelectorAll('.capture-card').length, 2);
-  assert.equal(document.querySelectorAll('.capture-code-viewer .capture-code-theme').length, 2);
-  assert.equal(document.querySelectorAll('.archive-card > .archive-theme-controls').length, 0);
-  assert.match(document.querySelector('.archive-list')!.textContent!, /대시보드 동기화됨/);
-  assert.match(document.querySelector('.archive-list')!.textContent!, /풀이 시간/);
-  assert.match(document.querySelector('.archive-list')!.textContent!, /실행 시간0 ms메모리 사용량0 MB/);
-  assert.match(document.querySelector('.archive-list')!.textContent!, /실행 시간정보 없음메모리 사용량정보 없음/);
-  assert.equal(document.querySelectorAll('.source-details').length, 0);
-  assert.equal(document.querySelectorAll('.capture-code-gutter span').length, 2);
-  assert.equal(document.querySelectorAll('.source-code')[1]!.textContent, '<script>const synced = true;</script>');
-  assert.equal(document.querySelectorAll('.source-code')[1]!.querySelector('script'), null);
+  assert.equal(document.querySelector('#archive-count')!.textContent, '3');
+  assert.equal(document.querySelector('#archive-filtered-count')!.textContent, '2');
+  assert.equal(document.querySelectorAll('.solution-row').length, 2);
+  assert.equal(document.querySelectorAll('.solution-row.selected').length, 1);
+  assert.equal(document.querySelectorAll('.capture-card').length, 1);
+  assert.equal(document.querySelectorAll('.capture-code-details').length, 0);
+  assert.equal(document.querySelectorAll('.capture-code-viewer').length, 1);
+  assert.equal(document.querySelectorAll('#archive-code-theme').length, 1);
+  assert.equal(document.querySelectorAll('.capture-code-theme').length, 0);
+  assert.match(document.querySelector('.archive-list')!.textContent!, /풀이 2개/);
+  assert.match(document.querySelector('.archive-detail')!.textContent!, /실행 시간0 ms메모리 사용량0 MB/);
+  const picker = document.querySelector<HTMLSelectElement>('.submission-picker select')!;
+  assert.equal(picker.querySelectorAll('option').length, 2);
+  choose(document, picker, '22222222-2222-4222-8222-222222222222');
+  const source = document.querySelector<HTMLElement>('.source-code')!;
+  assert.equal(source.textContent, '<script>const second = true;</script>');
+  assert.equal(source.querySelector('script'), null);
+  assert.match(document.querySelector('.archive-detail')!.textContent!, /대시보드 동기화됨/);
+  assert.equal(document.querySelectorAll('.code-toggle').length, 0);
 });
 
-test('archive clears stale records and reports storage failures', async () => {
+test('search, platform filter, sort and refresh keep the local list and detail coherent', async () => {
   const { document } = parseHTML(html);
-  let shouldFail = false;
-  mountArchive(document, {
-    load: async () => {
-      if (shouldFail) return { captures: [], error: 'STORAGE_ERROR' };
-      return { captures: [capture('33333333-3333-4333-8333-333333333333', 'PENDING', 'const first = 1;')] };
-    }
-  });
+  let fail = false;
+  mountArchive(document, { load: async () => fail ? { error: 'STORAGE_ERROR' } : ({ captures: [
+    capture('44444444-4444-4444-8444-444444444444', 'PENDING', 'const a = 1;'),
+    capture('55555555-5555-4555-8555-555555555555', 'SYNCED', 'class Main {}', { platform: 'JUNGOL', problemNumber: '1520', title: '계단 오르기', language: 'Java', observedAt: '2026-09-16T12:00:00.000Z' })
+  ] }) });
   await settle();
-  assert.equal(document.querySelectorAll('.capture-card').length, 1);
-  shouldFail = true;
+  const rows = () => Array.from(document.querySelectorAll<HTMLElement>('.solution-row'));
+  assert.match(rows()[0]!.textContent!, /계단 오르기/);
+  choose(document, document.querySelector<HTMLSelectElement>('#archive-sort')!, 'oldest');
+  assert.match(rows()[0]!.textContent!, /기능 개발/);
+  choose(document, document.querySelector<HTMLSelectElement>('#archive-sort')!, 'problem');
+  assert.match(rows()[0]!.textContent!, /계단 오르기/);
+  const language = document.querySelector<HTMLSelectElement>('#archive-language')!;
+  assert.deepEqual(Array.from(language.querySelectorAll('option')).map(option => option.textContent), ['모든 언어', 'Java', 'JavaScript']);
+  choose(document, language, 'Java');
+  assert.equal(rows().length, 1);
+  assert.match(document.querySelector('.detail-title')!.textContent!, /계단 오르기/);
+  choose(document, language, 'ALL');
+  const search = document.querySelector<HTMLInputElement>('#archive-search')!;
+  search.value = '계단';
+  search.dispatchEvent(new document.defaultView!.Event('input'));
+  assert.equal(rows().length, 1);
+  assert.match(document.querySelector('.detail-title')!.textContent!, /계단 오르기/);
+  (document.querySelector('[data-platform="SWEA"]') as HTMLButtonElement).click();
+  assert.equal(rows().length, 0);
+  assert.match(document.querySelector('.archive-detail')!.textContent!, /왼쪽 목록/);
+  fail = true;
   (document.querySelector('#archive-refresh') as HTMLButtonElement).click();
   await settle();
-  assert.equal(document.querySelectorAll('.capture-card').length, 0);
+  assert.equal(rows().length, 0);
   assert.equal((document.querySelector('#archive-error') as HTMLElement).hidden, false);
 });
 
-test('archive theme changes call the local updater and re-render with the selected palette metadata', async () => {
+test('the single top theme selector highlights the selected solution only', async () => {
   const { document } = parseHTML(html);
   let settings = { lightTheme: 'github-light', darkTheme: 'github-dark' };
   const updates: Array<[string, string]> = [];
   mountArchive(document, {
-    load: async () => ({ captures: [capture('44444444-4444-4444-8444-444444444444', 'PENDING', 'const theme = true;')], settings }),
+    load: async () => ({ captures: [
+      capture('66666666-6666-4666-8666-666666666666', 'PENDING', 'const first = 1;'),
+      capture('77777777-7777-4777-8777-777777777777', 'SYNCED', 'const second = 2;', { platform: 'JUNGOL', problemNumber: '1520', title: '계단 오르기' })
+    ], settings }),
     updateThemes: async (lightTheme, darkTheme) => { updates.push([lightTheme, darkTheme]); settings = { lightTheme, darkTheme }; }
   });
-  for (let i = 0; i < 12; i += 1) await settle();
-  const select = document.querySelector<HTMLSelectElement>('.capture-code-theme')!;
+  await settle();
+  const select = document.querySelector<HTMLSelectElement>('#archive-code-theme')!;
   assert.equal(select.querySelectorAll('option').length, 10);
   assert.deepEqual(Array.from(select.querySelectorAll('optgroup')).map(group => group.label), ['밝은 테마', '어두운 테마']);
-  select.querySelector('option[value="github-light"]')!.removeAttribute('selected');
-  select.querySelector('option[value="solarized-light"]')!.setAttribute('selected', '');
-  select.dispatchEvent(new document.defaultView!.Event('change'));
-  for (let i = 0; i < 12; i += 1) await settle();
+  choose(document, select, 'solarized-light');
   assert.deepEqual(updates, [['solarized-light', 'github-dark']]);
-  assert.equal(select.value, 'solarized-light');
-  assert.equal(document.querySelectorAll('.capture-card').length, 1);
-  const source = document.querySelector<HTMLElement>('.source-code')!;
-  // Shiki initializes its WASM engine asynchronously. Await the observable
-  // render completion instead of assuming a fixed wall-clock delay is enough
-  // on every CI host.
+  let source = document.querySelector<HTMLElement>('.source-code')!;
   await waitFor(() => source.dataset.shikiTheme === 'solarized-light');
-  assert.equal(source.dataset.shikiTheme, 'solarized-light');
-  assert.notEqual(source.style.backgroundColor, '');
-  select.querySelector('option[value="solarized-light"]')!.removeAttribute('selected');
-  select.querySelector('option[value="one-dark-pro"]')!.setAttribute('selected', '');
-  select.dispatchEvent(new document.defaultView!.Event('change'));
-  await waitFor(() => source.dataset.shikiTheme === 'one-dark-pro');
+  const firstSource = source;
+  (document.querySelectorAll<HTMLButtonElement>('.solution-row')[1]!).click();
+  assert.equal(document.querySelectorAll('.capture-code-viewer').length, 1);
+  source = document.querySelector<HTMLElement>('.source-code')!;
+  assert.notEqual(source, firstSource);
+  choose(document, select, 'dracula');
+  await waitFor(() => source.dataset.shikiTheme === 'dracula');
   assert.equal(document.querySelector<HTMLElement>('.capture-code-viewer')!.style.colorScheme, 'dark');
-  assert.deepEqual(updates, [['solarized-light', 'github-dark'], ['solarized-light', 'one-dark-pro']]);
-});
-
-test('choosing a theme in one local code viewer updates the other viewer', async () => {
-  const { document } = parseHTML(html);
-  mountArchive(document, {
-    load: async () => ({ captures: [
-      capture('55555555-5555-4555-8555-555555555555', 'PENDING', 'const first = 1;'),
-      capture('66666666-6666-4666-8666-666666666666', 'SYNCED', 'const second = 2;')
-    ] })
-  });
-  await settle();
-  const selects = Array.from(document.querySelectorAll<HTMLSelectElement>('.capture-code-theme'));
-  assert.equal(selects.length, 2);
-  const firstSelect = selects[0]!;
-  const secondSelect = selects[1]!;
-  firstSelect.querySelector('option[value="github-light"]')!.removeAttribute('selected');
-  firstSelect.querySelector('option[value="dracula"]')!.setAttribute('selected', '');
-  firstSelect.dispatchEvent(new document.defaultView!.Event('change'));
-  assert.equal(secondSelect.value, 'dracula');
-  await waitFor(() => Array.from(document.querySelectorAll<HTMLElement>('.source-code')).every(source => source.dataset.shikiTheme === 'dracula'));
+  assert.deepEqual(updates, [['solarized-light', 'github-dark'], ['solarized-light', 'dracula']]);
 });
