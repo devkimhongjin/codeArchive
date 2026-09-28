@@ -7,6 +7,14 @@ export interface JungolAcceptedResult {
   performance: PerformanceData;
 }
 
+function closeButtons(element: Element): HTMLButtonElement[] {
+  return [...element.querySelectorAll<HTMLButtonElement>("button")].filter(button =>
+    button.getAttribute("aria-label") === "닫기" ||
+    normalizeText(button.textContent).endsWith("닫기") ||
+    [...button.querySelectorAll("*")].some(child => child.children.length === 0 && normalizeText(child.textContent) === "닫기")
+  );
+}
+
 /** Read only Jungol's visible, complete 100-point submission result dialog. */
 export function jungolAcceptedResult(document: Document): JungolAcceptedResult | null {
   const titles = [...document.querySelectorAll<HTMLElement>('h2[id^="dialog-title-"]')]
@@ -19,14 +27,11 @@ export function jungolAcceptedResult(document: Document): JungolAcceptedResult |
   if (!description) return null;
 
   let dialog = title.parentElement;
-  while (dialog && dialog !== document.body && (!dialog.contains(description) || !dialog.querySelector("button"))) {
+  while (dialog && dialog !== document.body && (!dialog.contains(description) || closeButtons(dialog).length !== 1)) {
     dialog = dialog.parentElement;
   }
   if (!dialog || dialog === document.body || !isVisible(dialog) || !isVisible(title) || !isVisible(description)) return null;
-  const closeButtons = [...dialog.querySelectorAll("button")].filter(button =>
-    normalizeText(button.textContent) === "닫기" || button.getAttribute("aria-label") === "닫기"
-  );
-  if (closeButtons.length !== 1) return null;
+  if (closeButtons(dialog).length !== 1) return null;
 
   const signature = normalizeText(description.textContent);
   const match = signature.match(/^정답\s*100점\s*(\d+(?:\.\d+)?)\s*ms\s*(\d[\d,]*(?:\.\d+)?)\s*(KB|KiB|MB|MiB)(?:\s*다음 문제도 풀어볼까요\?(?:\s*다음 문제[\s\S]*)?)?$/);

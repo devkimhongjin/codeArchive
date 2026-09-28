@@ -83,6 +83,85 @@ test("content capture retries transient worker failures and preserves the same p
   assert.deepEqual(messages[1], messages[2]);
 });
 
+test("an invalidated extension context stops retrying the old tab", async () => {
+  let calls = 0;
+  const delays: number[] = [];
+  const result = await storeCaptureWithRetry(capture(), () => {
+    calls += 1;
+    throw new Error("Extension context invalidated.");
+  }, async delay => { delays.push(delay); });
+  assert.equal(result, undefined);
+  assert.equal(calls, 1);
+  assert.deepEqual(delays, []);
+});
+
+test("an invalidated content script stops observing and tells the user to refresh the problem tab", async () => {
+  const { document } = parseHTML("<html><body><button id='submit'>제출</button></body></html>");
+  const previousElement = globalThis.Element;
+  const previousObserver = globalThis.MutationObserver;
+  Object.assign(globalThis, { Element: document.defaultView!.Element, MutationObserver: document.defaultView!.MutationObserver });
+  let calls = 0;
+  const adapter: PlatformAdapter = {
+    platform: "JUNGOL",
+    detectProblem: () => ({ problemNumber: "1520", title: "테스트", problemUrl: "https://jungol.co.kr/problem/1520" }),
+    detectSubmissionResult: () => null,
+    detectEditor: () => null,
+    collectPerformance: () => null,
+    isSubmitControl: element => element.id === "submit",
+    beginSubmissionAttempt: () => undefined,
+    hasPendingSubmissionAttempt: () => true,
+    consumeSubmissionResult: () => undefined
+  };
+  try {
+    startCapture(adapter, document, () => {
+      calls += 1;
+      throw new Error("Extension context invalidated.");
+    });
+    (document.querySelector("#submit") as HTMLButtonElement).click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.match(document.querySelector("#codearchive-reload-required")?.textContent ?? "", /이 문제 탭을 새로고침/);
+    assert.equal(calls, 1);
+    (document.querySelector("#submit") as HTMLButtonElement).click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls, 1, "a dead content script must not keep sending or polling");
+  } finally {
+    Object.assign(globalThis, { Element: previousElement, MutationObserver: previousObserver });
+  }
+});
+
+test("accepted capture uses the supplied content-script channel for local storage", async () => {
+  const { document } = parseHTML("<html><body><button id='submit'>제출</button></body></html>");
+  const previousElement = globalThis.Element;
+  const previousObserver = globalThis.MutationObserver;
+  Object.assign(globalThis, { Element: document.defaultView!.Element, MutationObserver: document.defaultView!.MutationObserver });
+  const current = capture();
+  const problem = { problemNumber: current.problemNumber, title: current.title, problemUrl: current.problemUrl };
+  const editor = { language: current.language, sourceCode: current.sourceCode };
+  let pending = false;
+  const messages: Array<{ type: string }> = [];
+  const adapter: PlatformAdapter = {
+    platform: "SWEA",
+    detectProblem: () => problem,
+    detectSubmissionResult: () => pending ? { accepted: true, resultText: "PASS입니다.", element: document.body } : null,
+    detectEditor: () => editor,
+    collectPerformance: () => null,
+    isSubmitControl: element => element.id === "submit",
+    beginSubmissionAttempt: () => { pending = true; },
+    getSubmissionSnapshot: () => ({ problem, editor }),
+    hasPendingSubmissionAttempt: () => pending,
+    consumeSubmissionResult: () => { pending = false; }
+  };
+  try {
+    startCapture(adapter, document, async message => { messages.push(message as { type: string }); return { ok: true }; });
+    (document.querySelector("#submit") as HTMLButtonElement).click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(messages.filter(message => message.type === "STORE_CAPTURE").length, 1);
+    assert.equal(pending, false);
+  } finally {
+    Object.assign(globalThis, { Element: previousElement, MutationObserver: previousObserver });
+  }
+});
+
 test("Java versions are stored as Java only after site verification", async () => {
   for (const language of ["Java 8", "Java 15", "JAVA15", "Java 17 (OpenJDK)"]) {
     const original = { ...capture(), language, languageKey: "java" };

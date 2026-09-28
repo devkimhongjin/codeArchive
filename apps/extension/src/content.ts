@@ -21,6 +21,10 @@ const STORE_CAPTURE_RETRY_DELAYS_MS = [50, 150, 500] as const;
 type SendRuntimeMessage = (message: unknown) => Promise<unknown>;
 type Sleep = (delayMs: number) => Promise<void>;
 
+function extensionContextInvalidated(error: unknown): boolean {
+  return error instanceof Error && /extension context invalidated/i.test(error.message);
+}
+
 export async function storeSweaProblemContext(
   document: Document,
   location: Location,
@@ -101,7 +105,10 @@ export async function storeCaptureWithRetry(
     try {
       response = await send({ type: "STORE_CAPTURE", capture: storedCapture });
       if ((response as { ok?: unknown } | null)?.ok === true) return response;
-    } catch {
+    } catch (error) {
+      // Reloading an unpacked extension permanently invalidates the old tab's
+      // content-script context. Retrying that context cannot reach the worker.
+      if (extensionContextInvalidated(error)) return undefined;
       response = undefined;
     }
 
@@ -113,23 +120,50 @@ export async function storeCaptureWithRetry(
 
 export function startCapture(adapter: PlatformAdapter, document: Document, send: SendRuntimeMessage): void {
   let processing = false;
+  let invalidated = false;
   let checkScheduled = false;
   let checkAfterProcessing = false;
   let resultPoll: ReturnType<typeof setInterval> | null = null;
+  let observer: MutationObserver | null = null;
   let activeAttemptId: string | null = null;
 
+  function stopInvalidatedContext(): void {
+    if (invalidated) return;
+    invalidated = true;
+    if (resultPoll !== null) clearInterval(resultPoll);
+    resultPoll = null;
+    observer?.disconnect();
+    const root = document.body ?? document.documentElement;
+    if (!root || document.getElementById("codearchive-reload-required")) return;
+    const notice = document.createElement("div");
+    notice.id = "codearchive-reload-required";
+    notice.setAttribute("role", "alert");
+    notice.style.cssText = "position:fixed;z-index:2147483647;bottom:16px;left:16px;right:16px;padding:14px 18px;background:#fff4e5;color:#442b08;border:2px solid #c77700;border-radius:8px;font:14px/1.5 sans-serif;box-shadow:0 4px 16px #0003";
+    notice.textContent = "CodeArchive 확장 프로그램이 갱신되어 이 탭의 자동 수집이 중단되었습니다. 코드와 저장 여부를 확인한 뒤 이 문제 탭을 새로고침하고 다시 제출해 주세요.";
+    root.prepend(notice);
+  }
+
+  async function sendTracked(message: unknown): Promise<unknown> {
+    try {
+      return await send(message);
+    } catch (error) {
+      if (extensionContextInvalidated(error)) stopInvalidatedContext();
+      throw error;
+    }
+  }
+
   function reportProgress(attemptId: string | null, phase: "CAPTURING" | "SAVING" | "CLEAR"): void {
-    if (!attemptId) return;
+    if (!attemptId || invalidated) return;
     const problem = adapter.detectProblem();
     if (phase === "CAPTURING" && !problem) return;
-    void send({
+    void sendTracked({
       type: "SET_SUBMISSION_PROGRESS", attemptId, platform: adapter.platform, phase,
       ...(problem ? { problemNumber: problem.problemNumber, title: problem.title } : {})
     }).catch(() => undefined);
   }
 
   function ensureResultPoll(): void {
-    if (!adapter.hasPendingSubmissionAttempt || resultPoll !== null) return;
+    if (invalidated || !adapter.hasPendingSubmissionAttempt || resultPoll !== null) return;
     resultPoll = setInterval(() => {
       if (!adapter.hasPendingSubmissionAttempt?.()) {
         clearInterval(resultPoll!);
@@ -143,6 +177,7 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
   }
 
   const runCaptureCheck = async (): Promise<void> => {
+    if (invalidated) return;
     if (processing) {
       checkAfterProcessing = true;
       return;
@@ -171,7 +206,7 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
           // Optional metrics must never prevent the accepted source capture.
         }
       }
-      const response = await storeCaptureWithRetry(collected.capture);
+      const response = await storeCaptureWithRetry(collected.capture, sendTracked);
       // A capture is consumed only after the service worker confirms local
       // persistence. Storage or channel failures remain retryable.
       if ((response as { ok?: unknown } | null)?.ok === true) {
@@ -189,6 +224,7 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
   };
 
   function scheduleCaptureCheck(): void {
+    if (invalidated) return;
     if (processing) {
       checkAfterProcessing = true;
       return;
@@ -206,6 +242,7 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
   document.addEventListener(
     "click",
     (event) => {
+      if (invalidated) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
       let current: Element | null = target;
@@ -234,7 +271,7 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
 
   const root = document.body ?? document.documentElement;
   if (root) {
-    const observer = new MutationObserver(() => scheduleCaptureCheck());
+    observer = new MutationObserver(() => scheduleCaptureCheck());
     observer.observe(root, {
       subtree: true,
       childList: true,
