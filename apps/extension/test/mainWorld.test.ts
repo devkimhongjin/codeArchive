@@ -112,6 +112,27 @@ test("MAIN-world listener is exact-submit scoped and has no page-wide command ch
   cleanup();
 });
 
+test("MAIN-world Programmers listener stays ready after a same-document lesson navigation", () => {
+  const { document } = parseHTML('<html><body><textarea id="code" name="code"></textarea><button id="submit-code">submit</button></body></html>');
+  const code = document.querySelector("#code") as HTMLTextAreaElement & { CodeMirror?: unknown };
+  let saves = 0;
+  code.CodeMirror = { save() { saves += 1; }, getValue() { return "current source"; } };
+  const location = new URL("https://school.programmers.co.kr/learn/challenges") as unknown as Location;
+  const cleanup = installMainWorldSync(document, location);
+  try {
+    (document.querySelector("#submit-code") as HTMLButtonElement).click();
+    assert.equal(saves, 0);
+    assert.equal(document.documentElement.getAttribute(EDITOR_SYNC_ATTRIBUTE), null);
+    location.pathname = "/learn/courses/30/lessons/42861";
+    (document.querySelector("#submit-code") as HTMLButtonElement).click();
+    assert.equal(saves, 1);
+    assert.equal(code.value, "current source");
+    assert.match(document.documentElement.getAttribute(EDITOR_SYNC_ATTRIBUTE) ?? "", /^synced:/);
+  } finally {
+    cleanup();
+  }
+});
+
 test("MAIN-world sync fails closed when a platform editor is unavailable", () => {
   const { document } = parseHTML('<html><body><textarea id="textSource"></textarea></body></html>');
   const location = locationFor("https://swexpertacademy.com/main/solvingProblem/solvingProblem.do?contestProbId=AV1");

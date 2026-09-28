@@ -129,9 +129,17 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
   let observer: MutationObserver | null = null;
   let activeAttemptId: string | null = null;
 
+  function markCaptureStage(stage: string, attemptId: string | null = activeAttemptId): void {
+    if (adapter.platform !== "PROGRAMMERS" || (attemptId && attemptId !== activeAttemptId)) return;
+    // A non-sensitive, page-local diagnostic for the next real submission.
+    // Never include source, identity, capture IDs, or runtime error messages.
+    document.documentElement?.setAttribute("data-codearchive-capture-stage", stage);
+  }
+
   function stopInvalidatedContext(): void {
     if (invalidated) return;
     invalidated = true;
+    markCaptureStage("context-invalidated");
     if (resultPoll !== null) clearInterval(resultPoll);
     resultPoll = null;
     observer?.disconnect();
@@ -171,6 +179,9 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
         clearInterval(resultPoll!);
         resultPoll = null;
         reportProgress(activeAttemptId, "CLEAR");
+        if (document.documentElement?.getAttribute("data-codearchive-capture-stage") !== "store-acknowledged") {
+          markCaptureStage("result-timeout");
+        }
         activeAttemptId = null;
         return;
       }
@@ -188,14 +199,20 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
     if (!collected) return;
     const progressAttemptId = activeAttemptId;
 
+    markCaptureStage("accepted", progressAttemptId);
+
     processing = true;
     try {
       if (adapter.confirmCaptureAsync) {
         const confirmed = await adapter.confirmCaptureAsync(collected.capture, collected.detection);
-        if (!confirmed) return;
+        if (!confirmed) {
+          markCaptureStage("result-unverified", progressAttemptId);
+          return;
+        }
         Object.assign(collected.capture, confirmed);
       }
       reportProgress(progressAttemptId, "SAVING");
+      markCaptureStage("saving", progressAttemptId);
       if (
         adapter.collectPerformanceAsync &&
         collected.capture.executionTime === undefined &&
@@ -213,6 +230,9 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
       // persistence. Storage or channel failures remain retryable.
       if ((response as { ok?: unknown } | null)?.ok === true) {
         adapter.consumeSubmissionResult(collected.detection);
+        markCaptureStage("store-acknowledged", progressAttemptId);
+      } else {
+        markCaptureStage("store-unavailable", progressAttemptId);
       }
       reportProgress(progressAttemptId, "CLEAR");
       if (activeAttemptId === progressAttemptId) activeAttemptId = null;
@@ -250,12 +270,16 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
       let current: Element | null = target;
       while (current) {
         if (adapter.isSubmitControl(current)) {
-          if (adapter.platform === "JUNGOL" && !adapter.detectProblem()) break;
+          if ((adapter.platform === "JUNGOL" || adapter.platform === "PROGRAMMERS") && !adapter.detectProblem()) break;
           // The MAIN-world document_start listener runs before this isolated
           // document_idle listener and synchronously updates the platform's
           // source textarea at this click boundary.
           adapter.beginSubmissionAttempt(new Date());
           activeAttemptId = crypto.randomUUID();
+          if (adapter.platform === "PROGRAMMERS") {
+            const snapshot = adapter.getSubmissionSnapshot?.();
+            markCaptureStage(!snapshot?.problem || !snapshot.editor ? "snapshot-missing" : "waiting-result");
+          }
           reportProgress(activeAttemptId, "CAPTURING");
           ensureResultPoll();
           scheduleCaptureCheck();
@@ -275,7 +299,7 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
   const root = document.body ?? document.documentElement;
   if (root) {
     observer = new MutationObserver(() => {
-      if (adapter.platform !== "JUNGOL" || adapter.hasPendingSubmissionAttempt?.()) scheduleCaptureCheck();
+      if (adapter.platform === "SWEA" || adapter.hasPendingSubmissionAttempt?.()) scheduleCaptureCheck();
     });
     observer.observe(root, {
       subtree: true,

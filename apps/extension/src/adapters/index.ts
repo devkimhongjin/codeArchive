@@ -12,7 +12,10 @@ export function createAdapter(
   if (location.origin === "https://swexpertacademy.com" && location.pathname === "/main/solvingProblem/solvingProblem.do") {
     return new SweaAdapter(document, location, undefined, undefined, sweaProblemUrl, allowSweaQuerylessFallback);
   }
-  if (location.origin === "https://school.programmers.co.kr" && /^\/learn\/courses\/30\/lessons\/\d+\/?$/.test(location.pathname)) {
+  // Keep the listener on the origin when the site navigates to a lesson
+  // without loading a new document. The adapter still verifies the exact
+  // lesson path before accepting a submission.
+  if (location.origin === "https://school.programmers.co.kr") {
     return new ProgrammersAdapter(document, location);
   }
   // Jungol navigates from lists to problems without reloading the document.

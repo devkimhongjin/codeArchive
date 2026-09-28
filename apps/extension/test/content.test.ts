@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseHTML } from "linkedom";
 import { createCapture } from "../src/capture";
+import { createAdapter } from "../src/adapters";
 import {
   loadSweaProblemContext,
   loadSweaProblemContextForReferrer,
@@ -120,6 +121,59 @@ test("Jungol ignores list-page submit controls but starts collecting after SPA n
     assert.equal(phases[0], "CAPTURING");
     pending = false;
     await new Promise(resolve => setTimeout(resolve, 350));
+  } finally {
+    Object.assign(globalThis, { Element: previousElement, MutationObserver: previousObserver });
+  }
+});
+
+test("Programmers starts capture after list-to-lesson navigation without a document reload", async () => {
+  const { document } = parseHTML(`<html><body>
+    <h1 class="challenge-title">섬 연결하기</h1>
+    <nav class="challenge-nav"><button class="dropdown-toggle">Java</button></nav>
+    <textarea id="code" name="code">class Solution {}</textarea>
+    <button id="submit-code">제출 후 채점하기</button>
+    <div id="modal-dialog" class="modal fade" role="dialog" aria-modal="false">
+      <h4 class="modal-title">정답입니다!</h4>
+    </div>
+  </body></html>`);
+  const previousElement = globalThis.Element;
+  const previousObserver = globalThis.MutationObserver;
+  Object.assign(globalThis, { Element: document.defaultView!.Element, MutationObserver: document.defaultView!.MutationObserver });
+  const location = new URL("https://school.programmers.co.kr/learn/challenges");
+  const adapter = createAdapter(document, location as unknown as Location);
+  assert.ok(adapter);
+  const messages: Array<{ type: string; phase?: string }> = [];
+  try {
+    startCapture(adapter, document, async message => {
+      messages.push(message as { type: string; phase?: string });
+      return { ok: true };
+    });
+    (document.querySelector("#submit-code") as HTMLButtonElement).click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(messages.length, 0, "a non-lesson page must not start an attempt");
+    assert.equal(document.documentElement.getAttribute("data-codearchive-capture-stage"), null);
+
+    location.pathname = "/learn/courses/30/lessons/42861";
+    const source = document.querySelector("#code") as HTMLTextAreaElement;
+    source.value = "";
+    (document.querySelector("#submit-code") as HTMLButtonElement).click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(document.documentElement.getAttribute("data-codearchive-capture-stage"), "snapshot-missing");
+    assert.equal(messages.some(message => message.type === "STORE_CAPTURE"), false);
+
+    source.value = "class Solution {}";
+    (document.querySelector("#submit-code") as HTMLButtonElement).click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(messages[0]?.phase, "CAPTURING");
+    assert.equal(messages.some(message => message.type === "STORE_CAPTURE"), false);
+    assert.equal(document.documentElement.getAttribute("data-codearchive-capture-stage"), "waiting-result");
+
+    const dialog = document.querySelector("#modal-dialog")!;
+    dialog.classList.add("show");
+    dialog.setAttribute("aria-modal", "true");
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(messages.filter(message => message.type === "STORE_CAPTURE").length, 1);
+    assert.equal(document.documentElement.getAttribute("data-codearchive-capture-stage"), "store-acknowledged");
   } finally {
     Object.assign(globalThis, { Element: previousElement, MutationObserver: previousObserver });
   }

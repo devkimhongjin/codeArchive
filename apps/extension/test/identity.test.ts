@@ -25,8 +25,10 @@ test('public manifest key pins the same ID used by the dashboard', () => {
   assert.ok(isolated.matches.includes('https://swexpertacademy.com/main/code/problem/problemDetail.do*'));
   assert.ok(isolated.matches.includes('https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do*'));
   assert.ok(isolated.matches.includes('https://jungol.co.kr/*'));
+  assert.ok(isolated.matches.includes('https://school.programmers.co.kr/*'));
   const mainWorld = manifest.content_scripts.find((script: { world?: string }) => script.world === 'MAIN');
   assert.ok(mainWorld?.matches.includes('https://jungol.co.kr/*'), 'list-to-problem SPA navigation must retain the source listener');
+  assert.ok(mainWorld?.matches.includes('https://school.programmers.co.kr/*'), 'list-to-lesson SPA navigation must retain the source listener');
 });
 
 test('extension pages keep the default CSP without a WebAssembly exception', () => {
