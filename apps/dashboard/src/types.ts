@@ -1,8 +1,9 @@
 import type { LightTheme, DarkTheme } from '../../../shared/codeThemes'
+import type { HeaderField } from '../../../shared/headerFields'
 
 export type Platform = 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'
 
-export type ViewName = 'solutions' | 'community' | 'guide' | 'settings'
+export type ViewName = 'solutions' | 'community' | 'guide' | 'settings' | 'github'
 
 export type User = {
   id: number
@@ -78,6 +79,9 @@ export type AccountSettings = {
   copyHeader: boolean
   downloadHeader: boolean
   githubHeader: boolean
+  copyHeaderFields?: HeaderField[]
+  downloadHeaderFields?: HeaderField[]
+  githubHeaderFields?: HeaderField[]
   downloadFilenameTemplate: string
   gitPathTemplate: string
   githubCommitMessageTemplate: string
@@ -112,7 +116,10 @@ export type GithubBranchTarget = { name: string; protectedBranch: boolean; commi
 export type GithubDirectoryTarget = { currentPath: string; parentPath: string; directories: string[] }
 export type GithubTreeEntry = { name: string; path: string; type: 'tree' | 'blob' | 'commit'; size: number }
 export type GithubTreePage = { path: string; headSha: string | null; items: GithubTreeEntry[]; page: number; hasMore: boolean; truncated: boolean }
+export type GithubFileView = { path: string; headSha: string; blobSha: string; mode: string; size: number; content: string | null; unavailableReason: 'FILE_TOO_LARGE' | 'NON_TEXT' | 'UNSUPPORTED_TYPE' | null }
+export type GithubSavedTarget = { installationId: number; owner: string; repository: string; branch: string; rootPath: string | null }
 export type GithubAddFileRequest = { branch: string; path: string; content: string; message: string; expectedHeadSha: string; placeholder: boolean }
+export type GithubEditFileRequest = { branch: string; path: string; content: string; message: string; expectedHeadSha: string; expectedBlobSha: string }
 export type GithubTreeOperationPreviewRequest = { operation: 'MOVE' | 'DELETE'; branch: string; sourcePath: string; destinationPath: string | null; message: string; expectedHeadSha: string }
 export type GithubTreeChange = { fromPath: string; toPath: string | null }
 export type GithubTreeOperationPreview = GithubTreeOperationPreviewRequest & { previewId: string; changes: GithubTreeChange[] }

@@ -3,6 +3,7 @@ import type { CaptureSettings } from "./types";
 import type { CaptureStore } from "./storage";
 import { downloadFilename, exportCode } from "./export";
 import { textDownloadUrl } from "./download";
+import { normalizedHeaderFields } from "../../../shared/headerFields";
 
 export type CapturePreview = Omit<Capture, "sourceCode">;
 
@@ -31,7 +32,7 @@ export function prepareCaptureDownload(capture: Capture, settings: CaptureSettin
     nickname: settings.nickname,
     id: settings.accountId
   });
-  const url = textDownloadUrl(exportCode(capture, settings.downloadHeader === true), filename.split(".").pop() ?? "txt");
+  const url = textDownloadUrl(exportCode(capture, settings.downloadHeader === true, normalizedHeaderFields(settings.downloadHeaderFields)), filename.split(".").pop() ?? "txt");
   return url ? { filename, url } : null;
 }
 

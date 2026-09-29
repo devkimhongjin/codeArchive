@@ -112,6 +112,15 @@ class GithubAppProviderTest {
     assertThat(blobSource()).isEqualTo("// SWEA #123 · Title\n// https://example.test/123\n// Language: Java 21\n// Execution Time: 12.5 ms\n// Memory: 2048 KB\n\nclass Solution {}");
   }
 
+  @Test void selectedGithubHeaderFieldsAndSubmissionTokensMatchTheSavedSettings() throws Exception {
+    UserSettings selected=new UserSettings(AppUser.fromGithub("1","owner","Owner",null));
+    selected.apply(new SettingsRequest(0,"n",null,false,false,true,"{number}","{platform}/{number}-{title}","Add {time} {capture_ID}","github-light","github-dark",true,true,44L,"owner","repo","main",null,
+        List.of("identity"),List.of("language"),List.of("title","solvedAt")));
+    assertThat(provider().createOnly(selected,solution()).outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(blobSource()).isEqualTo("// Problem: Title\n// Solved At: 2026-09-18 05:21:03 UTC\n\nclass Solution {}");
+    assertThat(requests.get(6).body()).contains("\"message\":\"Add 260918052103 11111111-1111-4111-8111-111111111111\"");
+  }
+
   @Test void githubProblemHeaderPreservesPythonShebangAndIsUsedForIdempotency() throws Exception {
     Solution python=new Solution(AppUser.fromGithub("1","owner","Owner",null),"44444444-4444-4444-8444-444444444444",Platform.SWEA,"123","Title","https://example.test/123","Python3","#!/usr/bin/python\nprint(1)","ACCEPTED",Instant.parse("2026-09-18T05:21:03.456Z"),Instant.parse("2026-09-18T05:21:03.456Z"),null,null);
     UserSettings configured=settings("main","Add {platform} {number} solution",true);

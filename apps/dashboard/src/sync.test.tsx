@@ -61,6 +61,7 @@ async function openConnectedSettings() {
 afterEach(() => {
   cleanup()
   localStorage.clear()
+  window.history.replaceState({}, '', '/')
   vi.clearAllMocks()
 })
 
@@ -243,7 +244,7 @@ it('persists an offline inline code-view theme and seeds the next local archive 
 it('shows a read-only local pending count without issuing captures for upload', async () => {
   mocks.me.mockRejectedValue(new Error('not signed in'))
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => {
-    if (message.type === 'CONNECT') return Promise.resolve({ capability: 'status-capability', version: '0.2.0' })
+    if (message.type === 'CONNECT') return Promise.resolve({ capability: 'status-capability', version: '0.2.1' })
     if (message.type === 'GET_STATUS') return Promise.resolve({ pendingCount: 2 })
     if (message.type === 'GET_LOCAL_ARCHIVE') return Promise.resolve({ captures: [], localOnly: true })
     return Promise.resolve({ ok: true })
@@ -251,7 +252,7 @@ it('shows a read-only local pending count without issuing captures for upload', 
 
   render(<App />)
   await waitFor(() => expect(document.querySelector('.sync-count')?.textContent).toBe('2'))
-  expect(screen.getByText('확장 프로그램 연결 완료 · v0.2.0')).toBeTruthy()
+  expect(screen.getByText('확장 프로그램 연결 완료 · v0.2.1')).toBeTruthy()
   expect(screen.getByText('로컬 대기 풀이 2개')).toBeTruthy()
   expect(bridgeCalls('GET_PENDING')).toHaveLength(0)
 })

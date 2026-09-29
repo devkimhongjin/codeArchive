@@ -23,6 +23,9 @@ public class UserSettings {
     @Column(name = "copy_header") private boolean copyHeader;
     @Column(name = "download_header") private boolean downloadHeader;
     @Column(name = "github_header") private boolean githubHeader;
+    @Column(name = "copy_header_fields") private String copyHeaderFields = "identity,title,url,language,performance";
+    @Column(name = "download_header_fields") private String downloadHeaderFields = "identity,title,url,language,performance";
+    @Column(name = "github_header_fields") private String githubHeaderFields = "identity,title,url,language,performance";
     @Column(name = "download_filename_template") private String downloadFilenameTemplate = "Solution_{number}_{name}";
     @Column(name = "git_path_template") private String gitPathTemplate = "{platform}/{number}_{title}/{time}";
     @Column(name = "github_commit_message_template") private String githubCommitMessageTemplate = "Add {platform} {number} solution";
@@ -38,8 +41,12 @@ public class UserSettings {
     @Column(name = "automation_enabled_at") private Instant automationEnabledAt;
     protected UserSettings() {}
     public UserSettings(AppUser user) { this.user = user; }
-    public long getVersion() { return version; } public String getDisplayName() { return displayName; } public String getNickname() { return nickname; }
+    public long getVersion() { return version; } public String getDisplayName() { return displayName; }
+    public String getNickname() { return nickname == null || nickname.isBlank() ? user == null ? null : user.getGithubLogin() : nickname; }
     public boolean isCopyHeader() { return copyHeader; } public boolean isDownloadHeader() { return downloadHeader; } public boolean isGithubHeader() { return githubHeader; }
+    public java.util.List<String> getCopyHeaderFields() { return HeaderFields.parse(copyHeaderFields); }
+    public java.util.List<String> getDownloadHeaderFields() { return HeaderFields.parse(downloadHeaderFields); }
+    public java.util.List<String> getGithubHeaderFields() { return HeaderFields.parse(githubHeaderFields); }
     public String getDownloadFilenameTemplate() { return downloadFilenameTemplate; } public String getGitPathTemplate() { return gitPathTemplate; }
     public String getGithubCommitMessageTemplate() { return githubCommitMessageTemplate; }
     public String getLightTheme() { return lightTheme; } public String getDarkTheme() { return darkTheme; }
@@ -54,6 +61,7 @@ public class UserSettings {
         String nextCommitMessageTemplate = r.githubCommitMessageTemplate() == null ? githubCommitMessageTemplate : r.githubCommitMessageTemplate();
         boolean automationTargetChanged = !java.util.Objects.equals(gitPathTemplate, r.gitPathTemplate())
                 || githubHeader != r.githubHeader()
+                || r.githubHeaderFields() != null && !java.util.Set.copyOf(getGithubHeaderFields()).equals(java.util.Set.copyOf(r.githubHeaderFields()))
                 || !java.util.Objects.equals(githubCommitMessageTemplate, nextCommitMessageTemplate)
                 || !java.util.Objects.equals(githubInstallationId, r.githubInstallationId())
                 || !java.util.Objects.equals(githubOwner, r.githubOwner())
@@ -61,6 +69,9 @@ public class UserSettings {
                 || !java.util.Objects.equals(githubBranch, r.githubBranch())
                 || !java.util.Objects.equals(githubRootPath, r.githubRootPath());
         displayName = r.name(); nickname = r.nickname(); copyHeader = r.copyHeader(); downloadHeader = r.downloadHeader(); githubHeader = r.githubHeader();
+        if (r.copyHeaderFields() != null) copyHeaderFields = HeaderFields.encode(r.copyHeaderFields());
+        if (r.downloadHeaderFields() != null) downloadHeaderFields = HeaderFields.encode(r.downloadHeaderFields());
+        if (r.githubHeaderFields() != null) githubHeaderFields = HeaderFields.encode(r.githubHeaderFields());
         downloadFilenameTemplate = r.downloadFilenameTemplate(); gitPathTemplate = r.gitPathTemplate(); githubCommitMessageTemplate = nextCommitMessageTemplate; lightTheme = r.lightTheme(); darkTheme = r.darkTheme();
         autoSyncEnabled = r.autoSyncEnabled(); githubInstallationId = r.githubInstallationId(); githubOwner = r.githubOwner(); githubRepository = r.githubRepository(); githubBranch = r.githubBranch(); githubRootPath = r.githubRootPath();
         githubAutoCommitEnabled = r.githubAutoCommitEnabled() && githubTargetConfigured();

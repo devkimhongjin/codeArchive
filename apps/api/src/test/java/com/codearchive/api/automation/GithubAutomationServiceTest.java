@@ -75,6 +75,12 @@ class GithubAutomationServiceTest {
     AppUser user=AppUser.fromGithub("1","owner","Owner",null); UserSettings setting=settings(user,1,Instant.EPOCH); Instant before=setting.getAutomationEnabledAt();
     setting.apply(new SettingsRequest(1,"n","n",false,false,false,"{number}","{number}","Add {platform} {number} solution","one-light","dracula",true,true,1L,"owner","repo","main",null));
     assertThat(setting.getAutomationEnabledAt()).isEqualTo(before);
+    setting.apply(new SettingsRequest(1,"n","n",false,false,false,"{number}","{number}","Add {platform} {number} solution","one-light","dracula",true,true,1L,"owner","repo","main",null,
+        List.of("identity", "title", "url", "language", "performance"),List.of("identity", "title", "url", "language", "performance"),List.of("identity", "title", "language", "performance", "url")));
+    assertThat(setting.getAutomationEnabledAt()).isEqualTo(before);
+    setting.apply(new SettingsRequest(1,"n","n",false,false,false,"{number}","{number}","Add {platform} {number} solution","one-light","dracula",true,true,1L,"owner","repo","main",null,
+        List.of("identity"),List.of("language"),List.of("title")));
+    assertThat(setting.getAutomationEnabledAt()).isAfter(before);
     setting.apply(new SettingsRequest(1,"n","n",false,false,true,"{number}","{number}","Add {platform} {number} solution","one-light","dracula",true,true,1L,"owner","repo","main",null));
     assertThat(setting.getAutomationEnabledAt()).isAfter(before);
     setting.apply(new SettingsRequest(1,"n","n",false,false,false,"{number}","{number}","Solve {platform} {number}","one-light","dracula",true,true,1L,"owner","repo","main",null));

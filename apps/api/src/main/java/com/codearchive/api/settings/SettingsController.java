@@ -62,6 +62,7 @@ public class SettingsController {
   private static String validate(SettingsRequest r) {
     if (r == null || overOptional(r.name(),255) || overOptional(r.nickname(),80) || requiredOver(r.downloadFilenameTemplate(),160) || requiredOver(r.gitPathTemplate(),240) || (r.githubCommitMessageTemplate()!=null && requiredOver(r.githubCommitMessageTemplate(),200))) return "Invalid settings";
     if (!LIGHT.contains(r.lightTheme()) || !DARK.contains(r.darkTheme())) return "Unsupported Shiki theme";
+    if (!HeaderFields.valid(r.copyHeaderFields()) || !HeaderFields.valid(r.downloadHeaderFields()) || !HeaderFields.valid(r.githubHeaderFields())) return "Invalid header fields";
     if (r.downloadFilenameTemplate().contains("/") || r.downloadFilenameTemplate().contains("\\") || control(r.downloadFilenameTemplate()) || reserved(r.downloadFilenameTemplate())) return "Download filename is unsafe";
     String path = r.gitPathTemplate(); if (!safeRelative(path,240)) return "Git path must stay beneath the configured root";
     if (!path.contains("{capture_ID}") && !path.contains("{time}")) return "Git path must include {capture_ID} or {time}";
