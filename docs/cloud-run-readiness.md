@@ -1,22 +1,21 @@
 # Cloud Run readiness runbook
 
-## Current safe state
+## Current state (2026-09-29)
 
-The deployed Render API remains in `GITHUB_DISPATCH_MODE=polling` (the default).
-Spring Security sessions are stored in Flyway-managed PostgreSQL tables in
-`codearchive_v2`; the production session schema initializer is disabled and the
-Hikari maximum pool defaults to five connections. Session cleanup is hourly, not
-per-minute, to avoid preventing Neon scale-to-zero.
+Netlify `/api` targets the Cloud Run API, with a separate private GitHub worker
+in `asia-southeast1`. Both serve the same commit-tagged image and use Cloud Tasks
+dispatch; Render remains a rollback target. Spring Security sessions are stored
+in Flyway-managed PostgreSQL tables in `codearchive_v2`. The Cloud Scheduler API
+and recovery job are not yet enabled, so unattended outbox recovery is **not**
+complete. Consult `infra/gcp/README.md` for current deployment and recovery
+steps before making an operational change. The configuration below is a contract,
+not evidence that every acceptance criterion has passed.
 
-No Google Cloud project, API, queue, service account, scheduler job, or deployment
-is created by this repository or this runbook. Complete account authentication and
-review the platform ownership before running any placeholder command below.
+## Two-service configuration contract
 
-## Future two-service configuration
-
-The future cutover uses two Cloud Run services with separate exposure and IAM
-responsibilities. These are templates only; do not apply them until account
-authentication and platform ownership are resolved.
+The deployed pair uses separate exposure and IAM responsibilities. These are
+reference settings; inspect actual revisions and secret versions before any
+deployment, rather than assuming the text matches the running services.
 
 ### Public capture-ingress API enqueuer
 
@@ -86,18 +85,18 @@ Do not grant public invoker access. Grant Cloud Tasks its task-invoker IAM bindi
 and Cloud Scheduler its recovery-invoker IAM binding; both callers use OIDC. Do not
 forward GitHub source, credentials, or personal data into a task payload.
 
-## Future cutover order
+## Remaining acceptance order
 
-1. Keep current Render production on `GITHUB_DISPATCH_MODE=polling` until both
-   future services, IAM bindings, and recovery monitoring have been reviewed.
-2. After authentication is repaired, the platform owner creates the queue, private
-   worker service, task-enqueuer identity/role, task and scheduler invoker bindings,
-   and Scheduler OIDC target through approved IaC or console processes.
-3. Deploy and verify the private worker first with unauthenticated invocation
-   disabled. Validate queue-header rejection, OIDC access, duplicate delivery, and
-   low-frequency recovery without exposing it publicly.
-4. Configure the public capture-ingress API enqueuer with cloud-tasks mode only
-   after the worker is ready. Validate that a capture commits a `PENDING` job and
-   creates a task containing only `jobId`.
-5. Observe successful task execution, retry, stale-lease-to-`UNKNOWN`, and recovery
-   behavior before retiring polling. `UNKNOWN` is never retried automatically.
+1. Inspect the current API/worker pair, numeric database secret bindings, private
+   IAM boundary, queue limits, and billing account. Establish whether the
+   Scheduler API was previously enabled and inventory dormant jobs before
+   enabling it: re-enablement can run missed jobs immediately. The plan-only
+   helper in `infra/gcp/README.md` refuses to apply while the API is disabled.
+2. Validate Scheduler OIDC against the private worker and verify that an enqueue
+   failure leaves a durable `PENDING` job that recovery safely re-enqueues.
+   `UNKNOWN` must never be retried automatically.
+3. With all Dashboard documents closed, verify one real PASS through local save,
+   automatic sync, and exactly one GitHub commit. Separately test duplicate task
+   delivery, revoked permissions, restart/scale-to-zero, and rollback procedures.
+4. Do not close #247–#249 or remove the Render rollback target based only on a
+   single successful commit or on source-code readiness.

@@ -98,10 +98,12 @@ the worker and return HTTP 204.
 
 ## Security boundary
 
-The future worker must be deployed with unauthenticated invocation disabled.
-After the worker exists, grant `roles/run.invoker` on that service only to the
-`codearchive-task-invoker` service account. Never grant the worker to
-`allUsers` or `allAuthenticatedUsers`.
+The private worker must keep unauthenticated invocation disabled and Cloud Run
+Invoker IAM enforcement enabled. It currently grants unconditional
+`roles/run.invoker` to `codearchive-task-invoker` for Cloud Tasks delivery.
+When recovery Scheduler is safely activated, grant the same role on this
+worker to the separate `codearchive-recovery-invoker` identity for its OIDC
+request. Never grant the worker to `allUsers` or `allAuthenticatedUsers`.
 
 The public staging API uses `codearchive-api-stg` as its Cloud Run service
 identity. The private worker uses `codearchive-worker-stg`. Neither identity
@@ -117,13 +119,52 @@ uses a downloaded JSON key; Cloud Run provides Application Default Credentials.
 - A Cloud Tasks OIDC request for a nonexistent durable job reaches the worker
   and receives HTTP 204 without source code or credentials in the payload.
 
-## Still required before closing #247
+## Recovery Scheduler for #247
 
-1. Deploy the public staging API from the same verified image digest as part of
-   #248 so a real ingest can enqueue its durable job with keyless credentials.
-2. With the dashboard closed, submit one new PASS and verify exactly one GitHub
-   commit, duplicate-delivery idempotency, and recovery behavior.
-3. Keep Render in polling mode until that end-to-end verification passes.
+The API and private worker currently run the same commit-tagged image in
+Cloud Run, and Netlify `/api` already targets that API. The worker has a durable
+recovery endpoint, but as of 2026-09-29 the Cloud Scheduler API and hourly job
+are **not enabled**. A one-time successful commit does not prove lost-task
+recovery.
+
+`configure-issue247-recovery.ps1` uses a dedicated recovery-invoker service
+account with `roles/run.invoker` on the private worker only. Its HTTP job posts
+to `/internal/github/recovery` at minute 17 of each UTC hour using an OIDC
+token whose audience is the worker service URL. It sends no source or secret.
+The default invocation is read-only and prints a plan:
+
+```powershell
+./infra/gcp/configure-issue247-recovery.ps1 -ProjectId <project-id>
+./infra/gcp/configure-issue247-recovery.ps1 -ProjectId <project-id> -Apply -WhatIf
+```
+
+`-Apply` requires the Scheduler API to be already enabled, then creates the
+narrow service account, worker invoker binding, and job. It **does not enable**
+the API: the owner cannot confirm whether it was enabled before, and [re-enabling
+it can immediately run missed jobs](https://docs.cloud.google.com/scheduler/docs/configuring/cron-job-schedules).
+Inventory any dormant jobs and establish first-enable/re-enable history before
+an operator enables the API separately. Until then `-Apply` fails closed.
+The helper first requires the API and
+worker to serve their latest ready revisions, use the same immutable image and
+same **numeric** database secret bindings, retain their expected Cloud Tasks
+roles, and keep the single-container worker private with Cloud Run Invoker IAM
+enforcement and unconditional task-invoker access. An existing job with different target,
+identity, schedule, or retry settings is rejected rather than overwritten.
+This guard does **not** prove whether the database itself is production or
+staging, protect arbitrary `gcloud` commands, or authorize a migration.
+
+Cloud Scheduler currently allows three free jobs per billing account, not per
+project; a paused job still counts. Check the billing account's other projects
+and current usage before `-Apply`. The job and its Cloud Run/DB invocations are
+not a hard zero-cost guarantee. The existing project budget alerts at 50/80/100%
+are notifications, not a spending cap. See
+<https://cloud.google.com/scheduler/pricing> and
+<https://docs.cloud.google.com/scheduler/docs/http-target-auth>.
+
+Before closing #247, verify an actual dashboard-closed PASS → one GitHub commit,
+duplicate delivery, enqueue failure/recovery, permission failure and ambiguous
+`UNKNOWN` behavior, and restart/scale-to-zero. Do not inject failures or run
+the recovery job against live user jobs without a bounded, approved test plan.
 
 ## Issue #248: public staging API
 
