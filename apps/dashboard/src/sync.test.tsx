@@ -61,6 +61,7 @@ async function openConnectedSettings() {
 afterEach(() => {
   cleanup()
   localStorage.clear()
+  window.history.replaceState({}, '', '/')
   vi.clearAllMocks()
 })
 

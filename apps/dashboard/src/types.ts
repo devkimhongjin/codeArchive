@@ -2,7 +2,7 @@ import type { LightTheme, DarkTheme } from '../../../shared/codeThemes'
 
 export type Platform = 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'
 
-export type ViewName = 'solutions' | 'community' | 'guide' | 'settings'
+export type ViewName = 'solutions' | 'community' | 'guide' | 'settings' | 'github'
 
 export type User = {
   id: number

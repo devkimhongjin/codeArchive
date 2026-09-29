@@ -15,6 +15,10 @@ it('rejects malformed route values and removes private community context on othe
   const route = readCommunityRoute('?view=community&platform=other&problemNumber=../secret&languageKey=JAVA%0A&page=9999&solution=-1')
   expect(route).toEqual({ platform: 'SWEA', problemNumber: '', languageKey: '', page: 0, detailId: null })
   expect(urlForView('solutions', route, new URL('https://example.test/?view=community&platform=SWEA&problemNumber=123&solution=42'))).toBe('/')
+  expect(urlForView('github', route, new URL('https://example.test/?view=community&platform=SWEA&problemNumber=123&solution=42'))).toBe('/?view=github')
+  expect(readView('?view=github')).toBe('github')
+  expect(readView('?view=settings')).toBe('settings')
+  expect(readView('?view=unsupported')).toBe('solutions')
 })
 
 it('keeps an exact Jungol problem in a shared community link', () => {
