@@ -24,8 +24,9 @@ import { ApiError, addGithubFile, bulkUpload, getAccountSettings, getMe, getSolu
 import { BridgeError, parseAckResponse, parseBridgeStatusResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
-import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type BulkResponse, type GithubAddFileRequest, type GithubTreeOperationPreview, type Solution, type Toast, type User, type ViewName } from './types'
+import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type BulkResponse, type GithubAddFileRequest, type GithubSavedTarget, type GithubTreeOperationPreview, type Solution, type Toast, type User, type ViewName } from './types'
 import { CodeBlock, CodeThemeSelect } from './CodeBlock'
+import { GithubRepositoryBrowser } from './GithubRepositoryBrowser'
 import { EXTENSION_ID, LEGACY_EXTENSION_ID, EXTENSION_CANDIDATES } from './extensionConfig'
 import { readExportSettings, EXPORT_SETTINGS_KEY, exportCode, downloadFilename, githubCommitMessage, gitPath, sourceFileExtension, DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, DEFAULT_GIT_PATH_TEMPLATE, GIT_PATH_TOKENS, hasGitSubmissionIdentityToken, type ExportSettings } from './codeExport'
 import { navigateSameTab } from './navigation'
@@ -177,6 +178,12 @@ function persistLocalThemes(settings: Pick<AccountSettings, 'lightTheme' | 'dark
   try { localStorage.setItem(LOCAL_THEME_KEY, JSON.stringify(settings)) } catch { /* Preview remains usable. */ }
 }
 const defaultAccountSettings = (): AccountSettings => ({ version: 0, name: null, nickname: null, copyHeader: false, downloadHeader: false, githubHeader: false, downloadFilenameTemplate: DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, gitPathTemplate: DEFAULT_GIT_PATH_TEMPLATE, githubCommitMessageTemplate: DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, ...readLocalThemes(), autoSyncEnabled: false, githubAutoCommitEnabled: false, githubTargetConfigured: false, githubStatus: 'TARGET_MISSING', githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null })
+
+function savedGithubTarget(settings: AccountSettings): GithubSavedTarget | null {
+  return settings.githubTargetConfigured && settings.githubInstallationId && settings.githubOwner && settings.githubRepository && settings.githubBranch
+    ? { installationId: settings.githubInstallationId, owner: settings.githubOwner, repository: settings.githubRepository, branch: settings.githubBranch, rootPath: settings.githubRootPath }
+    : null
+}
 const RELAY_DEVICE_KEY = 'codearchive-relay-device-id'
 
 type GithubInstallReturn = {
@@ -259,6 +266,7 @@ export default function App() {
   const connectInFlight = useRef(false)
   const [exportSettings, setExportSettings] = useState(readExportSettings)
   const [accountSettings, setAccountSettings] = useState<AccountSettings>(defaultAccountSettings)
+  const [savedTarget, setSavedTarget] = useState<GithubSavedTarget | null>(null)
   const [settingsBusy, setSettingsBusy] = useState(false)
   const [settingsError, setSettingsError] = useState<string | null>(null)
   const [bridgeStatus, setBridgeStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
@@ -299,6 +307,7 @@ export default function App() {
   }
 
   const clearAccountDraft = () => {
+    setSavedTarget(null)
     themeQueueGeneration.current += 1
     themeSaveRequested.current = 0
     themeSaveCompleted.current = 0
@@ -454,7 +463,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!user) { settingsLoadedRef.current = null; updateAccountSettingsDraft(defaultAccountSettings()); return }
+    if (!user) { settingsLoadedRef.current = null; setSavedTarget(null); updateAccountSettingsDraft(defaultAccountSettings()); return }
     let active = true
     const generation = accountGeneration.current
     const loadingFor = user
@@ -471,6 +480,7 @@ export default function App() {
       relayHandoffOperation.current += 1
       accountSettingsRef.current = migrated
       setAccountSettings(migrated)
+      setSavedTarget(savedGithubTarget(server))
       setExportSettings({ copyHeader: migrated.copyHeader, downloadHeader: migrated.downloadHeader, filenameTemplate: migrated.downloadFilenameTemplate, gitPathTemplate: migrated.gitPathTemplate })
       settingsLoadedRef.current = { accountId: loadingFor.id, generation, version: migrated.version }
       // If automatic connection won the race against settings loading, now send
@@ -977,6 +987,7 @@ export default function App() {
         settingsLoadedRef.current = { accountId: savingFor.id, generation, version: saved.version }
         relayHandoffRef.current = null
         setAccountSettings(saved)
+        setSavedTarget(savedGithubTarget(saved))
         updateExportSettings({ copyHeader: saved.copyHeader, downloadHeader: saved.downloadHeader, filenameTemplate: saved.downloadFilenameTemplate, gitPathTemplate: saved.gitPathTemplate })
         await configureRelay(saved, savingFor, generation)
         if (stillCurrent()) showToast('success', '계정 설정을 저장했습니다.')
@@ -1330,6 +1341,7 @@ export default function App() {
             exportSettings={exportSettings}
             updateExportSettings={updateExportSettings}
             accountSettings={accountSettings}
+            savedTarget={savedTarget}
             updateAccountSettings={updateAccountSettingsDraft}
             codeThemeMode={codeThemeMode}
             onCodeThemeChange={(theme) => chooseCodeTheme(theme, false)}
@@ -1590,6 +1602,7 @@ function SettingsView({
   exportSettings,
   updateExportSettings,
   accountSettings,
+  savedTarget,
   updateAccountSettings,
   codeThemeMode,
   onCodeThemeChange,
@@ -1608,6 +1621,7 @@ function SettingsView({
   exportSettings: ExportSettings
   updateExportSettings: (settings: ExportSettings) => void
   accountSettings: AccountSettings
+  savedTarget: GithubSavedTarget | null
   updateAccountSettings: (settings: AccountSettings) => void
   codeThemeMode: CodeThemeMode
   onCodeThemeChange: (theme: CodeTheme) => void
@@ -1623,6 +1637,7 @@ function SettingsView({
   accountSettingsReady: boolean
 }) {
   const [installations, setInstallations] = useState<import('./types').GithubInstallation[]>([])
+  const [showTargetSetup, setShowTargetSetup] = useState(false)
   const [repositories, setRepositories] = useState<import('./types').GithubRepositoryTarget[]>([])
   const [branches, setBranches] = useState<import('./types').GithubBranchTarget[]>([])
   const [directory, setDirectory] = useState<import('./types').GithubDirectoryTarget | null>(null)
@@ -1931,6 +1946,12 @@ function SettingsView({
     return () => window.removeEventListener('focus', resume)
   }, [awaitingRepositoryCreation, accountSettings.githubInstallationId, user?.id])
   const draftTargetConfigured = Boolean(accountSettings.githubInstallationId && accountSettings.githubOwner?.trim() && accountSettings.githubRepository?.trim() && accountSettings.githubBranch?.trim())
+  // Match the settings API's root-path validation before offering a selection.
+  const browsedRoot = directory?.currentPath ?? ''
+  const browsedRootSavable = !browsedRoot || (browsedRoot.length <= 240 && !browsedRoot.includes('..') && !browsedRoot.includes('\\') && !/^[A-Za-z]:/.test(browsedRoot) && !/[\x00-\x1f\x7f]/.test(browsedRoot) && browsedRoot.split('/').every(segment => {
+    const base = segment.replace(/\.[^.]*$/, '')
+    return !!segment && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(base)
+  }))
   const providerUnavailable = accountSettings.githubStatus === 'PROVIDER_UNAVAILABLE'
   const targetPanelExpanded = draftTargetConfigured || installations.length > 0 || accountSettings.githubInstallationId !== null || targetBusy || targetError !== null
   const targetLoadingText = targetStep === 'connecting' ? '연결 중' : targetStep === 'repositories' ? '저장소 확인 중' : targetStep === 'branches' ? '브랜치 확인 중' : targetStep === 'directories' ? '폴더 확인 중' : targetStep === 'initializing' ? 'README 초기화 중' : targetStep === 'adding' ? '파일 커밋 중' : null
@@ -1945,6 +1966,7 @@ function SettingsView({
   return (
     <section className="settings-page">
       <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> WORKSPACE / SETTINGS</p><h1>설정</h1><p>CodeArchive가 문제 풀이를 가져오는 방법을 관리합니다.</p></div>
+      {user && savedTarget && <GithubRepositoryBrowser githubId={user.githubId} target={savedTarget} lightTheme={accountSettings.lightTheme} darkTheme={accountSettings.darkTheme} codeThemeMode={codeThemeMode} onExpectedAccountChange={onExpectedAccountChange} />}
       <div className="settings-layout">
         <div className="settings-column">
           <article className="settings-card export-settings"><h2>계정 · 코드 저장</h2>{settingsError && <p role="alert">{settingsError}</p>}<div className="setting-field"><label htmlFor="profile-name">이름</label><input id="profile-name" value={accountSettings.name ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, name: e.target.value || null })} /><label htmlFor="profile-nickname">닉네임</label><input id="profile-nickname" value={accountSettings.nickname ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, nickname: e.target.value || null })} /></div><p>문제 정보 주석을 추가합니다. 원본 코드는 유지합니다.</p>
@@ -1953,10 +1975,11 @@ function SettingsView({
           </article>
           <article className={`settings-card github-card ${targetPanelExpanded ? 'is-expanded' : 'is-collapsed'}`} aria-busy={targetBusy}>
             <div className="github-card-heading">
-              <div><span className="card-kicker">GITHUB APP</span><h2>GitHub 대상</h2><p>{githubStatusText}</p></div>
+              <div><span className="card-kicker">GITHUB APP</span><h2>GitHub 대상</h2><p>{providerUnavailable ? githubStatusText : savedTarget ? '저장소 연결을 변경하거나 기존 항목을 관리할 수 있습니다.' : githubStatusText}</p></div>
               <span className={`github-target-state ${targetBusy ? 'is-loading' : targetError ? 'is-error' : draftTargetConfigured ? 'is-ready' : ''}`} role="status" aria-live="polite">{targetStateText}</span>
             </div>
-            {!targetPanelExpanded ? (
+            {savedTarget && <button type="button" className="ghost-button github-target-advanced-toggle" aria-expanded={showTargetSetup} onClick={() => setShowTargetSetup(value => !value)}>{showTargetSetup ? '연결 변경·관리 닫기' : '연결 변경·기존 항목 관리'}</button>}
+            {(!savedTarget || showTargetSetup) && (!targetPanelExpanded ? (
               <div className="github-connect-cta">
                 <Icon name="github" size={24} />
                 <strong>풀이를 저장할 GitHub 위치를 연결하세요</strong>
@@ -1980,7 +2003,7 @@ function SettingsView({
                     <label><span><b>3</b> 브랜치</span><select aria-label="브랜치" disabled={targetBusy} value={accountSettings.githubBranch ?? ''} onChange={event => void chooseBranch(event.target.value)}><option value="">선택하세요</option>{branches.map(value => <option key={value.name} value={value.name}>{value.name}{value.protectedBranch ? ' (보호됨)' : ''}</option>)}{emptyDefaultBranch && !includeReadme && <option value={emptyDefaultBranch}>{emptyDefaultBranch} (첫 풀이 커밋 시 생성)</option>}</select>{branchesLoaded && branches.length === 0 && <small role="status">브랜치가 없습니다. {emptyDefaultBranch ? '비어 있는 저장소입니다.' : '저장소 상태를 확인하지 못했습니다. 다시 시도해 주세요.'}</small>}</label>
                     {branchesLoaded && branches.length === 0 && emptyDefaultBranch && <div className="github-empty-repository"><strong>비어 있는 저장소 시작하기</strong><label><input type="checkbox" checked={includeReadme} onChange={event => setIncludeReadme(event.target.checked)} /> CodeArchive README 추가</label>{includeReadme ? <><pre aria-label="README 미리보기">{readmePreview}</pre><button type="button" className="primary-button" disabled={targetBusy || !readmePreview} onClick={() => void initializeEmptyRepository()}>README로 초기화</button></> : <p>첫 풀이가 성공적으로 커밋될 때 기본 브랜치가 생성됩니다. 위 브랜치를 선택하고 저장하세요.</p>}</div>}
                   </>}
-                  {directory && <div className="github-directory"><span><b>4</b> 폴더</span><p>둘러보는 폴더 <strong>{directory.currentPath || '/'}</strong></p><p>선택한 저장 위치 <strong>{accountSettings.githubRootPath || '/'}</strong></p><div>{directory.currentPath && <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.parentPath, false)} disabled={targetBusy}>상위 폴더</button>}{!tree && directory.directories.map(name => <button type="button" key={name} onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath ? `${directory.currentPath}/${name}` : name, false)} disabled={targetBusy}>{name}/</button>)}</div><button type="button" className="github-select-directory" disabled={targetBusy || !!treeError || !tree || accountSettings.githubRootPath === (directory.currentPath || null)} onClick={() => updateAccountSettings({ ...accountSettings, githubRootPath: directory.currentPath || null, githubAutoCommitEnabled: false })}>이 폴더를 저장 위치로 선택</button><small>선택한 위치를 적용하려면 아래의 설정 저장을 누르세요.</small></div>}
+                  {directory && <div className="github-directory"><span><b>4</b> 폴더</span><p>둘러보는 폴더 <strong>{directory.currentPath || '/'}</strong></p><p>선택한 저장 위치 <strong>{accountSettings.githubRootPath || '/'}</strong></p><div>{directory.currentPath && <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.parentPath, false)} disabled={targetBusy}>상위 폴더</button>}{!tree && directory.directories.map(name => <button type="button" key={name} onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath ? `${directory.currentPath}/${name}` : name, false)} disabled={targetBusy}>{name}/</button>)}</div><button type="button" className="github-select-directory" disabled={targetBusy || !!treeError || !tree || !browsedRootSavable || accountSettings.githubRootPath === (directory.currentPath || null)} onClick={() => updateAccountSettings({ ...accountSettings, githubRootPath: directory.currentPath || null, githubAutoCommitEnabled: false })}>이 폴더를 저장 위치로 선택</button>{!browsedRootSavable && <small role="status">이 폴더는 살펴볼 수 있지만 자동 커밋 위치로 저장할 수 없습니다.</small>}<small>선택한 위치를 적용하려면 아래의 설정 저장을 누르세요.</small></div>}
                   {directory && <div className="github-tree"><strong>파일·폴더 구조</strong>{treeError && <p role="alert">{treeError} <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath, false)} disabled={targetBusy}>다시 확인</button></p>}{tree && <><ul>{tree.items.map(entry => <li key={`${entry.path}:${entry.type}`} className={entry.type === 'tree' && accountSettings.githubRootPath === entry.path ? 'is-selected' : ''}>{entry.type === 'tree' ? <button type="button" aria-current={accountSettings.githubRootPath === entry.path ? 'location' : undefined} disabled={targetBusy || !/^[A-Za-z0-9_.-]+$/.test(entry.name)} onClick={() => void chooseBranch(accountSettings.githubBranch!, entry.path, false)}>{entry.name}/</button> : <span>{entry.name}{entry.type === 'commit' ? ' (서브모듈)' : ''}</span>}</li>)}</ul>{tree.items.length === 0 && <p>이 폴더에 파일이 없습니다.</p>}{tree.hasMore && <button type="button" className="ghost-button" disabled={targetBusy} onClick={() => void loadMoreTree()}>파일 더 보기</button>}{tree.truncated && <p role="status">GitHub가 일부 항목만 반환했습니다. 더 작은 하위 폴더에서 확인해 주세요.</p>}</>}</div>}
                   {directory && tree?.headSha && <div className="github-add-file">
                     <strong>이 폴더에 새 항목 추가</strong>
@@ -2005,7 +2028,7 @@ function SettingsView({
                 </div>
                 {draftTargetConfigured && <div className="github-target-current"><Icon name="check" size={15} /><span><strong>현재 대상</strong>{accountSettings.githubOwner}/{accountSettings.githubRepository} · {accountSettings.githubBranch}{accountSettings.githubRootPath ? `/${accountSettings.githubRootPath}` : ''}</span></div>}
               </div>
-            )}
+            ))}
             {targetBusy && <div className="github-target-overlay" role="status" aria-live="assertive"><Icon name="sync" size={20} /><strong>{targetLoadingText}</strong><span>GitHub에서 안전하게 확인하고 있습니다.</span></div>}
           </article>
         </div>

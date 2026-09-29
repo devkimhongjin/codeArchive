@@ -24,6 +24,9 @@ class GithubBrowseFacadeTest {
   private boolean paginateTarget;
   private boolean includeEmptyRepository;
   private boolean largeTree;
+  private boolean largePreviewFile;
+  private boolean binaryPreviewFile;
+  private boolean oversizedBlobResponse;
 
   @BeforeEach
   void start() throws Exception {
@@ -113,7 +116,8 @@ class GithubBrowseFacadeTest {
     assertThat(root.items()).extracting(GithubAppProvider.TreeEntry::name,
         GithubAppProvider.TreeEntry::type)
         .containsExactly(org.assertj.core.groups.Tuple.tuple("src", "tree"),
-            org.assertj.core.groups.Tuple.tuple("README.md", "blob"));
+            org.assertj.core.groups.Tuple.tuple("README.md", "blob"),
+            org.assertj.core.groups.Tuple.tuple("한글.java", "blob"));
     assertThat(provider.treePage("123", 44L, 7L, "main", "src", 1).items())
         .extracting(GithubAppProvider.TreeEntry::path)
         .containsExactly("src/File.java");
@@ -132,6 +136,40 @@ class GithubBrowseFacadeTest {
     assertThat(requests.get()).isZero();
     assertThatThrownBy(() -> provider.treePage("123", 44L, 7L, "main", "missing", 1))
         .isInstanceOf(SecurityException.class);
+  }
+
+  @Test
+  void readsOnlyVerifiedBoundedUtf8FilesIncludingKoreanNames() throws Exception {
+    GithubAppProvider provider = provider();
+    var file = provider.fileView("123", 44L, 7L, "main", "src/File.java");
+    assertThat(file.path()).isEqualTo("src/File.java");
+    assertThat(file.content()).isEqualTo("class A{}");
+    assertThat(file.size()).isEqualTo(9);
+    assertThat(file.headSha()).isEqualTo("a".repeat(40));
+    assertThat(provider.fileView("123", 44L, 7L, "main", "한글.java").content()).isEqualTo("안녕");
+    assertThatThrownBy(() -> provider.fileView("124", 44L, 7L, "main", "README.md"))
+        .isInstanceOf(SecurityException.class);
+  }
+
+  @Test
+  void rejectsTraversalAndNeverRendersOversizedOrBinaryFilesAsText() throws Exception {
+    GithubAppProvider provider = provider();
+    assertThatThrownBy(() -> provider.fileView("123", 44L, 7L, "main", "../README.md"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(requests.get()).isZero();
+    assertThatThrownBy(() -> provider.fileView("123", 44L, 7L, "main", "missing.txt"))
+        .isInstanceOf(GithubAppProvider.FileMissingException.class);
+    largePreviewFile = true;
+    assertThat(provider.fileView("123", 44L, 7L, "main", "README.md").unavailableReason())
+        .isEqualTo("FILE_TOO_LARGE");
+    largePreviewFile = false;
+    binaryPreviewFile = true;
+    assertThat(provider.fileView("123", 44L, 7L, "main", "README.md").unavailableReason())
+        .isEqualTo("NON_TEXT");
+    binaryPreviewFile = false;
+    oversizedBlobResponse = true;
+    assertThatThrownBy(() -> provider.fileView("123", 44L, 7L, "main", "README.md"))
+        .isInstanceOf(GithubAppProvider.ProviderUnavailableException.class);
   }
 
   private GithubAppProvider provider() throws Exception {
@@ -183,7 +221,7 @@ class GithubBrowseFacadeTest {
       reply(exchange, 200, "[{\"name\":\"src\",\"type\":\"dir\"},{\"name\":\"File.java\",\"type\":\"file\"},"
           + "{\"name\":\"link\",\"type\":\"symlink\"},{\"name\":\"sub\",\"type\":\"submodule\"}]");
     } else if (path.equals("/repos/owner/repo/git/ref/heads/main")) {
-      reply(exchange, 200, "{\"object\":{\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}");
+      reply(exchange, 200, "{\"ref\":\"refs/heads/main\",\"object\":{\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}");
     } else if (path.equals("/repos/owner/repo/git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")) {
       reply(exchange, 200, "{\"tree\":{\"sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}");
     } else if (path.equals("/repos/owner/repo/git/trees/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")) {
@@ -194,12 +232,25 @@ class GithubBrowseFacadeTest {
           body.append("{\"path\":\"file-").append(index).append(".java\",\"type\":\"blob\",\"size\":1}");
         }
         reply(exchange, 200, body.append("]}").toString());
-      } else reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"type\":\"tree\",\"sha\":\"cccccccccccccccccccccccccccccccccccccccc\"},{\"path\":\"README.md\",\"type\":\"blob\",\"size\":42}]}");
+      } else reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"type\":\"tree\",\"sha\":\"cccccccccccccccccccccccccccccccccccccccc\"},{\"path\":\"README.md\",\"type\":\"blob\",\"mode\":\"100644\",\"sha\":\"dddddddddddddddddddddddddddddddddddddddd\",\"size\":"+(largePreviewFile?65537:10)+"},{\"path\":\"한글.java\",\"type\":\"blob\",\"mode\":\"100644\",\"sha\":\"ffffffffffffffffffffffffffffffffffffffff\",\"size\":6}]}");
     } else if (path.equals("/repos/owner/repo/git/trees/cccccccccccccccccccccccccccccccccccccccc")) {
-      reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"File.java\",\"type\":\"blob\",\"size\":9}]}");
+      reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"File.java\",\"type\":\"blob\",\"mode\":\"100644\",\"sha\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"size\":9}]}");
+    } else if (path.equals("/repos/owner/repo/git/blobs/dddddddddddddddddddddddddddddddddddddddd")) {
+      if (oversizedBlobResponse) { reply(exchange, 200, "x".repeat(140_000)); return; }
+      String content = binaryPreviewFile ? "abc\u0000defghi" : "# Archive\n";
+      reply(exchange, 200, blob("d".repeat(40), content));
+    } else if (path.equals("/repos/owner/repo/git/blobs/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")) {
+      reply(exchange, 200, blob("e".repeat(40), "class A{}"));
+    } else if (path.equals("/repos/owner/repo/git/blobs/ffffffffffffffffffffffffffffffffffffffff")) {
+      reply(exchange, 200, blob("f".repeat(40), "안녕"));
     } else {
       reply(exchange, 404, "{}");
     }
+  }
+
+  private static String blob(String sha, String content) {
+    byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    return "{\"sha\":\""+sha+"\",\"encoding\":\"base64\",\"size\":"+bytes.length+",\"content\":\""+Base64.getEncoder().encodeToString(bytes)+"\"}";
   }
 
   private static String installationsPage(String query) {

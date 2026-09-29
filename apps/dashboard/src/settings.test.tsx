@@ -42,7 +42,7 @@ async function openSettings(name = '홍길동') {
   await screen.findByDisplayValue(name)
 }
 
-beforeEach(() => { mocks.emptyBranch.mockResolvedValue({ defaultBranch: 'main' }); mocks.readmePreview.mockResolvedValue({ content: '# CodeArchive\n\n풀이를 자동으로 보관합니다.' }); mocks.initializeReadme.mockResolvedValue({ defaultBranch: 'main' }); mocks.tree.mockImplementation((_githubId: string, _installation: number, _repository: number, _branch: string, path = '') => Promise.resolve({ path, headSha: 'a'.repeat(40), items: path ? [] : [{ name: 'src', path: 'src', type: 'tree', size: 0 }], page: 1, hasMore: false, truncated: false })) })
+beforeEach(() => { mocks.emptyBranch.mockResolvedValue({ defaultBranch: 'main' }); mocks.readmePreview.mockResolvedValue({ content: '# CodeArchive\n\n풀이를 자동으로 보관합니다.' }); mocks.initializeReadme.mockResolvedValue({ defaultBranch: 'main' }); mocks.installations.mockResolvedValue([{ id: 77, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue({ items: [{ id: 7, owner: 'codearchive', name: 'solutions', fullName: 'codearchive/solutions', privateRepository: true, defaultBranch: 'main' }], hasMore: false }); mocks.branches.mockResolvedValue({ items: [{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }], hasMore: false }); mocks.tree.mockImplementation((_githubId: string, _installation: number, _repository: number, _branch: string, path = '') => Promise.resolve({ path, headSha: 'a'.repeat(40), items: path ? [] : [{ name: 'src', path: 'src', type: 'tree', size: 0 }], page: 1, hasMore: false, truncated: false })) })
 afterEach(() => { cleanup(); localStorage.clear(); window.history.replaceState({}, '', '/'); vi.clearAllMocks() })
 
 it('starts GitHub OAuth in the same tab on the first logged-out click', async () => {
@@ -85,6 +85,18 @@ it('shows one prominent connection action before revealing the target cascade', 
   expect(screen.getByText('풀이를 저장할 GitHub 위치를 연결하세요')).toBeTruthy()
   expect(screen.queryByLabelText('GitHub 설치')).toBeNull()
   expect(screen.queryByLabelText('저장소')).toBeNull()
+})
+
+it('shows the saved repository browser before connection-management controls', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue(settings); mocks.bridge.mockResolvedValue({ capability: 'saved-target' })
+  await openSettings()
+  expect(await screen.findByRole('button', { name: /src/ })).toBeTruthy()
+  expect(screen.getByRole('region', { name: '연결된 GitHub 저장소 파일' })).toBeTruthy()
+  expect(screen.queryByLabelText('GitHub 설치')).toBeNull()
+  expect(mocks.tree).toHaveBeenCalledWith('account-17', 77, 7, 'main')
+  fireEvent.click(screen.getByRole('button', { name: '연결 변경·기존 항목 관리' }))
+  expect(screen.getByLabelText('GitHub 설치')).toBeTruthy()
+  expect(mocks.save).not.toHaveBeenCalled()
 })
 
 it('covers the target panel with a named loading state and blocks saving while GitHub is checked', async () => {
@@ -290,6 +302,18 @@ it('browses folders without changing the draft target until explicitly selected'
   expect(screen.getByText('선택한 저장 위치').parentElement?.textContent).toContain('src')
   fireEvent.click(screen.getByRole('button', { name: '설정 저장' }))
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ githubRootPath: 'src', githubAutoCommitEnabled: false }), 'account-17'))
+})
+
+it('allows viewing but not selecting a root path rejected by account settings', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false }); mocks.bridge.mockResolvedValue({ capability: 'invalid-root' })
+  mocks.installations.mockResolvedValue([{ id: 9, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue([{ id: 11, owner: 'archive-user', name: 'repo', fullName: 'archive-user/repo', privateRepository: true, defaultBranch: 'main' }]); mocks.branches.mockResolvedValue([{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }]); mocks.directories.mockResolvedValueOnce({ currentPath: '', parentPath: '', directories: ['foo..bar'] }).mockResolvedValueOnce({ currentPath: 'foo..bar', parentPath: '', directories: [] })
+  mocks.tree.mockImplementation((_id: string, _installation: number, _repo: number, _branch: string, path = '') => Promise.resolve({ path, headSha: 'a'.repeat(40), items: path ? [] : [{ name: 'foo..bar', path: 'foo..bar', type: 'tree', size: 0 }], page: 1, hasMore: false, truncated: false }))
+  await openSettings()
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' })); await screen.findByRole('option', { name: 'archive-user' }); fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '9' } }); await screen.findByRole('option', { name: 'archive-user/repo' }); fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } }); await screen.findByRole('option', { name: 'main' }); fireEvent.change(screen.getByLabelText('브랜치'), { target: { value: 'main' } })
+  fireEvent.click(await screen.findByRole('button', { name: 'foo..bar/' }))
+  await waitFor(() => expect(screen.getByText('둘러보는 폴더').parentElement?.textContent).toContain('foo..bar'))
+  expect((screen.getByRole('button', { name: '이 폴더를 저장 위치로 선택' }) as HTMLButtonElement).disabled).toBe(true)
+  expect(screen.getByText('이 폴더는 살펴볼 수 있지만 자동 커밋 위치로 저장할 수 없습니다.')).toBeTruthy()
 })
 
 it('previews a new file before making one explicit GitHub commit request', async () => {

@@ -1,7 +1,7 @@
 package com.codearchive.api.automation;
 
 import com.codearchive.api.settings.UserSettings; import com.codearchive.api.solution.Solution; import com.fasterxml.jackson.databind.*;
-import com.fasterxml.jackson.databind.node.ObjectNode; import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; import java.net.http.*; import java.nio.charset.StandardCharsets; import java.security.*; import java.security.interfaces.RSAPrivateKey; import java.security.spec.PKCS8EncodedKeySpec; import java.security.spec.RSAPrivateCrtKeySpec; import java.time.*; import java.time.format.DateTimeFormatter; import java.util.*; import java.util.regex.Matcher; import java.util.regex.Pattern; import javax.crypto.Mac; import javax.crypto.spec.SecretKeySpec; import org.springframework.beans.factory.annotation.Autowired; import org.springframework.beans.factory.annotation.Value; import org.springframework.stereotype.Component;
+import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStream; import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; import java.net.http.*; import java.nio.ByteBuffer; import java.nio.charset.CharacterCodingException; import java.nio.charset.CodingErrorAction; import java.nio.charset.StandardCharsets; import java.security.*; import java.security.interfaces.RSAPrivateKey; import java.security.spec.PKCS8EncodedKeySpec; import java.security.spec.RSAPrivateCrtKeySpec; import java.time.*; import java.time.format.DateTimeFormatter; import java.util.*; import java.util.regex.Matcher; import java.util.regex.Pattern; import javax.crypto.Mac; import javax.crypto.spec.SecretKeySpec; import org.springframework.beans.factory.annotation.Autowired; import org.springframework.beans.factory.annotation.Value; import org.springframework.stereotype.Component;
 
 /** Server-only GitHub App write path. Every write is based on a newly read branch head and uses a non-force ref update. */
 @Component public class GithubAppProvider implements GithubProvider {
@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.math.BigInteg
  private static final DateTimeFormatter PATH_TIME=DateTimeFormatter.ofPattern("yyMMddHHmmss").withZone(ZoneOffset.UTC);
  private static final Duration OPERATION_PREVIEW_TTL=Duration.ofMinutes(5);
  private static final int MAX_OPERATION_FILES=100,MAX_OPERATION_DEPTH=32,MAX_OPERATION_TREE_REQUESTS=256,MAX_PREVIEW_TOKEN_LENGTH=4096;
+ private static final int MAX_FILE_PREVIEW_BYTES=65536;
  public static final String INITIAL_README="# CodeArchive\n\n이 저장소는 CodeArchive로 관리하는 알고리즘 풀이를 보관합니다. 지원 사이트에서 PASS한 풀이가 설정에 따라 자동 수집·동기화·커밋됩니다.\n\n저장된 풀이에는 플랫폼, 문제 번호와 제목, 제출 언어, 소스 코드, 수집 가능한 실행 시간과 메모리 정보가 포함될 수 있습니다. 폴더 구조와 파일명, 커밋 메시지, 문제 정보 주석은 CodeArchive 설정에 따라 달라집니다.\n";
  private final String appId,key,base; private final HttpClient http; private final ObjectMapper json; private final Duration requestTimeout; private final GithubProvider fallback=new FailClosedGithubProvider();
  @Autowired public GithubAppProvider(@Value("${codearchive.github.app-id:}")String appId,@Value("${codearchive.github.app-private-key:}")String key,@Value("${codearchive.github.api-base:https://api.github.com}")String base,@Value("${codearchive.github.connect-timeout-ms:5000}")long connectTimeoutMs,@Value("${codearchive.github.request-timeout-ms:10000}")long requestTimeoutMs,ObjectMapper json){this(appId,key,base,HttpClient.newBuilder().connectTimeout(timeout(connectTimeoutMs)).build(),json,requestTimeoutMs);} 
@@ -17,6 +18,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.math.BigInteg
  public Result createOnly(UserSettings s,Solution solution){ return createOnly(s,solution,()->true); }
  public record InstallationChoice(long id,String accountLogin){} public record RepositoryChoice(long id,String owner,String name,String fullName,boolean privateRepository,String defaultBranch){} public record BranchChoice(String name,boolean protectedBranch,String commitSha){} public record DirectoryChoice(String currentPath,String parentPath,List<String> directories){} public record PageResult<T>(List<T> items,boolean hasMore){}
  public record TreeEntry(String name,String path,String type,long size){} public record TreePage(String path,String headSha,List<TreeEntry> items,int page,boolean hasMore,boolean truncated){}
+ public record FileView(String path,String headSha,String blobSha,String mode,long size,String content,String unavailableReason){}
  /** The browser never supplies this list back to the commit endpoint. */
  public record TreeChange(String fromPath,String toPath){}
  private record BlobChange(String path,String mode,String sha){}
@@ -27,6 +29,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.math.BigInteg
  public static final class ProviderUnavailableException extends IllegalStateException { public ProviderUnavailableException(String message){super(message);} }
  public static final class EmptyRepositoryConflictException extends IllegalStateException { public EmptyRepositoryConflictException(){super("repository is not empty");} }
  public static final class TargetConflictException extends IllegalStateException { public TargetConflictException(String message){super(message);} }
+ public static final class FileMissingException extends IllegalStateException { public FileMissingException(){super("file unavailable");} }
  public boolean browseReady(){return !appId.isBlank()&&!key.isBlank();}
  public List<InstallationChoice> installations(String githubId)throws Exception{if(!browseReady())throw new ProviderUnavailableException("provider unavailable");if(!safeGithubId(githubId))throw new SecurityException("invalid GitHub identity");List<InstallationChoice> out=new ArrayList<>();for(int page=1;page<=100;page++){Response r=send("GET","/app/installations?per_page=100&page="+page,jwt(),null);if(r.code!=200)throw installationBrowseFailure(r);JsonNode body=json.readTree(r.body);if(!body.isArray())throw new ProviderUnavailableException("installation response invalid");int count=0;for(JsonNode n:body){count++;InstallationChoice choice=installationChoice(n,githubId);if(choice!=null)out.add(choice);}if(count<100)break;}return out;}
  public List<RepositoryChoice> repositories(String githubId,long installation,int page)throws Exception{return repositoriesPage(githubId,installation,page).items();}
@@ -50,11 +53,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.math.BigInteg
   return new PageResult<>(out,count==100&&page<100);
  }
  public List<BranchChoice> branches(String githubId,long installation,long repository,int page)throws Exception{return branchesPage(githubId,installation,repository,page).items();} public PageResult<BranchChoice> branchesPage(String githubId,long installation,long repository,int page)throws Exception{checkPage(page);RepositoryChoice r=repository(githubId,installation,repository);Response x=send("GET","/repos/"+segment(r.owner())+"/"+segment(r.name())+"/branches?per_page=100&page="+page,installationToken(installation),null);if(x.code==409)return new PageResult<>(List.of(),false);if(x.code!=200)throw new IllegalStateException("branches unavailable");JsonNode raw=json.readTree(x.body);if(!raw.isArray())throw new ProviderUnavailableException("branches response invalid");List<BranchChoice> out=new ArrayList<>();int count=0;for(JsonNode n:raw){count++;String name=n.path("name").asText(),sha=n.path("commit").path("sha").asText();if(safeBranch(name)&&sha.matches("[0-9a-fA-F]{40}"))out.add(new BranchChoice(name,n.path("protected").asBoolean(),sha));}return new PageResult<>(out,count==100&&page<100);}
- public DirectoryChoice directories(String githubId,long installation,long repository,String branch,String path)throws Exception{if(!safeBranch(branch)||!safePath(path))throw new IllegalArgumentException("unsafe path");RepositoryChoice r=repository(githubId,installation,repository);if(!branchExists(githubId,installation,repository,branch)){if(path.isBlank()&&branch.equals(emptyDefaultBranch(githubId,installation,repository,installationToken(installation))))return new DirectoryChoice("","",List.of());throw new SecurityException("branch mismatch");}String p=path.isBlank()?"": "/"+Arrays.stream(path.split("/")).map(GithubAppProvider::segment).collect(java.util.stream.Collectors.joining("/"));Response x=send("GET","/repos/"+segment(r.owner())+"/"+segment(r.name())+"/contents"+p+"?ref="+segment(branch),installationToken(installation),null);if(x.code!=200)throw new IllegalStateException("directory unavailable");List<String> dirs=new ArrayList<>();JsonNode body=json.readTree(x.body);if(!body.isArray())throw new IllegalArgumentException("not directory");for(JsonNode n:body){String name=n.path("name").asText();if("dir".equals(n.path("type").asText())&&safe(name)&&dirs.size()<100)dirs.add(name);}String parent=path.isBlank()?"":path.contains("/")?path.substring(0,path.lastIndexOf('/')):"";return new DirectoryChoice(path,parent,dirs);}
+ public DirectoryChoice directories(String githubId,long installation,long repository,String branch,String path)throws Exception{if(!safeBranch(branch)||!safeBrowsePath(path))throw new IllegalArgumentException("unsafe path");RepositoryChoice r=repository(githubId,installation,repository);if(!branchExists(githubId,installation,repository,branch)){if(path.isBlank()&&branch.equals(emptyDefaultBranch(githubId,installation,repository,installationToken(installation))))return new DirectoryChoice("","",List.of());throw new SecurityException("branch mismatch");}String p=path.isBlank()?"": "/"+Arrays.stream(path.split("/")).map(GithubAppProvider::segment).collect(java.util.stream.Collectors.joining("/"));Response x=send("GET","/repos/"+segment(r.owner())+"/"+segment(r.name())+"/contents"+p+"?ref="+segment(branch),installationToken(installation),null);if(x.code!=200)throw new IllegalStateException("directory unavailable");List<String> dirs=new ArrayList<>();JsonNode body=json.readTree(x.body);if(!body.isArray())throw new IllegalArgumentException("not directory");for(JsonNode n:body){String name=n.path("name").asText();if("dir".equals(n.path("type").asText())&&safeBrowsePart(name)&&dirs.size()<100)dirs.add(name);}String parent=path.isBlank()?"":path.contains("/")?path.substring(0,path.lastIndexOf('/')):"";return new DirectoryChoice(path,parent,dirs);}
  public TreePage treePage(String githubId,long installation,long repository,String branch,String path,int page)throws Exception{
   checkPage(page);
   if(page>50)throw new IllegalArgumentException("tree page out of range");
-  if(!safeBranch(branch)||!safePath(path))throw new IllegalArgumentException("unsafe tree path");
+  if(!safeBranch(branch)||!safeBrowsePath(path))throw new IllegalArgumentException("unsafe tree path");
   RepositoryChoice target=repository(githubId,installation,repository);
   String token=installationToken(installation);
   String basePath="/repos/"+segment(target.owner())+"/"+segment(target.name());
@@ -92,6 +95,68 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.math.BigInteg
   }
   return new TreePage(path,head,items,page,end<available,tree.path("truncated").asBoolean()||raw.size()>available||omitted);
  }
+ /** Snapshot a verified regular file without exposing the installation token or an unbounded blob. */
+ public FileView fileView(String githubId,long installation,long repository,String branch,String path)throws Exception{
+  if(!safeBranch(branch)||!safeBrowsePath(path)||path.isBlank()||pathDepth(path)>MAX_OPERATION_DEPTH)throw new IllegalArgumentException("unsafe file path");
+  RepositoryChoice target=repository(githubId,installation,repository);
+  String token=installationToken(installation);
+  String basePath="/repos/"+segment(target.owner())+"/"+segment(target.name());
+  Response ref=send("GET",basePath+"/git/ref/heads/"+segment(branch),token,null);
+  if(ref.code==404)throw new FileMissingException();
+  if(ref.code!=200)throw new ProviderUnavailableException("branch reference unavailable");
+  JsonNode reference=json.readTree(ref.body);
+  String head=reference.path("object").path("sha").asText();
+  if(!("refs/heads/"+branch).equals(reference.path("ref").asText())||!sha(head))throw new ProviderUnavailableException("branch reference invalid");
+  Response commit=send("GET",basePath+"/git/commits/"+head,token,null);
+  if(commit.code!=200)throw new ProviderUnavailableException("branch commit unavailable");
+  String treeSha=json.readTree(commit.body).path("tree").path("sha").asText();
+  if(!sha(treeSha))throw new ProviderUnavailableException("branch tree invalid");
+  JsonNode entry=browseEntry(basePath,token,readTree(basePath,treeSha,token),path);
+  if(!"blob".equals(entry.path("type").asText()))throw new FileMissingException();
+  String blobSha=entry.path("sha").asText(),mode=entry.path("mode").asText();
+  long size=entry.path("size").asLong(-1);
+  if(!sha(blobSha)||size<0)throw new ProviderUnavailableException("file metadata invalid");
+  if(!mode.equals("100644")&&!mode.equals("100755"))return new FileView(path,head,blobSha,mode,size,null,"UNSUPPORTED_TYPE");
+  if(size>MAX_FILE_PREVIEW_BYTES)return new FileView(path,head,blobSha,mode,size,null,"FILE_TOO_LARGE");
+  Response blob=sendBoundedBlob(basePath+"/git/blobs/"+blobSha,token);
+  if(blob.code!=200||blob.body.length()>MAX_FILE_PREVIEW_BYTES*2)throw new ProviderUnavailableException("file content unavailable");
+  JsonNode raw=json.readTree(blob.body);
+  if(!blobSha.equalsIgnoreCase(raw.path("sha").asText())||!"base64".equals(raw.path("encoding").asText())||raw.path("size").asLong(-1)!=size||!raw.path("content").isTextual())throw new ProviderUnavailableException("file content invalid");
+  String encoded=raw.path("content").asText().replaceAll("\\s","");
+  if(encoded.length()>MAX_FILE_PREVIEW_BYTES*2||!encoded.matches("[A-Za-z0-9+/=]*"))throw new ProviderUnavailableException("file encoding invalid");
+  byte[] bytes;
+  try{bytes=Base64.getDecoder().decode(encoded);}catch(IllegalArgumentException e){throw new ProviderUnavailableException("file encoding invalid");}
+  if(bytes.length!=size)throw new ProviderUnavailableException("file size invalid");
+  String content;
+  try{content=StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();}
+  catch(CharacterCodingException e){return new FileView(path,head,blobSha,mode,size,null,"NON_TEXT");}
+  if(content.chars().anyMatch(c->c==0||c<32&&c!='\n'&&c!='\r'&&c!='\t'||c==127))return new FileView(path,head,blobSha,mode,size,null,"NON_TEXT");
+  return new FileView(path,head,blobSha,mode,size,content,null);
+ }
+ private JsonNode browseEntry(String repoPath,String token,JsonNode tree,String path)throws Exception{
+  String[] parts=path.split("/");JsonNode entry=null;
+  for(int index=0;index<parts.length;index++){
+   if(tree.path("truncated").asBoolean()||!tree.path("tree").isArray())throw new ProviderUnavailableException("tree traversal unavailable");
+   entry=null;
+   for(JsonNode candidate:tree.path("tree"))if(parts[index].equals(candidate.path("path").asText())){
+    if(entry!=null)throw new ProviderUnavailableException("duplicate tree entry");
+    entry=candidate;
+   }
+   if(entry==null)throw new FileMissingException();
+   if(index<parts.length-1){
+    if(!"tree".equals(entry.path("type").asText())||!sha(entry.path("sha").asText()))throw new FileMissingException();
+    tree=readTree(repoPath,entry.path("sha").asText(),token);
+   }
+  }
+  return entry;
+ }
+ private static boolean safeBrowsePath(String path){
+  if(path==null||path.length()>1024||path.startsWith("/")||path.endsWith("/")||path.contains("\\"))return false;
+  if(path.isBlank())return path.isEmpty();
+  for(String part:path.split("/",-1))if(!safeBrowsePart(part))return false;
+  return true;
+ }
+ private static boolean safeBrowsePart(String part){return part!=null&&!part.isBlank()&&part.length()<=255&&!part.equals(".")&&!part.equals("..")&&!part.equalsIgnoreCase(".git")&&!part.contains("/")&&!part.contains("\\")&&part.chars().noneMatch(c->c<32||c==127);}
  private JsonNode readTree(String basePath,String sha,String token)throws Exception{
   Response result=send("GET",basePath+"/git/trees/"+sha,token,null);
   if(result.code!=200)throw new ProviderUnavailableException("repository tree unavailable");
@@ -185,6 +250,18 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.math.BigInteg
   OperationPlan plan=new OperationPlan(githubId,installation,repository,request.operation(),request.branch(),request.sourcePath(),request.destinationPath(),request.message().trim(),request.expectedHeadSha(),prepared.rootSha(),prepared.sourceType(),prepared.sourceMode(),prepared.sourceSha(),prepared.changes(),Instant.now());
   return new OperationPreview(signPreview(plan),plan.operation(),plan.branch(),plan.expectedHeadSha(),plan.sourcePath(),plan.destinationPath(),plan.changes(),plan.message());
  }
+ /** Confirms that a client repository ID resolves to the account's saved target. */
+ public boolean matchesRepository(String githubId,long installation,long repository,String owner,String name)throws Exception{
+  if(owner==null||name==null)return false;
+  RepositoryChoice resolved=repository(githubId,installation,repository);
+  return resolved.owner().equals(owner)&&resolved.name().equals(name);
+ }
+ /** Reads only signed preview metadata, so confirmation can recheck current settings. */
+ public String previewBranch(String githubId,long installation,long repository,String previewId)throws Exception{
+  OperationPlan plan=readSignedPreview(previewId);
+  if(!plan.githubId().equals(githubId)||plan.installation()!=installation||plan.repository()!=repository)throw new SecurityException("preview target mismatch");
+  return plan.branch();
+ }
  /** Rebuilds the plan at the stored HEAD; the client can only present previewId. */
  public String commitOperation(String githubId,long installation,long repository,String previewId)throws Exception{
   OperationPlan plan=readSignedPreview(previewId);
@@ -259,8 +336,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.math.BigInteg
  private static String previewText(JsonNode body,String name){JsonNode value=body.get(name);if(value==null||!value.isTextual()||value.asText().length()>1024)throw new IllegalArgumentException("invalid preview");return value.asText();}
  private static long previewLong(JsonNode body,String name){JsonNode value=body.get(name);if(value==null||!value.isIntegralNumber()||!value.canConvertToLong())throw new IllegalArgumentException("invalid preview");return value.asLong();}
  private void validateOperationRequest(OperationPreviewRequest request){
-  if(request==null||!("MOVE".equals(request.operation())||"DELETE".equals(request.operation()))||!safeBranch(request.branch())||!safePath(request.sourcePath())||request.sourcePath().isBlank()||pathDepth(request.sourcePath())>MAX_OPERATION_DEPTH||!sha(request.expectedHeadSha())||request.message()==null||request.message().isBlank()||request.message().length()>200||request.message().chars().anyMatch(c->c<32||c==127))throw new IllegalArgumentException("invalid operation request");
-  if("MOVE".equals(request.operation())){if(!safePath(request.destinationPath())||request.destinationPath().isBlank()||pathDepth(request.destinationPath())>MAX_OPERATION_DEPTH||request.destinationPath().equals(request.sourcePath())||request.destinationPath().startsWith(request.sourcePath()+"/"))throw new IllegalArgumentException("invalid move destination");}
+  if(request==null||!("MOVE".equals(request.operation())||"DELETE".equals(request.operation()))||!safeBranch(request.branch())||!safeBrowsePath(request.sourcePath())||request.sourcePath().isBlank()||pathDepth(request.sourcePath())>MAX_OPERATION_DEPTH||!sha(request.expectedHeadSha())||request.message()==null||request.message().isBlank()||request.message().length()>200||request.message().chars().anyMatch(c->c<32||c==127))throw new IllegalArgumentException("invalid operation request");
+  if("MOVE".equals(request.operation())){if(!safeBrowsePath(request.destinationPath())||request.destinationPath().isBlank()||pathDepth(request.destinationPath())>MAX_OPERATION_DEPTH||request.destinationPath().equals(request.sourcePath())||request.destinationPath().startsWith(request.sourcePath()+"/"))throw new IllegalArgumentException("invalid move destination");}
   else if(request.destinationPath()!=null&&!request.destinationPath().isBlank())throw new IllegalArgumentException("invalid delete destination");
  }
  private static int pathDepth(String path){return path==null||path.isBlank()?0:path.split("/",-1).length;}
@@ -284,7 +361,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.math.BigInteg
    if(!"tree".equals(found.path("type").asText()))throw new TargetConflictException("destination parent unavailable");validateSafeEntry(found);current=readTree(repoPath,found.path("sha").asText(),token);}if(current.path("truncated").asBoolean())throw new ProviderUnavailableException("tree traversal truncated");for(JsonNode candidate:current.path("tree"))if(candidate.path("path").asText().equalsIgnoreCase(parts[parts.length-1]))throw new TargetConflictException("destination already exists");}
  private static final class TraversalBudget { int files,treeRequests; }
  private void collectFiles(String repoPath,String token,String path,JsonNode entry,List<BlobChange> files,int depth,TraversalBudget budget)throws Exception{validateSafeEntry(entry);if(depth>MAX_OPERATION_DEPTH)throw new TargetConflictException("tree operation depth limit exceeded");if("blob".equals(entry.path("type").asText())){if(++budget.files>MAX_OPERATION_FILES)throw new TargetConflictException("tree operation file limit exceeded");files.add(new BlobChange(path,entry.path("mode").asText(),entry.path("sha").asText()));return;}if(++budget.treeRequests>MAX_OPERATION_TREE_REQUESTS)throw new TargetConflictException("tree operation traversal limit exceeded");JsonNode tree=readTree(repoPath,entry.path("sha").asText(),token);if(tree.path("truncated").asBoolean())throw new ProviderUnavailableException("tree traversal truncated");Set<String> names=new HashSet<>();for(JsonNode child:tree.path("tree")){validateSafeEntry(child);if(!names.add(child.path("path").asText().toLowerCase(Locale.ROOT)))throw new TargetConflictException("case-insensitive path collision");collectFiles(repoPath,token,path+"/"+child.path("path").asText(),child,files,depth+1,budget);}}
- private void validateSafeEntry(JsonNode entry){String name=entry.path("path").asText(),type=entry.path("type").asText(),mode=entry.path("mode").asText(),object=entry.path("sha").asText();if(!safePathSegment(name)||!sha(object)||!("blob".equals(type)&&("100644".equals(mode)||"100755".equals(mode))||"tree".equals(type)&&"040000".equals(mode)))throw new TargetConflictException("unsafe repository entry");}
+ private void validateSafeEntry(JsonNode entry){String name=entry.path("path").asText(),type=entry.path("type").asText(),mode=entry.path("mode").asText(),object=entry.path("sha").asText();if(!safeBrowsePart(name)||!sha(object)||!("blob".equals(type)&&("100644".equals(mode)||"100755".equals(mode))||"tree".equals(type)&&"040000".equals(mode)))throw new TargetConflictException("unsafe repository entry");}
  private static Map<String,Object> treeEntry(String path,String mode,String type,String object){Map<String,Object> value=new LinkedHashMap<>();value.put("path",path);value.put("mode",mode);value.put("type",type);value.put("sha",object);return value;}
  public void validateTarget(String githubId,long installation,long repository,String branch,String root)throws Exception{directories(githubId,installation,repository,branch,root==null?"":root);}
  public String initializeReadme(String githubId,long installation,long repository)throws Exception{
@@ -397,6 +474,64 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.math.BigInteg
  }
  private String installationToken(Long id)throws Exception{Response r=send("POST","/app/installations/"+id+"/access_tokens",jwt(),"{}");if(r.code!=201)throw new IllegalStateException("installation token unavailable");return json.readTree(r.body).path("token").asText();}
  private Response send(String method,String path,String token,String body)throws Exception{HttpRequest.Builder b=HttpRequest.newBuilder(URI.create(base+path)).timeout(requestTimeout).header("Accept","application/vnd.github+json").header("Authorization","Bearer "+token).header("X-GitHub-Api-Version","2022-11-28"); if(body==null)b.method(method,HttpRequest.BodyPublishers.noBody());else b.header("Content-Type","application/json").method(method,HttpRequest.BodyPublishers.ofString(body));HttpResponse<String> r=http.send(b.build(),HttpResponse.BodyHandlers.ofString());return new Response(r.statusCode(),r.body());}
+ private Response sendBoundedBlob(String path,String token)throws Exception{
+  HttpRequest request=HttpRequest.newBuilder(URI.create(base+path)).timeout(requestTimeout).header("Accept","application/vnd.github+json").header("Authorization","Bearer "+token).header("X-GitHub-Api-Version","2022-11-28").GET().build();
+  HttpResponse<InputStream> response=http.send(request,HttpResponse.BodyHandlers.ofInputStream());
+  try(InputStream body=response.body()){
+   byte[] bytes=body.readNBytes(MAX_FILE_PREVIEW_BYTES*2+1);
+   if(bytes.length>MAX_FILE_PREVIEW_BYTES*2)throw new ProviderUnavailableException("file content unavailable");
+   return new Response(response.statusCode(),new String(bytes,StandardCharsets.UTF_8));
+  }
+ }
+ /** Replace exactly the file that was read and explicitly confirmed by the browser. */
+ public String replaceFile(String githubId,long installation,long repository,String branch,String path,String content,String message,String expectedHead,String expectedBlob)throws Exception{
+  if(!safeBranch(branch)||!safeBrowsePath(path)||path.isBlank()||pathDepth(path)>MAX_OPERATION_DEPTH||!sha(expectedHead)||!sha(expectedBlob)||content==null||content.getBytes(StandardCharsets.UTF_8).length>MAX_FILE_PREVIEW_BYTES||content.chars().anyMatch(c->c==0||c<32&&c!='\n'&&c!='\r'&&c!='\t'||c==127)||message==null||message.isBlank()||message.length()>200||message.chars().anyMatch(c->c<32||c==127))throw new IllegalArgumentException("invalid file edit");
+  BranchChoice selected=selectedBranch(githubId,installation,repository,branch);
+  if(selected==null)throw new TargetConflictException("branch unavailable");
+  if(selected.protectedBranch())throw new TargetConflictException("protected branch");
+  FileView original=fileView(githubId,installation,repository,branch,path);
+  if(!original.headSha().equalsIgnoreCase(expectedHead)||!original.blobSha().equalsIgnoreCase(expectedBlob)||original.content()==null)throw new TargetConflictException("file changed or unavailable");
+  if(original.content().equals(content))throw new TargetConflictException("file unchanged");
+  RepositoryChoice target=repository(githubId,installation,repository);
+  String token=installationToken(installation),repoPath="/repos/"+segment(target.owner())+"/"+segment(target.name()),refPath=repoPath+"/git/ref/heads/"+segment(branch);
+  requireHead(refPath,token,branch,expectedHead);
+  Response commit=send("GET",repoPath+"/git/commits/"+expectedHead,token,null);
+  if(commit.code!=200)throw new ProviderUnavailableException("branch commit unavailable");
+  String rootSha=json.readTree(commit.body).path("tree").path("sha").asText();
+  if(!sha(rootSha))throw new ProviderUnavailableException("branch tree invalid");
+  JsonNode beforeRoot=readTree(repoPath,rootSha,token);
+  JsonNode current=browseEntry(repoPath,token,beforeRoot,path);
+  if(!"blob".equals(current.path("type").asText())||!original.mode().equals(current.path("mode").asText())||!expectedBlob.equalsIgnoreCase(current.path("sha").asText()))throw new TargetConflictException("file changed");
+  requireHead(refPath,token,branch,expectedHead);
+  Response newTree=send("POST",repoPath+"/git/trees",token,json.writeValueAsString(Map.of("base_tree",rootSha,"tree",List.of(Map.of("path",path,"mode",original.mode(),"type","blob","content",content)))));
+  if(newTree.code!=201)throw new ProviderUnavailableException("file edit tree outcome unavailable");
+  String newTreeSha=json.readTree(newTree.body).path("sha").asText();
+  if(!sha(newTreeSha))throw new ProviderUnavailableException("file edit tree invalid");
+  byte[] contentBytes=content.getBytes(StandardCharsets.UTF_8);
+  MessageDigest digest=MessageDigest.getInstance("SHA-1");
+  digest.update(("blob "+contentBytes.length+"\0").getBytes(StandardCharsets.UTF_8));digest.update(contentBytes);
+  String contentSha=HexFormat.of().formatHex(digest.digest());
+  verifyEditedTree(repoPath,token,beforeRoot,readTree(repoPath,newTreeSha,token),path.split("/"),0,original.mode(),expectedBlob,contentSha);
+  Response newCommit=send("POST",repoPath+"/git/commits",token,json.writeValueAsString(Map.of("message",message,"tree",newTreeSha,"parents",List.of(expectedHead))));
+  if(newCommit.code!=201)throw new ProviderUnavailableException("file edit commit outcome unavailable");
+  String commitSha=json.readTree(newCommit.body).path("sha").asText();
+  if(!sha(commitSha))throw new ProviderUnavailableException("file edit commit invalid");
+  requireHead(refPath,token,branch,expectedHead);
+  Response update=send("PATCH",repoPath+"/git/refs/heads/"+segment(branch),token,json.writeValueAsString(Map.of("sha",commitSha,"force",false)));
+  if(update.code==200){JsonNode updated=json.readTree(update.body);if(("refs/heads/"+branch).equals(updated.path("ref").asText())&&commitSha.equals(updated.path("object").path("sha").asText()))return commitSha;throw new ProviderUnavailableException("file edit ref response invalid");}
+  if(update.code==409||update.code==422)throw new TargetConflictException("branch update rejected");
+  throw new ProviderUnavailableException("file edit outcome unavailable");
+ }
+ private void verifyEditedTree(String repoPath,String token,JsonNode before,JsonNode after,String[] parts,int index,String mode,String oldBlob,String newBlob)throws Exception{
+  verifyUnchangedSiblings(before,after,Set.of(parts[index]));
+  JsonNode oldEntry=directEntry(before,parts[index]),newEntry=directEntry(after,parts[index]);
+  if(index==parts.length-1){
+   if(!sameEntry(oldEntry,mode,"blob",oldBlob)||!sameEntry(newEntry,mode,"blob",newBlob))throw new TargetConflictException("file edit tree mismatch");
+   return;
+  }
+  if(oldEntry==null||newEntry==null||!"tree".equals(oldEntry.path("type").asText())||!"tree".equals(newEntry.path("type").asText()))throw new TargetConflictException("file edit parent changed");
+  verifyEditedTree(repoPath,token,readEntryTree(repoPath,token,oldEntry),readEntryTree(repoPath,token,newEntry),parts,index+1,mode,oldBlob,newBlob);
+ }
  private static Duration timeout(long millis){return Duration.ofMillis(Math.max(100,Math.min(30000,millis)));}
  private static InstallationChoice installationChoice(JsonNode node,String githubId){if(!node.isObject()||!node.has("id")||!node.path("id").isIntegralNumber()||!node.path("id").canConvertToLong()||node.path("id").asLong()<=0)throw new ProviderUnavailableException("installation response invalid");JsonNode account=node.path("account"),accountId=account.path("id"),login=account.path("login"),type=account.path("type"),suspended=node.path("suspended_at");if(!account.isObject()||!accountId.isIntegralNumber()||!safeGithubId(accountId.asText())||!login.isTextual()||!safe(login.asText())||!type.isTextual()||!("User".equals(type.asText())||"Organization".equals(type.asText()))||!(suspended.isNull()||suspended.isTextual()))throw new ProviderUnavailableException("installation response invalid");if(!"User".equals(type.asText())||!sameGithubId(accountId.asText(),githubId)||suspended.isTextual())return null;return new InstallationChoice(node.path("id").asLong(),login.asText());}
  private static ProviderUnavailableException installationBrowseFailure(Response r){if(r.code==429||r.code>=500)return new ProviderUnavailableException("GitHub installation provider is temporarily unavailable");if(r.code==401||r.code==403)return new ProviderUnavailableException("GitHub App authentication is unavailable");return new ProviderUnavailableException("GitHub installation response was unavailable");}

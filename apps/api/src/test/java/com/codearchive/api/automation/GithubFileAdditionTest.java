@@ -34,6 +34,9 @@ class GithubFileAdditionTest {
   private HttpServer server;
   private boolean protectedBranch;
   private boolean truncatedChild, oversizedChild, unsafeChild, staleOperationTree;
+  private boolean staleEditedTree;
+  private boolean includeUnicodeFile;
+  private boolean reflectRefUpdates;
   private int moveAtRefRead;
   private JsonNode treeRequest;
   private JsonNode refUpdateRequest;
@@ -58,6 +61,85 @@ class GithubFileAdditionTest {
     assertThat(treeRequest.path("base_tree").asText()).isEqualTo(ROOT);
     assertThat(treeRequest.path("tree").get(0).path("path").asText()).isEqualTo("src/New.java");
     assertThat(treeRequest.path("tree").get(0).path("content").asText()).isEqualTo("class New {}");
+    assertThat(refUpdateRequest.path("force").asBoolean(true)).isFalse();
+  }
+
+  @Test void replacesOnlyTheExactPreviouslyReadFileWithANonForceCommit() throws Exception {
+    String result = provider().replaceFile("123", 44, 7, "main", "src/File.java", "new", "Edit file", HEAD, FILE);
+    assertThat(result).isEqualTo(NEW_COMMIT);
+    assertThat(mutations).hasValue(2);
+    assertThat(refUpdates).hasValue(1);
+    assertThat(treeRequest.path("tree").get(0).path("path").asText()).isEqualTo("src/File.java");
+    assertThat(treeRequest.path("tree").get(0).path("content").asText()).isEqualTo("new");
+    assertThat(refUpdateRequest.path("force").asBoolean(true)).isFalse();
+  }
+
+  @Test void editsEmptyAndUnicodeMultilineContentWithoutChangingOtherFiles() throws Exception {
+    includeUnicodeFile = true;
+    assertThat(provider().replaceFile("123", 44, 7, "main", "풀이.java", "", "Clear file", HEAD, FILE)).isEqualTo(NEW_COMMIT);
+    assertThat(treeRequest.path("tree").get(0).path("content").asText()).isEmpty();
+    assertThat(refUpdates).hasValue(1);
+    mutations.set(0); refUpdates.set(0); treeRequest = null;
+    assertThat(provider().replaceFile("123", 44, 7, "main", "풀이.java", "한글\n둘째 줄\n", "Edit file", HEAD, FILE)).isEqualTo(NEW_COMMIT);
+    assertThat(treeRequest.path("tree").get(0).path("content").asText()).isEqualTo("한글\n둘째 줄\n");
+    assertThat(refUpdates).hasValue(1);
+  }
+
+  @Test void duplicateConfirmationCannotUpdateTheRefTwiceAfterTheFirstCommit() throws Exception {
+    reflectRefUpdates = true;
+    GithubAppProvider provider = provider();
+    assertThat(provider.replaceFile("123", 44, 7, "main", "src/File.java", "new", "Edit file", HEAD, FILE)).isEqualTo(NEW_COMMIT);
+    assertThatThrownBy(() -> provider.replaceFile("123", 44, 7, "main", "src/File.java", "new", "Edit file", HEAD, FILE))
+        .isInstanceOf(GithubAppProvider.TargetConflictException.class);
+    assertThat(refUpdates).hasValue(1);
+  }
+
+  @Test void resolvesSavedRepositoryNamesFromTheInstallationInsteadOfTrustingTheClientId() throws Exception {
+    GithubAppProvider provider = provider();
+    assertThat(provider.matchesRepository("123", 44, 7, "owner", "repo")).isTrue();
+    assertThat(provider.matchesRepository("123", 44, 7, "owner", "different")).isFalse();
+    assertThatThrownBy(() -> provider.matchesRepository("123", 44, 8, "owner", "repo"))
+        .isInstanceOf(SecurityException.class);
+    assertThat(mutations).hasValue(0);
+    assertThat(refUpdates).hasValue(0);
+  }
+
+  @Test void rejectsEditedFileDriftAndAStaleTreeBeforeTheRefMutation() throws Exception {
+    GithubAppProvider provider = provider();
+    assertThatThrownBy(() -> provider.replaceFile("123", 44, 7, "main", "src/File.java", "new", "Edit", HEAD, MOVED))
+        .isInstanceOf(GithubAppProvider.TargetConflictException.class);
+    assertThatThrownBy(() -> provider.replaceFile("123", 44, 7, "main", "src/File.java", "new", "Edit", MOVED, FILE))
+        .isInstanceOf(GithubAppProvider.TargetConflictException.class);
+    protectedBranch = true;
+    assertThatThrownBy(() -> provider.replaceFile("123", 44, 7, "main", "src/File.java", "new", "Edit", HEAD, FILE))
+        .isInstanceOf(GithubAppProvider.TargetConflictException.class);
+    protectedBranch = false;
+    staleEditedTree = true;
+    assertThatThrownBy(() -> provider.replaceFile("123", 44, 7, "main", "src/File.java", "new", "Edit", HEAD, FILE))
+        .isInstanceOf(GithubAppProvider.TargetConflictException.class);
+    assertThat(refUpdates).hasValue(0);
+  }
+
+  @Test void supportsAUnicodeFileNameAndRejectsLateBranchMovement() throws Exception {
+    includeUnicodeFile = true;
+    assertThat(provider().replaceFile("123", 44, 7, "main", "풀이.java", "new", "Edit", HEAD, FILE)).isEqualTo(NEW_COMMIT);
+    assertThat(treeRequest.path("tree").get(0).path("path").asText()).isEqualTo("풀이.java");
+    includeUnicodeFile = false;
+    refReads.set(0); mutations.set(0); refUpdates.set(0); moveAtRefRead = 4;
+    assertThatThrownBy(() -> provider().replaceFile("123", 44, 7, "main", "src/File.java", "new", "Edit", HEAD, FILE))
+        .isInstanceOf(GithubAppProvider.TargetConflictException.class);
+    assertThat(refUpdates).hasValue(0);
+  }
+
+  @Test void previewsThenDeletesAUnicodeNamedFileWithoutAForcedRefUpdate() throws Exception {
+    includeUnicodeFile = true;
+    GithubAppProvider provider = provider();
+    var preview = provider.previewOperation("123", 44, 7,
+        new GithubAppProvider.OperationPreviewRequest("DELETE", "main", "풀이.java", null, "Delete file", HEAD));
+    assertThat(preview.changes()).containsExactly(new GithubAppProvider.TreeChange("풀이.java", null));
+    assertThat(mutations).hasValue(0);
+    assertThat(provider.commitOperation("123", 44, 7, preview.previewId())).isEqualTo(NEW_COMMIT);
+    assertThat(refUpdates).hasValue(1);
     assertThat(refUpdateRequest.path("force").asBoolean(true)).isFalse();
   }
 
@@ -223,30 +305,60 @@ class GithubFileAdditionTest {
     else if (path.equals("/repos/owner/repo/branches")) reply(exchange, 200, "[{\"name\":\"main\",\"protected\":" + protectedBranch + ",\"commit\":{\"sha\":\"" + HEAD + "\"}}]");
     else if (path.equals("/repos/owner/repo/git/ref/heads/main") && method.equals("GET")) {
       int read = refReads.incrementAndGet();
-      reply(exchange, 200, "{\"ref\":\"refs/heads/main\",\"object\":{\"sha\":\"" + (moveAtRefRead > 0 && read >= moveAtRefRead ? MOVED : HEAD) + "\"}}");
+      reply(exchange, 200, "{\"ref\":\"refs/heads/main\",\"object\":{\"sha\":\"" + (reflectRefUpdates && refUpdates.get() > 0 ? NEW_COMMIT : moveAtRefRead > 0 && read >= moveAtRefRead ? MOVED : HEAD) + "\"}}");
     } else if (path.equals("/repos/owner/repo/git/commits/" + HEAD) && method.equals("GET")) reply(exchange, 200, "{\"tree\":{\"sha\":\"" + ROOT + "\"}}");
+    else if (path.equals("/repos/owner/repo/git/commits/" + NEW_COMMIT) && method.equals("GET") && reflectRefUpdates) reply(exchange, 200, "{\"tree\":{\"sha\":\"" + NEW_TREE + "\"}}");
     else if (path.equals("/repos/owner/repo/git/trees/" + ROOT) && method.equals("GET")) reply(exchange, 200, rootTree());
     else if (path.equals("/repos/owner/repo/git/trees/" + NEW_TREE) && method.equals("GET")) reply(exchange, 200, operationResultTree());
-    else if (path.equals("/repos/owner/repo/git/trees/" + RESULT_CHILD) && method.equals("GET")) reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"Archived.java\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}");
+    else if (path.equals("/repos/owner/repo/git/trees/" + RESULT_CHILD) && method.equals("GET")) reply(exchange, 200, editedChildTree());
     else if (path.equals("/repos/owner/repo/git/trees/" + CHILD) && method.equals("GET")) {
       if (truncatedChild) reply(exchange, 200, "{\"truncated\":true,\"tree\":[]}");
       else if (oversizedChild) { StringBuilder files = new StringBuilder("{\"truncated\":false,\"tree\":["); for (int i = 0; i < 101; i++) { if (i > 0) files.append(','); files.append("{\"path\":\"F").append(i).append(".java\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"").append(FILE).append("\"}"); } reply(exchange, 200, files.append("]}").toString()); }
-      else if (unsafeChild) reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"foo..bar\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}");
-      else reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"File.java\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}");
+      else if (unsafeChild) reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"../escape\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}");
+      else reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"File.java\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\",\"size\":3}]}");
     }
+    else if (path.equals("/repos/owner/repo/git/blobs/" + FILE) && method.equals("GET")) reply(exchange, 200, "{\"sha\":\"" + FILE + "\",\"encoding\":\"base64\",\"size\":3,\"content\":\"b2xk\"}");
+    else if (reflectRefUpdates && treeRequest != null && path.equals("/repos/owner/repo/git/blobs/" + editedBlobSha()) && method.equals("GET")) reply(exchange, 200, "{\"sha\":\"" + editedBlobSha() + "\",\"encoding\":\"base64\",\"size\":3,\"content\":\"bmV3\"}");
     else if (path.equals("/repos/owner/repo/git/trees") && method.equals("POST")) { mutations.incrementAndGet(); treeRequest = json.readTree(exchange.getRequestBody()); reply(exchange, 201, "{\"sha\":\"" + NEW_TREE + "\"}"); }
     else if (path.equals("/repos/owner/repo/git/commits") && method.equals("POST")) { mutations.incrementAndGet(); reply(exchange, 201, "{\"sha\":\"" + NEW_COMMIT + "\"}"); }
     else if (path.equals("/repos/owner/repo/git/refs/heads/main") && method.equals("PATCH")) { refUpdates.incrementAndGet(); refUpdateRequest = json.readTree(exchange.getRequestBody()); reply(exchange, 200, "{\"ref\":\"refs/heads/main\",\"object\":{\"sha\":\"" + NEW_COMMIT + "\"}}"); }
     else reply(exchange, 404, "{}");
   }
 
-  private String rootTree() { return "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"mode\":\"040000\",\"type\":\"tree\",\"sha\":\"" + CHILD + "\"},{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}"; }
+  private String rootTree() { return "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"mode\":\"040000\",\"type\":\"tree\",\"sha\":\"" + CHILD + "\"},{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}" + (includeUnicodeFile ? ",{\"path\":\"풀이.java\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\",\"size\":3}" : "") + "]}"; }
   private String operationResultTree() {
     if (staleOperationTree || treeRequest == null) return rootTree();
     String first = treeRequest.path("tree").get(0).path("path").asText();
     if ("archive/File.java".equals(first)) return "{\"truncated\":false,\"tree\":[{\"path\":\"archive\",\"mode\":\"040000\",\"type\":\"tree\",\"sha\":\"" + CHILD + "\"},{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}";
     if ("src/Archived.java".equals(first)) return "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"mode\":\"040000\",\"type\":\"tree\",\"sha\":\"" + RESULT_CHILD + "\"},{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}";
+    if ("src/File.java".equals(first) && treeRequest.path("tree").get(0).has("content")) return "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"mode\":\"040000\",\"type\":\"tree\",\"sha\":\"" + RESULT_CHILD + "\"},{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}";
+    if ("풀이.java".equals(first) && treeRequest.path("tree").get(0).path("sha").isNull()) return "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"mode\":\"040000\",\"type\":\"tree\",\"sha\":\"" + CHILD + "\"},{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}";
+    if ("풀이.java".equals(first)) return "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"mode\":\"040000\",\"type\":\"tree\",\"sha\":\"" + CHILD + "\"},{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"},{\"path\":\"풀이.java\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + editedBlobSha() + "\"}]}";
     return "{\"truncated\":false,\"tree\":[{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}";
+  }
+
+  private String editedChildTree() throws IOException {
+    if (treeRequest == null || !"src/File.java".equals(treeRequest.path("tree").get(0).path("path").asText()))
+      return "{\"truncated\":false,\"tree\":[{\"path\":\"Archived.java\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}";
+    String content = treeRequest.path("tree").get(0).path("content").asText();
+    byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+    String blobSha;
+    try {
+      var digest = java.security.MessageDigest.getInstance("SHA-1");
+      digest.update(("blob " + bytes.length + "\0").getBytes(StandardCharsets.UTF_8)); digest.update(bytes);
+      blobSha = java.util.HexFormat.of().formatHex(digest.digest());
+    } catch (java.security.NoSuchAlgorithmException e) { throw new IOException(e); }
+    if (staleEditedTree) blobSha = FILE;
+    return "{\"truncated\":false,\"tree\":[{\"path\":\"File.java\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + blobSha + "\",\"size\":3}]}";
+  }
+
+  private String editedBlobSha() {
+    byte[] bytes = treeRequest.path("tree").get(0).path("content").asText().getBytes(StandardCharsets.UTF_8);
+    try {
+      var digest = java.security.MessageDigest.getInstance("SHA-1");
+      digest.update(("blob " + bytes.length + "\0").getBytes(StandardCharsets.UTF_8)); digest.update(bytes);
+      return java.util.HexFormat.of().formatHex(digest.digest());
+    } catch (java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
   }
 
   private static void reply(HttpExchange exchange, int status, String body) throws IOException {
