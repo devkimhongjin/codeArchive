@@ -671,7 +671,7 @@ it('shows independent header choices only when enabled and previews the selected
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
     copyHeaderFields: ['identity', 'title', 'language', 'performance'],
     downloadHeaderFields: ['identity', 'title', 'solvedAt', 'language', 'performance', 'url'],
-    githubHeaderFields: ['identity', 'title', 'performance', 'url'],
+    githubHeaderFields: ['identity', 'title', 'url', 'performance'],
   }), 'account-17'))
 })
 

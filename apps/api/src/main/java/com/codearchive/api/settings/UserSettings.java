@@ -61,7 +61,7 @@ public class UserSettings {
         String nextCommitMessageTemplate = r.githubCommitMessageTemplate() == null ? githubCommitMessageTemplate : r.githubCommitMessageTemplate();
         boolean automationTargetChanged = !java.util.Objects.equals(gitPathTemplate, r.gitPathTemplate())
                 || githubHeader != r.githubHeader()
-                || r.githubHeaderFields() != null && !java.util.Objects.equals(githubHeaderFields, HeaderFields.encode(r.githubHeaderFields()))
+                || r.githubHeaderFields() != null && !java.util.Set.copyOf(getGithubHeaderFields()).equals(java.util.Set.copyOf(r.githubHeaderFields()))
                 || !java.util.Objects.equals(githubCommitMessageTemplate, nextCommitMessageTemplate)
                 || !java.util.Objects.equals(githubInstallationId, r.githubInstallationId())
                 || !java.util.Objects.equals(githubOwner, r.githubOwner())

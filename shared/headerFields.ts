@@ -14,7 +14,13 @@ export const HEADER_FIELD_LABELS: Record<HeaderField, string> = {
 
 export function normalizedHeaderFields(value: unknown): HeaderField[] {
   if (!Array.isArray(value)) return [...DEFAULT_HEADER_FIELDS]
-  return HEADER_FIELDS.filter(field => value.includes(field))
+  const fields: HeaderField[] = []
+  for (const field of value) {
+    if (HEADER_FIELDS.includes(field as HeaderField) && !fields.includes(field as HeaderField)) {
+      fields.push(field as HeaderField)
+    }
+  }
+  return fields
 }
 
 export type HeaderSource = {
