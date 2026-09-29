@@ -2,6 +2,7 @@ import { createUuid } from "./capture";
 import type { Capture, CaptureSettings } from "./types";
 import type { CaptureStore } from "./storage";
 import { BUILD_METADATA } from "../../../shared/buildMetadata";
+import { normalizedHeaderFields, type HeaderField } from "../../../shared/headerFields";
 
 export const DASHBOARD_ORIGIN = "https://codearchive-dashboard-beta.netlify.app";
 export const DASHBOARD_ORIGINS = [
@@ -22,7 +23,7 @@ export type DashboardMessage =
   /** Reuse a durable relay after an MV3 service-worker restart without exposing its bearer secret. */
   | { type: "REUSE_RELAY"; capability: string; accountId: string; settingsVersion: number }
   | { type: "ACK"; capability: string; captureIds: string[] }
-  | { type: "CONFIGURE_RELAY"; capability: string; relay: { endpoint: string; secret: string; accountId: string; generation: number } | null; accountId?: string; settingsVersion?: number; autoSyncEnabled?: boolean; githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; copyHeader?: boolean; downloadHeader?: boolean; downloadFilenameTemplate?: string; gitPathTemplate?: string; name?: string | null; nickname?: string | null; lightTheme?: string; darkTheme?: string }
+  | { type: "CONFIGURE_RELAY"; capability: string; relay: { endpoint: string; secret: string; accountId: string; generation: number } | null; accountId?: string; settingsVersion?: number; autoSyncEnabled?: boolean; githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; copyHeader?: boolean; downloadHeader?: boolean; copyHeaderFields?: HeaderField[]; downloadHeaderFields?: HeaderField[]; downloadFilenameTemplate?: string; gitPathTemplate?: string; name?: string | null; nickname?: string | null; lightTheme?: string; darkTheme?: string }
   | { type: "DISCONNECT"; capability: string };
 
 export interface DashboardSender {
@@ -170,6 +171,8 @@ export class DashboardBridge {
         ...(settingsVersion !== undefined ? { accountSettingsVersion: settingsVersion } : {}),
         ...(typeof automatic.copyHeader === "boolean" ? { copyHeader: automatic.copyHeader } : {}),
         ...(typeof automatic.downloadHeader === "boolean" ? { downloadHeader: automatic.downloadHeader } : {}),
+        ...(Array.isArray(automatic.copyHeaderFields) ? { copyHeaderFields: normalizedHeaderFields(automatic.copyHeaderFields) } : {}),
+        ...(Array.isArray(automatic.downloadHeaderFields) ? { downloadHeaderFields: normalizedHeaderFields(automatic.downloadHeaderFields) } : {}),
         ...(typeof automatic.downloadFilenameTemplate === "string" ? { downloadFilenameTemplate: automatic.downloadFilenameTemplate } : {}),
         ...(typeof automatic.gitPathTemplate === "string" ? { gitPathTemplate: automatic.gitPathTemplate } : {}),
         ...(automatic.name === null ? { name: undefined } : typeof automatic.name === "string" ? { name: automatic.name } : {}),

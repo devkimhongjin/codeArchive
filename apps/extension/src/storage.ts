@@ -2,6 +2,7 @@ import { DEFAULT_CAPTURE_SETTINGS, type Capture, type CaptureSettings, type Sync
 import type { SweaProblemContext } from "./sweaProblemContext";
 import { canonicalLanguageKey } from "../../../shared/language";
 import { LIGHT_THEMES, DARK_THEMES } from "../../../shared/codeThemes";
+import { normalizedHeaderFields } from "../../../shared/headerFields";
 
 export const DATABASE_NAME = "codearchive-local";
 export const DATABASE_VERSION = 3;
@@ -59,6 +60,8 @@ function settingsWithDefaults(value: Partial<CaptureSettings> | undefined): Capt
     githubTargetConfigured: value?.githubTargetConfigured === true,
     ...(typeof value?.copyHeader === "boolean" ? { copyHeader: value.copyHeader } : {}),
     ...(typeof value?.downloadHeader === "boolean" ? { downloadHeader: value.downloadHeader } : {}),
+    copyHeaderFields: normalizedHeaderFields(value?.copyHeaderFields),
+    downloadHeaderFields: normalizedHeaderFields(value?.downloadHeaderFields),
     downloadFilenameTemplate: typeof value?.downloadFilenameTemplate === "string"
       ? value.downloadFilenameTemplate.slice(0, 160)
       : DEFAULT_CAPTURE_SETTINGS.downloadFilenameTemplate,

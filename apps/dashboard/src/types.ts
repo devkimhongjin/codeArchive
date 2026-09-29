@@ -1,4 +1,5 @@
 import type { LightTheme, DarkTheme } from '../../../shared/codeThemes'
+import type { HeaderField } from '../../../shared/headerFields'
 
 export type Platform = 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'
 
@@ -78,6 +79,9 @@ export type AccountSettings = {
   copyHeader: boolean
   downloadHeader: boolean
   githubHeader: boolean
+  copyHeaderFields?: HeaderField[]
+  downloadHeaderFields?: HeaderField[]
+  githubHeaderFields?: HeaderField[]
   downloadFilenameTemplate: string
   gitPathTemplate: string
   githubCommitMessageTemplate: string

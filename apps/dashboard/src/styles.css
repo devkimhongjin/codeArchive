@@ -294,5 +294,10 @@ h1, h2, p { margin-top: 0; }
 .github-browser-edit-preview > button { justify-self: start; }
 .github-browser-success { margin: 9px 0; padding: 10px; border-radius: 5px; background: #e8f6f0; color: #14715c; font-size: 12px; }
 .settings-layout.is-github-management { grid-template-columns: minmax(0, 1fr); }
+.header-fields-picker { display: grid; gap: 9px; margin: 3px 0 16px 20px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
+.header-fields-picker p { margin: 0; color: var(--muted); font-size: 11px; }
+.header-field-options { display: flex; flex-wrap: wrap; gap: 8px 15px; }
+.header-field-options label { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+.header-fields-picker pre { max-height: 180px; overflow: auto; margin: 0; padding: 10px; border: 1px solid var(--line); border-radius: 5px; background: #fff; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
 @media (max-width: 700px) { .github-repository-browser { padding: 13px; } .github-browser-layout { grid-template-columns: 1fr; } .github-browser-list { max-height: 270px; border-right: 0; border-bottom: 1px solid var(--line); } }
 @media (max-width: 700px) { .github-browser-edit-preview > div { grid-template-columns: 1fr; } }

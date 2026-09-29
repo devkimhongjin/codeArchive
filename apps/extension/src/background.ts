@@ -3,6 +3,7 @@ import { DashboardBridge } from "./bridge";
 import { IndexedDbCaptureStore } from "./storage";
 import { loadPopupLocalState, prepareCaptureDownload, retryRelayConnection, storeCaptureLocalFirst } from "./backgroundActions";
 import { exportCode } from "./export";
+import { normalizedHeaderFields } from "../../../shared/headerFields";
 import { fetchGithubCommitStatuses, recordRelayAttempt, relayCapture, revokeRelay } from "./relay";
 import {
   normalizeSweaDetailUrl,
@@ -220,7 +221,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     if (!isPopupSender(sender) || typeof object.captureId !== "string") { sendResponse({ ok: false, error: "UNAUTHORIZED" }); return false; }
     void store.getCapture(object.captureId).then(async capture => {
       if (!capture) return sendResponse({ ok: false, error: "NOT_FOUND" });
-      const settings = await store.getSettings(); const text = exportCode(capture, settings.copyHeader === true);
+      const settings = await store.getSettings(); const text = exportCode(capture, settings.copyHeader === true, normalizedHeaderFields(settings.copyHeaderFields));
       if (object.type === "COPY_RECENT_CAPTURE") return sendResponse({ ok: true, text });
       const download = prepareCaptureDownload(capture, settings);
       if (!download) return sendResponse({ ok: false, error: "DOWNLOAD_TOO_LARGE" });

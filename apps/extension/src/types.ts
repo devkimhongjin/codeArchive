@@ -1,3 +1,5 @@
+import type { HeaderField } from "../../../shared/headerFields";
+
 export type Platform = "SWEA" | "PROGRAMMERS" | "JUNGOL";
 export const DEFAULT_DOWNLOAD_FILENAME_TEMPLATE = "Solution_{number}_{name}";
 
@@ -103,6 +105,8 @@ export interface CaptureSettings {
   relay?: { endpoint: string; secret: string; accountId: string; generation: number; status: "CONFIRMED" | "PENDING" | "OFFLINE" | "AUTH_EXPIRED" | "RELAY_ERROR" | "REVOCATION_PENDING" };
   copyHeader?: boolean;
   downloadHeader?: boolean;
+  copyHeaderFields?: HeaderField[];
+  downloadHeaderFields?: HeaderField[];
   downloadFilenameTemplate?: string;
   gitPathTemplate?: string;
   name?: string;

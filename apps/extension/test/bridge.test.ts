@@ -190,11 +190,13 @@ test("relay configuration persists only opaque acknowledged profile/export/theme
     onRelayConfigured: () => { configuredCount += 1; }
   });
   const connected = await bridge.handleMessage({ type: "CONNECT" }, sender()); assert.ok("capability" in connected);
-  assert.deepEqual(await bridge.handleMessage({ type: "CONFIGURE_RELAY", capability: connected.capability, relay: { endpoint: "/api/relay/captures", secret: "opaque-only", accountId: "17", generation: 3 }, settingsVersion: 3, autoSyncEnabled: true, githubAutoCommitEnabled: true, githubTargetConfigured: true, copyHeader: true, downloadHeader: true, downloadFilenameTemplate: "{number}", gitPathTemplate: "java/{number}", name: "name", nickname: "nick", lightTheme: "one-light", darkTheme: "dracula" }, sender()), { ok: true });
+  assert.deepEqual(await bridge.handleMessage({ type: "CONFIGURE_RELAY", capability: connected.capability, relay: { endpoint: "/api/relay/captures", secret: "opaque-only", accountId: "17", generation: 3 }, settingsVersion: 3, autoSyncEnabled: true, githubAutoCommitEnabled: true, githubTargetConfigured: true, copyHeader: true, downloadHeader: true, copyHeaderFields: ["title", "solvedAt"], downloadHeaderFields: ["language"], downloadFilenameTemplate: "{number}", gitPathTemplate: "java/{number}", name: "name", nickname: "nick", lightTheme: "one-light", darkTheme: "dracula" }, sender()), { ok: true });
   const configured = await store.getSettings();
   assert.deepEqual(configured.relay, { endpoint: "/api/relay/captures", secret: "opaque-only", accountId: "17", generation: 3, status: "CONFIRMED" });
   assert.equal(configuredCount, 1);
   assert.equal(configured.autoDownloadEnabled, true);
+  assert.deepEqual(configured.copyHeaderFields, ["title", "solvedAt"]);
+  assert.deepEqual(configured.downloadHeaderFields, ["language"]);
   assert.equal(configured.downloadFilenameTemplate, "{number}"); assert.equal(configured.lightTheme, "one-light"); assert.equal(configured.darkTheme, "dracula");
   assert.deepEqual(await bridge.handleMessage({ type: "CONFIGURE_RELAY", capability: connected.capability, relay: null, accountId: "17", settingsVersion: 4, copyHeader: false, downloadHeader: true, downloadFilenameTemplate: "{nickname}-{number}", gitPathTemplate: "offline/{id}", name: null, nickname: "새 별명", lightTheme: "solarized-light", darkTheme: "one-dark-pro", githubTargetConfigured: true }, sender()), { ok: true });
   const off = await store.getSettings();

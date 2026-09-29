@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
 @Component public class GithubAppProvider implements GithubProvider {
  private static final DateTimeFormatter VERSION_TIMESTAMP=DateTimeFormatter.ofPattern("yyyyMMdd-HHmmssSSS").withZone(ZoneOffset.UTC);
  private static final DateTimeFormatter PATH_TIME=DateTimeFormatter.ofPattern("yyMMddHHmmss").withZone(ZoneOffset.UTC);
+ private static final DateTimeFormatter HEADER_TIME=DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC);
  private static final Duration OPERATION_PREVIEW_TTL=Duration.ofMinutes(5);
  private static final int MAX_OPERATION_FILES=100,MAX_OPERATION_DEPTH=32,MAX_OPERATION_TREE_REQUESTS=256,MAX_PREVIEW_TOKEN_LENGTH=4096;
  private static final int MAX_FILE_PREVIEW_BYTES=65536;
@@ -568,9 +569,17 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
  private String source(UserSettings settings,Solution solution){
   String source=solution.getSourceCode();if(!settings.isGithubHeader())return source;
   String ext=extension(solution.getLanguage()),prefix=List.of("py","rb").contains(ext)?"#":"sql".equals(ext)?"--":"txt".equals(ext)?"":"//";if(prefix.isBlank())return source;
-  List<String> lines=new ArrayList<>();lines.add(solution.getPlatform().name()+" #"+solution.getProblemNumber()+" · "+solution.getTitle());lines.add(solution.getProblemUrl());lines.add("Language: "+solution.getLanguage());
-  if(solution.getExecutionTime()!=null)lines.add("Execution Time: "+decimal(solution.getExecutionTime())+" ms");
-  if(solution.getMemoryValue()!=null&&solution.getMemoryUnit()!=null&&!solution.getMemoryUnit().isBlank()&&!"UNKNOWN".equalsIgnoreCase(solution.getMemoryUnit()))lines.add("Memory: "+decimal(solution.getMemoryValue())+" "+solution.getMemoryUnit());else if(solution.getMemoryUsage()!=null)lines.add("Memory: "+decimal(solution.getMemoryUsage())+" (unit unknown)");
+  Set<String> fields=new HashSet<>(settings.getGithubHeaderFields());List<String> lines=new ArrayList<>();
+  if(fields.contains("identity")&&fields.contains("title"))lines.add(solution.getPlatform().name()+" #"+solution.getProblemNumber()+" · "+solution.getTitle());
+  else{if(fields.contains("identity"))lines.add(solution.getPlatform().name()+" #"+solution.getProblemNumber());if(fields.contains("title"))lines.add("Problem: "+solution.getTitle());}
+  if(fields.contains("url")&&solution.getProblemUrl()!=null&&!solution.getProblemUrl().isBlank())lines.add(solution.getProblemUrl());
+  if(fields.contains("solvedAt")){Instant solved=solution.getSolvedAt()!=null?solution.getSolvedAt():solution.getObservedAt();if(solved!=null)lines.add("Solved At: "+HEADER_TIME.format(solved)+" UTC");}
+  if(fields.contains("language")&&solution.getLanguage()!=null&&!solution.getLanguage().isBlank())lines.add("Language: "+solution.getLanguage());
+  if(fields.contains("performance")){
+   if(solution.getExecutionTime()!=null)lines.add("Execution Time: "+decimal(solution.getExecutionTime())+" ms");
+   if(solution.getMemoryValue()!=null&&solution.getMemoryUnit()!=null&&!solution.getMemoryUnit().isBlank()&&!"UNKNOWN".equalsIgnoreCase(solution.getMemoryUnit()))lines.add("Memory: "+decimal(solution.getMemoryValue())+" "+solution.getMemoryUnit());else if(solution.getMemoryUsage()!=null)lines.add("Memory: "+decimal(solution.getMemoryUsage())+" (unit unknown)");
+  }
+  if(lines.isEmpty())return source;
   String header=lines.stream().map(line->prefix+" "+metadataLine(line,ext)).collect(java.util.stream.Collectors.joining("\n"))+"\n\n";
   if(source.startsWith("#!")){int newline=source.indexOf('\n');if(newline>=0)return source.substring(0,newline+1)+header+source.substring(newline+1);}
   return header+source;
@@ -594,7 +603,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
   int slash=path.lastIndexOf('/'),dot=path.lastIndexOf('.');if(dot<=slash)dot=path.length();return path.substring(0,dot)+"_"+timestamp+"_"+capture+path.substring(dot);
  }
  private String commitMessage(UserSettings s,Solution x){
-  Map<String,String> v=new HashMap<>();String platform=x.getPlatform().name();v.put("Platform",platform);v.put("platform",platform);v.put("number",x.getProblemNumber());v.put("title",x.getTitle());v.put("language",x.getLanguage());v.put("name",s.getDisplayName()==null?"":s.getDisplayName().trim());v.put("nickname",s.getNickname()==null?"":s.getNickname().trim());v.put("id",s.getUser()!=null&&s.getUser().getId()!=null?String.valueOf(s.getUser().getId()):"");
+  Map<String,String> v=new HashMap<>();String platform=x.getPlatform().name();v.put("Platform",platform);v.put("platform",platform);v.put("number",x.getProblemNumber());v.put("title",x.getTitle());v.put("language",x.getLanguage());v.put("name",s.getDisplayName()==null?"":s.getDisplayName().trim());v.put("nickname",s.getNickname()==null?"":s.getNickname().trim());v.put("id",s.getUser()!=null&&s.getUser().getId()!=null?String.valueOf(s.getUser().getId()):"");Instant solved=x.getSolvedAt()!=null?x.getSolvedAt():x.getObservedAt();v.put("time",PATH_TIME.format(solved==null?Instant.EPOCH:solved));v.put("capture_ID",x.getCaptureId()==null?"":x.getCaptureId());
   String message=render(s.getGithubCommitMessageTemplate(),v).replaceAll("[\\r\\n\\u2028\\u2029\\x00-\\x1f\\x7f]+"," ").replaceAll("\\s+"," ").trim();
   if(message.isBlank())message="Add "+platform+" "+x.getProblemNumber()+" solution";
   return message.length()>200?message.substring(0,200).trim():message;

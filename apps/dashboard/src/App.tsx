@@ -28,7 +28,8 @@ import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type
 import { CodeBlock, CodeThemeSelect } from './CodeBlock'
 import { GithubRepositoryBrowser } from './GithubRepositoryBrowser'
 import { EXTENSION_ID, LEGACY_EXTENSION_ID, EXTENSION_CANDIDATES } from './extensionConfig'
-import { readExportSettings, EXPORT_SETTINGS_KEY, exportCode, downloadFilename, githubCommitMessage, gitPath, sourceFileExtension, DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, DEFAULT_GIT_PATH_TEMPLATE, GIT_PATH_TOKENS, hasGitSubmissionIdentityToken, type ExportSettings } from './codeExport'
+import { readExportSettings, EXPORT_SETTINGS_KEY, exportCode, downloadFilename, githubCommitMessage, gitPath, sourceFileExtension, DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, DEFAULT_GIT_PATH_TEMPLATE, GIT_PATH_TOKENS, FILENAME_TOKENS, COMMIT_MESSAGE_TOKENS, hasGitSubmissionIdentityToken, type ExportSettings } from './codeExport'
+import { DEFAULT_HEADER_FIELDS, HEADER_FIELDS, HEADER_FIELD_LABELS, normalizedHeaderFields, type HeaderField } from '../../../shared/headerFields'
 import { navigateSameTab } from './navigation'
 import './styles.css'
 import { canonicalLanguageDisplayName, canonicalLanguageKey } from '../../../shared/language'
@@ -177,7 +178,7 @@ function readLocalThemes(): Pick<AccountSettings, 'lightTheme' | 'darkTheme'> {
 function persistLocalThemes(settings: Pick<AccountSettings, 'lightTheme' | 'darkTheme'>) {
   try { localStorage.setItem(LOCAL_THEME_KEY, JSON.stringify(settings)) } catch { /* Preview remains usable. */ }
 }
-const defaultAccountSettings = (): AccountSettings => ({ version: 0, name: null, nickname: null, copyHeader: false, downloadHeader: false, githubHeader: false, downloadFilenameTemplate: DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, gitPathTemplate: DEFAULT_GIT_PATH_TEMPLATE, githubCommitMessageTemplate: DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, ...readLocalThemes(), autoSyncEnabled: false, githubAutoCommitEnabled: false, githubTargetConfigured: false, githubStatus: 'TARGET_MISSING', githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null })
+const defaultAccountSettings = (): AccountSettings => ({ version: 0, name: null, nickname: null, copyHeader: false, downloadHeader: false, githubHeader: false, copyHeaderFields: [...DEFAULT_HEADER_FIELDS], downloadHeaderFields: [...DEFAULT_HEADER_FIELDS], githubHeaderFields: [...DEFAULT_HEADER_FIELDS], downloadFilenameTemplate: DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, gitPathTemplate: DEFAULT_GIT_PATH_TEMPLATE, githubCommitMessageTemplate: DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, ...readLocalThemes(), autoSyncEnabled: false, githubAutoCommitEnabled: false, githubTargetConfigured: false, githubStatus: 'TARGET_MISSING', githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null })
 
 function savedGithubTarget(settings: AccountSettings): GithubSavedTarget | null {
   return settings.githubTargetConfigured && settings.githubInstallationId && settings.githubOwner && settings.githubRepository && settings.githubBranch
@@ -382,7 +383,7 @@ export default function App() {
           settingsLoadedRef.current = { accountId: account.id, generation, version: saved.version }
           relayHandoffRef.current = null
           setAccountSettings(saved)
-          updateExportSettings({ copyHeader: saved.copyHeader, downloadHeader: saved.downloadHeader, filenameTemplate: saved.downloadFilenameTemplate, gitPathTemplate: saved.gitPathTemplate })
+          updateExportSettings({ copyHeader: saved.copyHeader, downloadHeader: saved.downloadHeader, copyHeaderFields: normalizedHeaderFields(saved.copyHeaderFields), downloadHeaderFields: normalizedHeaderFields(saved.downloadHeaderFields), filenameTemplate: saved.downloadFilenameTemplate, gitPathTemplate: saved.gitPathTemplate })
           await configureRelay(saved, account, generation)
         }
       } catch (error) {
@@ -471,7 +472,7 @@ export default function App() {
     settingsLoadedRef.current = null
     void Promise.resolve(getAccountSettings(loadingFor.githubId)).then(serverResponse => {
       if (!stillCurrent()) return
-      const server = { ...serverResponse, githubCommitMessageTemplate: serverResponse.githubCommitMessageTemplate || DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE }
+      const server = { ...serverResponse, nickname: serverResponse.nickname?.trim() || loadingFor.githubLogin, githubCommitMessageTemplate: serverResponse.githubCommitMessageTemplate || DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, copyHeaderFields: normalizedHeaderFields(serverResponse.copyHeaderFields), downloadHeaderFields: normalizedHeaderFields(serverResponse.downloadHeaderFields), githubHeaderFields: normalizedHeaderFields(serverResponse.githubHeaderFields) }
       // One-way migration: old browser-only export choices only seed the first
       // server version, and never overwrite an existing account preference.
       const migrated = server.version === 0 && !server.copyHeader && !server.downloadHeader && server.downloadFilenameTemplate === '{platform}-{number}-{title}'
@@ -481,7 +482,7 @@ export default function App() {
       accountSettingsRef.current = migrated
       setAccountSettings(migrated)
       setSavedTarget(savedGithubTarget(server))
-      setExportSettings({ copyHeader: migrated.copyHeader, downloadHeader: migrated.downloadHeader, filenameTemplate: migrated.downloadFilenameTemplate, gitPathTemplate: migrated.gitPathTemplate })
+      setExportSettings({ copyHeader: migrated.copyHeader, downloadHeader: migrated.downloadHeader, copyHeaderFields: migrated.copyHeaderFields, downloadHeaderFields: migrated.downloadHeaderFields, filenameTemplate: migrated.downloadFilenameTemplate, gitPathTemplate: migrated.gitPathTemplate })
       settingsLoadedRef.current = { accountId: loadingFor.id, generation, version: migrated.version }
       // If automatic connection won the race against settings loading, now send
       // the authoritative settings. configureRelay is declared below but is
@@ -881,6 +882,8 @@ export default function App() {
     githubTargetConfigured: saved.githubTargetConfigured,
     copyHeader: saved.copyHeader,
     downloadHeader: saved.downloadHeader,
+    copyHeaderFields: normalizedHeaderFields(saved.copyHeaderFields),
+    downloadHeaderFields: normalizedHeaderFields(saved.downloadHeaderFields),
     downloadFilenameTemplate: saved.downloadFilenameTemplate,
     gitPathTemplate: saved.gitPathTemplate,
     name: saved.name,
@@ -988,7 +991,7 @@ export default function App() {
         relayHandoffRef.current = null
         setAccountSettings(saved)
         setSavedTarget(savedGithubTarget(saved))
-        updateExportSettings({ copyHeader: saved.copyHeader, downloadHeader: saved.downloadHeader, filenameTemplate: saved.downloadFilenameTemplate, gitPathTemplate: saved.gitPathTemplate })
+        updateExportSettings({ copyHeader: saved.copyHeader, downloadHeader: saved.downloadHeader, copyHeaderFields: normalizedHeaderFields(saved.copyHeaderFields), downloadHeaderFields: normalizedHeaderFields(saved.downloadHeaderFields), filenameTemplate: saved.downloadFilenameTemplate, gitPathTemplate: saved.gitPathTemplate })
         await configureRelay(saved, savingFor, generation)
         if (stillCurrent()) showToast('success', '계정 설정을 저장했습니다.')
       }
@@ -1166,7 +1169,7 @@ export default function App() {
   const copyCode = async () => {
     if (!selectedSolution) return
     try {
-      await navigator.clipboard.writeText(exportCode(selectedSolution, exportSettings.copyHeader))
+      await navigator.clipboard.writeText(exportCode(selectedSolution, exportSettings.copyHeader, normalizedHeaderFields(exportSettings.copyHeaderFields)))
       showToast('success', '코드를 클립보드에 복사했습니다.')
     } catch {
       showToast('error', '클립보드에 복사하지 못했습니다.')
@@ -1175,7 +1178,7 @@ export default function App() {
 
   const downloadCode = () => {
     if (!selectedSolution) return
-    const objectUrl = URL.createObjectURL(new Blob([exportCode(selectedSolution, exportSettings.downloadHeader)], { type: 'text/plain;charset=utf-8' }))
+    const objectUrl = URL.createObjectURL(new Blob([exportCode(selectedSolution, exportSettings.downloadHeader, normalizedHeaderFields(exportSettings.downloadHeaderFields))], { type: 'text/plain;charset=utf-8' }))
     const anchor = document.createElement('a')
     anchor.href = objectUrl
     anchor.download = downloadFilename(selectedSolution, exportSettings.filenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })
@@ -1353,7 +1356,7 @@ export default function App() {
             settingsError={settingsError}
             onSaveSettings={() => void saveAccountSettings()}
             onAutoSyncDisabled={clearRelay}
-            previewSolution={selectedSolution ?? { captureId: 'preview', platform: 'SWEA', problemNumber: '0000', title: '미리보기', problemUrl: '#', language: 'Java', sourceCode: '', result: 'ACCEPTED' }}
+            previewSolution={selectedSolution ?? { captureId: 'preview', platform: 'SWEA', problemNumber: '0000', title: '미리보기', problemUrl: 'https://example.com/problem/0000', language: 'Java', sourceCode: '', result: 'ACCEPTED', solvedAt: '2026-01-01T00:00:00Z', executionTime: 123, memoryValue: 2048, memoryUnit: 'KB' }}
             onLogin={() => navigateSameTab(GITHUB_LOGIN_URL)}
             onLogout={() => void handleLogout()}
             onExpectedAccountChange={(expectedGithubId) => void handleExpectedAccountChange(new ApiError('GitHub account changed; reconnect required', 409), expectedGithubId)}
@@ -1599,6 +1602,23 @@ function GuideView({ onSettings, onGithub }: { onSettings: () => void; onGithub:
 
 function GuideStep({ number, title, text, action, onAction }: { number: string; title: string; text: string; action: string; onAction?: () => void }) {
   return <article className="guide-card guide-step"><span className="step-number">{number}</span><div className="step-copy"><h2>{title}</h2><p>{text}</p>{onAction ? <button className="text-button" onClick={onAction}>{action} <Icon name="chevron" size={13} /></button> : <code>{action}</code>}</div></article>
+}
+
+function TokenTemplateInput({ id, label, value, tokens, maxLength, onChange }: { id: string; label: string; value: string; tokens: readonly string[]; maxLength: number; onChange: (value: string) => void }) {
+  const input = useRef<HTMLInputElement>(null)
+  const insert = (token: string) => {
+    const start = input.current?.selectionStart ?? value.length
+    const end = input.current?.selectionEnd ?? start
+    const next = value.slice(0, start) + token + value.slice(end)
+    if (next.length > maxLength) return
+    onChange(next)
+    requestAnimationFrame(() => { input.current?.focus(); input.current?.setSelectionRange(start + token.length, start + token.length) })
+  }
+  return <><label htmlFor={id}>{label}</label><div className="git-path-token-list" aria-label={`${label} 토큰`}>{tokens.map(token => <button type="button" key={token} onClick={() => insert(token)}>{token}</button>)}</div><input ref={input} id={id} maxLength={maxLength} value={value} onChange={event => onChange(event.target.value)} /></>
+}
+
+function HeaderFieldsPicker({ label, fields, solution, onChange }: { label: string; fields: readonly HeaderField[]; solution: Solution; onChange: (fields: HeaderField[]) => void }) {
+  return <div className="header-fields-picker" role="group" aria-label={`${label} 주석 항목`}><p>포함할 정보</p><div className="header-field-options">{HEADER_FIELDS.map(field => <label key={field}><input type="checkbox" checked={fields.includes(field)} onChange={event => onChange(event.target.checked ? HEADER_FIELDS.filter(candidate => candidate === field || fields.includes(candidate)) : fields.filter(candidate => candidate !== field))} />{HEADER_FIELD_LABELS[field]}</label>)}</div><p>수집되지 않은 값은 주석에서 생략합니다.</p><pre aria-label={`${label} 주석 미리보기`}>{exportCode({ ...solution, sourceCode: '' }, true, fields) || '선택한 항목이 없거나 이 언어의 안전한 주석 형식을 알 수 없습니다.'}</pre></div>
 }
 
 function SettingsView({
@@ -1976,12 +1996,16 @@ function SettingsView({
       <div className={`settings-layout ${section === 'github' ? 'is-github-management' : ''}`}>
         <div className="settings-column">
           {section === 'settings' && <article className="settings-card export-settings"><h2>계정 · 코드 저장</h2>{settingsError && <p role="alert">{settingsError}</p>}<div className="setting-field"><label htmlFor="profile-name">이름</label><input id="profile-name" value={accountSettings.name ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, name: e.target.value || null })} /><label htmlFor="profile-nickname">닉네임</label><input id="profile-nickname" value={accountSettings.nickname ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, nickname: e.target.value || null })} /></div><p>문제 정보 주석을 추가합니다. 원본 코드는 유지합니다.</p>
-            <label><input type="checkbox" checked={accountSettings.copyHeader} onChange={e => updateAccountSettings({ ...accountSettings, copyHeader: e.target.checked })} /> 복사할 때 문제 정보 주석 포함</label><label><input type="checkbox" checked={accountSettings.downloadHeader} onChange={e => updateAccountSettings({ ...accountSettings, downloadHeader: e.target.checked })} /> 다운로드할 때 문제 정보 주석 포함</label>
-            <div className="setting-field"><label htmlFor="filename-template">다운로드 파일명</label><input id="filename-template" maxLength={160} value={accountSettings.downloadFilenameTemplate} onChange={e => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate: e.target.value })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="settings-code-theme">코드 보기 테마</label><CodeThemeSelect id="settings-code-theme" value={codeThemeMode === 'dark' ? accountSettings.darkTheme : accountSettings.lightTheme} onChange={onCodeThemeChange} /></div><label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label>{!gitPathHasIdentity && <p className="field-error" role="alert">GitHub 관리에서 저장 경로를 수정해야 설정을 저장할 수 있습니다.</p>}<button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy || targetBusy || !gitPathHasIdentity}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
+            <label><input type="checkbox" checked={accountSettings.copyHeader} onChange={e => updateAccountSettings({ ...accountSettings, copyHeader: e.target.checked })} /> 복사할 때 문제 정보 주석 포함</label>
+            {accountSettings.copyHeader && <HeaderFieldsPicker label="복사" fields={normalizedHeaderFields(accountSettings.copyHeaderFields)} solution={previewSolution} onChange={copyHeaderFields => updateAccountSettings({ ...accountSettings, copyHeaderFields })} />}
+            <label><input type="checkbox" checked={accountSettings.downloadHeader} onChange={e => updateAccountSettings({ ...accountSettings, downloadHeader: e.target.checked })} /> 다운로드할 때 문제 정보 주석 포함</label>
+            {accountSettings.downloadHeader && <HeaderFieldsPicker label="다운로드" fields={normalizedHeaderFields(accountSettings.downloadHeaderFields)} solution={previewSolution} onChange={downloadHeaderFields => updateAccountSettings({ ...accountSettings, downloadHeaderFields })} />}
+            <div className="setting-field"><TokenTemplateInput id="filename-template" label="다운로드 파일명" maxLength={160} tokens={FILENAME_TOKENS} value={accountSettings.downloadFilenameTemplate} onChange={downloadFilenameTemplate => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="settings-code-theme">코드 보기 테마</label><CodeThemeSelect id="settings-code-theme" value={codeThemeMode === 'dark' ? accountSettings.darkTheme : accountSettings.lightTheme} onChange={onCodeThemeChange} /></div><label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label>{!gitPathHasIdentity && <p className="field-error" role="alert">GitHub 관리에서 저장 경로를 수정해야 설정을 저장할 수 있습니다.</p>}<button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy || targetBusy || !gitPathHasIdentity}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
           </article>}
           {section === 'github' && <article className="settings-card export-settings"><h2>GitHub 자동 커밋</h2>{settingsError && <p role="alert">{settingsError}</p>}<p>자동 커밋할 파일의 경로, 메시지와 주석을 지정합니다.</p>
             <label><input type="checkbox" checked={accountSettings.githubHeader} onChange={e => updateAccountSettings({ ...accountSettings, githubHeader: e.target.checked })} /> GitHub 커밋 시 문제 정보 주석 포함</label>
-            <div className="setting-field"><label htmlFor="git-path-template">Git 저장 경로</label><div className="git-path-token-list" aria-label="Git 경로 토큰">{GIT_PATH_TOKENS.map(token => <button type="button" key={token} onClick={() => insertGitPathToken(token)}>{token}</button>)}</div><input ref={gitPathInput} id="git-path-template" maxLength={240} aria-invalid={!gitPathHasIdentity} value={accountSettings.gitPathTemplate} onChange={e => updateAccountSettings({ ...accountSettings, gitPathTemplate: e.target.value })} />{!gitPathHasIdentity && <p className="field-error" role="alert">제출별 파일을 구분하려면 {'{capture_ID}'} 또는 {'{time}'}이 필요합니다.</p>}<p>Git 미리보기: <output>{gitPath(previewSolution, accountSettings.gitPathTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id }) ?? '유효하지 않은 상대 경로'}</output></p><label htmlFor="github-commit-message-template">Git 커밋 메시지</label><input id="github-commit-message-template" maxLength={200} value={accountSettings.githubCommitMessageTemplate} onChange={e => updateAccountSettings({ ...accountSettings, githubCommitMessageTemplate: e.target.value })} /><p>커밋 미리보기: <output>{githubCommitMessage(previewSolution, accountSettings.githubCommitMessageTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p></div><label><input type="checkbox" disabled={!draftTargetConfigured || providerUnavailable} checked={accountSettings.githubAutoCommitEnabled} onChange={e => updateAccountSettings({ ...accountSettings, githubAutoCommitEnabled: e.target.checked })} /> GitHub 자동 커밋</label><button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy || targetBusy || !gitPathHasIdentity}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
+            {accountSettings.githubHeader && <HeaderFieldsPicker label="GitHub 커밋" fields={normalizedHeaderFields(accountSettings.githubHeaderFields)} solution={previewSolution} onChange={githubHeaderFields => updateAccountSettings({ ...accountSettings, githubHeaderFields })} />}
+            <div className="setting-field"><label htmlFor="git-path-template">Git 저장 경로</label><div className="git-path-token-list" aria-label="Git 경로 토큰">{GIT_PATH_TOKENS.map(token => <button type="button" key={token} onClick={() => insertGitPathToken(token)}>{token}</button>)}</div><input ref={gitPathInput} id="git-path-template" maxLength={240} aria-invalid={!gitPathHasIdentity} value={accountSettings.gitPathTemplate} onChange={e => updateAccountSettings({ ...accountSettings, gitPathTemplate: e.target.value })} />{!gitPathHasIdentity && <p className="field-error" role="alert">제출별 파일을 구분하려면 {'{capture_ID}'} 또는 {'{time}'}이 필요합니다.</p>}<p>Git 미리보기: <output>{gitPath(previewSolution, accountSettings.gitPathTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id }) ?? '유효하지 않은 상대 경로'}</output></p><TokenTemplateInput id="github-commit-message-template" label="Git 커밋 메시지" maxLength={200} tokens={COMMIT_MESSAGE_TOKENS} value={accountSettings.githubCommitMessageTemplate} onChange={githubCommitMessageTemplate => updateAccountSettings({ ...accountSettings, githubCommitMessageTemplate })} /><p>커밋 미리보기: <output>{githubCommitMessage(previewSolution, accountSettings.githubCommitMessageTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p></div><label><input type="checkbox" disabled={!draftTargetConfigured || providerUnavailable} checked={accountSettings.githubAutoCommitEnabled} onChange={e => updateAccountSettings({ ...accountSettings, githubAutoCommitEnabled: e.target.checked })} /> GitHub 자동 커밋</label><button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy || targetBusy || !gitPathHasIdentity}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
           </article>}
           {section === 'github' && <article className={`settings-card github-card ${targetPanelExpanded ? 'is-expanded' : 'is-collapsed'}`} aria-busy={targetBusy}>
             <div className="github-card-heading">

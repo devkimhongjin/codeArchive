@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import App from './App'
 import { ApiError } from './api'
@@ -644,9 +644,62 @@ it('requires a submission identity token and inserts a selected Git path token',
   expect(screen.getByRole('alert').textContent).toContain('{capture_ID}')
   expect((screen.getByRole('button', { name: '설정 저장' }) as HTMLButtonElement).disabled).toBe(true)
   input.setSelectionRange(input.value.length, input.value.length)
-  fireEvent.click(screen.getByRole('button', { name: '{time}' }))
+  fireEvent.click(within(screen.getByLabelText('Git 경로 토큰')).getByRole('button', { name: '{time}' }))
   expect(input.value).toBe('archive/{number}{time}')
   expect((screen.getByRole('button', { name: '설정 저장' }) as HTMLButtonElement).disabled).toBe(false)
+})
+
+it('shows independent header choices only when enabled and previews the selected lines', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue(settings)
+  mocks.bridge.mockResolvedValue({ capability: 'header-fields' })
+  await openSettings()
+  const copy = screen.getByRole('group', { name: '복사 주석 항목' })
+  expect(copy).toBeTruthy()
+  expect(screen.queryByRole('group', { name: '다운로드 주석 항목' })).toBeNull()
+  fireEvent.click(within(copy).getByLabelText('문제 링크'))
+  expect(within(copy).getByLabelText('복사 주석 미리보기').textContent).not.toContain('https://')
+  fireEvent.click(screen.getByLabelText('다운로드할 때 문제 정보 주석 포함'))
+  const download = screen.getByRole('group', { name: '다운로드 주석 항목' })
+  fireEvent.click(within(download).getByLabelText('풀이 일자'))
+  expect(within(download).getByLabelText('다운로드 주석 미리보기').textContent).toContain('Solved At:')
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 관리' }))
+  expect(screen.queryByRole('group', { name: 'GitHub 커밋 주석 항목' })).toBeNull()
+  fireEvent.click(screen.getByLabelText('GitHub 커밋 시 문제 정보 주석 포함'))
+  const github = screen.getByRole('group', { name: 'GitHub 커밋 주석 항목' })
+  fireEvent.click(within(github).getByLabelText('언어'))
+  fireEvent.click(screen.getByRole('button', { name: '설정 저장' }))
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
+    copyHeaderFields: ['identity', 'title', 'language', 'performance'],
+    downloadHeaderFields: ['identity', 'title', 'solvedAt', 'language', 'performance', 'url'],
+    githubHeaderFields: ['identity', 'title', 'performance', 'url'],
+  }), 'account-17'))
+})
+
+it('inserts the supported tokens into filename and commit message templates', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue(settings)
+  mocks.bridge.mockResolvedValue({ capability: 'token-inputs' })
+  await openSettings()
+  const filename = screen.getByLabelText('다운로드 파일명') as HTMLInputElement
+  filename.setSelectionRange(filename.value.length, filename.value.length)
+  fireEvent.click(within(screen.getByLabelText('다운로드 파일명 토큰')).getByRole('button', { name: '{capture_ID}' }))
+  expect(filename.value).toContain('{capture_ID}')
+  expect(screen.getByText(/demo-swea|preview/)).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 관리' }))
+  const message = screen.getByLabelText('Git 커밋 메시지') as HTMLInputElement
+  message.setSelectionRange(message.value.length, message.value.length)
+  fireEvent.click(within(screen.getByLabelText('Git 커밋 메시지 토큰')).getByRole('button', { name: '{time}' }))
+  expect(message.value).toContain('{time}')
+  expect(screen.getByText(/Add SWEA .*solution.*260/)).toBeTruthy()
+})
+
+it('defaults an unset nickname to the GitHub login without replacing a chosen nickname', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, nickname: null })
+  mocks.bridge.mockResolvedValue({ capability: 'nickname-default' })
+  await openSettings()
+  expect((screen.getByLabelText('닉네임') as HTMLInputElement).value).toBe('archive-user')
+  fireEvent.change(screen.getByLabelText('닉네임'), { target: { value: '내별명' } })
+  fireEvent.click(screen.getByRole('button', { name: '설정 저장' }))
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ nickname: '내별명' }), 'account-17'))
 })
 
 it('reuses a matching extension relay without rotating the server grant', async () => {

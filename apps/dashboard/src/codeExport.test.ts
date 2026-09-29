@@ -41,5 +41,13 @@ describe('code export', () => {
     expect(downloadFilename({ ...solution, language: 'Python3' }, '{name}-{nickname}-{id}.java', profile)).toBe('홍 길동-길동-42.py')
     expect(gitPath({ ...solution, language: 'Python3' }, 'archive/{id}/{name}/solution.java', profile)).toBe('archive/42/홍 길동/solution.py')
     expect(githubCommitMessage(solution, 'Add {platform} {number} solution by {nickname}', profile)).toBe('Add SWEA 1208 solution by 길동')
+    expect(downloadFilename(solution, '{time}_{capture_ID}')).toBe('260914042418_demo-swea-1208.java')
+    expect(githubCommitMessage(solution, 'Add {time} {capture_ID}')).toBe('Add 260914042418 demo-swea-1208')
+  })
+  it('renders only selected safe header fields and omits missing measurements', () => {
+    expect(exportCode(solution, true, ['title', 'solvedAt'])).toContain('// Problem: 경로/금지:*?\n// Solved At: 2026-09-14 04:24:18 UTC')
+    expect(exportCode(solution, true, ['title'])).not.toContain('Language:')
+    expect(exportCode(solution, true, [])).toBe(solution.sourceCode)
+    expect(exportCode({ ...solution, executionTime: undefined, memoryValue: undefined, memoryUsage: undefined }, true, ['performance'])).toBe(solution.sourceCode)
   })
 })

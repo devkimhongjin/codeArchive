@@ -407,19 +407,27 @@ class CodeArchiveApiIntegrationTest {
         githubAccountService.upsert(principal("601", "settings", "Settings", null));
         mockMvc.perform(get("/api/settings").with(githubLogin("601", "settings", "Settings", null)).header("X-CodeArchive-Github-Id", "601"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.version", is(0)))
+                .andExpect(jsonPath("$.nickname", is("settings")))
                 .andExpect(jsonPath("$.downloadFilenameTemplate", is("Solution_{number}_{name}")))
                 .andExpect(jsonPath("$.githubHeader", is(false)))
                 .andExpect(jsonPath("$.githubAutoCommitEnabled", is(false)));
         String valid = settingsJson(0, "홍길동", "별명", "{platform}-{number}", "archive/{language}/{number}/{time}", "one-light", "dracula", true, true, null, null, null, null, null)
-                .replace("\"githubHeader\":false", "\"githubHeader\":true");
+                .replace("\"githubHeader\":false", "\"githubHeader\":true,\"copyHeaderFields\":[\"title\",\"solvedAt\"],\"downloadHeaderFields\":[\"language\"],\"githubHeaderFields\":[\"identity\",\"url\"]");
         mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("601", "settings", "Settings", null)).header("X-CodeArchive-Github-Id", "601").contentType("application/json").content(valid))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.name", is("홍길동"))).andExpect(jsonPath("$.nickname", is("별명")))
+                .andExpect(jsonPath("$.copyHeaderFields[0]", is("title")))
+                .andExpect(jsonPath("$.downloadHeaderFields[0]", is("language")))
+                .andExpect(jsonPath("$.githubHeaderFields[1]", is("url")))
                 .andExpect(jsonPath("$.githubHeader", is(true)))
                 .andExpect(jsonPath("$.githubAutoCommitEnabled", is(false)));
         mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("601", "settings", "Settings", null)).header("X-CodeArchive-Github-Id", "601").contentType("application/json").content(valid))
                 .andExpect(status().isConflict());
         mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("601", "settings", "Settings", null)).header("X-CodeArchive-Github-Id", "601").contentType("application/json")
                         .content(settingsJson(1,"n","n","bad/name","../escape","not-a-theme","dracula",false,false,null,null,null,null,null)))
+                .andExpect(status().isBadRequest());
+        String invalidFields = settingsJson(1,"n","n","{number}","archive/{number}/{time}","one-light","dracula",false,false,null,null,null,null,null)
+                .replace("\"githubHeader\":false", "\"githubHeader\":false,\"githubHeaderFields\":[\"sourceCode\"]");
+        mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("601", "settings", "Settings", null)).header("X-CodeArchive-Github-Id", "601").contentType("application/json").content(invalidFields))
                 .andExpect(status().isBadRequest());
     }
 
@@ -429,7 +437,7 @@ class CodeArchiveApiIntegrationTest {
         mockMvc.perform(get("/api/settings").with(githubLogin("602", "optional-profile", "Optional", null)).header("X-CodeArchive-Github-Id", "602")).andExpect(status().isOk());
         mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("602", "optional-profile", "Optional", null)).header("X-CodeArchive-Github-Id", "602").contentType("application/json")
                         .content(settingsJson(0,null,null,"{number}","archive/{number}/{capture_ID}","github-light","github-dark",false,false,null,null,null,null,null)))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.name").doesNotExist()).andExpect(jsonPath("$.nickname").doesNotExist());
+                .andExpect(status().isOk()).andExpect(jsonPath("$.name").doesNotExist()).andExpect(jsonPath("$.nickname", is("optional-profile")));
         mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("602", "optional-profile", "Optional", null)).header("X-CodeArchive-Github-Id", "602").contentType("application/json")
                         .content(settingsJson(1,null,null,"CON","../escape","github-light","github-dark",false,false,-1L,"x".repeat(101),"repo","main","C:/bad")))
                 .andExpect(status().isBadRequest());

@@ -28,3 +28,11 @@ test("new downloads use the requested Solution number and name template", () => 
   assert.equal(DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, "Solution_{number}_{name}");
   assert.equal(downloadFilename(base("Java"), undefined, { name: "Kim" }), "Solution_123_Kim.java");
 });
+
+test("filename tokens and selected header fields match the dashboard export contract", () => {
+  const capture = base("Java");
+  assert.equal(downloadFilename(capture, "{time}_{capture_ID}"), "260101000000_capture-1.java");
+  assert.match(exportCode(capture, true, ["title", "solvedAt"]), /^\/\/ Problem: A\/B\n\/\/ Solved At: 2026-01-01 00:00:00 UTC/);
+  assert.equal(exportCode(capture, true, []), capture.sourceCode);
+  assert.equal(exportCode(capture, true, ["performance"]), capture.sourceCode);
+});
