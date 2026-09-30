@@ -120,6 +120,29 @@ export async function getSolutions(expectedGithubId: string): Promise<Solution[]
   return Array.isArray(payload) ? payload : payload.solutions ?? []
 }
 
+export async function getHistoricalSubmissionIds(expectedGithubId: string): Promise<string[]> {
+  return requestJson<string[]>('/api/solutions/historical-submission-ids?platform=JUNGOL', {
+    headers: accountAssertionHeaders(expectedGithubId),
+  })
+}
+
+export async function requestHistoricalGithubCommits(expectedGithubId: string, request: {
+  submissionIds: string[]
+  settingsVersion: number
+  installationId: number
+  owner: string
+  repository: string
+  branch: string
+}): Promise<Record<string, 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN'>> {
+  return requestJson('/api/solutions/historical-github-commits', {
+    method: 'POST', headers: accountAssertionHeaders(expectedGithubId), body: JSON.stringify(request),
+  })
+}
+
+export async function getHistoricalGithubStatus(expectedGithubId: string): Promise<Record<string, 'NONE' | 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN'>> {
+  return requestJson('/api/solutions/historical-github-status', { headers: accountAssertionHeaders(expectedGithubId) })
+}
+
 export function getCommunitySolutions(expectedGithubId: string, platform: Platform, problemNumber: string, languageKey: string, page: number): Promise<CommunityPage> {
   const query = new URLSearchParams({ platform, problemNumber, page: String(page), size: '20' })
   if (languageKey) query.set('languageKey', languageKey)

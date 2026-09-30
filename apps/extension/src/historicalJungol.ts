@@ -1,0 +1,406 @@
+import { canonicalLanguageDisplayName, canonicalLanguageKey } from "../../../shared/language";
+import { createCapture } from "./capture";
+import { CAPTURE_RESULT, type Capture } from "./types";
+
+const JUNGOL_ORIGIN = "https://jungol.co.kr";
+const MAX_IMPORT_BATCH = 10;
+const ACCOUNT_HISTORY_PATH = /^\/account\/(\d{1,40})\/submission$/;
+const observedPagination = new WeakMap<Document, { url: string; clicks: number; minRows: number }>();
+
+export function isJungolHistoryPath(pathname: string): boolean {
+  return pathname === "/submission" || ACCOUNT_HISTORY_PATH.test(pathname);
+}
+
+export function isJungolHistorySenderUrl(url: URL): boolean {
+  if (url.origin !== JUNGOL_ORIGIN || !isJungolHistoryPath(url.pathname)) return false;
+  if (url.pathname === "/submission") return /^[\w.-]{1,80}$/.test(url.searchParams.get("account") ?? "");
+  return !url.searchParams.has("account");
+}
+
+function listIdentity(document: Document, location: Location): { account: string; accountId: string | null } | null {
+  const url = new URL(location.href);
+  const profileId = url.pathname.match(ACCOUNT_HISTORY_PATH)?.[1];
+  if (profileId) {
+    // The edit tab is only rendered on the signed-in user's own profile.
+    if (!document.querySelector(`a[href="/account/${profileId}/edit"]`) ||
+        !document.querySelector(`a[href="/account/${profileId}/submission"].active`)) return null;
+    const account = document.querySelector<HTMLAnchorElement>(`a.crumb[href="/account/${profileId}"]`)
+      ?.textContent?.trim().replace(/^@/, "") ?? "";
+    return /^[\w.-]{1,80}$/.test(account) ? { account, accountId: profileId } : null;
+  }
+  if (url.pathname !== "/submission") return null;
+  const account = url.searchParams.get("account");
+  if (!account || !/^[\w.-]{1,80}$/.test(account)) return null;
+  const own = [...document.querySelectorAll<HTMLElement>('[role="switch"]')]
+    .some(element => element.textContent?.trim() === "내 제출" && element.getAttribute("aria-checked") === "true");
+  const filtered = [...document.querySelectorAll<HTMLButtonElement>("button[aria-label]")]
+    .some(button => button.getAttribute("aria-label") === `@${account} 필터 해제`);
+  return own && filtered ? { account, accountId: null } : null;
+}
+
+export interface JungolHistoryCandidate {
+  submissionId: string;
+  problemNumber: string;
+  title: string;
+  language: string;
+  detailUrl: string;
+  codeByteLength: number;
+  executionTime?: number;
+  memoryValue?: number;
+}
+
+export interface JungolHistoryVerified extends JungolHistoryCandidate {
+  sourceCode: string;
+  solvedAt: string;
+}
+
+function rowSubmissionIdentity(row: HTMLTableRowElement, location: Location):
+  { submissionId: string; detailUrl: URL } | null {
+  const languageLink = row.querySelector<HTMLAnchorElement>('td[data-col="언어"] a[href]');
+  if (!languageLink) return null;
+  let detailUrl: URL;
+  try { detailUrl = new URL(languageLink.getAttribute("href") ?? "", location.href); }
+  catch { return null; }
+  if (detailUrl.origin !== JUNGOL_ORIGIN || detailUrl.pathname !== location.pathname) return null;
+  const submissionId = detailUrl.searchParams.get("sid") ?? "";
+  if (!/^\d{1,40}$/.test(submissionId)) return null;
+  const explicitId = row.querySelector('td[data-col="번호"] .sl-id')?.textContent?.trim() ?? "";
+  if (explicitId && (!/^\d{1,40}$/.test(explicitId) || explicitId !== submissionId)) return null;
+  // Expanded group children show a short ordinal in the number cell, not a
+  // submission ID. The result link must corroborate their language link.
+  const resultHref = row.querySelector<HTMLAnchorElement>('td[data-col="결과"] a.sl-card-link[href]')?.getAttribute("href");
+  if (resultHref) {
+    let resultUrl: URL;
+    try { resultUrl = new URL(resultHref, location.href); } catch { return null; }
+    if (resultUrl.origin !== detailUrl.origin || resultUrl.pathname !== detailUrl.pathname ||
+        resultUrl.searchParams.get("sid") !== submissionId) return null;
+  } else if (!explicitId) {
+    const numberText = row.querySelector('td[data-col="번호"]')?.textContent?.trim() ?? "";
+    if (numberText !== submissionId) return null;
+  }
+  return { submissionId, detailUrl };
+}
+
+function rowProblemIdentity(row: HTMLTableRowElement): { problemNumber: string; title: string } | null {
+  const cell = row.querySelector('td[data-col="문제"]');
+  const link = cell?.querySelector<HTMLAnchorElement>('a[href^="/problem/"]');
+  const text = (link ?? cell)?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+  const match = text.match(/^(.*?)\s*#(\d{1,40})$/);
+  if (!match?.[1]?.trim()) return null;
+  if (link && link.getAttribute("href") !== `/problem/${match[2]}`) return null;
+  return { problemNumber: match[2]!, title: match[1].trim() };
+}
+
+function rowGroupId(row: HTMLTableRowElement, location: Location): string {
+  const displayed = row.querySelector('td[data-col="번호"] .sl-id')?.textContent?.trim() ?? "";
+  return /^\d{1,40}$/.test(displayed) ? displayed : rowSubmissionIdentity(row, location)?.submissionId ?? "";
+}
+
+export type JungolHistoryPreview =
+  | { status: "LOGIN_REQUIRED" | "ACCESS_DENIED" | "OWNERSHIP_UNVERIFIED"; candidates: []; skipped: 0 }
+  | { status: "READY"; candidates: JungolHistoryCandidate[]; skipped: number; truncated: boolean;
+      scanProtocol?: number; paginationClicks?: number; remainingGroups?: number };
+
+/** A listing is only a candidate source. It never supplies source code or an exact submission time. */
+export function previewJungolHistory(document: Document, location: Location): JungolHistoryPreview {
+  const empty = (status: "LOGIN_REQUIRED" | "ACCESS_DENIED" | "OWNERSHIP_UNVERIFIED"): JungolHistoryPreview =>
+    ({ status, candidates: [], skipped: 0 });
+  if (location.origin !== JUNGOL_ORIGIN || !isJungolHistoryPath(location.pathname)) return empty("OWNERSHIP_UNVERIFIED");
+  if (/APIError\(403\)|권한이 없어요/.test(document.body?.textContent ?? "")) return empty("ACCESS_DENIED");
+  if (location.pathname === "/submission" &&
+      ![...document.querySelectorAll<HTMLElement>('[role="switch"]')]
+        .some(element => element.textContent?.trim() === "내 제출" && element.getAttribute("aria-checked") === "true")) {
+    return empty("LOGIN_REQUIRED");
+  }
+  const identity = listIdentity(document, location);
+  if (!identity) return empty("OWNERSHIP_UNVERIFIED");
+
+  const rows = [...document.querySelectorAll<HTMLTableRowElement>("table tr")]
+    .filter(row => !!row.querySelector('td[data-col="번호"]'));
+  const candidates: JungolHistoryCandidate[] = [];
+  const seen = new Set<string>();
+  let skipped = 0;
+  for (const row of rows) {
+    const submission = rowSubmissionIdentity(row, location);
+    const id = submission?.submissionId ?? "";
+    const rowOwner = row.querySelector<HTMLAnchorElement>('td[data-col="제출자"] a[href^="/account/"]');
+    const result = row.querySelector('td[data-col="결과"]')?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+    const problem = rowProblemIdentity(row);
+    const languageLink = row.querySelector<HTMLAnchorElement>('td[data-col="언어"] a[href]');
+    const number = problem?.problemNumber;
+    const title = problem?.title;
+    const language = languageLink?.textContent?.trim() ?? "";
+    const codeLengthText = row.querySelector('td[data-col="코드 길이"]')?.textContent?.replace(/\s+/g, "") ?? "";
+    const executionText = row.querySelector('td[data-col="시간"]')?.textContent?.replace(/[\s·]/g, "") ?? "";
+    const memoryText = row.querySelector('td[data-col="메모리"]')?.textContent?.replace(/[\s·]/g, "") ?? "";
+    const codeByteLength = /^\d{1,7}B$/.test(codeLengthText) ? Number(codeLengthText.slice(0, -1)) : NaN;
+    const executionTime = /^\d+(?:\.\d+)?ms$/.test(executionText) ? Number(executionText.slice(0, -2)) : NaN;
+    const memoryValue = /^\d+(?:\.\d+)?MB$/.test(memoryText) ? Number(memoryText.slice(0, -2)) : NaN;
+    const detailUrl = submission?.detailUrl;
+    if (!/^\d{1,40}$/.test(id) || result !== "정답 100점" || !number || !title || !language ||
+      !canonicalLanguageKey(language) || !detailUrl ||
+      (identity.accountId ? rowOwner?.getAttribute("href") !== `/account/${identity.accountId}` :
+        detailUrl.searchParams.get("account") !== identity.account) ||
+      seen.has(id) ||
+      !Number.isSafeInteger(codeByteLength) || codeByteLength < 1 || codeByteLength > 1_000_000) {
+      skipped += 1;
+      continue;
+    }
+    seen.add(id);
+    candidates.push({ submissionId: id, problemNumber: number, title, language, detailUrl: detailUrl.href,
+      codeByteLength, ...(Number.isFinite(executionTime) ? { executionTime } : {}),
+      ...(Number.isFinite(memoryValue) ? { memoryValue } : {}) });
+  }
+  return { status: "READY", candidates, skipped,
+    truncated: !!document.querySelector('button.sl-group-toggle[aria-expanded="false"]') };
+}
+
+/** Expand the site's grouped submissions before previewing; each accepted submission keeps its own ID. */
+export async function loadJungolHistoryPreview(document: Document, location: Location): Promise<JungolHistoryPreview> {
+  const initial = previewJungolHistory(document, location);
+  if (initial.status !== "READY") return initial;
+  const startingUrl = location.href;
+  const deadline = Date.now() + 120_000;
+  const moreButton = () => [...document.querySelectorAll<HTMLButtonElement>("button")]
+    .find(button => button.textContent?.trim() === "더 불러오기");
+  const attempted = new Set<string>();
+  let incomplete = false;
+  let sawMoreButton = false;
+  let finishedPageWithoutMore = false;
+  let lastRowCount = document.querySelectorAll('table tr').length;
+  const priorPagination = observedPagination.get(document);
+  let paginationClicks = priorPagination?.url === startingUrl && lastRowCount >= priorPagination.minRows
+    ? priorPagination.clicks : 0;
+  for (let count = 0; count < 1_000; count++) {
+    if (Date.now() >= deadline) { incomplete = true; break; }
+    const more = moreButton();
+    if (!more) {
+      // The first page and its pagination control are rendered asynchronously.
+      // A momentarily missing button does not mean the final page was reached.
+      const changed = await waitFor(document, () => {
+        const rowCount = document.querySelectorAll('table tr').length;
+        return moreButton() || rowCount !== lastRowCount ? true : null;
+      }, Math.min(!sawMoreButton || lastRowCount <= 1 ? 8_000 : 3_000, Math.max(1, deadline - Date.now())));
+      if (location.href !== startingUrl) { incomplete = true; break; }
+      if (changed) {
+        lastRowCount = document.querySelectorAll('table tr').length;
+        continue;
+      }
+      // Neither a footer/version nor fewer than 30 represented submissions
+      // proves that the first cursor request has finished. The site can show
+      // just 13 rows while its pagination control is still loading. The
+      // control's disappearance is terminal only after this scan has clicked
+      // it and observed the following page grow.
+      if ((!sawMoreButton && paginationClicks === 0) ||
+          (sawMoreButton && !finishedPageWithoutMore) || lastRowCount <= 1) incomplete = true;
+      break;
+    }
+    sawMoreButton = true;
+    if (more.disabled) {
+      const ready = await waitFor(document, () => moreButton() && !moreButton()?.disabled ? true : null,
+        Math.min(8_000, Math.max(1, deadline - Date.now())));
+      if (!ready) { incomplete = true; break; }
+      continue;
+    }
+    const rowCount = document.querySelectorAll("table tr").length;
+    more.click();
+    const loaded = await waitFor(document, () =>
+      document.querySelectorAll("table tr").length > rowCount && !moreButton()?.disabled ? true : null,
+      Math.min(8_000, Math.max(1, deadline - Date.now())));
+    if (!loaded || location.href !== startingUrl) { incomplete = true; break; }
+    paginationClicks += 1;
+    lastRowCount = document.querySelectorAll('table tr').length;
+    observedPagination.set(document, { url: startingUrl, clicks: paginationClicks, minRows: lastRowCount });
+    finishedPageWithoutMore = !moreButton();
+  }
+  if (moreButton()) incomplete = true;
+  let waitedForLateRows = false;
+  for (let count = 0; count < 3_000; count++) {
+    if (Date.now() >= deadline) { incomplete = true; break; }
+    const toggle = [...document.querySelectorAll<HTMLButtonElement>('button.sl-group-toggle[aria-expanded="false"]')]
+      .find(button => !attempted.has(rowGroupId(button.closest("tr") as HTMLTableRowElement, location)));
+    if (!toggle) {
+      if (waitedForLateRows) break;
+      waitedForLateRows = true;
+      const rowCount = document.querySelectorAll('table tr').length;
+      const late = await waitFor(document, () =>
+        document.querySelector('button.sl-group-toggle[aria-expanded="false"]') ||
+        moreButton() || document.querySelectorAll('table tr').length !== rowCount ? true : null,
+        Math.min(5_000, Math.max(1, deadline - Date.now())));
+      if (location.href !== startingUrl) { incomplete = true; break; }
+      if (late) {
+        if (moreButton()) incomplete = true;
+        if (document.querySelectorAll('table tr').length !== rowCount) waitedForLateRows = false;
+        continue;
+      }
+      break;
+    }
+    const id = rowGroupId(toggle.closest("tr") as HTMLTableRowElement, location);
+    const additional = Number(toggle.querySelector(".sl-group-count")?.textContent?.trim().replace(/^\+/, ""));
+    if (!/^\d{1,40}$/.test(id) || !Number.isSafeInteger(additional) || additional < 1) {
+      incomplete = true;
+      break;
+    }
+    attempted.add(id);
+    const rowCount = document.querySelectorAll("table tr").length;
+    toggle.click();
+    const expanded = await waitFor(document, () => {
+      const row = [...document.querySelectorAll<HTMLTableRowElement>("table tr")]
+        .find(item => rowGroupId(item, location) === id);
+      return row?.querySelector<HTMLButtonElement>("button.sl-group-toggle")?.getAttribute("aria-expanded") === "true" &&
+        document.querySelectorAll("table tr").length >= rowCount + additional ? true : null;
+    }, Math.min(8_000, Math.max(1, deadline - Date.now())));
+    if (location.href !== startingUrl) { incomplete = true; break; }
+    if (!expanded) incomplete = true;
+    waitedForLateRows = false;
+  }
+  if (location.href !== startingUrl) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
+  const result = previewJungolHistory(document, location);
+  return result.status === "READY"
+    ? { ...result, truncated: result.truncated || incomplete || paginationClicks === 0,
+        scanProtocol: 3, paginationClicks,
+        remainingGroups: document.querySelectorAll('button.sl-group-toggle[aria-expanded="false"]').length }
+    : result;
+}
+
+/** Only a matching, signed-in submission dialog can turn a listing candidate into source evidence. */
+export function verifyJungolHistoryDetail(document: Document, location: Location,
+  candidate: JungolHistoryCandidate): JungolHistoryVerified | null {
+  const url = new URL(location.href);
+  const detailUrl = new URL(candidate.detailUrl);
+  const profileId = url.pathname.match(ACCOUNT_HISTORY_PATH)?.[1];
+  if (url.origin !== JUNGOL_ORIGIN || url.pathname !== detailUrl.pathname ||
+      detailUrl.searchParams.get("sid") !== candidate.submissionId ||
+      (profileId ? !document.querySelector(`a[href="/account/${profileId}/edit"]`) :
+        url.searchParams.get("sid") !== candidate.submissionId ||
+        url.searchParams.get("account") !== detailUrl.searchParams.get("account"))) return null;
+  const identity = listIdentity(document, location);
+  if (!identity || (!profileId && identity.account !== detailUrl.searchParams.get("account"))) return null;
+  const account = profileId ? document.querySelector<HTMLAnchorElement>(`a.crumb[href="/account/${profileId}"]`)
+    ?.textContent?.trim().replace(/^@/, "") : url.searchParams.get("account");
+  const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-label="제출 상세"]');
+  const owner = dialog?.querySelector<HTMLAnchorElement>('a[href^="/account/"]')?.textContent?.trim();
+  const problem = dialog?.querySelector<HTMLAnchorElement>(`a[href="/problem/${candidate.problemNumber}"]`);
+  const detailId = dialog?.querySelector(".sd-id")?.textContent?.trim();
+  const score = dialog?.querySelector(".sd-heading-score")?.textContent?.trim();
+  const status = dialog?.querySelector(".sd-heading-status")?.textContent?.trim();
+  const timeText = dialog?.querySelector('.sd-meta-item .time')?.parentElement?.parentElement
+    ?.querySelector('.paper .content')?.textContent?.trim() ?? "";
+  const code = dialog?.querySelector<HTMLElement>('code.hljs')?.textContent ?? "";
+  const ownerLink = dialog?.querySelector<HTMLAnchorElement>('a[href^="/account/"]');
+  if (!account || owner !== account || (profileId && ownerLink?.getAttribute("href") !== `/account/${profileId}`) || !problem ||
+      !problem.textContent?.includes(candidate.title) || !problem.textContent?.includes(`#${candidate.problemNumber}`) ||
+      detailId !== `#${candidate.submissionId}` || score !== "100점" || status !== "정답" ||
+      !code.trim() || new TextEncoder().encode(code).length !== candidate.codeByteLength) return null;
+  const date = timeText.match(/^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.\s*(오전|오후)\s*(\d{1,2}):(\d{2}):(\d{2})$/);
+  if (!date) return null;
+  const [, year, month, day, period, hour, minute, second] = date;
+  const displayHour = Number(hour);
+  if (displayHour < 1 || displayHour > 12) return null;
+  const hour24 = displayHour % 12 + (period === "오후" ? 12 : 0);
+  const utc = Date.UTC(Number(year), Number(month) - 1, Number(day), hour24, Number(minute), Number(second)) - 9 * 60 * 60 * 1000;
+  const roundTrip = new Date(utc + 9 * 60 * 60 * 1000);
+  if (roundTrip.getUTCFullYear() !== Number(year) || roundTrip.getUTCMonth() + 1 !== Number(month) ||
+      roundTrip.getUTCDate() !== Number(day) || roundTrip.getUTCHours() !== hour24 ||
+      roundTrip.getUTCMinutes() !== Number(minute) || roundTrip.getUTCSeconds() !== Number(second)) return null;
+  return { ...candidate, sourceCode: code, solvedAt: new Date(utc).toISOString() };
+}
+
+export function historicalJungolCapture(verified: JungolHistoryVerified): Capture | null {
+  return createCapture({
+    platform: "JUNGOL",
+    problemNumber: verified.problemNumber,
+    title: verified.title,
+    problemUrl: `${JUNGOL_ORIGIN}/problem/${verified.problemNumber}`,
+    language: canonicalLanguageDisplayName(verified.language),
+    sourceCode: verified.sourceCode,
+    result: CAPTURE_RESULT,
+    solvedAt: verified.solvedAt,
+    executionTime: verified.executionTime,
+    memoryValue: verified.memoryValue,
+    ...(verified.memoryValue === undefined ? {} : { memoryUnit: "MB" as const }),
+    historicalImport: true,
+    historicalSubmissionId: verified.submissionId
+  });
+}
+
+type StoreHistorical = (capture: Capture) => Promise<{ ok?: boolean; created?: boolean }>;
+
+function waitFor<T>(document: Document, read: () => T | null, timeoutMs = 8_000): Promise<T | null> {
+  const found = read();
+  if (found !== null) return Promise.resolve(found);
+  return new Promise(resolve => {
+    const observer = new MutationObserver(() => {
+      const value = read();
+      if (value !== null) { observer.disconnect(); clearTimeout(timeout); resolve(value); }
+    });
+    const timeout = setTimeout(() => { observer.disconnect(); resolve(null); }, timeoutMs);
+    observer.observe(document.body ?? document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true });
+  });
+}
+
+/** User-initiated, bounded local import. No relay, auto-download, or GitHub job is started here. */
+export async function importVisibleJungolHistory(document: Document, location: Location,
+  candidates: JungolHistoryCandidate[], store: StoreHistorical,
+  onProgress: (completed: number, total: number) => void = () => undefined): Promise<{ saved: number; duplicate: number; skipped: number }> {
+  const selected = candidates.slice(0, MAX_IMPORT_BATCH);
+  let saved = 0, duplicate = 0, skipped = 0;
+  const originalUrl = new URL(location.href);
+  for (const [index, candidate] of selected.entries()) {
+    const current = previewJungolHistory(document, location);
+    if (current.status !== "READY" || new URL(location.href).pathname !== originalUrl.pathname ||
+        new URL(location.href).searchParams.get("account") !== originalUrl.searchParams.get("account") ||
+        !current.candidates.some(item => item.submissionId === candidate.submissionId &&
+          item.detailUrl === candidate.detailUrl && item.problemNumber === candidate.problemNumber &&
+          item.title === candidate.title && item.language === candidate.language &&
+          item.codeByteLength === candidate.codeByteLength &&
+          item.executionTime === candidate.executionTime && item.memoryValue === candidate.memoryValue)) {
+      skipped += selected.length - index;
+      break;
+    }
+    const row = [...document.querySelectorAll<HTMLTableRowElement>('table tr')]
+      .find(item => rowSubmissionIdentity(item, location)?.submissionId === candidate.submissionId);
+    const link = row?.querySelector<HTMLAnchorElement>('td[data-col="언어"] a[href]');
+    if (!link || new URL(link.getAttribute("href") ?? "", location.href).href !== candidate.detailUrl) { skipped++; onProgress(index + 1, selected.length); continue; }
+    link.click();
+    const dialog = await waitFor(document, () =>
+      (new URL(location.href).pathname.match(ACCOUNT_HISTORY_PATH) ||
+        new URL(location.href).searchParams.get("sid") === candidate.submissionId) &&
+      document.querySelector<HTMLElement>('[role="dialog"][aria-label="제출 상세"] .sd-id')?.textContent?.trim() === `#${candidate.submissionId}`
+        ? document.querySelector<HTMLElement>('[role="dialog"][aria-label="제출 상세"] code.hljs')?.closest<HTMLElement>('[role="dialog"]') ?? null
+        : null);
+    if (dialog) {
+      const timeTrigger = dialog.querySelector<HTMLElement>('.sd-meta-item .time')?.closest<HTMLElement>('[role="button"]');
+      if (timeTrigger?.getAttribute("aria-expanded") !== "true") timeTrigger?.click();
+      const verified = await waitFor(document, () => verifyJungolHistoryDetail(document, location, candidate));
+      const capture = verified && historicalJungolCapture(verified);
+      const stillOwnSubmission = previewJungolHistory(document, location);
+      if (capture && stillOwnSubmission.status === "READY" &&
+          stillOwnSubmission.candidates.some(item => item.submissionId === candidate.submissionId &&
+            item.detailUrl === candidate.detailUrl && item.language === candidate.language &&
+            item.problemNumber === candidate.problemNumber && item.codeByteLength === candidate.codeByteLength)) {
+        try {
+          const response = await store(capture);
+          if (response.ok && response.created) saved++;
+          else if (response.ok) duplicate++;
+          else skipped++;
+        } catch { skipped++; }
+      } else skipped++;
+      // Jungol's open time popover consumes the first outside click. Dismiss
+      // it explicitly, then retry Close once if the dialog remains open.
+      if (timeTrigger?.getAttribute("aria-expanded") === "true") timeTrigger.click();
+      const close = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.trim() === "닫기");
+      const isClosed = () => document.querySelector('[role="dialog"][aria-label="제출 상세"]') ||
+        (!new URL(location.href).pathname.match(ACCOUNT_HISTORY_PATH) && new URL(location.href).searchParams.has("sid"))
+          ? null : true;
+      let closed = isClosed();
+      for (let attempt = 0; !closed && close?.isConnected && attempt < 5; attempt++) {
+        close.click();
+        closed = await waitFor(document, isClosed, 2_000);
+      }
+      if (!closed) { skipped += selected.length - index - 1; break; }
+    } else skipped++;
+    onProgress(index + 1, selected.length);
+  }
+  return { saved, duplicate, skipped };
+}

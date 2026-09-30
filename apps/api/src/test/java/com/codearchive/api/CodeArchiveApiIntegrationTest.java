@@ -342,6 +342,98 @@ class CodeArchiveApiIntegrationTest {
     }
 
     @Test
+    @org.springframework.transaction.annotation.Transactional
+    void historicalBulkSyncNeverEnqueuesGithubEvenWhenAutomationIsEnabled() throws Exception {
+        AppUser user = githubAccountService.upsert(principal("305", "historical-owner", "Historical", null));
+        var settings = new com.codearchive.api.settings.UserSettings(user);
+        settings.apply(new com.codearchive.api.settings.SettingsRequest(
+                0, "Historical", null, false, false, false,
+                "{platform}-{number}-{title}", "{platform}/{number}_{title}/{time}",
+                "Add {platform} {number} solution",
+                "github-light", "github-dark", true, true,
+                77L, "historical-owner", "archive", "main", null));
+        userSettingsRepository.saveAndFlush(settings);
+        String captureId = UUID.randomUUID().toString();
+        var historical = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(
+                capture(captureId, "old accepted source"));
+        historical.put("observedAt", java.time.Instant.now().plusSeconds(1).toString());
+        historical.put("historicalImport", true);
+        historical.put("platform", "JUNGOL");
+        historical.put("historicalSubmissionId", "13771703");
+        String body = objectMapper.createObjectNode()
+                .set("captures", objectMapper.createArrayNode().add(historical)).toString();
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mockMvc.perform(post("/api/solutions/bulk").with(csrf().asHeader())
+                            .with(githubLogin("305", "historical-owner", "Historical", null))
+                            .contentType("application/json").content(body))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.acceptedCaptureIds[0]", is(captureId)));
+        }
+        mockMvc.perform(get("/api/solutions").with(githubLogin("305", "historical-owner", "Historical", null)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].historicalImport", is(true)))
+                .andExpect(jsonPath("$[0].historicalSubmissionId", is("13771703")));
+        mockMvc.perform(get("/api/solutions/historical-submission-ids")
+                        .with(githubLogin("305", "historical-owner", "Historical", null))
+                        .header("X-CodeArchive-Account", "305"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0]", is("13771703")));
+        mockMvc.perform(get("/api/solutions/historical-submission-ids"))
+                .andExpect(status().isUnauthorized());
+        String sameSubmissionDifferentCapture = UUID.randomUUID().toString();
+        historical.put("captureId", sameSubmissionDifferentCapture);
+        String duplicateBody = objectMapper.createObjectNode()
+                .set("captures", objectMapper.createArrayNode().add(historical)).toString();
+        mockMvc.perform(post("/api/solutions/bulk").with(csrf().asHeader())
+                        .with(githubLogin("305", "historical-owner", "Historical", null))
+                        .contentType("application/json").content(duplicateBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.acceptedCaptureIds[0]", is(sameSubmissionDifferentCapture)));
+        org.assertj.core.api.Assertions.assertThat(solutionRepository.findByUserIdOrderBySolvedAtDesc(user.getId())).hasSize(1);
+        String manualRequest = objectMapper.createObjectNode()
+                .put("settingsVersion", settings.getVersion())
+                .put("installationId", 77)
+                .put("owner", "historical-owner")
+                .put("repository", "archive")
+                .put("branch", "main")
+                .set("submissionIds", objectMapper.createArrayNode().add("13771703")).toString();
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mockMvc.perform(post("/api/solutions/historical-github-commits").with(csrf().asHeader())
+                            .with(githubLogin("305", "historical-owner", "Historical", null))
+                            .header("X-CodeArchive-Account", "305")
+                            .contentType("application/json").content(manualRequest))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.13771703", is("PENDING")));
+        }
+        var manualJob = githubCommitJobRepository.findByUserIdAndCaptureId(user.getId(), captureId);
+        org.assertj.core.api.Assertions.assertThat(manualJob).isPresent();
+        org.assertj.core.api.Assertions.assertThat(manualJob.get().getOrigin())
+                .isEqualTo(com.codearchive.api.automation.CommitJobOrigin.HISTORICAL_MANUAL);
+        mockMvc.perform(get("/api/solutions/historical-github-status")
+                        .with(githubLogin("305", "historical-owner", "Historical", null)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.13771703", is("PENDING")));
+        String changedTarget = manualRequest.replace("\"main\"", "\"develop\"");
+        mockMvc.perform(post("/api/solutions/historical-github-commits").with(csrf().asHeader())
+                        .with(githubLogin("305", "historical-owner", "Historical", null))
+                        .contentType("application/json").content(changedTarget))
+                .andExpect(status().isConflict());
+        historical.put("captureId", captureId);
+
+        historical.put("historicalImport", false);
+        String conflicting = objectMapper.createObjectNode()
+                .set("captures", objectMapper.createArrayNode().add(historical)).toString();
+        mockMvc.perform(post("/api/solutions/bulk").with(csrf().asHeader())
+                        .with(githubLogin("305", "historical-owner", "Historical", null))
+                        .contentType("application/json").content(conflicting))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.failures[0].captureId", is(captureId)));
+        org.assertj.core.api.Assertions.assertThat(
+                githubCommitJobRepository.findByUserIdAndCaptureId(user.getId(), captureId)).isPresent();
+    }
+
+    @Test
     void bulkSyncRejectsMoreThanFiftyCaptures() throws Exception {
         githubAccountService.upsert(principal("404", "limit", "Limit", null));
         com.fasterxml.jackson.databind.node.ArrayNode captures = objectMapper.createArrayNode();

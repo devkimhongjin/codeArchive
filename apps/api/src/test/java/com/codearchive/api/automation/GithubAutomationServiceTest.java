@@ -19,6 +19,47 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class GithubAutomationServiceTest {
+  @Test void historicalOriginBlocksNewAndPreviouslyQueuedCommitJobs() throws Exception {
+    GithubCommitJobRepository jobs=mock(GithubCommitJobRepository.class); UserSettingsRepository settingsRepo=mock(UserSettingsRepository.class); SolutionRepository solutions=mock(SolutionRepository.class); GithubProvider provider=mock(GithubProvider.class);
+    AppUser user=AppUser.fromGithub("1","owner","Owner",null); set(user,"id",1L);
+    UserSettings current=settings(user,1,Instant.EPOCH);
+    Solution historical=solution(user,"historical",Instant.now()); historical.setHistoricalImport(true);
+    when(settingsRepo.findByUserId(1L)).thenReturn(Optional.of(current));
+    GithubAutomationService service=new GithubAutomationService(jobs,settingsRepo,solutions,provider);
+    service.consider(user,historical);
+    verify(jobs,never()).save(any());
+
+    GithubCommitJob queued=new GithubCommitJob(user,"historical",1); set(queued,"id",13L);
+    when(jobs.findByIdForClaim(13L)).thenReturn(Optional.of(queued));
+    when(solutions.findByUserIdAndCaptureId(1L,"historical")).thenReturn(Optional.of(historical));
+    service.process(13L);
+    assertThat(queued.getState()).isEqualTo(CommitJobState.FAILED);
+    verifyNoInteractions(provider);
+  }
+
+  @Test void manualHistoricalJobRunsWithAutomaticFlagsOffAndHonorsFinalVersionGuard() throws Exception {
+    GithubCommitJobRepository jobs=mock(GithubCommitJobRepository.class); UserSettingsRepository settingsRepo=mock(UserSettingsRepository.class); SolutionRepository solutions=mock(SolutionRepository.class); GithubProvider provider=mock(GithubProvider.class);
+    AppUser user=AppUser.fromGithub("1","owner","Owner",null); set(user,"id",1L);
+    UserSettings current=settings(user,7,Instant.EPOCH); set(current,"autoSyncEnabled",false); set(current,"githubAutoCommitEnabled",false);
+    Solution historical=solution(user,"historical",Instant.now()); historical.setHistoricalImport(true); historical.setHistoricalSubmissionId("12345");
+    GithubCommitJob manual=new GithubCommitJob(user,"historical",7,CommitJobOrigin.HISTORICAL_MANUAL); set(manual,"id",17L);
+    when(jobs.findByIdForClaim(17L)).thenReturn(Optional.of(manual)); when(jobs.findById(17L)).thenReturn(Optional.of(manual));
+    when(settingsRepo.findByUserId(1L)).thenReturn(Optional.of(current)); when(solutions.findByUserIdAndCaptureId(1L,"historical")).thenReturn(Optional.of(historical));
+    doAnswer(invocation -> { assertThat(((GithubProvider.FinalWriteGuard)invocation.getArgument(2)).stillAuthorized()).isTrue(); return GithubProvider.Result.succeeded(); })
+        .when(provider).createOnly(eq(current),eq(historical),any());
+    new GithubAutomationService(jobs,settingsRepo,solutions,provider).process(17L);
+    assertThat(manual.getState()).isEqualTo(CommitJobState.SUCCEEDED);
+
+    UserSettings changed=settings(user,8,Instant.EPOCH); set(changed,"autoSyncEnabled",false); set(changed,"githubAutoCommitEnabled",false);
+    GithubCommitJob second=new GithubCommitJob(user,"historical",7,CommitJobOrigin.HISTORICAL_MANUAL); set(second,"id",18L);
+    when(jobs.findByIdForClaim(18L)).thenReturn(Optional.of(second)); when(jobs.findById(18L)).thenReturn(Optional.of(second));
+    when(settingsRepo.findByUserId(1L)).thenReturn(Optional.of(current),Optional.of(changed));
+    doAnswer(invocation -> { assertThat(((GithubProvider.FinalWriteGuard)invocation.getArgument(2)).stillAuthorized()).isFalse(); return GithubProvider.Result.failed("target changed"); })
+        .when(provider).createOnly(eq(current),eq(historical),any());
+    new GithubAutomationService(jobs,settingsRepo,solutions,provider).process(18L);
+    assertThat(second.getState()).isEqualTo(CommitJobState.FAILED);
+  }
+
   @Test void boundaryDeduplicationAndRestartClaimAreDurable() throws Exception {
     GithubCommitJobRepository jobs=mock(GithubCommitJobRepository.class); UserSettingsRepository settingsRepo=mock(UserSettingsRepository.class); SolutionRepository solutions=mock(SolutionRepository.class); GithubProvider provider=mock(GithubProvider.class);
     AppUser user=AppUser.fromGithub("1","owner","Owner",null); set(user,"id",1L); UserSettings settings=settings(user,5,Instant.parse("2026-01-01T00:00:00Z"));

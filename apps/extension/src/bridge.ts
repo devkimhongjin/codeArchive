@@ -1,6 +1,7 @@
 import { createUuid } from "./capture";
 import type { Capture, CaptureSettings } from "./types";
-import type { CaptureStore } from "./storage";
+import type { CaptureStore, CaptureSummary } from "./storage";
+import type { Platform } from "./types";
 import { BUILD_METADATA } from "../../../shared/buildMetadata";
 import { normalizedHeaderFields, type HeaderField } from "../../../shared/headerFields";
 
@@ -20,6 +21,12 @@ export type DashboardMessage =
   | { type: "GET_PENDING"; capability: string; limit?: number }
   /** Read-only, capability-bound local archive view for an unauthenticated dashboard. */
   | { type: "GET_LOCAL_ARCHIVE"; capability: string; limit?: number }
+  | { type: "GET_HISTORICAL_ARCHIVE"; capability: string; limit?: number }
+  | { type: "GET_HISTORICAL_SUMMARY"; capability: string }
+  | { type: "GET_HISTORICAL_SUBMISSION_IDS"; capability: string; platform: "JUNGOL" }
+  | { type: "GET_HISTORICAL_BY_SUBMISSION_IDS"; capability: string; platform: "JUNGOL"; submissionIds: string[] }
+  | { type: "HISTORY_PREVIEW"; capability: string; platform: "SWEA" | "JUNGOL" | "PROGRAMMERS" }
+  | { type: "HISTORY_IMPORT"; capability: string; platform: "JUNGOL"; submissionIds: string[] }
   /** Reuse a durable relay after an MV3 service-worker restart without exposing its bearer secret. */
   | { type: "REUSE_RELAY"; capability: string; accountId: string; settingsVersion: number }
   | { type: "ACK"; capability: string; captureIds: string[] }
@@ -34,12 +41,16 @@ export interface DashboardSender {
 }
 
 export type BridgeResponse =
-  | { capability: string; expiresAt: number; version: string }
+  | { capability: string; expiresAt: number; version: string; features: string[] }
   | { pendingCount: number }
   | { captures: Capture[]; hasMore: boolean; localOnly?: boolean }
+  | { captures: Capture[]; totalCount: number; localOnly: true }
+  | { summary: Record<Platform, CaptureSummary>; localOnly: true }
+  | { submissionIds: string[]; localOnly: true }
   | { reused: boolean }
+  | { history: unknown }
   | { ok: true }
-  | { error: "UNAUTHORIZED" | "BAD_REQUEST" | "STALE_CONFIGURATION" };
+  | { error: "UNAUTHORIZED" | "BAD_REQUEST" | "STALE_CONFIGURATION" | "HISTORY_UNAVAILABLE" };
 
 interface SenderIdentity {
   tabId: number;
@@ -61,6 +72,8 @@ export interface DashboardBridgeOptions {
   idleTtlMs?: number;
   absoluteTtlMs?: number;
   onRelayConfigured?: () => void;
+  onHistoryPreview?: (platform: "SWEA" | "JUNGOL" | "PROGRAMMERS") => Promise<unknown>;
+  onHistoryImport?: (submissionIds: string[]) => Promise<unknown>;
 }
 
 function exactDashboardSender(sender: DashboardSender): boolean {
@@ -96,7 +109,7 @@ function asObject(value: unknown): Record<string, unknown> | null {
 }
 
 function isMessageType(value: unknown): value is DashboardMessage["type"] {
-  return value === "CONNECT" || value === "PING" || value === "GET_STATUS" || value === "GET_PENDING" || value === "GET_LOCAL_ARCHIVE" || value === "REUSE_RELAY" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
+  return value === "CONNECT" || value === "PING" || value === "GET_STATUS" || value === "GET_PENDING" || value === "GET_LOCAL_ARCHIVE" || value === "GET_HISTORICAL_ARCHIVE" || value === "GET_HISTORICAL_SUMMARY" || value === "GET_HISTORICAL_SUBMISSION_IDS" || value === "GET_HISTORICAL_BY_SUBMISSION_IDS" || value === "HISTORY_PREVIEW" || value === "HISTORY_IMPORT" || value === "REUSE_RELAY" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
 }
 
 export class DashboardBridge {
@@ -106,6 +119,8 @@ export class DashboardBridge {
   private readonly idleTtlMs: number;
   private readonly absoluteTtlMs: number;
   private readonly onRelayConfigured: () => void;
+  private readonly onHistoryPreview?: (platform: "SWEA" | "JUNGOL" | "PROGRAMMERS") => Promise<unknown>;
+  private readonly onHistoryImport?: (submissionIds: string[]) => Promise<unknown>;
 
   constructor(private readonly store: CaptureStore, options: DashboardBridgeOptions = {}) {
     this.now = options.now ?? (() => Date.now());
@@ -113,6 +128,8 @@ export class DashboardBridge {
     this.idleTtlMs = options.idleTtlMs ?? SESSION_IDLE_TTL_MS;
     this.absoluteTtlMs = options.absoluteTtlMs ?? SESSION_ABSOLUTE_TTL_MS;
     this.onRelayConfigured = options.onRelayConfigured ?? (() => undefined);
+    this.onHistoryPreview = options.onHistoryPreview;
+    this.onHistoryImport = options.onHistoryImport;
   }
 
   async handleMessage(message: unknown, sender: DashboardSender): Promise<BridgeResponse> {
@@ -134,6 +151,20 @@ export class DashboardBridge {
     if (!session) return { error: "UNAUTHORIZED" };
 
     if (type === "PING") return { ok: true };
+
+    if (type === "HISTORY_PREVIEW") {
+      if ((object?.platform !== "SWEA" && object?.platform !== "JUNGOL" && object?.platform !== "PROGRAMMERS") || !this.onHistoryPreview) return { error: "BAD_REQUEST" };
+      try { return { history: await this.onHistoryPreview(object.platform) }; }
+      catch { return { error: "HISTORY_UNAVAILABLE" }; }
+    }
+
+    if (type === "HISTORY_IMPORT") {
+      const ids = object?.submissionIds;
+      if (object?.platform !== "JUNGOL" || !this.onHistoryImport || !Array.isArray(ids) || ids.length < 1 || ids.length > 10 ||
+          ids.some(id => typeof id !== "string" || !/^\d{1,40}$/.test(id)) || new Set(ids).size !== ids.length) return { error: "BAD_REQUEST" };
+      try { return { history: await this.onHistoryImport(ids as string[]) }; }
+      catch { return { error: "HISTORY_UNAVAILABLE" }; }
+    }
 
     if (type === "GET_STATUS") {
       // Counting is deliberately read-only: unlike GET_PENDING it does not
@@ -223,6 +254,31 @@ export class DashboardBridge {
       return { captures, hasMore: captures.length === Math.min(MAX_PENDING_PAGE_SIZE, Math.max(1, Math.floor(limit))), localOnly: true };
     }
 
+    if (type === "GET_HISTORICAL_ARCHIVE") {
+      const rawLimit = object?.limit;
+      const limit = typeof rawLimit === "number" && Number.isFinite(rawLimit) ? rawLimit : MAX_PENDING_PAGE_SIZE;
+      const historical = await this.store.listHistorical(Math.min(MAX_PENDING_PAGE_SIZE, Math.max(1, Math.floor(limit))));
+      return { ...historical, localOnly: true };
+    }
+
+    if (type === "GET_HISTORICAL_SUMMARY") {
+      return { summary: await this.store.historicalSummary(), localOnly: true };
+    }
+
+    if (type === "GET_HISTORICAL_SUBMISSION_IDS") {
+      if (object?.platform !== "JUNGOL") return { error: "BAD_REQUEST" };
+      return { submissionIds: await this.store.listHistoricalSubmissionIds("JUNGOL"), localOnly: true };
+    }
+
+    if (type === "GET_HISTORICAL_BY_SUBMISSION_IDS") {
+      const ids = object?.submissionIds;
+      if (object?.platform !== "JUNGOL" || !Array.isArray(ids) || ids.length < 1 || ids.length > MAX_PENDING_PAGE_SIZE ||
+          ids.some(id => typeof id !== "string" || !/^\d{1,40}$/.test(id)) || new Set(ids).size !== ids.length) return { error: "BAD_REQUEST" };
+      const captures = await this.store.listHistoricalBySubmissionIds("JUNGOL", ids as string[]);
+      for (const capture of captures) session.issuedCaptureIds.add(capture.captureId);
+      return { captures, totalCount: captures.length, localOnly: true };
+    }
+
     if (type === "ACK") {
       const captureIds = object?.captureIds;
       if (!Array.isArray(captureIds) || captureIds.length > MAX_PENDING_PAGE_SIZE) {
@@ -258,7 +314,7 @@ export class DashboardBridge {
       issuedCaptureIds: new Set()
     };
     this.sessions.set(capability, session);
-    return { capability, expiresAt: now + this.absoluteTtlMs, version: BUILD_METADATA.version };
+    return { capability, expiresAt: now + this.absoluteTtlMs, version: BUILD_METADATA.version, features: ["history-v1"] };
   }
 
   private authorize(capability: string, identity: SenderIdentity): Session | null {

@@ -89,7 +89,7 @@ function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement,
     platform.textContent = capture.platform;
     const sync = document.createElement("span");
     sync.className = "sync-label";
-    sync.textContent = capture.syncState === "SYNCED" ? "동기화됨" : "동기화 대기";
+    sync.textContent = capture.historicalImport === true ? capture.syncState === "SYNCED" ? "과거 풀이 · 서버 동기화됨" : "과거 풀이 · 로컬만" : capture.syncState === "SYNCED" ? "동기화됨" : "동기화 대기";
     heading.append(platform, sync);
     if (capture.githubCommitStatus) {
       const github = document.createElement("span");

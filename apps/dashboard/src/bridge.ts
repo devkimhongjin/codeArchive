@@ -75,13 +75,13 @@ function recordPayload(payload: unknown) {
   return payload as Record<string, unknown>
 }
 
-export function parseConnectResponse(payload: unknown): { capability: string; version: string | null } {
+export function parseConnectResponse(payload: unknown): { capability: string; version: string | null; historySupported: boolean } {
   const record = recordPayload(payload)
   if (typeof record.capability !== 'string' || !record.capability.trim()) {
     throw new BridgeError('확장 프로그램 capability가 없습니다.')
   }
   const version = typeof record.version === 'string' && /^\d+\.\d+\.\d+$/.test(record.version) ? record.version : null
-  return { capability: record.capability, version }
+  return { capability: record.capability, version, historySupported: Array.isArray(record.features) && record.features.includes('history-v1') }
 }
 
 export function parsePendingResponse(payload: unknown): { captures: Capture[] } {

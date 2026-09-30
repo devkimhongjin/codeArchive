@@ -3,7 +3,7 @@ import type { HeaderField } from '../../../shared/headerFields'
 
 export type Platform = 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'
 
-export type ViewName = 'solutions' | 'community' | 'guide' | 'settings' | 'github'
+export type ViewName = 'solutions' | 'history' | 'community' | 'guide' | 'settings' | 'github'
 
 export type User = {
   id: number
@@ -42,6 +42,8 @@ export type Solution = {
   memoryUsage?: number | string
   memoryValue?: number | string
   memoryUnit?: 'KB' | 'KiB' | 'MB' | 'MiB' | 'UNKNOWN' | string
+  historicalImport?: boolean
+  historicalSubmissionId?: string
   visibility?: 'private' | 'published'
   publishedAt?: string | null
 }

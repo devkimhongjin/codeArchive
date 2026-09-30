@@ -3,7 +3,7 @@ import test from "node:test";
 import { parseHTML } from "linkedom";
 import { ProgrammersAdapter } from "../src/adapters/programmers";
 import { SweaAdapter } from "../src/adapters/swea";
-import { collectAcceptedCaptureAttempt, createCapture } from "../src/capture";
+import { collectAcceptedCaptureAttempt, createCapture, isCaptureRecord } from "../src/capture";
 import { IndexedDbCaptureStore, MemoryCaptureStore } from "../src/storage";
 
 function locationFor(href: string): Location {
@@ -252,6 +252,25 @@ test("IndexedDB store keeps captures pending until an issued ACK marks them sync
   }
 });
 
+test('historical local records stay visible but never enter automatic pending relay pages', async () => {
+  const { indexedDB, IDBKeyRange } = await import('fake-indexeddb');
+  const previous = globalThis.IDBKeyRange;
+  (globalThis as typeof globalThis & { IDBKeyRange: typeof IDBKeyRange }).IDBKeyRange = IDBKeyRange;
+  try {
+    const stores = [new MemoryCaptureStore(), new IndexedDbCaptureStore({ databaseName: `history-pending-${Date.now()}-${Math.random()}`, indexedDb: indexedDB })];
+    for (const store of stores) {
+      const imported = createCapture({ platform: 'JUNGOL', problemNumber: '1544', title: 'History', problemUrl: 'https://jungol.co.kr/problem/1544', language: 'Java', sourceCode: 'class History {}', result: 'ACCEPTED', historicalImport: true });
+      assert.ok(imported);
+      assert.deepEqual(await store.putCapture(imported), { created: true });
+      assert.equal((await store.listAll())[0]?.historicalImport, true);
+      assert.equal(await store.countPending(), 0);
+      assert.deepEqual(await store.listPending(), []);
+    }
+  } finally {
+    (globalThis as typeof globalThis & { IDBKeyRange?: typeof IDBKeyRange }).IDBKeyRange = previous;
+  }
+});
+
 test("local stores skip a repeated submission only when problem, language, and source are identical", async () => {
   const { indexedDB, IDBKeyRange } = await import("fake-indexeddb");
   const stores = [
@@ -319,6 +338,59 @@ test("local stores skip a repeated submission only when problem, language, and s
   } finally {
     (globalThis as typeof globalThis & { IDBKeyRange?: typeof IDBKeyRange }).IDBKeyRange = previous;
   }
+});
+
+test("historical Jungol submission ID is retained and deduplicated even when source differs", async () => {
+  const { indexedDB, IDBKeyRange } = await import("fake-indexeddb");
+  const previous = globalThis.IDBKeyRange;
+  (globalThis as typeof globalThis & { IDBKeyRange: typeof IDBKeyRange }).IDBKeyRange = IDBKeyRange;
+  try {
+    const stores = [new MemoryCaptureStore(), new IndexedDbCaptureStore({
+      databaseName: `codearchive-historical-id-${Date.now()}-${Math.random()}`,
+      indexedDb: indexedDB
+    })];
+    for (const store of stores) {
+      const first = createCapture({
+        captureId: "11111111-1111-4111-8111-111111111111",
+        platform: "JUNGOL", problemNumber: "1520", title: "계단 오르기",
+        problemUrl: "https://jungol.co.kr/problem/1520", language: "Java 8",
+        sourceCode: "first source", result: "ACCEPTED", historicalImport: true,
+        historicalSubmissionId: "12345"
+      });
+      assert.ok(first);
+      assert.equal(isCaptureRecord(first), true);
+      assert.deepEqual(await store.putCapture(first), { created: true });
+      assert.deepEqual(await store.putCapture({ ...first,
+        captureId: "22222222-2222-4222-8222-222222222222",
+        sourceCode: "different source" }), { created: false });
+      assert.deepEqual(await store.putCapture({ ...first,
+        captureId: "33333333-3333-4333-8333-333333333333",
+        historicalSubmissionId: "12346", sourceCode: "different source" }), { created: true });
+      assert.deepEqual(await store.putCapture({ ...first,
+        captureId: "44444444-4444-4444-8444-444444444444",
+        historicalSubmissionId: "12347" }), { created: true });
+      assert.equal((await store.listHistorical()).totalCount, 3);
+      const laterLiveCapture = { ...first,
+        captureId: "55555555-5555-4555-8555-555555555555",
+        historicalImport: false, historicalSubmissionId: undefined };
+      assert.deepEqual(await store.putCapture(laterLiveCapture), { created: true });
+      assert.deepEqual(await store.putCapture({ ...laterLiveCapture,
+        captureId: "66666666-6666-4666-8666-666666666666" }), { created: false });
+      for (let index = 0; index < 50; index++) {
+        const capture = createCapture({ platform: "JUNGOL", problemNumber: "1520", title: "계단 오르기",
+          problemUrl: "https://jungol.co.kr/problem/1520", language: "Java 8",
+          sourceCode: `historical source ${index}`, result: "ACCEPTED", historicalImport: true,
+          historicalSubmissionId: String(20000 + index) });
+        assert.ok(capture);
+        assert.deepEqual(await store.putCapture(capture), { created: true });
+      }
+      assert.equal((await store.listHistoricalSubmissionIds("JUNGOL")).length, 53);
+      assert.deepEqual(await store.listHistoricalSubmissionIds("SWEA"), []);
+    }
+  } finally { (globalThis as typeof globalThis & { IDBKeyRange: typeof IDBKeyRange }).IDBKeyRange = previous; }
+  assert.equal(createCapture({ platform: "JUNGOL", problemNumber: "1520", title: "x",
+    problemUrl: "https://jungol.co.kr/problem/1520", language: "Java",
+    sourceCode: "x", result: "ACCEPTED", historicalSubmissionId: "12345" }), null);
 });
 
 test("local archive lists retained captures newest first, including synced records", async () => {

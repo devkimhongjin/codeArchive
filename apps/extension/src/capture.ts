@@ -97,6 +97,9 @@ export function createCapture(
   }
   if (memoryValue !== undefined && (!Number.isFinite(memoryValue) || memoryValue < 0)) return null;
   if (memoryUnit !== undefined && !["KB", "KiB", "MB", "MiB", "UNKNOWN"].includes(memoryUnit)) return null;
+  if (draft.historicalSubmissionId !== undefined &&
+      (draft.historicalImport !== true || draft.platform !== "JUNGOL" ||
+        !/^\d{1,40}$/.test(draft.historicalSubmissionId))) return null;
 
   return {
     captureId,
@@ -114,6 +117,8 @@ export function createCapture(
     ...(memoryUsage === undefined ? {} : { memoryUsage }),
     ...(memoryValue === undefined ? {} : { memoryValue }),
     ...(memoryUnit === undefined ? {} : { memoryUnit }),
+    ...(draft.historicalImport === true ? { historicalImport: true } : {}),
+    ...(draft.historicalSubmissionId === undefined ? {} : { historicalSubmissionId: draft.historicalSubmissionId }),
     syncState: "PENDING"
   };
 }
@@ -134,6 +139,10 @@ export function isCaptureRecord(value: unknown): value is Capture {
     (candidate.languageKey === undefined || candidate.languageKey === canonicalLanguageKey(candidate.language)) &&
     nonEmpty(candidate.sourceCode, 1_000_000) &&
     candidate.result === CAPTURE_RESULT &&
+    (candidate.historicalImport === undefined || candidate.historicalImport === true) &&
+    (candidate.historicalSubmissionId === undefined ||
+      (candidate.historicalImport === true && candidate.platform === "JUNGOL" &&
+        /^\d{1,40}$/.test(candidate.historicalSubmissionId))) &&
     candidate.syncState === "PENDING" &&
     parsedObservedAt !== null &&
     !Number.isNaN(parsedObservedAt.getTime()) &&

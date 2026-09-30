@@ -27,6 +27,10 @@ export interface Capture {
   memoryUnit?: MemoryUnit;
   syncState: SyncState;
   syncedAt?: string;
+  /** Imported from a verified earlier submission; never relayed or downloaded automatically. */
+  historicalImport?: boolean;
+  /** Site submission identity retained for historical Jungol retry deduplication. */
+  historicalSubmissionId?: string;
 }
 
 export interface CaptureDraft {
@@ -45,6 +49,8 @@ export interface CaptureDraft {
   memoryUsage?: number;
   memoryValue?: number;
   memoryUnit?: MemoryUnit;
+  historicalImport?: boolean;
+  historicalSubmissionId?: string;
 }
 
 export interface ProblemMetadata {
