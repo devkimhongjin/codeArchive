@@ -26,6 +26,7 @@ export type DashboardMessage =
   | { type: "GET_HISTORICAL_SUBMISSION_IDS"; capability: string; platform: "JUNGOL" }
   | { type: "GET_HISTORICAL_BY_SUBMISSION_IDS"; capability: string; platform: "JUNGOL"; submissionIds: string[] }
   | { type: "HISTORY_PREVIEW"; capability: string; platform: "SWEA" | "JUNGOL" | "PROGRAMMERS" }
+  | { type: "HISTORY_SCAN_START" | "HISTORY_SCAN_STATUS"; capability: string; platform: "JUNGOL" }
   | { type: "HISTORY_IMPORT"; capability: string; platform: "JUNGOL"; submissionIds: string[] }
   /** Reuse a durable relay after an MV3 service-worker restart without exposing its bearer secret. */
   | { type: "REUSE_RELAY"; capability: string; accountId: string; settingsVersion: number }
@@ -73,6 +74,8 @@ export interface DashboardBridgeOptions {
   absoluteTtlMs?: number;
   onRelayConfigured?: () => void;
   onHistoryPreview?: (platform: "SWEA" | "JUNGOL" | "PROGRAMMERS") => Promise<unknown>;
+  onHistoryScanStart?: () => Promise<unknown>;
+  onHistoryScanStatus?: () => Promise<unknown>;
   onHistoryImport?: (submissionIds: string[]) => Promise<unknown>;
 }
 
@@ -109,7 +112,7 @@ function asObject(value: unknown): Record<string, unknown> | null {
 }
 
 function isMessageType(value: unknown): value is DashboardMessage["type"] {
-  return value === "CONNECT" || value === "PING" || value === "GET_STATUS" || value === "GET_PENDING" || value === "GET_LOCAL_ARCHIVE" || value === "GET_HISTORICAL_ARCHIVE" || value === "GET_HISTORICAL_SUMMARY" || value === "GET_HISTORICAL_SUBMISSION_IDS" || value === "GET_HISTORICAL_BY_SUBMISSION_IDS" || value === "HISTORY_PREVIEW" || value === "HISTORY_IMPORT" || value === "REUSE_RELAY" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
+  return value === "CONNECT" || value === "PING" || value === "GET_STATUS" || value === "GET_PENDING" || value === "GET_LOCAL_ARCHIVE" || value === "GET_HISTORICAL_ARCHIVE" || value === "GET_HISTORICAL_SUMMARY" || value === "GET_HISTORICAL_SUBMISSION_IDS" || value === "GET_HISTORICAL_BY_SUBMISSION_IDS" || value === "HISTORY_PREVIEW" || value === "HISTORY_SCAN_START" || value === "HISTORY_SCAN_STATUS" || value === "HISTORY_IMPORT" || value === "REUSE_RELAY" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
 }
 
 export class DashboardBridge {
@@ -120,6 +123,8 @@ export class DashboardBridge {
   private readonly absoluteTtlMs: number;
   private readonly onRelayConfigured: () => void;
   private readonly onHistoryPreview?: (platform: "SWEA" | "JUNGOL" | "PROGRAMMERS") => Promise<unknown>;
+  private readonly onHistoryScanStart?: () => Promise<unknown>;
+  private readonly onHistoryScanStatus?: () => Promise<unknown>;
   private readonly onHistoryImport?: (submissionIds: string[]) => Promise<unknown>;
 
   constructor(private readonly store: CaptureStore, options: DashboardBridgeOptions = {}) {
@@ -129,6 +134,8 @@ export class DashboardBridge {
     this.absoluteTtlMs = options.absoluteTtlMs ?? SESSION_ABSOLUTE_TTL_MS;
     this.onRelayConfigured = options.onRelayConfigured ?? (() => undefined);
     this.onHistoryPreview = options.onHistoryPreview;
+    this.onHistoryScanStart = options.onHistoryScanStart;
+    this.onHistoryScanStatus = options.onHistoryScanStatus;
     this.onHistoryImport = options.onHistoryImport;
   }
 
@@ -155,6 +162,14 @@ export class DashboardBridge {
     if (type === "HISTORY_PREVIEW") {
       if ((object?.platform !== "SWEA" && object?.platform !== "JUNGOL" && object?.platform !== "PROGRAMMERS") || !this.onHistoryPreview) return { error: "BAD_REQUEST" };
       try { return { history: await this.onHistoryPreview(object.platform) }; }
+      catch { return { error: "HISTORY_UNAVAILABLE" }; }
+    }
+
+    if (type === "HISTORY_SCAN_START" || type === "HISTORY_SCAN_STATUS") {
+      if (object?.platform !== "JUNGOL") return { error: "BAD_REQUEST" };
+      const action = type === "HISTORY_SCAN_START" ? this.onHistoryScanStart : this.onHistoryScanStatus;
+      if (!action) return { error: "BAD_REQUEST" };
+      try { return { history: await action() }; }
       catch { return { error: "HISTORY_UNAVAILABLE" }; }
     }
 

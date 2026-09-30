@@ -111,6 +111,7 @@ test('Jungol current account layout traverses later pages and expands ID-less gr
   first.querySelector('td[data-col="번호"]')!.append(toggle);
   toggle.addEventListener('click', () => {
     const child = first.cloneNode(true) as HTMLTableRowElement;
+    child.classList.add('gr');
     child.querySelector('.sl-group-toggle')?.remove();
     child.querySelector('td[data-col="결과"] a')!.setAttribute('href', '?sid=13771704');
     child.querySelector('td[data-col="언어"] a')!.setAttribute('href', '?sid=13771704');
@@ -279,14 +280,16 @@ test("Jungol own account page expands grouped accepted submissions with no previ
     setTimeout(() => {
       toggle.setAttribute("aria-expanded", "true");
       toggle.closest("tr")!.after(...[row(2001), row(2002), row(2003, 2001, "오답 0점")].map(html => {
-        const wrapper = document.createElement("tbody"); wrapper.innerHTML = html; return wrapper.querySelector("tr")!;
+        const wrapper = document.createElement("tbody"); wrapper.innerHTML = html;
+        const child = wrapper.querySelector("tr")!; child.classList.add('gr'); return child;
       }));
     }, 0);
   });
   const url = locationFor("https://jungol.co.kr/account/152511/submission");
   const previousObserver = globalThis.MutationObserver;
   globalThis.MutationObserver = document.defaultView!.MutationObserver;
-  const result = await loadJungolHistoryPreview(document, url).finally(() => { globalThis.MutationObserver = previousObserver; });
+  const result = await loadJungolHistoryPreview(document, url, () => undefined, 1)
+    .finally(() => { globalThis.MutationObserver = previousObserver; });
   assert.equal(result.status, "READY");
   if (result.status !== "READY") return;
   assert.equal(result.candidates.length, 62);
@@ -321,6 +324,7 @@ test("Jungol preview loads all older pages before counting accepted submissions"
         toggle.addEventListener("click", () => setTimeout(() => {
           toggle.setAttribute("aria-expanded", "true");
           const child = row.cloneNode(true) as HTMLTableRowElement;
+          child.classList.add('gr');
           child.querySelector(".sl-group-toggle")?.remove();
           child.querySelector(".sl-id")!.textContent = "1004";
           child.querySelector('td[data-col="언어"] a')!.setAttribute("href", "?sid=1004");
@@ -395,6 +399,7 @@ test("Jungol waits for grouped submissions that hydrate after the final cursor d
       toggle.addEventListener('click', () => {
         toggle.setAttribute('aria-expanded', 'true');
         const child = row.cloneNode(true) as HTMLTableRowElement;
+        child.classList.add('gr');
         child.querySelector('.sl-group-toggle')?.remove();
         child.querySelector('.sl-id')!.textContent = '12347';
         child.querySelector('td[data-col="언어"] a')!.setAttribute('href', '?account=mine&sid=12347');
@@ -423,21 +428,28 @@ test("Jungol waits for grouped submissions that hydrate after the final cursor d
   } finally { globalThis.MutationObserver = previousObserver; }
 });
 
-test("Jungol does not call a first page complete when pagination appears after the settle window", async () => {
+test("Jungol keeps scanning when pagination appears after the first settle window", async () => {
   const document = jungolPage();
   const previousObserver = globalThis.MutationObserver;
   globalThis.MutationObserver = document.defaultView!.MutationObserver;
   const lateButton = setTimeout(() => {
     const more = document.createElement("button");
     more.textContent = "더 불러오기";
+    more.addEventListener("click", () => {
+      const row = document.querySelector<HTMLTableRowElement>('td[data-col="번호"]')!.closest("tr")!.cloneNode(true) as HTMLTableRowElement;
+      row.querySelector('td[data-col="번호"]')!.textContent = "12346";
+      row.querySelector('td[data-col="언어"] a')!.setAttribute("href", "?account=mine&sid=12346");
+      document.querySelector("table")!.append(row);
+      more.remove();
+    });
     document.querySelector("table")!.after(more);
   }, 3_500);
   try {
     const result = await loadJungolHistoryPreview(document, locationFor("https://jungol.co.kr/submission?account=mine"));
     assert.equal(result.status, "READY");
     if (result.status === "READY") {
-      assert.equal(result.candidates.length, 1);
-      assert.equal(result.truncated, true);
+      assert.equal(result.candidates.length, 2);
+      assert.equal(result.truncated, false);
     }
   } finally {
     clearTimeout(lateButton);
@@ -461,7 +473,7 @@ test("Jungol never treats a version-pinned short first page as proof of completi
   const previousObserver = globalThis.MutationObserver;
   globalThis.MutationObserver = document.defaultView!.MutationObserver;
   try {
-    const result = await loadJungolHistoryPreview(document, locationFor('https://jungol.co.kr/submission?account=mine'));
+    const result = await loadJungolHistoryPreview(document, locationFor('https://jungol.co.kr/submission?account=mine'), () => undefined, 1);
     assert.equal(result.status, 'READY');
     if (result.status === 'READY') {
       assert.equal(result.candidates.length, 13);
@@ -485,7 +497,7 @@ test("Jungol does not mistake a full first page for a single-page account", asyn
   const previousObserver = globalThis.MutationObserver;
   globalThis.MutationObserver = document.defaultView!.MutationObserver;
   try {
-    const result = await loadJungolHistoryPreview(document, locationFor('https://jungol.co.kr/submission?account=mine'));
+    const result = await loadJungolHistoryPreview(document, locationFor('https://jungol.co.kr/submission?account=mine'), () => undefined, 1);
     assert.equal(result.status, 'READY');
     if (result.status === 'READY') assert.equal(result.truncated, true);
   } finally { globalThis.MutationObserver = previousObserver; }
@@ -518,6 +530,247 @@ test("Jungol recognizes the site's removed cursor control after a loaded final p
       assert.deepEqual(result.candidates.map(candidate => candidate.submissionId), ['12345', '12346', '12347']);
       assert.equal(result.truncated, false);
     }
+  } finally { globalThis.MutationObserver = previousObserver; }
+});
+
+test("Jungol retry cannot complete a page whose cursor vanished before its rows arrived", async () => {
+  const document = jungolPage();
+  const location = locationFor('https://jungol.co.kr/submission?account=mine');
+  const more = document.createElement('button');
+  more.textContent = '더 불러오기';
+  document.querySelector('table')!.after(more);
+  more.addEventListener('click', () => more.remove());
+  const previousObserver = globalThis.MutationObserver;
+  globalThis.MutationObserver = document.defaultView!.MutationObserver;
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await loadJungolHistoryPreview(document, location, () => undefined, 1, 5);
+      assert.equal(result.status, 'READY');
+      if (result.status === 'READY') assert.equal(result.truncated, true);
+      if (attempt === 0) {
+        // A group can expand independently while the cursor request is unresolved.
+        const parent = document.querySelector<HTMLTableRowElement>('td[data-col="번호"]')!.closest('tr')!;
+        const toggle = document.createElement('button');
+        toggle.className = 'sl-group-toggle';
+        toggle.setAttribute('aria-expanded', 'true');
+        parent.querySelector('td[data-col="번호"]')!.append(toggle);
+        const child = parent.cloneNode(true) as HTMLTableRowElement;
+        child.classList.add('gr');
+        child.querySelector('.sl-group-toggle')!.remove();
+        child.querySelector('td[data-col="번호"]')!.textContent = '12347';
+        child.querySelector('td[data-col="언어"] a')!.setAttribute('href', '?account=mine&sid=12347');
+        parent.after(child);
+      }
+    }
+    const row = document.querySelector<HTMLTableRowElement>('td[data-col="번호"]')!.closest('tr')!.cloneNode(true) as HTMLTableRowElement;
+    row.querySelector('td[data-col="번호"]')!.textContent = '12346';
+    row.querySelector('td[data-col="언어"] a')!.setAttribute('href', '?account=mine&sid=12346');
+    document.querySelector('table')!.append(row);
+    const resolved = await loadJungolHistoryPreview(document, location, () => undefined, 1, 5);
+    assert.equal(resolved.status, 'READY');
+    if (resolved.status === 'READY') {
+      assert.equal(resolved.truncated, false);
+      assert.deepEqual(resolved.candidates.map(item => item.submissionId), ['12345', '12347', '12346']);
+    }
+  } finally { globalThis.MutationObserver = previousObserver; }
+});
+
+test("Jungol retry waits for all children of a group that already appears expanded", async () => {
+  const document = jungolPage();
+  const location = locationFor('https://jungol.co.kr/submission?account=mine');
+  const parent = document.querySelector<HTMLTableRowElement>('td[data-col="번호"]')!.closest('tr')!;
+  const more = document.createElement('button');
+  more.textContent = '더 불러오기';
+  document.querySelector('table')!.after(more);
+  const toggle = document.createElement('button');
+  toggle.className = 'sl-group-toggle';
+  toggle.setAttribute('aria-expanded', 'false');
+  toggle.innerHTML = '<span class="sl-group-count">+1</span>';
+  more.addEventListener('click', () => {
+    const loaded = parent.cloneNode(true) as HTMLTableRowElement;
+    loaded.querySelector('td[data-col="번호"]')!.innerHTML = '<span class="sl-id">12346</span>';
+    loaded.querySelector('td[data-col="언어"] a')!.setAttribute('href', '?account=mine&sid=12346');
+    loaded.querySelector('td[data-col="번호"]')!.append(toggle);
+    document.querySelector('table')!.append(loaded);
+    more.remove();
+  });
+  toggle.addEventListener('click', () => toggle.setAttribute('aria-expanded', 'true'));
+  const previousObserver = globalThis.MutationObserver;
+  globalThis.MutationObserver = document.defaultView!.MutationObserver;
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await loadJungolHistoryPreview(document, location, () => undefined, 1, 5);
+      assert.equal(result.status, 'READY');
+      if (result.status === 'READY') assert.equal(result.truncated, true);
+      if (attempt === 0) {
+        // A late page row must not satisfy this group's missing child.
+        const unrelated = parent.cloneNode(true) as HTMLTableRowElement;
+        unrelated.querySelector('td[data-col="번호"]')!.textContent = '12348';
+        unrelated.querySelector('td[data-col="언어"] a')!.setAttribute('href', '?account=mine&sid=12348');
+        document.querySelector('table')!.append(unrelated);
+      }
+    }
+    const child = parent.cloneNode(true) as HTMLTableRowElement;
+    child.classList.add('gr');
+    child.querySelector('td[data-col="번호"]')!.textContent = '12347';
+    child.querySelector('td[data-col="언어"] a')!.setAttribute('href', '?account=mine&sid=12347');
+    toggle.closest('tr')!.after(child);
+    const resolved = await loadJungolHistoryPreview(document, location, () => undefined, 1, 5);
+    assert.equal(resolved.status, 'READY');
+    if (resolved.status === 'READY') {
+      assert.equal(resolved.truncated, false);
+      assert.deepEqual(resolved.candidates.map(item => item.submissionId), ['12345', '12346', '12347', '12348']);
+    }
+  } finally { globalThis.MutationObserver = previousObserver; }
+});
+
+test("Jungol does not reuse a finished page count after the same URL rerenders its table", async () => {
+  const document = jungolPage();
+  const location = locationFor('https://jungol.co.kr/submission?account=mine');
+  const table = document.querySelector('table')!;
+  const first = table.querySelector<HTMLTableRowElement>('td[data-col="번호"]')!.closest('tr')!;
+  const more = document.createElement('button');
+  more.textContent = '더 불러오기';
+  table.after(more);
+  more.addEventListener('click', () => {
+    const second = first.cloneNode(true) as HTMLTableRowElement;
+    second.querySelector('td[data-col="번호"]')!.textContent = '12346';
+    second.querySelector('td[data-col="언어"] a')!.setAttribute('href', '?account=mine&sid=12346');
+    table.append(second);
+    more.remove();
+  });
+  const previousObserver = globalThis.MutationObserver;
+  globalThis.MutationObserver = document.defaultView!.MutationObserver;
+  try {
+    const complete = await loadJungolHistoryPreview(document, location, () => undefined, 1, 5);
+    assert.equal(complete.status, 'READY');
+    if (complete.status === 'READY') assert.equal(complete.truncated, false);
+    table.querySelectorAll('tr')[2]?.remove();
+    const shortened = await loadJungolHistoryPreview(document, location, () => undefined, 1, 5);
+    assert.equal(shortened.status, 'READY');
+    if (shortened.status === 'READY') assert.equal(shortened.truncated, true);
+    const replacement = first.cloneNode(true) as HTMLTableRowElement;
+    replacement.querySelector('td[data-col="번호"]')!.textContent = '12348';
+    replacement.querySelector('td[data-col="언어"] a')!.setAttribute('href', '?account=mine&sid=12348');
+    table.append(replacement);
+    const replaced = await loadJungolHistoryPreview(document, location, () => undefined, 1, 5);
+    assert.equal(replaced.status, 'READY');
+    if (replaced.status === 'READY') assert.equal(replaced.truncated, true);
+  } finally { globalThis.MutationObserver = previousObserver; }
+});
+
+test("Jungol does not count a cursor page when its previous rows are replaced mid-click", async () => {
+  const document = jungolPage();
+  const location = locationFor('https://jungol.co.kr/submission?account=mine');
+  const table = document.querySelector('table')!;
+  const more = document.createElement('button');
+  more.textContent = '더 불러오기';
+  table.after(more);
+  more.addEventListener('click', () => {
+    const row = table.querySelector<HTMLTableRowElement>('td[data-col="번호"]')!.closest('tr')!;
+    row.querySelector('td[data-col="번호"]')!.textContent = '12346';
+    row.querySelector('td[data-col="언어"] a')!.setAttribute('href', '?account=mine&sid=12346');
+    more.remove();
+  });
+  const previousObserver = globalThis.MutationObserver;
+  globalThis.MutationObserver = document.defaultView!.MutationObserver;
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await loadJungolHistoryPreview(document, location, () => undefined, 1, 5);
+      assert.equal(result.status, 'READY');
+      if (result.status === 'READY') assert.equal(result.truncated, true);
+    }
+  } finally { globalThis.MutationObserver = previousObserver; }
+});
+
+test("Jungol waits for the next cursor after the previous page rows arrive", async () => {
+  const document = jungolPage();
+  const location = locationFor('https://jungol.co.kr/submission?account=mine');
+  const table = document.querySelector('table')!;
+  const first = table.querySelector<HTMLTableRowElement>('td[data-col="번호"]')!.closest('tr')!;
+  const addRow = (id: string) => {
+    const row = first.cloneNode(true) as HTMLTableRowElement;
+    row.querySelector('td[data-col="번호"]')!.textContent = id;
+    row.querySelector('td[data-col="언어"] a')!.setAttribute('href', `?account=mine&sid=${id}`);
+    table.append(row);
+  };
+  const more = document.createElement('button');
+  more.textContent = '더 불러오기';
+  table.after(more);
+  more.addEventListener('click', () => {
+    addRow('12346');
+    more.remove();
+    setTimeout(() => {
+      const next = document.createElement('button');
+      next.textContent = '더 불러오기';
+      next.addEventListener('click', () => { addRow('12347'); next.remove(); });
+      table.after(next);
+    }, 12);
+  });
+  const previousObserver = globalThis.MutationObserver;
+  globalThis.MutationObserver = document.defaultView!.MutationObserver;
+  try {
+    const result = await loadJungolHistoryPreview(document, location, () => undefined, 4, 5);
+    assert.equal(result.status, 'READY');
+    if (result.status === 'READY') {
+      assert.equal(result.truncated, false);
+      assert.equal(result.paginationClicks, 2);
+      assert.deepEqual(result.candidates.map(item => item.submissionId), ['12345', '12346', '12347']);
+    }
+  } finally { globalThis.MutationObserver = previousObserver; }
+});
+
+test("Jungol detects rows removed while waiting for the next cursor", async () => {
+  const document = jungolPage();
+  const location = locationFor('https://jungol.co.kr/submission?account=mine');
+  const table = document.querySelector('table')!;
+  const first = table.querySelector<HTMLTableRowElement>('td[data-col="번호"]')!.closest('tr')!;
+  const more = document.createElement('button');
+  more.textContent = '더 불러오기';
+  table.after(more);
+  more.addEventListener('click', () => {
+    const second = first.cloneNode(true) as HTMLTableRowElement;
+    second.querySelector('td[data-col="번호"]')!.textContent = '12346';
+    second.querySelector('td[data-col="언어"] a')!.setAttribute('href', '?account=mine&sid=12346');
+    table.append(second);
+    more.remove();
+    setTimeout(() => second.remove(), 12);
+  });
+  const previousObserver = globalThis.MutationObserver;
+  globalThis.MutationObserver = document.defaultView!.MutationObserver;
+  try {
+    const result = await loadJungolHistoryPreview(document, location, () => undefined, 4, 5);
+    assert.equal(result.status, 'READY');
+    if (result.status === 'READY') assert.equal(result.truncated, true);
+  } finally { globalThis.MutationObserver = previousObserver; }
+});
+
+test("Jungol stops a superseded scan before it can click the replacement listing", async () => {
+  const document = jungolPage();
+  const location = locationFor('https://jungol.co.kr/submission?account=mine');
+  const table = document.querySelector('table')!;
+  const first = table.querySelector<HTMLTableRowElement>('td[data-col="번호"]')!.closest('tr')!;
+  const more = document.createElement('button');
+  more.textContent = '더 불러오기';
+  table.after(more);
+  let active = true;
+  let clicks = 0;
+  more.addEventListener('click', () => {
+    clicks++;
+    if (clicks === 1) {
+      const replacement = first.cloneNode(true) as HTMLTableRowElement;
+      replacement.querySelector('td[data-col="번호"]')!.textContent = '12346';
+      replacement.querySelector('td[data-col="언어"] a')!.setAttribute('href', '?account=mine&sid=12346');
+      table.append(replacement);
+      active = false;
+    }
+  });
+  const previousObserver = globalThis.MutationObserver;
+  globalThis.MutationObserver = document.defaultView!.MutationObserver;
+  try {
+    const result = await loadJungolHistoryPreview(document, location, () => undefined, 1, 5, () => active);
+    assert.equal(result.status, 'OWNERSHIP_UNVERIFIED');
+    assert.equal(clicks, 1);
   } finally { globalThis.MutationObserver = previousObserver; }
 });
 

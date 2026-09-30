@@ -20,6 +20,8 @@ const bridge = new DashboardBridge(store, {
   // the old relay was offline or expired instead of waiting for the next alarm.
   onRelayConfigured: requestRelayDrain,
   onHistoryPreview: platform => requestHistoryTab(platform, { type: "HISTORY_PREVIEW" }),
+  onHistoryScanStart: () => requestHistoryTab("JUNGOL", { type: "HISTORY_SCAN_START" }),
+  onHistoryScanStatus: () => requestHistoryTab("JUNGOL", { type: "HISTORY_SCAN_STATUS" }),
   onHistoryImport: requestHistoryImport
 });
 

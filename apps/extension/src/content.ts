@@ -3,7 +3,8 @@ import { collectAcceptedCaptureAttempt } from "./capture";
 import type { Capture, PlatformAdapter } from "./types";
 import { canonicalLanguageKey } from "../../../shared/language";
 import { BUILD_METADATA } from "../../../shared/buildMetadata";
-import { importVisibleJungolHistory, isJungolHistoryPath, loadJungolHistoryPreview, previewJungolHistory } from "./historicalJungol";
+import { importVisibleJungolHistory, isJungolHistoryPath, loadJungolHistoryPreview, previewJungolHistory,
+  type JungolHistoryPreview, type JungolHistoryScanProgress } from "./historicalJungol";
 import { loadSweaHistoryPreview } from "./historicalSwea";
 import { previewProgrammersHistory } from "./historicalProgrammers";
 import {
@@ -342,13 +343,63 @@ export async function bootstrapContent(
   if (adapter) startCapture(adapter, document, send);
 }
 
+type JungolScanState =
+  | { status: "SCANNING"; progress: JungolHistoryScanProgress }
+  | JungolHistoryPreview
+  | { status: "SCAN_INCOMPLETE" | "SCAN_FAILED" };
+let jungolScan: { url: string; table: Element | null; state: JungolScanState } | null = null;
+
+function startJungolScan(document: Document, location: Location): JungolScanState {
+  const table = document.querySelector("table");
+  if (jungolScan?.url === location.href && jungolScan.table === table &&
+      jungolScan.state.status === "SCANNING") return jungolScan.state;
+  const initial = previewJungolHistory(document, location);
+  if (initial.status !== "READY") return initial;
+  const url = location.href;
+  const progress: JungolHistoryScanProgress = { phase: "pages", rows: document.querySelectorAll("table tr").length,
+    pagesLoaded: 0, groupsExpanded: 0, groupsTotal: 0 };
+  const run = { url, table, state: { status: "SCANNING", progress } as JungolScanState };
+  jungolScan = run;
+  void (async () => {
+    try {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const result = await loadJungolHistoryPreview(document, location, next => {
+          if (jungolScan === run) run.state = { status: "SCANNING", progress: next };
+        }, 12, 8_000, () => jungolScan === run && document.querySelector("table") === table && location.href === url);
+        if (jungolScan !== run) return;
+        if (location.href !== url) {
+          run.state = { status: "SCAN_INCOMPLETE" };
+          return;
+        }
+        if (result.status !== "READY" || !result.truncated) {
+          run.state = result;
+          return;
+        }
+      }
+      run.state = { status: "SCAN_INCOMPLETE" };
+    } catch {
+      if (jungolScan === run) run.state = { status: "SCAN_FAILED" };
+    }
+  })();
+  return run.state;
+}
+
 if (typeof document !== "undefined" && typeof window !== "undefined") {
   chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
     const object = message !== null && typeof message === "object" ? message as Record<string, unknown> : null;
+    if (object?.type === "HISTORY_SCAN_START" || object?.type === "HISTORY_SCAN_STATUS") {
+      if (window.location.origin !== "https://jungol.co.kr" || !isJungolHistoryPath(window.location.pathname)) {
+        sendResponse({ status: "TAB_NOT_FOUND" });
+      } else if (object.type === "HISTORY_SCAN_START") sendResponse(startJungolScan(document, window.location));
+      else if (jungolScan?.url === window.location.href && jungolScan.table !== document.querySelector("table"))
+        sendResponse(startJungolScan(document, window.location));
+      else sendResponse(jungolScan?.url === window.location.href ? jungolScan.state : { status: "SCAN_IDLE" });
+      return false;
+    }
     if (object?.type === "HISTORY_PREVIEW") {
       if (window.location.origin === "https://jungol.co.kr" && isJungolHistoryPath(window.location.pathname)) {
-        void loadJungolHistoryPreview(document, window.location).then(sendResponse);
-        return true;
+        sendResponse(startJungolScan(document, window.location));
+        return false;
       } else if (window.location.origin === SWEA_ORIGIN && window.location.pathname === SWEA_USER_SUBMISSIONS_PATH) {
         void loadSweaHistoryPreview(document, window.location).then(sendResponse);
         return true;
