@@ -438,7 +438,7 @@ class PostgreSqlMigrationTest {
             assertEquals("NO", nullable("solutions", "source_code"));
             assertEquals("NO", nullable("solutions", "language_key"));
             assertEquals("NO", nullable("solutions", "historical_import"));
-            assertEquals("false", String.valueOf(scalar(
+            assertEquals("false", String.valueOf((Object) scalar(
                     "SELECT column_default FROM information_schema.columns WHERE table_schema = ? AND table_name = 'solutions' AND column_name = 'historical_import'",
                     schema)));
             assertEquals("YES", nullable("solutions", "published_at"));
