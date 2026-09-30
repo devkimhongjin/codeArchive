@@ -48,9 +48,26 @@ public class SolutionService {
             return solutionRepository.saveAndFlush(solution);
         }
 
+        if (capture.historicalSubmissionId() != null) {
+            Optional<Solution> sameSubmission = solutionRepository.findByUserIdAndPlatformAndHistoricalSubmissionId(
+                    user.getId(), capture.platform(), capture.historicalSubmissionId());
+            if (sameSubmission.isPresent()) {
+                Solution solution = sameSubmission.get();
+                if (!solution.isHistoricalImport()
+                        || !solution.getProblemNumber().equals(capture.problemNumber())
+                        || !solution.getLanguageKey().equals(capture.languageKey())
+                        || !solution.getSourceCode().equals(capture.sourceCode())) {
+                    throw new CaptureValidationException("historicalSubmissionId already exists with different solution data");
+                }
+                return solution;
+            }
+        }
+
         Solution solution = new Solution(user, capture.captureId(), capture.platform(), capture.problemNumber(),
                 capture.title(), capture.problemUrl(), capture.language(), capture.languageKey(), capture.sourceCode(), capture.result(),
                 capture.observedAt(), capture.solvedAt(), capture.executionTime(), capture.memoryUsage());
+        solution.setHistoricalImport(capture.historicalImport());
+        solution.setHistoricalSubmissionId(capture.historicalSubmissionId());
         solution.setMemoryMeasurement(capture.memoryValue(), capture.memoryUnit());
         return solutionRepository.saveAndFlush(solution);
     }
@@ -60,6 +77,13 @@ public class SolutionService {
         AppUser user = userRepository.findByGithubId(githubId)
                 .orElseThrow(() -> new CaptureValidationException("Authenticated user no longer exists"));
         return solutionRepository.findByUserIdOrderBySolvedAtDesc(user.getId());
+    }
+
+    @Transactional(readOnly = true)
+    public List<String> historicalSubmissionIdsForUser(String githubId, Platform platform) {
+        AppUser user = userRepository.findByGithubId(githubId)
+                .orElseThrow(() -> new CaptureValidationException("Authenticated user no longer exists"));
+        return solutionRepository.findHistoricalSubmissionIds(user.getId(), platform);
     }
 
     private NormalizedCapture normalize(CapturePayload payload) {
@@ -108,9 +132,16 @@ public class SolutionService {
         validateMetric(payload.getMemoryUsage(), "memoryUsage");
         validateMetric(payload.getMemoryValue(), "memoryValue");
         String memoryUnit = normalizeMemoryUnit(payload.getMemoryUnit(), payload.getMemoryValue());
+        String historicalSubmissionId = payload.getHistoricalSubmissionId();
+        if (historicalSubmissionId != null &&
+                (!Boolean.TRUE.equals(payload.getHistoricalImport()) || platform != Platform.JUNGOL ||
+                 !historicalSubmissionId.matches("[0-9]{1,40}"))) {
+            throw new CaptureValidationException("historicalSubmissionId requires a Jungol historical import");
+        }
 
         return new NormalizedCapture(captureId, platform, problemNumber, title, problemUrl, language, languageKey, sourceCode,
-                result, observedAt, solvedAt, payload.getExecutionTime(), payload.getMemoryUsage(), payload.getMemoryValue(), memoryUnit);
+                result, observedAt, solvedAt, payload.getExecutionTime(), payload.getMemoryUsage(), payload.getMemoryValue(), memoryUnit,
+                Boolean.TRUE.equals(payload.getHistoricalImport()), historicalSubmissionId);
     }
 
     private String required(String value, String field, int maxLength) {
@@ -194,12 +225,15 @@ public class SolutionService {
                 && solution.getSourceCode().equals(capture.sourceCode())
                 && solution.getResult().equals(capture.result())
                 && solution.getObservedAt().equals(capture.observedAt())
-                && solution.getSolvedAt().equals(capture.solvedAt());
+                && solution.getSolvedAt().equals(capture.solvedAt())
+                && solution.isHistoricalImport() == capture.historicalImport()
+                && java.util.Objects.equals(solution.getHistoricalSubmissionId(), capture.historicalSubmissionId());
     }
 
     private record NormalizedCapture(String captureId, Platform platform, String problemNumber, String title,
                                      String problemUrl, String language, String languageKey, String sourceCode, String result,
                                      Instant observedAt, Instant solvedAt, BigDecimal executionTime,
-                                     BigDecimal memoryUsage, BigDecimal memoryValue, String memoryUnit) {
+                                     BigDecimal memoryUsage, BigDecimal memoryValue, String memoryUnit,
+                                     boolean historicalImport, String historicalSubmissionId) {
     }
 }

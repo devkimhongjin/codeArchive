@@ -5,6 +5,7 @@ import com.codearchive.api.settings.UserSettings;
 import com.codearchive.api.settings.UserSettingsRepository;
 import com.codearchive.api.solution.Solution;
 import com.codearchive.api.solution.SolutionRepository;
+import com.codearchive.api.solution.CaptureValidationException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -95,6 +96,34 @@ public class GithubAutomationService {
         return result;
     }
 
+    @Transactional
+    public Map<String, CommitJobState> requestManualHistorical(List<Solution> selected, long settingsVersion,
+            long installationId, String owner, String repository, String branch) {
+        if (selected.isEmpty()) throw new CaptureValidationException("No historical submissions selected");
+        AppUser user = selected.get(0).getUser();
+        UserSettings current = settings.findByUserId(user.getId()).orElse(null);
+        if (current == null || !current.githubTargetConfigured() || current.getVersion() != settingsVersion ||
+                !java.util.Objects.equals(current.getGithubInstallationId(), installationId) ||
+                !java.util.Objects.equals(current.getGithubOwner(), owner) ||
+                !java.util.Objects.equals(current.getGithubRepository(), repository) ||
+                !java.util.Objects.equals(current.getGithubBranch(), branch))
+            throw new CaptureValidationException("GitHub target or settings changed");
+        Map<String, CommitJobState> result = new LinkedHashMap<>();
+        for (Solution solution : selected) {
+            if (!user.getId().equals(solution.getUser().getId()) || !solution.isHistoricalImport() ||
+                    solution.getHistoricalSubmissionId() == null)
+                throw new CaptureValidationException("Only synced historical submissions can be committed");
+            GithubCommitJob job = jobs.findByUserIdAndCaptureId(user.getId(), solution.getCaptureId())
+                    .orElseGet(() -> jobs.saveAndFlush(new GithubCommitJob(user, solution.getCaptureId(),
+                            settingsVersion, CommitJobOrigin.HISTORICAL_MANUAL)));
+            if (job.getOrigin() != CommitJobOrigin.HISTORICAL_MANUAL)
+                throw new CaptureValidationException("Capture already has another GitHub job");
+            result.put(solution.getHistoricalSubmissionId(), job.getState());
+            if (job.getState() == CommitJobState.PENDING) scheduleDeliveryAfterCommit(job.getId());
+        }
+        return result;
+    }
+
     public ProcessResult process(Long id) {
         Claim claim = inTransaction(() -> claim(id));
         if (claim == null) {
@@ -166,25 +195,30 @@ public class GithubAutomationService {
         }
         job.start();
         jobs.saveAndFlush(job);
-        return new Claim(current, solution);
+        return new Claim(current, solution, job.getOrigin());
     }
 
     private boolean eligible(UserSettings current, Solution solution) {
-        return current != null && current.isAutoSyncEnabled() && current.isGithubAutoCommitEnabled()
+        return current != null && !solution.isHistoricalImport()
+                && current.isAutoSyncEnabled() && current.isGithubAutoCommitEnabled()
                 && current.githubTargetConfigured() && current.getAutomationEnabledAt() != null
                 && !solution.getObservedAt().isBefore(current.getAutomationEnabledAt());
     }
 
     private boolean eligibleForJob(UserSettings current, Solution solution, GithubCommitJob job) {
-        return current != null && solution != null && current.isAutoSyncEnabled()
-                && current.isGithubAutoCommitEnabled() && current.githubTargetConfigured()
-                && current.getVersion() == job.getSettingsGeneration();
+        if (current == null || solution == null || !current.githubTargetConfigured() ||
+                current.getVersion() != job.getSettingsGeneration()) return false;
+        if (job.getOrigin() == CommitJobOrigin.HISTORICAL_MANUAL)
+            return solution.isHistoricalImport() && solution.getHistoricalSubmissionId() != null;
+        return !solution.isHistoricalImport() && current.isAutoSyncEnabled() && current.isGithubAutoCommitEnabled();
     }
 
     private boolean finalWriteAuthorized(Claim claim) {
         UserSettings current = settings.findByUserId(claim.settings().getUser().getId()).orElse(null);
-        return current != null && current.getVersion() == claim.settings().getVersion()
-                && current.isAutoSyncEnabled() && current.isGithubAutoCommitEnabled() && current.githubTargetConfigured();
+        if (current == null || current.getVersion() != claim.settings().getVersion() || !current.githubTargetConfigured()) return false;
+        return claim.origin() == CommitJobOrigin.HISTORICAL_MANUAL
+                ? claim.solution().isHistoricalImport() && claim.solution().getHistoricalSubmissionId() != null
+                : !claim.solution().isHistoricalImport() && current.isAutoSyncEnabled() && current.isGithubAutoCommitEnabled();
     }
 
     private void scheduleDeliveryAfterCommit(Long jobId) {
@@ -214,7 +248,7 @@ public class GithubAutomationService {
         return transactions == null ? work.get() : transactions.execute(status -> work.get());
     }
 
-    private record Claim(UserSettings settings, Solution solution) { }
+    private record Claim(UserSettings settings, Solution solution, CommitJobOrigin origin) { }
 
     public enum ProcessResult { COMPLETED, RETRYABLE, IGNORED }
 }

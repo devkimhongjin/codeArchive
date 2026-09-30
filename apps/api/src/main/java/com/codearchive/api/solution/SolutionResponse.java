@@ -20,6 +20,8 @@ public class SolutionResponse {
     private final BigDecimal memoryUsage;
     private final BigDecimal memoryValue;
     private final String memoryUnit;
+    private final boolean historicalImport;
+    private final String historicalSubmissionId;
     private final String visibility;
     private final Instant publishedAt;
 
@@ -40,6 +42,8 @@ public class SolutionResponse {
         this.memoryUsage = solution.getMemoryUsage();
         this.memoryValue = solution.getMemoryValue();
         this.memoryUnit = solution.getMemoryUnit();
+        this.historicalImport = solution.isHistoricalImport();
+        this.historicalSubmissionId = solution.getHistoricalSubmissionId();
         this.visibility = solution.isPublished() ? "published" : "private";
         this.publishedAt = solution.getPublishedAt();
     }
@@ -64,6 +68,8 @@ public class SolutionResponse {
     public BigDecimal getMemoryUsage() { return memoryUsage; }
     public BigDecimal getMemoryValue() { return memoryValue; }
     public String getMemoryUnit() { return memoryUnit; }
+    public boolean isHistoricalImport() { return historicalImport; }
+    public String getHistoricalSubmissionId() { return historicalSubmissionId; }
     public String getVisibility() { return visibility; }
     public Instant getPublishedAt() { return publishedAt; }
 }

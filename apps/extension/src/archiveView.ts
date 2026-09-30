@@ -96,7 +96,7 @@ function renderDetail(document: Document, capture: Capture, group: CaptureGroup,
     element(document, "h2", "detail-title", capture.title),
     element(document, "div", "detail-subline", `${canonicalLanguageDisplayName(capture.language)} · 풀이 시간 ${formatSolutionTime(capture.solvedAt ?? capture.observedAt)}`));
   const actions = element(document, "div", "detail-heading-actions");
-  actions.append(element(document, "span", `sync-label ${capture.syncState.toLowerCase()}`, capture.syncState === "SYNCED" ? "대시보드 동기화됨" : "동기화 대기"));
+  actions.append(element(document, "span", `sync-label ${capture.syncState.toLowerCase()}`, capture.historicalImport === true ? capture.syncState === "SYNCED" ? "과거 풀이 · 서버 동기화됨" : "과거 풀이 · 로컬만" : capture.syncState === "SYNCED" ? "대시보드 동기화됨" : "동기화 대기"));
   if (safeProblemUrl(capture.problemUrl)) {
     const link = element(document, "a", "problem-link", "문제 보기 ↗");
     link.href = capture.problemUrl;

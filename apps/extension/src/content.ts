@@ -3,6 +3,9 @@ import { collectAcceptedCaptureAttempt } from "./capture";
 import type { Capture, PlatformAdapter } from "./types";
 import { canonicalLanguageKey } from "../../../shared/language";
 import { BUILD_METADATA } from "../../../shared/buildMetadata";
+import { importVisibleJungolHistory, isJungolHistoryPath, loadJungolHistoryPreview, previewJungolHistory } from "./historicalJungol";
+import { loadSweaHistoryPreview } from "./historicalSwea";
+import { previewProgrammersHistory } from "./historicalProgrammers";
 import {
   createSweaProblemContext,
   normalizeSweaDetailUrl,
@@ -317,6 +320,9 @@ export async function bootstrapContent(
   referrer: string,
   send: SendRuntimeMessage = (message) => chrome.runtime.sendMessage(message)
 ): Promise<void> {
+  if (location.origin === SWEA_ORIGIN && location.pathname === SWEA_USER_SUBMISSIONS_PATH) {
+    return;
+  }
   const detailContext = createSweaProblemContext(document, location);
   if (detailContext) {
     await storeSweaProblemContext(document, location, send, detailContext.observedAt);
@@ -337,5 +343,41 @@ export async function bootstrapContent(
 }
 
 if (typeof document !== "undefined" && typeof window !== "undefined") {
+  chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+    const object = message !== null && typeof message === "object" ? message as Record<string, unknown> : null;
+    if (object?.type === "HISTORY_PREVIEW") {
+      if (window.location.origin === "https://jungol.co.kr" && isJungolHistoryPath(window.location.pathname)) {
+        void loadJungolHistoryPreview(document, window.location).then(sendResponse);
+        return true;
+      } else if (window.location.origin === SWEA_ORIGIN && window.location.pathname === SWEA_USER_SUBMISSIONS_PATH) {
+        void loadSweaHistoryPreview(document, window.location).then(sendResponse);
+        return true;
+      } else if (window.location.origin === "https://school.programmers.co.kr" && window.location.pathname === "/learn/challenges") {
+        sendResponse(previewProgrammersHistory(document, window.location));
+      } else sendResponse({ status: "TAB_NOT_FOUND" });
+      return false;
+    }
+    if (object?.type === "HISTORY_IMPORT") {
+      const ids = object.submissionIds;
+      if (window.location.origin !== "https://jungol.co.kr" || !isJungolHistoryPath(window.location.pathname) ||
+          !Array.isArray(ids) || ids.length < 1 || ids.length > 10 ||
+          ids.some(id => typeof id !== "string" || !/^\d{1,40}$/.test(id)) || new Set(ids).size !== ids.length) {
+        sendResponse({ status: "BAD_REQUEST" });
+        return false;
+      }
+      const preview = previewJungolHistory(document, window.location);
+      const selected = preview.status === "READY" ? ids.map(id => preview.candidates.find(candidate => candidate.submissionId === id)) : [];
+      if (selected.length !== ids.length || selected.some(candidate => !candidate)) {
+        sendResponse({ status: "STALE_PREVIEW" });
+        return false;
+      }
+      void importVisibleJungolHistory(document, window.location, selected as NonNullable<typeof selected[number]>[],
+        capture => chrome.runtime.sendMessage({ type: "STORE_HISTORICAL_CAPTURE", capture }))
+        .then(result => sendResponse({ status: "DONE", ...result }))
+        .catch(() => sendResponse({ status: "FAILED" }));
+      return true;
+    }
+    return false;
+  });
   void bootstrapContent(document, window.location, document.referrer);
 }

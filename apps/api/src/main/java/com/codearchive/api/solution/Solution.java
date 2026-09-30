@@ -75,6 +75,13 @@ public class Solution {
     @Column(name = "memory_unit", length = 10)
     private String memoryUnit;
 
+    /** Durable origin guard: historical rows must never create GitHub commit jobs. */
+    @Column(name = "historical_import", nullable = false)
+    private boolean historicalImport;
+
+    @Column(name = "historical_submission_id", length = 40)
+    private String historicalSubmissionId;
+
     /** Null is the default and means private, including every pre-community row. */
     @Column(name = "published_at")
     private Instant publishedAt;
@@ -178,6 +185,10 @@ public class Solution {
     public BigDecimal getMemoryValue() { return memoryValue; }
     public String getMemoryUnit() { return memoryUnit; }
     public void setMemoryMeasurement(BigDecimal value, String unit) { this.memoryValue = value; this.memoryUnit = unit == null || unit.isBlank() ? "UNKNOWN" : unit; }
+    public boolean isHistoricalImport() { return historicalImport; }
+    public void setHistoricalImport(boolean historicalImport) { this.historicalImport = historicalImport; }
+    public String getHistoricalSubmissionId() { return historicalSubmissionId; }
+    public void setHistoricalSubmissionId(String historicalSubmissionId) { this.historicalSubmissionId = historicalSubmissionId; }
     public Instant getPublishedAt() { return publishedAt; }
     public boolean isPublished() { return publishedAt != null; }
     public void setPublished(boolean published, Instant now) {

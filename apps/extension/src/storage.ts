@@ -1,4 +1,4 @@
-import { DEFAULT_CAPTURE_SETTINGS, type Capture, type CaptureSettings, type SyncState } from "./types";
+import { DEFAULT_CAPTURE_SETTINGS, type Capture, type CaptureSettings, type Platform, type SyncState } from "./types";
 import type { SweaProblemContext } from "./sweaProblemContext";
 import { canonicalLanguageKey } from "../../../shared/language";
 import { LIGHT_THEMES, DARK_THEMES } from "../../../shared/codeThemes";
@@ -16,6 +16,11 @@ export interface CaptureStore {
   putCapture(capture: Capture): Promise<{ created: boolean }>;
   /** Returns retained captures, newest first. A limit is useful for small UI previews. */
   listAll(limit?: number): Promise<Capture[]>;
+  /** Historical imports are kept separate from the normal recent-capture preview. */
+  listHistorical(limit?: number): Promise<{ captures: Capture[]; totalCount: number }>;
+  listHistoricalSubmissionIds(platform: Platform): Promise<string[]>;
+  listHistoricalBySubmissionIds(platform: Platform, submissionIds: string[]): Promise<Capture[]>;
+  historicalSummary(): Promise<Record<Platform, CaptureSummary>>;
   getCapture(captureId: string): Promise<Capture | null>;
   listPending(excludedCaptureIds?: Iterable<string>, limit?: number): Promise<Capture[]>;
   countPending(): Promise<number>;
@@ -28,6 +33,43 @@ export interface CaptureStore {
   mutateRelayIfCurrent(relay: NonNullable<CaptureSettings["relay"]>, mutator: (current: CaptureSettings) => CaptureSettings): Promise<{ settings: CaptureSettings; applied: boolean }>;
   putSweaProblemContext(context: SweaProblemContext): Promise<void>;
   getSweaProblemContext(problemUrl: string): Promise<SweaProblemContext | null>;
+}
+
+export interface CaptureSummary {
+  saved: number;
+  problems: number;
+  previouslySaved: number;
+  historicalSaved: number;
+  synced: number;
+  syncedProblems: number;
+}
+
+function summarizeCaptures(captures: Iterable<Capture>): Record<Platform, CaptureSummary> {
+  const summary = {} as Record<Platform, CaptureSummary>;
+  const problems = new Map<Platform, Set<string>>();
+  const syncedProblems = new Map<Platform, Set<string>>();
+  for (const platform of ["JUNGOL", "SWEA", "PROGRAMMERS"] as const) {
+    summary[platform] = { saved: 0, problems: 0, previouslySaved: 0, historicalSaved: 0, synced: 0, syncedProblems: 0 };
+    problems.set(platform, new Set());
+    syncedProblems.set(platform, new Set());
+  }
+  for (const capture of captures) {
+    const row = summary[capture.platform];
+    if (!row) continue;
+    row.saved += 1;
+    problems.get(capture.platform)!.add(capture.problemNumber);
+    if (capture.historicalImport === true) row.historicalSaved += 1;
+    else row.previouslySaved += 1;
+    if (capture.syncState === "SYNCED") {
+      row.synced += 1;
+      syncedProblems.get(capture.platform)!.add(capture.problemNumber);
+    }
+  }
+  for (const platform of ["JUNGOL", "SWEA", "PROGRAMMERS"] as const) {
+    summary[platform].problems = problems.get(platform)!.size;
+    summary[platform].syncedProblems = syncedProblems.get(platform)!.size;
+  }
+  return summary;
 }
 
 interface StoredCapture extends Capture {
@@ -45,10 +87,20 @@ function sortNewestFirst(left: Capture, right: Capture): number {
 }
 
 function hasSameSubmittedCode(left: Capture, right: Capture): boolean {
+  // A historical submission has its own site identity. The "all submissions"
+  // choice must retain two accepted attempts even when they contain the same code.
+  if ((left.historicalImport === true && left.historicalSubmissionId) ||
+      (right.historicalImport === true && right.historicalSubmissionId)) return false;
   return left.platform === right.platform &&
     left.problemNumber === right.problemNumber &&
     canonicalLanguageKey(left.language) === canonicalLanguageKey(right.language) &&
     left.sourceCode === right.sourceCode;
+}
+
+function hasSameHistoricalSubmission(left: Capture, right: Capture): boolean {
+  return right.historicalSubmissionId !== undefined &&
+    left.platform === right.platform &&
+    left.historicalSubmissionId === right.historicalSubmissionId;
 }
 
 function settingsWithDefaults(value: Partial<CaptureSettings> | undefined): CaptureSettings {
@@ -125,7 +177,8 @@ export class IndexedDbCaptureStore implements CaptureStore {
     // labels, so scan retained local records to prevent Java/JAVA aliases from
     // bypassing identical-code suppression.
     const retained = await requestResult(store.getAll());
-    if ((retained as StoredCapture[]).some(stored => hasSameSubmittedCode(stored, capture))) {
+    if ((retained as StoredCapture[]).some(stored =>
+      hasSameHistoricalSubmission(stored, capture) || hasSameSubmittedCode(stored, capture))) {
       transaction.abort();
       return { created: false };
     }
@@ -143,6 +196,38 @@ export class IndexedDbCaptureStore implements CaptureStore {
     return limited.map((capture) => structuredClone(capture));
   }
 
+  async listHistorical(limit = 50): Promise<{ captures: Capture[]; totalCount: number }> {
+    const database = await this.open();
+    const transaction = database.transaction(CAPTURE_STORE_NAME, "readonly");
+    const values = (await requestResult(transaction.objectStore(CAPTURE_STORE_NAME).getAll())) as StoredCapture[];
+    const historical = values.filter(capture => capture.historicalImport === true).sort(sortNewestFirst);
+    return { captures: historical.slice(0, clampLimit(limit)).map(capture => structuredClone(capture)), totalCount: historical.length };
+  }
+
+  async listHistoricalSubmissionIds(platform: Platform): Promise<string[]> {
+    const database = await this.open();
+    const transaction = database.transaction(CAPTURE_STORE_NAME, "readonly");
+    const values = (await requestResult(transaction.objectStore(CAPTURE_STORE_NAME).getAll())) as StoredCapture[];
+    return [...new Set(values.filter(capture => capture.platform === platform && capture.historicalSubmissionId)
+      .map(capture => capture.historicalSubmissionId!))];
+  }
+
+  async listHistoricalBySubmissionIds(platform: Platform, submissionIds: string[]): Promise<Capture[]> {
+    const database = await this.open();
+    const transaction = database.transaction(CAPTURE_STORE_NAME, "readonly");
+    const values = (await requestResult(transaction.objectStore(CAPTURE_STORE_NAME).getAll())) as StoredCapture[];
+    const selected = new Set(submissionIds);
+    return values.filter(capture => capture.platform === platform && capture.historicalImport === true &&
+      capture.historicalSubmissionId && selected.has(capture.historicalSubmissionId)).map(capture => structuredClone(capture));
+  }
+
+  async historicalSummary(): Promise<Record<Platform, CaptureSummary>> {
+    const database = await this.open();
+    const transaction = database.transaction(CAPTURE_STORE_NAME, "readonly");
+    const values = (await requestResult(transaction.objectStore(CAPTURE_STORE_NAME).getAll())) as StoredCapture[];
+    return summarizeCaptures(values);
+  }
+
   async getCapture(captureId: string): Promise<Capture | null> {
     const database = await this.open(); const transaction = database.transaction(CAPTURE_STORE_NAME, "readonly");
     const capture = await requestResult(transaction.objectStore(CAPTURE_STORE_NAME).get(captureId));
@@ -157,7 +242,7 @@ export class IndexedDbCaptureStore implements CaptureStore {
     const values = await requestResult(index.getAll(IDBKeyRange.only("PENDING")));
     const excluded = new Set(excludedCaptureIds);
     return (values as StoredCapture[])
-      .filter((capture) => !excluded.has(capture.captureId))
+      .filter((capture) => !excluded.has(capture.captureId) && capture.historicalImport !== true)
       .sort((left, right) => left.observedAt.localeCompare(right.observedAt))
       .slice(0, clampLimit(limit));
   }
@@ -165,7 +250,8 @@ export class IndexedDbCaptureStore implements CaptureStore {
   async countPending(): Promise<number> {
     const database = await this.open();
     const transaction = database.transaction(CAPTURE_STORE_NAME, "readonly");
-    return requestResult(transaction.objectStore(CAPTURE_STORE_NAME).index("bySyncState").count(IDBKeyRange.only("PENDING")));
+    const values = await requestResult(transaction.objectStore(CAPTURE_STORE_NAME).index("bySyncState").getAll(IDBKeyRange.only("PENDING")));
+    return (values as StoredCapture[]).filter(capture => capture.historicalImport !== true).length;
   }
 
   async markSynced(captureIds: Iterable<string>): Promise<string[]> {
@@ -292,7 +378,8 @@ export class MemoryCaptureStore implements CaptureStore {
 
   async putCapture(capture: Capture): Promise<{ created: boolean }> {
     if (this.captures.has(capture.captureId)) return { created: false };
-    if ([...this.captures.values()].some(stored => hasSameSubmittedCode(stored, capture))) return { created: false };
+    if ([...this.captures.values()].some(stored =>
+      hasSameHistoricalSubmission(stored, capture) || hasSameSubmittedCode(stored, capture))) return { created: false };
     this.captures.set(capture.captureId, structuredClone(capture));
     return { created: true };
   }
@@ -303,19 +390,40 @@ export class MemoryCaptureStore implements CaptureStore {
     return limited.map((capture) => structuredClone(capture));
   }
 
+  async listHistorical(limit = 50): Promise<{ captures: Capture[]; totalCount: number }> {
+    const historical = [...this.captures.values()].filter(capture => capture.historicalImport === true).sort(sortNewestFirst);
+    return { captures: historical.slice(0, clampLimit(limit)).map(capture => structuredClone(capture)), totalCount: historical.length };
+  }
+
+  async listHistoricalSubmissionIds(platform: Platform): Promise<string[]> {
+    return [...new Set([...this.captures.values()]
+      .filter(capture => capture.platform === platform && capture.historicalSubmissionId)
+      .map(capture => capture.historicalSubmissionId!))];
+  }
+
+  async listHistoricalBySubmissionIds(platform: Platform, submissionIds: string[]): Promise<Capture[]> {
+    const selected = new Set(submissionIds);
+    return [...this.captures.values()].filter(capture => capture.platform === platform && capture.historicalImport === true &&
+      capture.historicalSubmissionId && selected.has(capture.historicalSubmissionId)).map(capture => structuredClone(capture));
+  }
+
+  async historicalSummary(): Promise<Record<Platform, CaptureSummary>> {
+    return summarizeCaptures(this.captures.values());
+  }
+
   async getCapture(captureId: string): Promise<Capture | null> { const capture = this.captures.get(captureId); return capture ? structuredClone(capture) : null; }
 
   async listPending(excludedCaptureIds: Iterable<string> = [], limit = 50): Promise<Capture[]> {
     const excluded = new Set(excludedCaptureIds);
     return [...this.captures.values()]
-      .filter((capture) => capture.syncState === "PENDING" && !excluded.has(capture.captureId))
+      .filter((capture) => capture.syncState === "PENDING" && capture.historicalImport !== true && !excluded.has(capture.captureId))
       .sort((left, right) => left.observedAt.localeCompare(right.observedAt))
       .slice(0, clampLimit(limit))
       .map((capture) => structuredClone(capture));
   }
 
   async countPending(): Promise<number> {
-    return [...this.captures.values()].filter((capture) => capture.syncState === "PENDING").length;
+    return [...this.captures.values()].filter((capture) => capture.syncState === "PENDING" && capture.historicalImport !== true).length;
   }
 
   async markSynced(captureIds: Iterable<string>): Promise<string[]> {

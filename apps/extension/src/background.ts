@@ -12,13 +12,40 @@ import {
 import { SWEA_ORIGIN, SWEA_SOLVING_PATH } from "./adapters/sweaSelectors";
 import { activeSubmissionProgress, SUBMISSION_PROGRESS_KEY, updateSubmissionProgress } from "./submissionProgress";
 import type { Platform } from "./types";
+import { isJungolHistoryPath, isJungolHistorySenderUrl } from "./historicalJungol";
 
 const store = new IndexedDbCaptureStore();
 const bridge = new DashboardBridge(store, {
   // A refreshed dashboard grant should flush captures that were retained while
   // the old relay was offline or expired instead of waiting for the next alarm.
-  onRelayConfigured: requestRelayDrain
+  onRelayConfigured: requestRelayDrain,
+  onHistoryPreview: platform => requestHistoryTab(platform, { type: "HISTORY_PREVIEW" }),
+  onHistoryImport: requestHistoryImport
 });
+
+let historyImportInFlight = false;
+async function requestHistoryImport(submissionIds: string[]): Promise<unknown> {
+  if (historyImportInFlight) return { status: "BUSY" };
+  historyImportInFlight = true;
+  try { return await requestHistoryTab("JUNGOL", { type: "HISTORY_IMPORT", submissionIds }); }
+  finally { historyImportInFlight = false; }
+}
+
+async function requestHistoryTab(platform: "SWEA" | "JUNGOL" | "PROGRAMMERS", message: object): Promise<unknown> {
+  const path = platform === "SWEA" ? "/main/userpage/code/userSubmitProblem.do" :
+    platform === "PROGRAMMERS" ? "/learn/challenges" : "/submission";
+  const origin = platform === "SWEA" ? "https://swexpertacademy.com" :
+    platform === "PROGRAMMERS" ? "https://school.programmers.co.kr" : "https://jungol.co.kr";
+  const tabs = await chrome.tabs.query({ url: `${origin}/*` });
+  const matches = tabs.filter(tab => {
+    if (!Number.isSafeInteger(tab.id) || !tab.url) return false;
+    try { const url = new URL(tab.url); return url.origin === origin &&
+      (platform === "JUNGOL" ? isJungolHistoryPath(url.pathname) : url.pathname === path); }
+    catch { return false; }
+  });
+  if (matches.length !== 1) return { status: matches.length === 0 ? "TAB_NOT_FOUND" : "MULTIPLE_TABS" };
+  return chrome.tabs.sendMessage(matches[0]!.id!, message, { frameId: 0 });
+}
 
 async function finishSelfRevocation(settings: Awaited<ReturnType<typeof store.getSettings>>): Promise<void> {
   const relay = settings.relay;
@@ -90,6 +117,7 @@ requestRelayDrain();
 
 type InternalMessage =
   | { type: "STORE_CAPTURE"; capture: unknown }
+  | { type: "STORE_HISTORICAL_CAPTURE"; capture: unknown }
   | { type: "SET_SUBMISSION_PROGRESS"; attemptId: unknown; platform?: unknown; problemNumber?: unknown; title?: unknown; phase: unknown }
   | { type: "GET_POPUP_STATE" }
   | { type: "RETRY_RELAY" }
@@ -157,11 +185,27 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 
   if (object.type === "STORE_CAPTURE") {
     const capture = object.capture;
-    if (!isCaptureRecord(capture)) {
+    if (!isCaptureRecord(capture) || capture.historicalImport === true) {
       sendResponse({ ok: false, error: "INVALID_CAPTURE" });
       return false;
     }
     void storeCaptureLocalFirst(store, capture, () => requestPostCaptureWork(capture))
+      .then(({ created }) => sendResponse({ ok: true, created }))
+      .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
+    return true;
+  }
+
+  if (object.type === "STORE_HISTORICAL_CAPTURE") {
+    const capture = object.capture;
+    const url = senderUrl(sender);
+    if (!isCaptureRecord(capture) || capture.historicalImport !== true || capture.platform !== "JUNGOL" ||
+        !url || !isJungolHistorySenderUrl(url) ||
+        !Number.isSafeInteger(sender.tab?.id) || sender.frameId !== 0) {
+      sendResponse({ ok: false, error: "INVALID_HISTORICAL_CAPTURE" });
+      return false;
+    }
+    // Historical imports remain local until a separate, explicit upload action.
+    void store.putCapture(capture)
       .then(({ created }) => sendResponse({ ok: true, created }))
       .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;

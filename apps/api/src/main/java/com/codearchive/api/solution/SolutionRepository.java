@@ -10,6 +10,10 @@ import org.springframework.data.repository.query.Param;
 
 public interface SolutionRepository extends JpaRepository<Solution, Long> {
     Optional<Solution> findByUserIdAndCaptureId(Long userId, String captureId);
+    Optional<Solution> findByUserIdAndPlatformAndHistoricalSubmissionId(Long userId, Platform platform, String historicalSubmissionId);
+
+    @Query("select s.historicalSubmissionId from Solution s where s.user.id = :userId and s.platform = :platform and s.historicalSubmissionId is not null")
+    List<String> findHistoricalSubmissionIds(@Param("userId") Long userId, @Param("platform") Platform platform);
 
     List<Solution> findByUserIdOrderBySolvedAtDesc(Long userId);
 

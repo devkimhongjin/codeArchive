@@ -301,3 +301,35 @@ h1, h2, p { margin-top: 0; }
 .header-fields-picker pre { max-height: 180px; overflow: auto; margin: 0; padding: 10px; border: 1px solid var(--line); border-radius: 5px; background: #fff; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
 @media (max-width: 700px) { .github-repository-browser { padding: 13px; } .github-browser-layout { grid-template-columns: 1fr; } .github-browser-list { max-height: 270px; border-right: 0; border-bottom: 1px solid var(--line); } }
 @media (max-width: 700px) { .github-browser-edit-preview > div { grid-template-columns: 1fr; } }
+.historical-import { max-width: 960px; margin: 0 auto; padding: 24px; background: #fff; border: 1px solid var(--line); border-radius: 10px; }
+.historical-import-heading h1 { margin: 5px 0 8px; font-size: 27px; }
+.historical-import-heading p:last-child, .historical-import-note { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.historical-import-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 22px 0 12px; }
+.historical-import-controls label { display: grid; gap: 5px; font-size: 12px; }
+.historical-import-controls select, .historical-import-controls button, .historical-import-action { min-height: 36px; padding: 7px 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: #fff; color: #514866; }
+.historical-import-controls a { padding: 9px 2px; color: #5945a5; font-size: 12px; }
+.historical-import-controls button, .historical-import-action { background: #685ca9; color: #fff; cursor: pointer; }
+.historical-import-controls button:disabled, .historical-import-action:disabled { opacity: .5; cursor: not-allowed; }
+.historical-import-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; }
+.historical-import-actions p { flex-basis: 100%; margin: 0; color: var(--muted); font-size: 12px; }
+.historical-import-status { padding: 11px 13px; border-radius: 6px; background: #f3f0ff; color: #51457c; font-size: 12px; }
+.historical-import-progress { position: relative; display: grid; gap: 6px; margin: 10px 0 16px; color: #51457c; font-size: 12px; }
+.historical-import-progress progress { width: 100%; height: 10px; overflow: hidden; border: 0; border-radius: 999px; background: #e8e3f7; accent-color: #685ca9; }
+.historical-import-progress progress::-webkit-progress-bar { border-radius: 999px; background: #e8e3f7; }
+.historical-import-progress progress::-webkit-progress-value { border-radius: 999px; background: #685ca9; }
+.historical-import-progress progress::-moz-progress-bar { border-radius: 999px; background: #685ca9; }
+.historical-import-progress.is-active::after { position: absolute; top: 0; left: 0; width: 28%; height: 10px; border-radius: 999px; background: linear-gradient(90deg, transparent, #ffffff99, transparent); content: ''; animation: historical-import-scan 1.4s ease-in-out infinite; pointer-events: none; }
+@keyframes historical-import-scan { from { transform: translateX(0); } to { transform: translateX(260%); } }
+@media (prefers-reduced-motion: reduce) { .historical-import-progress.is-active::after { animation: none; } }
+.historical-import-list { display: grid; max-height: 440px; overflow: auto; margin: 16px 0; border: 1px solid var(--line); border-radius: 7px; }
+.historical-import-list label { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 13px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.historical-import-list label:last-child { border-bottom: 0; }
+.historical-import-list small { margin-left: auto; color: var(--muted); }
+.historical-import-list p { padding: 10px 13px; color: var(--muted); font-size: 11px; }
+.historical-import-saved { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); }
+.historical-import-saved h2 { margin: 0 0 10px; font-size: 16px; }
+.historical-import-saved h2 span { color: #685ca9; }
+.historical-import-saved p { color: var(--muted); font-size: 12px; }
+.historical-import-saved ul { display: grid; gap: 7px; max-height: 320px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.historical-import-saved li { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+.historical-import-saved li span { color: var(--muted); font-size: 11px; }

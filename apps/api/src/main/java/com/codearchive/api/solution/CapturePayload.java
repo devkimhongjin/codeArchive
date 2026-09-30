@@ -20,6 +20,9 @@ public class CapturePayload {
     /** The value is deliberately separate from its unit: old captures are ambiguous. */
     private BigDecimal memoryValue;
     private String memoryUnit;
+    /** True only for explicitly confirmed historical imports; live captures default to false. */
+    private Boolean historicalImport;
+    private String historicalSubmissionId;
 
     public String getCaptureId() { return captureId; }
     public void setCaptureId(String captureId) { this.captureId = captureId; }
@@ -51,4 +54,8 @@ public class CapturePayload {
     public void setMemoryValue(BigDecimal memoryValue) { this.memoryValue = memoryValue; }
     public String getMemoryUnit() { return memoryUnit; }
     public void setMemoryUnit(String memoryUnit) { this.memoryUnit = memoryUnit; }
+    public Boolean getHistoricalImport() { return historicalImport; }
+    public void setHistoricalImport(Boolean historicalImport) { this.historicalImport = historicalImport; }
+    public String getHistoricalSubmissionId() { return historicalSubmissionId; }
+    public void setHistoricalSubmissionId(String historicalSubmissionId) { this.historicalSubmissionId = historicalSubmissionId; }
 }
