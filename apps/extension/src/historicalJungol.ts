@@ -5,7 +5,9 @@ import { CAPTURE_RESULT, type Capture } from "./types";
 const JUNGOL_ORIGIN = "https://jungol.co.kr";
 const MAX_IMPORT_BATCH = 10;
 const ACCOUNT_HISTORY_PATH = /^\/account\/(\d{1,40})\/submission$/;
-const observedPagination = new WeakMap<Document, { url: string; clicks: number; minRows: number }>();
+type ObservedScan = { url: string; clicks: number; minRows: number; knownSubmissionIds: Set<string>;
+  pendingPageIds?: Set<string>; pendingGroups: Map<string, { beforeChildren: Set<string>; additional: number }> };
+const observedPagination = new WeakMap<Document, ObservedScan>();
 
 export function isJungolHistoryPath(pathname: string): boolean {
   return pathname === "/submission" || ACCOUNT_HISTORY_PATH.test(pathname);
@@ -96,10 +98,39 @@ function rowGroupId(row: HTMLTableRowElement, location: Location): string {
   return /^\d{1,40}$/.test(displayed) ? displayed : rowSubmissionIdentity(row, location)?.submissionId ?? "";
 }
 
+function pageSubmissionIds(document: Document, location: Location): Set<string> {
+  return new Set([...document.querySelectorAll<HTMLTableRowElement>('table tr:not(.gr)')]
+    .map(row => rowSubmissionIdentity(row, location)?.submissionId).filter((id): id is string => !!id));
+}
+
+function allSubmissionIds(document: Document, location: Location): Set<string> {
+  return new Set([...document.querySelectorAll<HTMLTableRowElement>('table tr')]
+    .map(row => rowSubmissionIdentity(row, location)?.submissionId).filter((id): id is string => !!id));
+}
+
+function groupChildIds(document: Document, location: Location, groupId: string): Set<string> {
+  const parent = [...document.querySelectorAll<HTMLTableRowElement>('table tr')]
+    .find(row => rowGroupId(row, location) === groupId && !!row.querySelector('button.sl-group-toggle'));
+  const ids = new Set<string>();
+  for (let row = parent?.nextElementSibling; row?.matches('tr.gr') && !row.querySelector('button.sl-group-toggle'); row = row.nextElementSibling) {
+    const id = rowSubmissionIdentity(row as HTMLTableRowElement, location)?.submissionId;
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
 export type JungolHistoryPreview =
   | { status: "LOGIN_REQUIRED" | "ACCESS_DENIED" | "OWNERSHIP_UNVERIFIED"; candidates: []; skipped: 0 }
   | { status: "READY"; candidates: JungolHistoryCandidate[]; skipped: number; truncated: boolean;
       scanProtocol?: number; paginationClicks?: number; remainingGroups?: number };
+
+export type JungolHistoryScanProgress = {
+  phase: "pages" | "groups";
+  rows: number;
+  pagesLoaded: number;
+  groupsExpanded: number;
+  groupsTotal: number;
+};
 
 /** A listing is only a candidate source. It never supplies source code or an exact submission time. */
 export function previewJungolHistory(document: Document, location: Location): JungolHistoryPreview {
@@ -156,23 +187,64 @@ export function previewJungolHistory(document: Document, location: Location): Ju
 }
 
 /** Expand the site's grouped submissions before previewing; each accepted submission keeps its own ID. */
-export async function loadJungolHistoryPreview(document: Document, location: Location): Promise<JungolHistoryPreview> {
+export async function loadJungolHistoryPreview(document: Document, location: Location,
+  onProgress: (progress: JungolHistoryScanProgress) => void = () => undefined,
+  maxIdlePageChecks = 12, stepWaitMs = 8_000,
+  isCurrent: () => boolean = () => true): Promise<JungolHistoryPreview> {
   const initial = previewJungolHistory(document, location);
   if (initial.status !== "READY") return initial;
+  const cancelled = (): JungolHistoryPreview => ({ status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 });
+  if (!isCurrent()) return cancelled();
   const startingUrl = location.href;
-  const deadline = Date.now() + 120_000;
   const moreButton = () => [...document.querySelectorAll<HTMLButtonElement>("button")]
     .find(button => button.textContent?.trim() === "더 불러오기");
   const attempted = new Set<string>();
   let incomplete = false;
+  let unresolvedPage = false;
   let sawMoreButton = false;
   let finishedPageWithoutMore = false;
   let lastRowCount = document.querySelectorAll('table tr').length;
+  let idlePageChecks = 0;
+  let groupsExpanded = 0;
+  let groupsTotal = 0;
   const priorPagination = observedPagination.get(document);
-  let paginationClicks = priorPagination?.url === startingUrl && lastRowCount >= priorPagination.minRows
-    ? priorPagination.clicks : 0;
-  for (let count = 0; count < 1_000; count++) {
-    if (Date.now() >= deadline) { incomplete = true; break; }
+  const currentIds = allSubmissionIds(document, location);
+  const sameListing = priorPagination?.url === startingUrl && lastRowCount >= priorPagination.minRows &&
+    [...priorPagination.knownSubmissionIds].every(id => currentIds.has(id));
+  const observed: ObservedScan = sameListing
+    ? priorPagination : { url: startingUrl, clicks: 0, minRows: lastRowCount,
+      knownSubmissionIds: currentIds, pendingGroups: new Map() };
+  observedPagination.set(document, observed);
+  let paginationClicks = observed.clicks;
+  const report = (phase: JungolHistoryScanProgress["phase"]) => onProgress({ phase,
+    rows: document.querySelectorAll('table tr').length, pagesLoaded: paginationClicks,
+    groupsExpanded, groupsTotal });
+  report("pages");
+  const pageLoaded = () => {
+    const previous = observed.pendingPageIds;
+    if (!previous?.size || moreButton()?.disabled) return null;
+    const current = allSubmissionIds(document, location);
+    if (![...previous].every(id => current.has(id))) return null;
+    return [...pageSubmissionIds(document, location)].some(id => !previous.has(id)) ? true : null;
+  };
+  if (observed.pendingPageIds) {
+    let loaded: true | null = null;
+    for (let wait = 0; wait < 4 && !loaded; wait++) loaded = await waitFor(document, pageLoaded, stepWaitMs);
+    if (!isCurrent()) return cancelled();
+    if (loaded && location.href === startingUrl) {
+      observed.pendingPageIds = undefined;
+      observed.clicks += 1;
+      paginationClicks = observed.clicks;
+      observed.minRows = document.querySelectorAll("table tr").length;
+      observed.knownSubmissionIds = allSubmissionIds(document, location);
+      lastRowCount = observed.minRows;
+      sawMoreButton = true;
+      finishedPageWithoutMore = !moreButton();
+      report("pages");
+    } else { incomplete = true; unresolvedPage = true; }
+  }
+  for (let count = 0; count < 1_000 && !incomplete; count++) {
+    if (!isCurrent()) return cancelled();
     const more = moreButton();
     if (!more) {
       // The first page and its pagination control are rendered asynchronously.
@@ -180,10 +252,13 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
       const changed = await waitFor(document, () => {
         const rowCount = document.querySelectorAll('table tr').length;
         return moreButton() || rowCount !== lastRowCount ? true : null;
-      }, Math.min(!sawMoreButton || lastRowCount <= 1 ? 8_000 : 3_000, Math.max(1, deadline - Date.now())));
+      }, stepWaitMs);
+      if (!isCurrent()) return cancelled();
       if (location.href !== startingUrl) { incomplete = true; break; }
       if (changed) {
+        idlePageChecks = 0;
         lastRowCount = document.querySelectorAll('table tr').length;
+        report("pages");
         continue;
       }
       // Neither a footer/version nor fewer than 30 represented submissions
@@ -192,31 +267,66 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
       // control's disappearance is terminal only after this scan has clicked
       // it and observed the following page grow.
       if ((!sawMoreButton && paginationClicks === 0) ||
-          (sawMoreButton && !finishedPageWithoutMore) || lastRowCount <= 1) incomplete = true;
+          (sawMoreButton && !finishedPageWithoutMore) || lastRowCount <= 1) {
+        if (++idlePageChecks < maxIdlePageChecks) continue;
+        incomplete = true;
+      } else if (++idlePageChecks < Math.min(maxIdlePageChecks, 4)) {
+        // After a loaded page the next cursor can mount later than the rows.
+        // Require several quiet windows before treating its absence as final.
+        continue;
+      }
       break;
     }
     sawMoreButton = true;
     if (more.disabled) {
       const ready = await waitFor(document, () => moreButton() && !moreButton()?.disabled ? true : null,
-        Math.min(8_000, Math.max(1, deadline - Date.now())));
-      if (!ready) { incomplete = true; break; }
+        stepWaitMs);
+      if (!isCurrent()) return cancelled();
+      if (!ready) { if (++idlePageChecks < maxIdlePageChecks) continue; incomplete = true; break; }
+      idlePageChecks = 0;
       continue;
     }
-    const rowCount = document.querySelectorAll("table tr").length;
+    observed.pendingPageIds = pageSubmissionIds(document, location);
+    if (!isCurrent()) return cancelled();
     more.click();
-    const loaded = await waitFor(document, () =>
-      document.querySelectorAll("table tr").length > rowCount && !moreButton()?.disabled ? true : null,
-      Math.min(8_000, Math.max(1, deadline - Date.now())));
-    if (!loaded || location.href !== startingUrl) { incomplete = true; break; }
+    let loaded: true | null = null;
+    for (let wait = 0; wait < 4 && !loaded; wait++) loaded = await waitFor(document, pageLoaded, stepWaitMs);
+    if (!isCurrent()) return cancelled();
+    if (!loaded || location.href !== startingUrl) { incomplete = true; unresolvedPage = true; break; }
+    observed.pendingPageIds = undefined;
+    idlePageChecks = 0;
     paginationClicks += 1;
     lastRowCount = document.querySelectorAll('table tr').length;
-    observedPagination.set(document, { url: startingUrl, clicks: paginationClicks, minRows: lastRowCount });
+    observed.clicks = paginationClicks;
+    observed.minRows = lastRowCount;
+    observed.knownSubmissionIds = allSubmissionIds(document, location);
     finishedPageWithoutMore = !moreButton();
+    report("pages");
   }
   if (moreButton()) incomplete = true;
+  groupsTotal = document.querySelectorAll('button.sl-group-toggle[aria-expanded="false"]').length;
+  report("groups");
+  let unresolvedGroup = false;
+  for (const [id, pending] of observed.pendingGroups) {
+    if (!isCurrent()) return cancelled();
+    const expandedNow = () => {
+      const row = [...document.querySelectorAll<HTMLTableRowElement>("table tr")]
+        .find(item => rowGroupId(item, location) === id);
+      return row?.querySelector<HTMLButtonElement>("button.sl-group-toggle")?.getAttribute("aria-expanded") === "true" &&
+        [...groupChildIds(document, location, id)].filter(childId => !pending.beforeChildren.has(childId)).length >= pending.additional ? true : null;
+    };
+    let expanded: true | null = null;
+    for (let wait = 0; wait < 4 && !expanded; wait++) expanded = await waitFor(document, expandedNow, stepWaitMs);
+    if (!isCurrent()) return cancelled();
+    if (!expanded || location.href !== startingUrl) { incomplete = true; unresolvedGroup = true; break; }
+    observed.pendingGroups.delete(id);
+    attempted.add(id);
+    groupsExpanded += 1;
+    report("groups");
+  }
   let waitedForLateRows = false;
-  for (let count = 0; count < 3_000; count++) {
-    if (Date.now() >= deadline) { incomplete = true; break; }
+  for (let count = 0; count < 3_000 && !unresolvedGroup && !unresolvedPage; count++) {
+    if (!isCurrent()) return cancelled();
     const toggle = [...document.querySelectorAll<HTMLButtonElement>('button.sl-group-toggle[aria-expanded="false"]')]
       .find(button => !attempted.has(rowGroupId(button.closest("tr") as HTMLTableRowElement, location)));
     if (!toggle) {
@@ -226,7 +336,8 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
       const late = await waitFor(document, () =>
         document.querySelector('button.sl-group-toggle[aria-expanded="false"]') ||
         moreButton() || document.querySelectorAll('table tr').length !== rowCount ? true : null,
-        Math.min(5_000, Math.max(1, deadline - Date.now())));
+        Math.min(stepWaitMs, 5_000));
+      if (!isCurrent()) return cancelled();
       if (location.href !== startingUrl) { incomplete = true; break; }
       if (late) {
         if (moreButton()) incomplete = true;
@@ -241,20 +352,31 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
       incomplete = true;
       break;
     }
-    attempted.add(id);
-    const rowCount = document.querySelectorAll("table tr").length;
+    observed.pendingGroups.set(id, { beforeChildren: groupChildIds(document, location, id), additional });
+    if (!isCurrent()) return cancelled();
     toggle.click();
-    const expanded = await waitFor(document, () => {
+    const expandedNow = () => {
       const row = [...document.querySelectorAll<HTMLTableRowElement>("table tr")]
         .find(item => rowGroupId(item, location) === id);
       return row?.querySelector<HTMLButtonElement>("button.sl-group-toggle")?.getAttribute("aria-expanded") === "true" &&
-        document.querySelectorAll("table tr").length >= rowCount + additional ? true : null;
-    }, Math.min(8_000, Math.max(1, deadline - Date.now())));
+        groupChildIds(document, location, id).size >= additional ? true : null;
+    };
+    let expanded: true | null = null;
+    for (let wait = 0; wait < 4 && !expanded; wait++) expanded = await waitFor(document, expandedNow, stepWaitMs);
+    if (!isCurrent()) return cancelled();
     if (location.href !== startingUrl) { incomplete = true; break; }
-    if (!expanded) incomplete = true;
+    if (!expanded) { incomplete = true; break; }
+    observed.pendingGroups.delete(id);
+    attempted.add(id);
+    groupsExpanded += 1;
+    report("groups");
     waitedForLateRows = false;
   }
+  if (!isCurrent()) return cancelled();
   if (location.href !== startingUrl) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
+  const finalIds = allSubmissionIds(document, location);
+  if (document.querySelectorAll('table tr').length < observed.minRows ||
+      [...observed.knownSubmissionIds].some(id => !finalIds.has(id))) incomplete = true;
   const result = previewJungolHistory(document, location);
   return result.status === "READY"
     ? { ...result, truncated: result.truncated || incomplete || paginationClicks === 0,

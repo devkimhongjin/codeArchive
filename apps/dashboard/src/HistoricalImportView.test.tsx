@@ -25,13 +25,13 @@ afterEach(() => {
 it('keeps selection and local-only import in the dashboard, with no site-injected controls', async () => {
   const imported = vi.fn()
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) =>
-    message.type === 'HISTORY_PREVIEW'
+    message.type === 'HISTORY_SCAN_START'
       ? Promise.resolve({ history: { status: 'READY', candidates: [{ submissionId: '12345', problemNumber: '1520', title: '계단 오르기', language: 'Java', executionTime: 25, memoryValue: 33 }], skipped: 0, truncated: false, scanProtocol: 3, paginationClicks: 1 } })
       : Promise.resolve(message.type === 'ACK' ? { ok: true } : { history: { status: 'DONE', saved: 1, duplicate: 0, skipped: 0 } }))
   render(<HistoricalImportView extensionId="extension-id" capability="capability" user={{ id: 1, githubId: '123', githubLogin: 'test' }} mode="live" onImported={imported} />)
   fireEvent.click(screen.getByRole('button', { name: '열린 탭에서 후보 확인' }))
   expect(await screen.findByText(/#1520 · 계단 오르기/)).toBeTruthy()
-  expect(mocks.bridge.mock.calls.find(([, message]) => message.type === 'HISTORY_PREVIEW')?.[2]).toEqual({ timeoutMs: 150_000 })
+  expect(mocks.bridge.mock.calls.find(([, message]) => message.type === 'HISTORY_SCAN_START')).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: '선택한 1건 동기화' }))
   await waitFor(() => expect(imported).toHaveBeenCalledOnce())
   expect(screen.getByRole('status').textContent).toContain('GitHub 커밋은 실행되지 않았습니다')
@@ -48,6 +48,27 @@ it('requires dashboard login before scanning the site or reading server duplicat
   expect(mocks.serverIds).not.toHaveBeenCalled()
 })
 
+it('shows scan progress without exposing a short partial list, then presents the complete result', async () => {
+  const candidates = Array.from({ length: 14 }, (_, index) => ({ submissionId: String(index + 1),
+    problemNumber: String(index + 1), title: `문제 ${index + 1}` }))
+  let statusCalls = 0
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => Promise.resolve(
+    message.type === 'HISTORY_SCAN_START'
+      ? { history: { status: 'SCANNING', progress: { phase: 'pages', rows: 13, pagesLoaded: 0, groupsExpanded: 0, groupsTotal: 0 } } }
+      : message.type === 'HISTORY_SCAN_STATUS' && ++statusCalls === 1
+        ? { history: { status: 'SCANNING', progress: { phase: 'groups', rows: 26, pagesLoaded: 1, groupsExpanded: 1, groupsTotal: 2 } } }
+        : { history: { status: 'READY', candidates, truncated: false, scanProtocol: 3, paginationClicks: 1 } }))
+  render(<HistoricalImportView extensionId="extension-id" capability="capability"
+    user={{ id: 1, githubId: '123', githubLogin: 'test' }} mode="live" onImported={() => undefined} />)
+  fireEvent.click(screen.getByRole('button', { name: '열린 탭에서 후보 확인' }))
+  const bar = await screen.findByRole('progressbar', { name: '정올 후보 탐색 진행률' })
+  expect(bar).toBeTruthy()
+  expect(screen.queryByText('#1 · 문제 1')).toBeNull()
+  expect(await screen.findByText(/접힌 제출 펼치는 중 · 1\/2그룹/, {}, { timeout: 3000 })).toBeTruthy()
+  expect(await screen.findByText(/가져올 정답 제출 후보 14건/, {}, { timeout: 3000 })).toBeTruthy()
+  expect(screen.getByRole('button', { name: '선택한 14건 동기화' })).toBeTruthy()
+})
+
 it('does not expose an import action when the authenticated server duplicate check fails', async () => {
   mocks.serverIds.mockRejectedValueOnce(new Error('server unavailable'))
   mocks.bridge.mockResolvedValue({ history: { status: 'READY', candidates: [{ submissionId: '12345', problemNumber: '1520', title: '계단 오르기' }], truncated: false, scanProtocol: 3, paginationClicks: 1 } })
@@ -62,7 +83,7 @@ it('sends a locally verified historical capture to the server and acknowledges o
     problemNumber: '1520', title: '계단 오르기', problemUrl: 'https://jungol.co.kr/problem/1520', language: 'Java', sourceCode: 'class Main {}', result: 'ACCEPTED' }
   mocks.archive.mockResolvedValueOnce({ captures: [capture], localOnly: true })
   mocks.upload.mockResolvedValueOnce({ acceptedCaptureIds: ['capture-1'], failures: [] })
-  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => Promise.resolve(message.type === 'HISTORY_PREVIEW'
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => Promise.resolve(message.type === 'HISTORY_SCAN_START'
     ? { history: { status: 'READY', candidates: [{ submissionId: '12345', problemNumber: '1520', title: '계단 오르기' }], truncated: false, scanProtocol: 3, paginationClicks: 1 } }
     : message.type === 'ACK' ? { ok: true } : { history: { status: 'DONE', saved: 1, duplicate: 0, skipped: 0 } }))
   render(<HistoricalImportView extensionId="extension-id" capability="capability" user={{ id: 1, githubId: '123', githubLogin: 'test' }} mode="live" onImported={() => undefined} />)
@@ -74,6 +95,24 @@ it('sends a locally verified historical capture to the server and acknowledges o
   expect(mocks.bridge.mock.calls.find(([, message]) => message.type === 'ACK')?.[1]).toEqual({ type: 'ACK', capability: 'capability', captureIds: ['capture-1'] })
 })
 
+it('retries a temporarily skipped submission before counting it as excluded', async () => {
+  let importCalls = 0
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => Promise.resolve(
+    message.type === 'HISTORY_SCAN_START'
+      ? { history: { status: 'READY', candidates: [{ submissionId: '12345', problemNumber: '1520', title: '계단 오르기' }], truncated: false, scanProtocol: 3, paginationClicks: 1 } }
+      : message.type === 'HISTORY_IMPORT'
+        ? { history: ++importCalls === 1 ? { status: 'DONE', saved: 0, duplicate: 0, skipped: 1 } : { status: 'DONE', saved: 1, duplicate: 0, skipped: 0 } }
+        : message.type === 'ACK' ? { ok: true } : { localOnly: true }))
+  render(<HistoricalImportView extensionId="extension-id" capability="capability"
+    user={{ id: 1, githubId: '123', githubLogin: 'test' }} mode="live" onImported={() => undefined} />)
+  fireEvent.click(screen.getByRole('button', { name: '열린 탭에서 후보 확인' }))
+  fireEvent.click(await screen.findByRole('button', { name: '선택한 1건 동기화' }))
+  expect(await screen.findByText(/1번째 제출을 다시 확인 중입니다/, {}, { timeout: 3000 })).toBeTruthy()
+  expect(await screen.findByText(/로컬 신규 1건 · 서버 동기화 1건 · 중복 0건 · 제외 0건/, {}, { timeout: 3000 })).toBeTruthy()
+  expect(importCalls).toBe(2)
+  expect(mocks.upload).toHaveBeenCalledOnce()
+})
+
 it('offers an explicit GitHub commit after sync only for a confirmed target', async () => {
   const target = { version: 4, githubTargetConfigured: true, githubInstallationId: 77,
     githubOwner: 'owner', githubRepository: 'archive', githubBranch: 'develop' }
@@ -83,7 +122,7 @@ it('offers an explicit GitHub commit after sync only for a confirmed target', as
   mocks.archive.mockResolvedValueOnce({ captures: [capture], localOnly: true })
   mocks.upload.mockResolvedValueOnce({ acceptedCaptureIds: ['capture-2'], failures: [] })
   mocks.commits.mockResolvedValueOnce({ '12345': 'PENDING' })
-  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => Promise.resolve(message.type === 'HISTORY_PREVIEW'
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => Promise.resolve(message.type === 'HISTORY_SCAN_START'
     ? { history: { status: 'READY', candidates: [{ submissionId: '12345', problemNumber: '1520', title: '계단 오르기' }], truncated: false, scanProtocol: 3, paginationClicks: 1 } }
     : message.type === 'ACK' ? { ok: true } : { history: { status: 'DONE', saved: 1, duplicate: 0, skipped: 0 } }))
   render(<HistoricalImportView extensionId="extension-id" capability="capability" user={{ id: 1, githubId: '123', githubLogin: 'test' }} mode="live" onImported={() => undefined} />)
@@ -108,7 +147,7 @@ it('recovers a server-saved submission after its local ACK fails', async () => {
     return Promise.resolve({ acceptedCaptureIds: captures.map(capture => capture.captureId), failures: [] })
   })
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => {
-    if (message.type === 'HISTORY_PREVIEW') return Promise.resolve({ history: { status: 'READY',
+    if (message.type === 'HISTORY_SCAN_START') return Promise.resolve({ history: { status: 'READY',
       candidates: [{ submissionId: '12345', problemNumber: '1520', title: '계단 오르기' }],
       truncated: false, scanProtocol: 3, paginationClicks: 1 } })
     if (message.type === 'HISTORY_IMPORT') { locallySaved = true; return Promise.resolve({ history: { status: 'DONE', saved: 1, duplicate: 0, skipped: 0 } }) }
@@ -146,7 +185,7 @@ it('can request GitHub commits later for submissions already synced to the serve
   })
   mocks.commits.mockRejectedValueOnce(new Error('network failure')).mockResolvedValue({ '12345': 'PENDING' })
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => {
-    if (message.type === 'HISTORY_PREVIEW') return Promise.resolve({ history: { status: 'READY',
+    if (message.type === 'HISTORY_SCAN_START') return Promise.resolve({ history: { status: 'READY',
       candidates: [{ submissionId: '12345', problemNumber: '1520', title: '계단 오르기' }],
       truncated: false, scanProtocol: 3, paginationClicks: 1 } })
     if (message.type === 'HISTORY_IMPORT') { locallySaved = true; return Promise.resolve({ history: { status: 'DONE', saved: 1, duplicate: 0, skipped: 0 } }) }
@@ -173,7 +212,7 @@ it('continues a sequential import after the extension capability expires', async
   mocks.connect.mockResolvedValueOnce({ capability: 'first-run', features: ['history-v1'] })
     .mockResolvedValueOnce({ capability: 'renewed-run', features: ['history-v1'] })
   mocks.bridge.mockImplementation((_id: string, message: { type: string; capability?: string; submissionIds?: string[] }) => {
-    if (message.type === 'HISTORY_PREVIEW') return Promise.resolve({ history: { status: 'READY',
+    if (message.type === 'HISTORY_SCAN_START') return Promise.resolve({ history: { status: 'READY',
       candidates: [{ submissionId: '1', problemNumber: '1', title: '첫 문제' },
         { submissionId: '2', problemNumber: '2', title: '둘째 문제' }],
       truncated: false, scanProtocol: 3, paginationClicks: 1 } })
@@ -199,7 +238,7 @@ it('reissues accepted capture IDs on a fresh capability before retrying ACK', as
   mocks.connect.mockResolvedValueOnce({ capability: 'first-run', features: ['history-v1'] })
     .mockResolvedValueOnce({ capability: 'renewed-run', features: ['history-v1'] })
   mocks.bridge.mockImplementation((_id: string, message: { type: string; capability?: string }) => {
-    if (message.type === 'HISTORY_PREVIEW') return Promise.resolve({ history: { status: 'READY',
+    if (message.type === 'HISTORY_SCAN_START') return Promise.resolve({ history: { status: 'READY',
       candidates: [{ submissionId: '12345', problemNumber: '1520', title: '계단 오르기' }],
       truncated: false, scanProtocol: 3, paginationClicks: 1 } })
     if (message.type === 'HISTORY_IMPORT') return Promise.resolve({ history: { status: 'DONE', saved: 1, duplicate: 0, skipped: 0 } })
@@ -238,7 +277,7 @@ it('removes already saved Jungol submission IDs before applying the selected pro
     { submissionId: '103', problemNumber: '1520', title: '계단 오르기' },
     { submissionId: '102', problemNumber: '1073', title: '삼각형둘레' },
   ]
-  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => Promise.resolve(message.type === 'HISTORY_PREVIEW'
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => Promise.resolve(message.type === 'HISTORY_SCAN_START'
     ? { history: { status: 'READY', candidates, skipped: 113, truncated: false, scanProtocol: 3, paginationClicks: 1 } }
     : { history: { status: 'DONE', saved: 1, duplicate: 0, skipped: 0 } }))
   render(<HistoricalImportView extensionId="extension-id" capability="capability" user={{ id: 1, githubId: '123', githubLogin: 'test' }} mode="live" onImported={() => undefined} />)
@@ -254,7 +293,7 @@ it('removes already saved Jungol submission IDs before applying the selected pro
 it('selects all submissions and imports them one at a time without a ten-item archive cap', async () => {
   const candidates = Array.from({ length: 12 }, (_, index) => ({ submissionId: String(index + 1), problemNumber: String(index + 1), title: `문제 ${index + 1}` }))
   mocks.bridge.mockImplementation((_id: string, message: { type: string; submissionIds?: string[] }) =>
-    Promise.resolve(message.type === 'HISTORY_PREVIEW'
+    Promise.resolve(message.type === 'HISTORY_SCAN_START'
       ? { history: { status: 'READY', candidates, skipped: 0, truncated: false, scanProtocol: 3, paginationClicks: 1 } }
       : message.type === 'ACK' ? { ok: true } : { history: { status: 'DONE', saved: message.submissionIds?.length ?? 0, duplicate: 0, skipped: 0 } }))
   render(<HistoricalImportView extensionId="extension-id" capability="capability" user={{ id: 1, githubId: '123', githubLogin: 'test' }} mode="live" onImported={() => undefined} />)
@@ -281,7 +320,7 @@ it('selects one accepted submission per problem using newest list order or the b
   expect(selectHistoricalSubmissionIds(candidates, 'latest')).toEqual(['104', '101'])
   expect(selectHistoricalSubmissionIds(candidates, 'fastest')).toEqual(['103', '101'])
   expect(selectHistoricalSubmissionIds(candidates, 'lowest-memory')).toEqual(['102', '101'])
-  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => Promise.resolve(message.type === 'HISTORY_PREVIEW'
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => Promise.resolve(message.type === 'HISTORY_SCAN_START'
     ? { history: { status: 'READY', candidates, skipped: 0, truncated: false, scanProtocol: 3, paginationClicks: 1 } }
     : { localOnly: true, totalCount: 0, captures: [] }))
   render(<HistoricalImportView extensionId="extension-id" capability="capability" user={{ id: 1, githubId: '123', githubLogin: 'test' }} mode="live" onImported={() => undefined} />)
@@ -312,15 +351,15 @@ it('warns about an incomplete Jungol scan even if no accepted candidate was foun
   mocks.bridge.mockResolvedValue({ history: { status: 'READY', candidates: [], skipped: 0, truncated: true, scanProtocol: 3, paginationClicks: 0 } })
   render(<HistoricalImportView extensionId="extension-id" capability="capability" user={{ id: 1, githubId: '123', githubLogin: 'test' }} mode="live" onImported={() => undefined} />)
   fireEvent.click(screen.getByRole('button', { name: '열린 탭에서 후보 확인' }))
-  expect(await screen.findByText(/제출 목록이 아직 로딩 중이거나 일부 그룹을 확인하지 못했습니다/)).toBeTruthy()
+  expect(await screen.findByText(/정올 목록 탐색이 끝나지 않았습니다/)).toBeTruthy()
 })
 
 it('does not offer a partial Jungol preview as an import-ready full scan', async () => {
   mocks.bridge.mockResolvedValue({ history: { status: 'READY', candidates: [{ submissionId: '12345', problemNumber: '1520', title: '계단 오르기' }], skipped: 3, truncated: true, scanProtocol: 3, paginationClicks: 0, remainingGroups: 3 } })
   render(<HistoricalImportView extensionId="extension-id" capability="capability" user={{ id: 1, githubId: '123', githubLogin: 'test' }} mode="live" onImported={() => undefined} />)
   fireEvent.click(screen.getByRole('button', { name: '열린 탭에서 후보 확인' }))
-  expect(await screen.findByText(/목록 탐색이 끝나지 않아 가져올 수 없습니다/)).toBeTruthy()
-  expect(screen.getByText(/접힌 그룹 3개가 남았습니다/)).toBeTruthy()
+  expect(await screen.findByText(/정올 목록 탐색이 끝나지 않았습니다/)).toBeTruthy()
+  expect(screen.queryByText('#1520 · 계단 오르기')).toBeNull()
   expect(screen.queryByRole('button', { name: '선택한 1건 동기화' })).toBeNull()
 })
 
@@ -341,7 +380,7 @@ it('refreshes local history after a later submission fails because part may alre
   const candidates = Array.from({ length: 11 }, (_, index) => ({ submissionId: String(index + 1), problemNumber: String(index + 1), title: `문제 ${index + 1}` }))
   let calls = 0
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => {
-    if (message.type === 'HISTORY_PREVIEW') return Promise.resolve({ history: { status: 'READY', candidates, skipped: 0, truncated: false, scanProtocol: 3, paginationClicks: 1 } })
+    if (message.type === 'HISTORY_SCAN_START') return Promise.resolve({ history: { status: 'READY', candidates, skipped: 0, truncated: false, scanProtocol: 3, paginationClicks: 1 } })
     if (message.type === 'HISTORY_IMPORT') return Promise.resolve({ history: ++calls <= 10
       ? { status: 'DONE', saved: 1, duplicate: 0, skipped: 0 } : { status: 'FAILED' } })
     return Promise.resolve({ localOnly: true, totalCount: 10, captures: [] })

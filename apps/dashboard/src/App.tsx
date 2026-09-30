@@ -277,6 +277,7 @@ export default function App() {
   const [bridgeCapability, setBridgeCapability] = useState<string | null>(null)
   const [extensionVersion, setExtensionVersion] = useState<string | null>(null)
   const [historySupported, setHistorySupported] = useState(false)
+  const [historyActivity, setHistoryActivity] = useState<string | null>(null)
   const [pendingCount, setPendingCount] = useState<number | null>(null)
   const [pendingCountState, setPendingCountState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [lastSyncState, setLastSyncState] = useState<'idle' | 'success' | 'partial' | 'failed'>('idle')
@@ -1238,7 +1239,7 @@ export default function App() {
               전체 풀이 <span className="nav-count">{solutions.length}</span>
             </button>
             <button className={view === 'history' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('history')}>
-              과거 풀이 가져오기
+              과거 풀이 가져오기 {historyActivity && <span className="nav-count" aria-live="polite">{historyActivity}</span>}
             </button>
             <button className={view === 'community' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('community')}>
               커뮤니티
@@ -1333,7 +1334,7 @@ export default function App() {
             onCodeThemeChange={(theme) => chooseCodeTheme(theme, true)}
           />
         )}
-        {view === 'history' && <HistoricalImportView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} user={user} mode={mode} onImported={() => {
+        <div hidden={view !== 'history'}><HistoricalImportView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} user={user} mode={mode} onActivityChange={setHistoryActivity} onImported={() => {
           if (modeRef.current === 'live' && userRef.current) {
             void refreshSolutions(accountGeneration.current, userRef.current.githubId).catch(() => undefined)
             return
@@ -1350,7 +1351,7 @@ export default function App() {
               const local = response.captures.map(normalizeSolution)
               setSolutions(local)
             }).catch(() => undefined)
-        }} />}
+        }} /></div>
         {view === 'community' && <CommunityView
           user={user}
           mode={mode}

@@ -6,7 +6,8 @@ import type { AccountSettings, Capture, User } from './types'
 type Platform = 'JUNGOL' | 'SWEA' | 'PROGRAMMERS'
 type Candidate = { submissionId?: string; problemNumber: string; title: string; language?: string; executionTime?: number; memoryValue?: number; solvedAt?: string }
 type SelectionMode = 'all' | 'latest' | 'fastest' | 'lowest-memory'
-type Preview = { status: string; candidates?: Candidate[]; skipped?: number; truncated?: boolean; scanProtocol?: number; paginationClicks?: number; remainingGroups?: number }
+type Preview = { status: string; candidates?: Candidate[]; skipped?: number; truncated?: boolean; scanProtocol?: number; paginationClicks?: number; remainingGroups?: number; progress?: unknown }
+type ScanProgress = { phase: 'pages' | 'groups'; rows: number; pagesLoaded: number; groupsExpanded: number; groupsTotal: number; active: boolean }
 type ImportResult = { status: string; saved?: number; duplicate?: number; skipped?: number }
 type ImportProgress = { completed: number; total: number; saved: number; duplicate: number; skipped: number; active: boolean; phase: 'local' | 'sync' | 'github' }
 type CaptureSummary = { saved: number; problems: number; previouslySaved: number; historicalSaved: number; synced: number; syncedProblems: number }
@@ -25,6 +26,16 @@ function readHistory(response: unknown): Preview | null {
   const history = response.history
   if (!history || typeof history !== 'object' || !('status' in history) || typeof history.status !== 'string') return null
   return history as Preview
+}
+
+function readScanProgress(value: unknown): ScanProgress | null {
+  if (!value || typeof value !== 'object') return null
+  const progress = value as Record<string, unknown>
+  if ((progress.phase !== 'pages' && progress.phase !== 'groups') ||
+      !['rows', 'pagesLoaded', 'groupsExpanded', 'groupsTotal'].every(key =>
+        Number.isSafeInteger(progress[key]) && (progress[key] as number) >= 0)) return null
+  return { phase: progress.phase, rows: progress.rows as number, pagesLoaded: progress.pagesLoaded as number,
+    groupsExpanded: progress.groupsExpanded as number, groupsTotal: progress.groupsTotal as number, active: true }
 }
 
 export function selectHistoricalSubmissionIds(candidates: Candidate[], mode: SelectionMode): string[] {
@@ -49,13 +60,14 @@ export function selectHistoricalSubmissionIds(candidates: Candidate[], mode: Sel
   return candidates.flatMap(candidate => candidate.submissionId && selected.has(candidate.submissionId) ? [candidate.submissionId] : [])
 }
 
-export function HistoricalImportView({ extensionId, capability, supported = true, user, mode, onImported }: {
+export function HistoricalImportView({ extensionId, capability, supported = true, user, mode, onImported, onActivityChange }: {
   extensionId: string
   capability: string | null
   supported?: boolean
   user: User | null
   mode: 'local' | 'live'
   onImported: () => void
+  onActivityChange?: (label: string | null) => void
 }) {
   const [platform, setPlatform] = useState<Platform>('JUNGOL')
   const [preview, setPreview] = useState<Preview | null>(null)
@@ -68,11 +80,12 @@ export function HistoricalImportView({ extensionId, capability, supported = true
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null)
+  const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null)
   const [summary, setSummary] = useState<HistorySummary | null>(null)
   const [githubTarget, setGithubTarget] = useState<AccountSettings | null>(null)
   const [serverCount, setServerCount] = useState<number | null>(null)
   const [githubStatuses, setGithubStatuses] = useState<Record<string, string> | null>(null)
-  const activeRun = useRef<{ extensionId: string; accountId: number; capability: string } | null>(null)
+  const activeRun = useRef<{ extensionId: string; accountId: number; githubId: string; capability: string } | null>(null)
   const currentConnection = useRef({ extensionId, capability })
   currentConnection.current = { extensionId, capability: activeRun.current?.capability ?? capability }
   const currentAccount = useRef({ id: user?.id, githubId: user?.githubId, mode })
@@ -80,20 +93,28 @@ export function HistoricalImportView({ extensionId, capability, supported = true
   const accountIsCurrent = (id: number, githubId: string) =>
     currentAccount.current.id === id && currentAccount.current.githubId === githubId && currentAccount.current.mode === 'live'
 
+  const activity = busy && importProgress?.active
+    ? `진행 ${importProgress.completed}/${importProgress.total}`
+    : busy && scanProgress?.active
+      ? scanProgress.phase === 'pages' ? `목록 ${scanProgress.rows}행` : `펼치기 ${scanProgress.groupsExpanded}/${scanProgress.groupsTotal}`
+      : null
+  useEffect(() => { onActivityChange?.(activity) }, [activity, onActivityChange])
+
   useEffect(() => {
     const running = activeRun.current
-    if (running && running.extensionId === extensionId && running.accountId === user?.id && mode === 'live') return
+    if (running && running.extensionId === extensionId && running.accountId === user?.id &&
+        running.githubId === user?.githubId && mode === 'live') return
     activeRun.current = null
     setPreview(null); setKnownServerIds([]); setKnownLocalIds([]); setSelected([]); setSelectedSaved([])
-    setMessage(''); setImportProgress(null); setGithubTarget(null); setServerCount(null); setGithubStatuses(null)
-  }, [extensionId, capability, user?.id, mode])
+    setMessage(''); setImportProgress(null); setScanProgress(null); setGithubTarget(null); setServerCount(null); setGithubStatuses(null)
+  }, [extensionId, capability, user?.id, user?.githubId, mode])
 
   const connectRun = async (accountId: number, githubId: string) => {
     const response = await requestBridge<{ capability?: string; features?: string[] }>(extensionId, { type: 'CONNECT' })
     if (!accountIsCurrent(accountId, githubId) || currentConnection.current.extensionId !== extensionId ||
         typeof response.capability !== 'string' || !response.capability ||
         !Array.isArray(response.features) || !response.features.includes('history-v1')) throw new Error('확장 연결 변경')
-    activeRun.current = { extensionId, accountId, capability: response.capability }
+    activeRun.current = { extensionId, accountId, githubId, capability: response.capability }
     currentConnection.current = { extensionId, capability: response.capability }
     return response.capability
   }
@@ -101,7 +122,8 @@ export function HistoricalImportView({ extensionId, capability, supported = true
   const runRequest = async <T extends object,>(accountId: number, githubId: string,
     message: Record<string, unknown>, timeoutMs?: number): Promise<T> => {
     const run = activeRun.current
-    if (!run || run.extensionId !== extensionId || run.accountId !== accountId || !accountIsCurrent(accountId, githubId))
+    if (!run || run.extensionId !== extensionId || run.accountId !== accountId ||
+        run.githubId !== githubId || !accountIsCurrent(accountId, githubId))
       throw new Error('로그인 계정 또는 확장 연결 변경')
     try {
       return await requestBridge<T>(extensionId, { ...message, capability: run.capability }, { timeoutMs })
@@ -116,7 +138,8 @@ export function HistoricalImportView({ extensionId, capability, supported = true
   const acknowledgeRunCaptures = async (accountId: number, githubId: string, captures: Capture[], accepted: string[]) => {
     if (accepted.length === 0) return
     const run = activeRun.current
-    if (!run || run.extensionId !== extensionId || run.accountId !== accountId || !accountIsCurrent(accountId, githubId))
+    if (!run || run.extensionId !== extensionId || run.accountId !== accountId ||
+        run.githubId !== githubId || !accountIsCurrent(accountId, githubId))
       throw new Error('계정 또는 확장 연결 변경')
     try {
       const ack = await requestBridge<{ ok?: boolean }>(extensionId,
@@ -179,14 +202,32 @@ export function HistoricalImportView({ extensionId, capability, supported = true
     setSelected([])
     setSelectedSaved([])
     setImportProgress(null)
-    setMessage(platform === 'JUNGOL' ? '이전 제출과 접힌 제출을 모두 확인 중입니다. 목록 크기에 따라 최대 2분 정도 걸릴 수 있습니다…' : '후보 목록을 확인 중입니다…')
+    setScanProgress(platform === 'JUNGOL' ? { phase: 'pages', rows: 0, pagesLoaded: 0, groupsExpanded: 0, groupsTotal: 0, active: true } : null)
+    setMessage(platform === 'JUNGOL' ? '이전 제출과 접힌 제출을 확인 중입니다…' : '후보 목록을 확인 중입니다…')
     try {
       const authenticated = await getMe()
       if (!accountIsCurrent(accountId, githubId) || authenticated.id !== accountId || authenticated.githubId !== githubId) throw new Error('로그인 계정 변경')
-      const response = await requestBridge(extensionId, { type: 'HISTORY_PREVIEW', capability, platform }, { timeoutMs: 150_000 })
-      if (currentConnection.current.extensionId !== extensionId || currentConnection.current.capability !== capability || !accountIsCurrent(accountId, githubId)) return
-      const result = readHistory(response)
+      let result: Preview | null
+      if (platform === 'JUNGOL') {
+        activeRun.current = { extensionId, accountId, githubId, capability }
+        currentConnection.current = { extensionId, capability }
+        result = readHistory(await runRequest(accountId, githubId, { type: 'HISTORY_SCAN_START', platform }))
+        while (result?.status === 'SCANNING') {
+          const progress = readScanProgress(result.progress)
+          if (!progress) throw new Error('탐색 진행 상태 오류')
+          setScanProgress(progress)
+          await new Promise(resolve => setTimeout(resolve, 700))
+          if (currentConnection.current.extensionId !== extensionId || !accountIsCurrent(accountId, githubId)) return
+          result = readHistory(await runRequest(accountId, githubId, { type: 'HISTORY_SCAN_STATUS', platform }))
+        }
+        setScanProgress(current => current ? { ...current, active: false } : null)
+      } else result = readHistory(await requestBridge(extensionId, { type: 'HISTORY_PREVIEW', capability, platform }))
+      if (currentConnection.current.extensionId !== extensionId || !accountIsCurrent(accountId, githubId)) return
       if (!result) throw new Error('후보 응답을 읽을 수 없습니다.')
+      if (result.status === 'SCAN_INCOMPLETE' || result.status === 'SCAN_FAILED' || result.status === 'SCAN_IDLE') {
+        setMessage('정올 목록 탐색을 마치지 못했습니다. 정올 제출 탭의 연결과 로그인 상태를 확인한 뒤 후보 확인을 다시 눌러 주세요.')
+        return
+      }
       if (platform === 'JUNGOL' && result.status === 'READY' &&
           (result.scanProtocol !== 3 || typeof result.truncated !== 'boolean' ||
             !Number.isSafeInteger(result.paginationClicks) || result.paginationClicks! < 0 ||
@@ -194,18 +235,22 @@ export function HistoricalImportView({ extensionId, capability, supported = true
         setMessage('정올 제출 탭에서 이전 버전의 수집 코드가 응답했습니다. Chrome 확장 프로그램을 새로고침하고 정올 제출 탭도 새로고침한 뒤 다시 확인해 주세요.')
         return
       }
+      if (platform === 'JUNGOL' && result.status === 'READY' && result.truncated) {
+        setMessage('정올 목록 탐색이 끝나지 않았습니다. 정올 제출 탭을 유지하고 후보 확인을 다시 눌러 주세요.')
+        return
+      }
       if (result.status === 'READY') {
         const candidates = Array.isArray(result.candidates) ? result.candidates : []
         let available = candidates
         if (platform === 'JUNGOL') {
           const serverIds = await getHistoricalSubmissionIds(githubId)
-          if (currentConnection.current.extensionId !== extensionId || currentConnection.current.capability !== capability || !accountIsCurrent(accountId, githubId)) return
+          if (currentConnection.current.extensionId !== extensionId || !accountIsCurrent(accountId, githubId)) return
           if (!Array.isArray(serverIds) || serverIds.some(id => typeof id !== 'string' || !/^\d{1,40}$/.test(id))) throw new Error('서버 중복 확인 실패')
           setKnownServerIds(serverIds)
           setServerCount(serverIds.length)
-          const local = await requestBridge<{ localOnly?: boolean; submissionIds?: string[] }>(extensionId,
-            { type: 'GET_HISTORICAL_SUBMISSION_IDS', capability, platform: 'JUNGOL' })
-          if (currentConnection.current.extensionId !== extensionId || currentConnection.current.capability !== capability || !accountIsCurrent(accountId, githubId)) return
+          const local = await runRequest<{ localOnly?: boolean; submissionIds?: string[] }>(accountId, githubId,
+            { type: 'GET_HISTORICAL_SUBMISSION_IDS', platform: 'JUNGOL' })
+          if (currentConnection.current.extensionId !== extensionId || !accountIsCurrent(accountId, githubId)) return
           if (local.localOnly !== true || !Array.isArray(local.submissionIds) ||
               local.submissionIds.some(id => typeof id !== 'string' || !/^\d{1,40}$/.test(id))) throw new Error('로컬 제출 확인 실패')
           setKnownLocalIds(local.submissionIds)
@@ -220,15 +265,20 @@ export function HistoricalImportView({ extensionId, capability, supported = true
         }
         setPreview(result)
         setSelected(platform === 'JUNGOL' ? selectHistoricalSubmissionIds(available, selectionMode) : [])
+        setScanProgress(null)
         setMessage(platform === 'JUNGOL'
-          ? `${result.truncated ? '현재 확인된 가져올 정답 제출 후보' : '가져올 정답 제출 후보'} ${available.length}건. ${result.truncated ? `목록 탐색이 끝나지 않아 가져올 수 없습니다.${result.remainingGroups ? ` 접힌 그룹 ${result.remainingGroups}개가 남았습니다.` : ''} 후보 확인을 다시 누르면 열린 목록에서 이어서 확인합니다.` : '목록 탐색 완료.'}`
+          ? `가져올 정답 제출 후보 ${available.length}건. 목록 탐색 완료.`
           : `해결 문제 후보 ${candidates.length}건 · 제외 ${result.skipped ?? 0}건. 이 목록은 제출별 내역이 아니므로 선택 기준은 아직 적용되지 않습니다.`)
       } else if (result.status === 'TAB_NOT_FOUND') setMessage('해당 사이트의 제출 내역 탭을 하나 열어 주세요.')
       else if (result.status === 'MULTIPLE_TABS') setMessage('같은 사이트의 제출 내역 탭이 여러 개입니다. 하나만 남겨 주세요.')
       else if (result.status === 'ACCESS_DENIED') setMessage('제출 내역 접근 권한이 없습니다. 해당 계정으로 로그인해 주세요.')
       else setMessage('로그인 상태와 본인 제출 목록인지 확인해 주세요.')
-    } catch { setMessage('로그인 상태 또는 서버 중복 기록을 확인할 수 없습니다. CodeArchive 로그인과 API 연결을 확인해 주세요.') }
-    finally { setBusy(false) }
+    } catch (error) {
+      setMessage(error instanceof Error && (error.message === 'BAD_REQUEST' || error.message === 'HISTORY_UNAVAILABLE')
+        ? '확장 프로그램과 정올 제출 탭에 이전 수집 코드가 남아 있습니다. 둘 다 새로고침한 뒤 다시 확인해 주세요.'
+        : '로그인 상태 또는 서버 중복 기록을 확인할 수 없습니다. CodeArchive 로그인과 API 연결을 확인해 주세요.')
+    }
+    finally { setScanProgress(current => current ? { ...current, active: false } : null); setBusy(false) }
   }
 
   const importSelected = async (action: 'sync' | 'github') => {
@@ -277,10 +327,18 @@ export function HistoricalImportView({ extensionId, capability, supported = true
       const verifiedSubmissionIds: string[] = []
       for (const submissionId of selected) {
         if (!accountIsCurrent(accountId, githubId)) throw new Error('로그인 계정 변경')
-        const response = await runRequest<{ history?: ImportResult }>(accountId, githubId,
-          { type: 'HISTORY_IMPORT', platform, submissionIds: [submissionId] }, 240_000)
+        let response: { history?: ImportResult } | null = null
+        for (let attempt = 0; attempt < 3; attempt++) {
+          response = await runRequest<{ history?: ImportResult }>(accountId, githubId,
+            { type: 'HISTORY_IMPORT', platform, submissionIds: [submissionId] }, 240_000)
+          if (response.history?.status !== 'DONE' || response.history.skipped !== 1 ||
+              (response.history.saved ?? 0) !== 0 || (response.history.duplicate ?? 0) !== 0 || attempt === 2) break
+          setMessage(`로컬 검증 중 ${completed}/${selected.length}건 · ${completed + 1}번째 제출을 다시 확인 중입니다…`)
+          await new Promise(resolve => setTimeout(resolve, 500))
+          if (!accountIsCurrent(accountId, githubId)) throw new Error('로그인 계정 변경')
+        }
         if (currentConnection.current.extensionId !== extensionId || !activeRun.current || !accountIsCurrent(accountId, githubId)) return
-        const result = response.history
+        const result = response?.history
         if (result?.status !== 'DONE') {
           setMessage(`가져오기 중단 · ${completed}/${selected.length}건 처리. 로컬 보관함을 확인한 뒤 다시 시도해 주세요.`)
           setImportProgress({ completed, total: selected.length, saved, duplicate, skipped, active: false, phase: 'local' })
@@ -459,7 +517,7 @@ export function HistoricalImportView({ extensionId, capability, supported = true
   return <section className="historical-import" aria-label="과거 풀이 가져오기">
     <div className="historical-import-heading"><div><p className="eyebrow">ARCHIVE / IMPORT</p><h1>과거 풀이 가져오기</h1><p>이미 제출한 풀이를 확인하고 선택해서 가져옵니다. 과거 풀이의 자동 커밋은 하지 않습니다.</p></div></div>
     <div className="historical-import-controls">
-      <label>사이트 <select aria-label="가져올 사이트" value={platform} disabled={busy} onChange={event => { setPlatform(event.target.value as Platform); setPreview(null); setSelected([]); setMessage('') }}><option value="JUNGOL">정올</option><option value="SWEA">SWEA</option><option value="PROGRAMMERS">프로그래머스</option></select></label>
+      <label>사이트 <select aria-label="가져올 사이트" value={platform} disabled={busy} onChange={event => { setPlatform(event.target.value as Platform); setPreview(null); setSelected([]); setScanProgress(null); setMessage('') }}><option value="JUNGOL">정올</option><option value="SWEA">SWEA</option><option value="PROGRAMMERS">프로그래머스</option></select></label>
       <label>동일 문제 제출 선택 <select aria-label="동일 문제 제출 선택" value={selectionMode} disabled={busy} onChange={event => {
         const mode = event.target.value as SelectionMode
         setSelectionModes(current => ({ ...current, [platform]: mode }))
@@ -474,6 +532,13 @@ export function HistoricalImportView({ extensionId, capability, supported = true
     {capability && !supported && <p role="status" className="historical-import-status">현재 설치된 확장 프로그램에는 과거 풀이 기능이 없습니다. 새 확장 프로그램을 설치한 뒤 새로고침해 주세요.</p>}
     {(!user || mode !== 'live') && <p role="status" className="historical-import-status">CodeArchive 로그인과 서버 연결을 확인한 뒤 과거 풀이를 시작할 수 있습니다.</p>}
     {message && <p role="status" className="historical-import-status">{message}</p>}
+    {scanProgress && <div className={`historical-import-progress${scanProgress.active ? ' is-active' : ''}`}>
+      <progress aria-label="정올 후보 탐색 진행률" value={scanProgress.phase === 'groups' ? scanProgress.groupsExpanded : undefined}
+        max={scanProgress.phase === 'groups' ? Math.max(1, scanProgress.groupsTotal) : undefined} />
+      <span>{scanProgress.phase === 'pages'
+        ? `제출 목록 읽는 중 · ${scanProgress.rows}행 확인 · 추가 페이지 ${scanProgress.pagesLoaded}개`
+        : `접힌 제출 펼치는 중 · ${scanProgress.groupsExpanded}/${scanProgress.groupsTotal}그룹 · ${scanProgress.rows}행 확인`}</span>
+    </div>}
     {importProgress && <div className={`historical-import-progress${importProgress.active ? ' is-active' : ''}`}>
       <progress aria-label="과거 풀이 가져오기 진행률" value={importProgress.completed} max={importProgress.total} />
       <span>{importProgress.phase === 'local' ? '로컬 검증' : importProgress.phase === 'sync' ? '서버 동기화' : 'GitHub 커밋 요청'} {importProgress.completed}/{importProgress.total}건 처리{importProgress.active && importProgress.completed < importProgress.total && importProgress.phase === 'local' ? ` · ${importProgress.completed + 1}번째 제출 확인 중` : ''}</span>
@@ -499,7 +564,6 @@ export function HistoricalImportView({ extensionId, capability, supported = true
           onClick={() => void recoverSaved('github')}>선택한 저장 제출 GitHub 커밋까지 진행</button>
       </div>}
     </div>}
-    {preview?.status === 'READY' && preview.truncated && <p className="historical-import-note">제출 목록이 아직 로딩 중이거나 일부 그룹을 확인하지 못했습니다. 정올 탭을 유지한 채 후보 확인을 다시 누르면 이어서 확인합니다.</p>}
     {platform === 'JUNGOL' && candidates.length > 0 && preview?.truncated === false && preview.scanProtocol === 3 && !!preview.paginationClicks && <div className="historical-import-actions">
       <p>선택 {selected.length}건을 검증해 로컬에 저장하고, 검증된 제출만 최대 {selected.length}건 서버에 동기화합니다. GitHub 커밋을 선택하면 최대 {selected.length}건의 작업을 요청합니다.{githubTarget?.githubTargetConfigured ? ` 대상: ${githubTarget.githubOwner}/${githubTarget.githubRepository} · ${githubTarget.githubBranch}${githubTarget.githubRootPath ? ` · ${githubTarget.githubRootPath}` : ''}` : ' GitHub 대상이 설정되지 않아 커밋 선택은 사용할 수 없습니다.'}</p>
       <button className="historical-import-action" type="button" onClick={() => void importSelected('sync')} disabled={busy || selected.length === 0 || !user || mode !== 'live'}>선택한 {selected.length}건 동기화</button>
