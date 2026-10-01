@@ -9,14 +9,21 @@ const DETAIL_PATH = "/main/code/problem/problemSubmitDetail.do";
 const ID = /^[A-Za-z0-9_-]{1,100}$/;
 type FetchHtml = (url: string, init?: RequestInit) => Promise<Response>;
 
-export interface SweaHistoryCandidate { submissionId: string; problemNumber: string; title: string; contestProbId: string; userProblem?: boolean; language: string; solvedAt: string; codeByteLength: number; executionTime?: number; memoryValue?: number; }
+type SweaSolvingClub = { solveclubId: string; probBoxId: string; problemBoxTitle: string };
+export interface SweaHistoryCandidate { submissionId: string; problemNumber: string; title: string; contestProbId: string; userProblem?: boolean; solvingClub?: SweaSolvingClub; language: string; solvedAt: string; codeByteLength: number; executionTime?: number; memoryValue?: number; }
 export type SweaScanFailureReason = "LIST_PAGE_INCOMPLETE" | "HISTORY_RESPONSE_UNAVAILABLE" | "HISTORY_PAGE_INCOMPLETE" | "SUBMISSION_ID_UNAVAILABLE" | "HISTORY_PAGE_REPEATED";
 export type SweaHistoryPreview = { status: "LOGIN_REQUIRED" | "OWNERSHIP_UNVERIFIED" | "SCAN_INCOMPLETE"; candidates: []; skipped: number; failureReason?: SweaScanFailureReason; failurePage?: number; failedProblemNumber?: string } | { status: "READY"; candidates: SweaHistoryCandidate[]; skipped: number; truncated: boolean };
 type Identity = { userId: string; nickname: string };
-type SweaProblem = { contestProbId: string; problemNumber: string; title: string; userProblem?: boolean };
-function historyPath(problem: SweaProblem): string { return problem.userProblem ? "/main/code/userProblem/userProblemSubmitHistory.do" : HISTORY_PATH; }
-function detailPath(problem: SweaProblem): string { return problem.userProblem ? "/main/code/userProblem/userProblemSubmitDetail.do" : DETAIL_PATH; }
-function problemFormId(problem: SweaProblem): string { return problem.userProblem ? "contestProbForm" : "problemForm"; }
+type SweaProblem = { contestProbId: string; problemNumber: string; title: string; userProblem?: boolean; solvingClub?: SweaSolvingClub };
+function historyPath(problem: SweaProblem): string { return problem.solvingClub ? "/main/talk/solvingClub/problemSubmitHistory.do" : problem.userProblem ? "/main/code/userProblem/userProblemSubmitHistory.do" : HISTORY_PATH; }
+function detailPath(problem: SweaProblem): string { return problem.solvingClub ? "/main/talk/solvingClub/problemSubmitDetail.do" : problem.userProblem ? "/main/code/userProblem/userProblemSubmitDetail.do" : DETAIL_PATH; }
+function problemFormId(problem: SweaProblem): string { return !problem.solvingClub && problem.userProblem ? "contestProbForm" : "problemForm"; }
+function sameProblemContext(document: Document, problem: SweaProblem): boolean {
+  const form = document.querySelector(`#${problemFormId(problem)}`);
+  return form?.querySelector<HTMLInputElement>('input[name="contestProbId"]')?.value === problem.contestProbId && (!problem.solvingClub ||
+    (form.querySelector<HTMLInputElement>('input[name="solveclubId"]')?.value === problem.solvingClub.solveclubId &&
+     form.querySelector<HTMLInputElement>('input[name="probBoxId"]')?.value === problem.solvingClub.probBoxId));
+}
 
 function parser(html: string): Document { return new DOMParser().parseFromString(html, "text/html"); }
 function text(el: Element | null): string { return el?.textContent?.replace(/\s+/g, " ").trim() ?? ""; }
@@ -41,12 +48,16 @@ export function authenticatedSweaUserId(profile: Document): string | null {
 }
 function problemFromCard(card: HTMLElement): SweaProblem | null {
   const anchor = card.querySelector<HTMLAnchorElement>('a[onclick*="fn_move_prob"]');
-  const match = anchor?.getAttribute("onclick")?.match(/fn_move_prob\('([A-Za-z0-9_-]{1,100})','([NY])','CODE','','\1',''\)/);
+  const action = anchor?.getAttribute("onclick") ?? "";
+  const match = action.match(/^(?:javascript:)?fn_move_prob\('([A-Za-z0-9_-]{1,100})','([NY])','CODE','','\1',''\);?$/);
+  const club = action.match(/^(?:javascript:)?fn_move_prob\('([A-Za-z0-9_-]{1,100})','([NY])','BOX','([A-Za-z0-9_-]{1,100})','([A-Za-z0-9_-]{1,100})','([^'\r\n]{0,300})'\);?$/);
   const header = card.querySelector(".widget-header-sub");
   const raw = text(header);
   const number = raw.match(/(?:^|\s)(\d{1,40})(?:\.|\s)/)?.[1];
   const title = text(anchor);
-  return match && number && title ? { contestProbId: match[1]!, problemNumber: number, title, ...(match[2] === "Y" ? { userProblem: true } : {}) } : null;
+  const route = match ?? club;
+  return route && number && title ? { contestProbId: route[1]!, problemNumber: number, title, ...(route[2] === "Y" ? { userProblem: true } : {}),
+    ...(club ? { solvingClub: { solveclubId: club[3]!, probBoxId: club[4]!, problemBoxTitle: club[5]! } } : {}) } : null;
 }
 
 /** Only own My Page cards are problem traversal inputs, never submission records. */
@@ -75,15 +86,23 @@ export function previewSweaHistory(document: Document, location: Location, authe
   return { status: "READY" as const, candidates: preview.problems, skipped: 0, truncated: preview.pages.length > 1 };
 }
 
-function historyForm(identity: Identity, contestProbId: string, contestHistoryId = "", pageIndex = 1): URLSearchParams {
-  return new URLSearchParams({ contestProbId, contestHistoryId, codeLangSet: "", sortType: "1", nickName: "", isChecked: "checked", checkUserId: identity.userId, pageSize: "20", pageIndex: String(pageIndex) });
+function historyForm(identity: Identity, problem: SweaProblem, contestHistoryId = "", pageIndex = 1): URLSearchParams {
+  const form = new URLSearchParams({ contestProbId: problem.contestProbId, contestHistoryId, codeLangSet: "", sortType: "1", nickName: "", pageSize: "20", pageIndex: String(pageIndex) });
+  if (problem.solvingClub) {
+    // Club histories expose nickname search rather than the My checkbox. The
+    // native owner ID of every returned row is still required before accepting it.
+    form.set("nickName", identity.nickname);
+    for (const [key, value] of Object.entries(problem.solvingClub)) form.set(key, value);
+    form.set("problemBoxCnt", "0");
+  } else { form.set("isChecked", "checked"); form.set("checkUserId", identity.userId); }
+  return form;
 }
 function fetchHistoryDocument(fetchHtml: FetchHtml, identity: Identity, problem: SweaProblem, page = 1): Promise<Document | null> {
   const url = new URL(`${ORIGIN}${historyPath(problem)}`);
-  const form = historyForm(identity, problem.contestProbId, "", page);
+  const form = historyForm(identity, problem, "", page);
   // User Problem's observed contestProbForm submits with GET, unlike the
   // standard problemForm POST. Keep My submission filtering on every page.
-  if (problem.userProblem) {
+  if (problem.userProblem && !problem.solvingClub) {
     form.set("sortType", "1");
     url.search = form.toString();
     return fetchDocument(fetchHtml, url.href, { credentials: "include" });
@@ -163,22 +182,27 @@ export async function loadSweaHistoryPreview(document: Document, location: Locat
     const preview = current && previewSweaProblems(current, location);
     if (!preview || preview.pageIndex !== page || preview.rowNum !== 20 || preview.total !== total || preview.identity.userId !== first.identity.userId || preview.identity.nickname !== first.identity.nickname || preview.problems.length !== Math.min(20, total - (page - 1) * 20)) return incomplete("LIST_PAGE_INCOMPLETE", page);
     allProblems.push(...preview.problems);
-    onProgress({ problems: allProblems.length, pages: page });
+    onProgress({ problems: new Set(allProblems.map(problem => problem.problemNumber)).size, pages: page });
   }
-  if (allProblems.length !== total || new Set(allProblems.map(problem => problem.contestProbId)).size !== total) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
-  const output: SweaHistoryCandidate[] = []; let skipped = 0; let pagesRead = pagesTotal; const seen = new Set<string>();
+  // The same public problem may appear once as CODE and again in a club. Both
+  // histories must be read; only a repeated identical history scope is invalid.
+  const scopes = allProblems.map(problem => JSON.stringify([problem.contestProbId, !!problem.userProblem, problem.solvingClub?.solveclubId, problem.solvingClub?.probBoxId]));
+  if (allProblems.length !== total || new Set(scopes).size !== total) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
+  const problemCount = new Set(allProblems.map(problem => problem.problemNumber)).size;
+  const output: SweaHistoryCandidate[] = []; let skipped = 0; let pagesRead = pagesTotal; const seen = new Map<string, string>();
   for (const [problemIndex, problem] of allProblems.entries()) {
     if (!isCurrent()) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
-    onProgress({ problems: allProblems.length, pages: pagesRead, historiesRead: problemIndex, historiesTotal: allProblems.length });
+    onProgress({ problems: problemCount, pages: pagesRead, historiesRead: problemIndex, historiesTotal: allProblems.length });
+    const scopeSubmissionIds = new Set<string>();
     const history = await fetchHistoryDocument(fetchHtml, first.identity, problem);
     if (!history) return incomplete("HISTORY_RESPONSE_UNAVAILABLE", 1, problem.problemNumber);
     if (!sameSignedInIdentity(history, first.identity)) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
-    if (history.querySelector<HTMLInputElement>(`#${problemFormId(problem)} input[name="contestProbId"]`)?.value !== problem.contestProbId) return incomplete("HISTORY_PAGE_INCOMPLETE", 1, problem.problemNumber);
+    if (!sameProblemContext(history, problem)) return incomplete("HISTORY_PAGE_INCOMPLETE", 1, problem.problemNumber);
     const historyTotal = exactCount(text(history.querySelector("h5.section_tit")), /총\s*(\d+)\s*회\s*제출/);
     if (historyTotal === null) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
     for (let page = 1; page <= Math.ceil(historyTotal / 20); page++) {
       const current = page === 1 ? history : await fetchHistoryDocument(fetchHtml, first.identity, problem, page);
-      if (!current || current.querySelector<HTMLInputElement>(`#${problemFormId(problem)} input[name="contestProbId"]`)?.value !== problem.contestProbId || exactCount(text(current.querySelector("h5.section_tit")), /총\s*(\d+)\s*회\s*제출/) !== historyTotal) return incomplete("HISTORY_PAGE_INCOMPLETE", page, problem.problemNumber);
+      if (!current || !sameProblemContext(current, problem) || exactCount(text(current.querySelector("h5.section_tit")), /총\s*(\d+)\s*회\s*제출/) !== historyTotal) return incomplete("HISTORY_PAGE_INCOMPLETE", page, problem.problemNumber);
       if (!sameSignedInIdentity(current, first.identity)) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
       const rows = [...current.querySelectorAll<HTMLElement>(".box-list-inner .problem_smt")];
       if (rows.length !== Math.min(20, historyTotal - (page - 1) * 20)) return incomplete("HISTORY_PAGE_INCOMPLETE", page, problem.problemNumber);
@@ -186,13 +210,21 @@ export async function loadSweaHistoryPreview(document: Document, location: Locat
       for (const row of rows) {
         const rawId = submissionIdFromRow(row);
         if (!rawId) return incomplete("SUBMISSION_ID_UNAVAILABLE", page, problem.problemNumber);
-        if (seen.has(rawId)) return incomplete("HISTORY_PAGE_REPEATED", page, problem.problemNumber);
-        seen.add(rawId); const candidate = rowCandidate(row, problem, first.identity); if (!candidate) { skipped++; continue; } output.push(candidate);
+        if (scopeSubmissionIds.has(rawId)) return incomplete("HISTORY_PAGE_REPEATED", page, problem.problemNumber);
+        scopeSubmissionIds.add(rawId);
+        const signature = JSON.stringify([problem.contestProbId, problem.problemNumber, problem.title, text(row.querySelector(".submitter .smt_txt dd")),
+          ...["언어", "메모리", "코드길이", "결과"].map(label => metric(row, label)), metric(row, "실행시간") || metric(row, "시간")]);
+        const previous = seen.get(rawId);
+        if (previous !== undefined) {
+          if (previous !== signature) return incomplete("HISTORY_PAGE_REPEATED", page, problem.problemNumber);
+          continue;
+        }
+        seen.set(rawId, signature); const candidate = rowCandidate(row, problem, first.identity); if (!candidate) { skipped++; continue; } output.push(candidate);
       }
       pagesRead += 1;
-      onProgress({ problems: allProblems.length, pages: pagesRead, historiesRead: problemIndex, historiesTotal: allProblems.length });
+      onProgress({ problems: problemCount, pages: pagesRead, historiesRead: problemIndex, historiesTotal: allProblems.length });
     }
-    onProgress({ problems: allProblems.length, pages: pagesRead, historiesRead: problemIndex + 1, historiesTotal: allProblems.length });
+    onProgress({ problems: problemCount, pages: pagesRead, historiesRead: problemIndex + 1, historiesTotal: allProblems.length });
   }
   return { status: "READY", candidates: output, skipped, truncated: false };
 }
@@ -200,20 +232,27 @@ export async function loadSweaHistoryPreview(document: Document, location: Locat
 /** Fetches raw, unhighlighted detail HTML and verifies the selected row before local storage. */
 export type SweaHydrationResult = { status: "DONE"; capture: ReturnType<typeof createCapture> } | { status: "OWNERSHIP_UNVERIFIED" | "TAB_NOT_FOUND" | "SOURCE_UNAVAILABLE" };
 export async function hydrateSweaCandidateResult(candidate: SweaHistoryCandidate, identity: { userId: string; nickname: string }, fetchHtml: FetchHtml = fetch): Promise<SweaHydrationResult> {
-  const fetched = await fetchSweaDocument(fetchHtml, `${ORIGIN}${detailPath(candidate)}`, { method: "POST", credentials: "include", headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: historyForm(identity, candidate.contestProbId, candidate.submissionId).toString() });
+  const fetched = await fetchSweaDocument(fetchHtml, `${ORIGIN}${detailPath(candidate)}`, { method: "POST", credentials: "include", headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: historyForm(identity, candidate, candidate.submissionId).toString() });
   if (fetched.status !== "DONE") return fetched;
   const detail = fetched.document;
   if (!sameSignedInIdentity(detail, identity)) return { status: "OWNERSHIP_UNVERIFIED" };
-  if (detail.querySelector<HTMLInputElement>(`#${problemFormId(candidate)} input[name="contestProbId"]`)?.value !== candidate.contestProbId) return { status: "SOURCE_UNAVAILABLE" };
+  if (!sameProblemContext(detail, candidate)) return { status: "SOURCE_UNAVAILABLE" };
   const row = detail.querySelector<HTMLElement>(".box-list-inner > .problem_smt_detail"); const sources = detail.querySelectorAll<HTMLElement>('textarea[class^="brush:"],pre[class^="brush:"]'); const source = sources.length === 1 ? sources[0] : null;
   const sourceCode = source?.tagName === "TEXTAREA" ? (source as HTMLTextAreaElement).value : source?.textContent ?? "";
   const title = problemTitle(detail);
+  const clubTitles = detail.querySelectorAll(".problem_title");
+  const clubTitle = clubTitles.length === 1 ? clubTitles[0]!.cloneNode(true) as HTMLElement : null;
+  clubTitle?.querySelectorAll(".badge").forEach(item => item.remove());
+  const matchesTitle = candidate.solvingClub ? text(clubTitle) === candidate.title : !!title && title.problemNumber === candidate.problemNumber && title.title === candidate.title;
   const brushLanguage = source?.className.match(/^brush:\s*([^\s;]+)/)?.[1] ?? "";
-  if (!row || !source || !title || title.problemNumber !== candidate.problemNumber || title.title !== candidate.title ||
+  if (!row || !source || !matchesTitle ||
       canonicalLanguageKey(brushLanguage) !== canonicalLanguageKey(candidate.language) || sweaDisplayedCodeLength(sourceCode) !== candidate.codeByteLength) return { status: "SOURCE_UNAVAILABLE" };
   const again = rowCandidate(row, candidate, identity);
   if (!again || again.submissionId !== candidate.submissionId || again.solvedAt !== candidate.solvedAt || again.language !== candidate.language || again.codeByteLength !== candidate.codeByteLength) return { status: "SOURCE_UNAVAILABLE" };
-  const capture = createCapture({ platform: "SWEA", problemNumber: candidate.problemNumber, title: candidate.title, problemUrl: `${ORIGIN}/main/code/${candidate.userProblem ? "userProblem/userProblemDetail" : "problem/problemDetail"}.do?contestProbId=${encodeURIComponent(candidate.contestProbId)}`, language: candidate.language, sourceCode, result: "ACCEPTED", solvedAt: candidate.solvedAt, observedAt: new Date(), historicalImport: true, historicalSubmissionId: candidate.submissionId, ...(candidate.executionTime === undefined ? {} : { executionTime: candidate.executionTime }), ...(candidate.memoryValue === undefined ? {} : { memoryValue: candidate.memoryValue, memoryUnit: "KB" }) });
+  const problemUrl = new URL(candidate.solvingClub ? `${ORIGIN}/main/talk/solvingClub/problemView.do` : `${ORIGIN}/main/code/${candidate.userProblem ? "userProblem/userProblemDetail" : "problem/problemDetail"}.do`);
+  problemUrl.searchParams.set("contestProbId", candidate.contestProbId);
+  if (candidate.solvingClub) for (const [key, value] of Object.entries(candidate.solvingClub)) problemUrl.searchParams.set(key, value);
+  const capture = createCapture({ platform: "SWEA", problemNumber: candidate.problemNumber, title: candidate.title, problemUrl: problemUrl.href, language: candidate.language, sourceCode, result: "ACCEPTED", solvedAt: candidate.solvedAt, observedAt: new Date(), historicalImport: true, historicalSubmissionId: candidate.submissionId, ...(candidate.executionTime === undefined ? {} : { executionTime: candidate.executionTime }), ...(candidate.memoryValue === undefined ? {} : { memoryValue: candidate.memoryValue, memoryUnit: "KB" }) });
   return capture ? { status: "DONE", capture } : { status: "SOURCE_UNAVAILABLE" };
 }
 

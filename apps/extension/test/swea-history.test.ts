@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseHTML } from "linkedom";
-import { hydrateSweaCandidate, hydrateSweaCandidateResult, loadSweaHistoryPreview } from "../src/historicalSwea";
+import { hydrateSweaCandidate, hydrateSweaCandidateResult, loadSweaHistoryPreview, previewSweaProblems } from "../src/historicalSwea";
 
 const origin = "https://swexpertacademy.com";
 const location = { origin, pathname: "/main/userpage/code/userSubmitProblem.do", href: `${origin}/main/userpage/code/userSubmitProblem.do` } as Location;
@@ -21,6 +21,103 @@ function history(problem: number, page: number, owner = uid, header = nick) { co
 function detail(problem: number, body = "hello", title = `Problem ${problem}`, header = nick) { return `<div class="my-login"><span class="name hidden-sm-down">${header}</span></div><form id="problemForm"><input name="contestProbId" value="Key${String(problem).padStart(8, "A")}"><input name="contestHistoryId" value=""></form><div class="problem_box"><h1 class="problem_title">${problem}. ${title}<span class="badge">D3</span></h1></div><div class="box-list-inner"><div class="problem_smt_detail"><div class="submitter"><div class="smt_txt"><dt><a onclick="userInformationPopup('${uid}')">${nick}</a></dt><dd>제출일 : 2026-09-28 08:26</dd></div></div><div class="info"><ul><li><span>JAVA</span><span>언어</span></li><li><span>102,076kb</span><span>메모리</span></li><li><span>669ms</span><span>실행시간</span></li><li><span>5B</span><span>코드길이</span></li><li><span>Pass</span><span>결과</span></li></ul></div></div></div><textarea class="brush:java">${body}</textarea>`; }
 
 function installedDomParser() { const prior = globalThis.DOMParser; Object.assign(globalThis, { DOMParser: parseHTML("<html></html>").window.DOMParser }); return () => Object.assign(globalThis, { DOMParser: prior }); }
+
+const clubContext = { solveclubId: "FixtureClub123", probBoxId: "FixtureBox456", problemBoxTitle: " [난이도 상] SW 전공 자율" };
+function clubPage(page: number) {
+  // The observed five-page profile has one BOX card on page 3 and eight on
+  // page 4. Both N and Y problems use club routes, independently of the flag.
+  const clubNumbers = new Set([41, 61, 62, 63, 64, 65, 66, 67, 68]);
+  return listPage(page, 95).replace(/fn_move_prob\('(Key[A0-9]+)','N','CODE','','\1',''\)/g, (action, key: string) =>
+    clubNumbers.has(Number(key.replace(/\D/g, ""))) ? `fn_move_prob('${key}','${key.endsWith("3") ? "Y" : "N"}','BOX','${clubContext.solveclubId}','${clubContext.probBoxId}','${clubContext.problemBoxTitle}')` : action);
+}
+function clubMarkup(markup: string): string {
+  return markup.replace('<form id="problemForm">', `<form id="problemForm"><input name="solveclubId" value="${clubContext.solveclubId}"><input name="probBoxId" value="${clubContext.probBoxId}">`);
+}
+
+test("SWEA traverses 95 mixed CODE and solving-club problems without losing nine BOX cards", async () => {
+  const restore = installedDomParser();
+  try {
+    let clubRequests = 0;
+    const result = await loadSweaHistoryPreview(parseHTML(clubPage(4)).document, location, async (url, init) => {
+      if (url.includes("userSubmitProblem")) return response(clubPage(Number(new URL(url).searchParams.get("pageIndex"))), url);
+      const form = new URLSearchParams(String(init?.body));
+      const number = Number((form.get("contestProbId") ?? "").replace(/\D/g, ""));
+      const markup = history(number, Number(form.get("pageIndex")));
+      if (form.has("solveclubId")) {
+        clubRequests++;
+        assert.equal(new URL(url).pathname, "/main/talk/solvingClub/problemSubmitHistory.do");
+        assert.equal(init?.method, "POST"); assert.equal(init?.credentials, "include");
+        assert.equal(form.get("nickName"), nick); assert.equal(form.has("checkUserId"), false);
+        assert.equal(form.get("solveclubId"), clubContext.solveclubId);
+        assert.equal(form.get("probBoxId"), clubContext.probBoxId);
+        assert.equal(form.get("problemBoxTitle"), clubContext.problemBoxTitle);
+        assert.equal(form.get("problemBoxCnt"), "0");
+        return response(clubMarkup(markup), url);
+      }
+      return response(markup, url);
+    });
+    assert.equal(result.status, "READY"); assert.equal(clubRequests, 18);
+    if (result.status === "READY") {
+      assert.equal(result.candidates.length, 95);
+      assert.equal(result.candidates.filter(item => item.solvingClub).length, 9);
+      assert.ok(result.candidates.find(item => item.problemNumber === "63")?.userProblem);
+    }
+  } finally { restore(); }
+});
+
+test("SWEA never accepts a foreign owner or a changed club/box from nickname-filtered histories", async () => {
+  const restore = installedDomParser();
+  try {
+    const source = parseHTML(listPage(1, 1).replace(",'N','CODE','','KeyAAAAAAA1',''", `,'N','BOX','${clubContext.solveclubId}','${clubContext.probBoxId}','${clubContext.problemBoxTitle}'`)).document;
+    const foreign = await loadSweaHistoryPreview(source, location, async url => response(clubMarkup(history(1, 1, "OtherUser")), url));
+    assert.equal(foreign.status, "OWNERSHIP_UNVERIFIED");
+    const changed = await loadSweaHistoryPreview(source, location, async url => response(clubMarkup(history(1, 1)).replace(clubContext.probBoxId, "OtherBox"), url));
+    assert.equal(changed.status, "SCAN_INCOMPLETE");
+    assert.equal(changed.failureReason, "HISTORY_PAGE_INCOMPLETE");
+    const hostile = parseHTML(listPage(1, 1).replace("fn_move_prob(", "otherAction();fn_move_prob(")).document;
+    assert.equal(previewSweaProblems(hostile, location)?.problems.length, 0);
+  } finally { restore(); }
+});
+
+test("SWEA reads public and club histories of the same problem and deduplicates identical native submissions", async () => {
+  const restore = installedDomParser();
+  try {
+    const source = listPage(1, 2).replace(/KeyAAAAAAA2/g, "KeyAAAAAAA1").replace(/2\.\<\/span\>/g, "1.</span>").replace(/Problem 2/g, "Problem 1")
+      .replace("fn_move_prob('KeyAAAAAAA1','N','CODE','','KeyAAAAAAA1','')", `fn_move_prob('KeyAAAAAAA1','N','BOX','${clubContext.solveclubId}','${clubContext.probBoxId}','${clubContext.problemBoxTitle}')`);
+    let histories = 0; const progress: {problems: number; historiesRead?: number; historiesTotal?: number}[] = [];
+    const result = await loadSweaHistoryPreview(parseHTML(source).document, location, async (url, init) => {
+      histories++;
+      const form = new URLSearchParams(String(init?.body));
+      const markup = history(1, Number(form.get("pageIndex")));
+      return response(form.has("solveclubId") ? clubMarkup(markup) : markup, url);
+    }, value => progress.push(value));
+    assert.equal(histories, 4); assert.equal(result.status, "READY");
+    if (result.status === "READY") assert.equal(result.candidates.length, 1);
+    assert.equal(progress.at(-1)?.problems, 1); assert.equal(progress.at(-1)?.historiesRead, 2);
+    const repeated = await loadSweaHistoryPreview(parseHTML(source).document, location, async url => response(clubMarkup(history(1, 1)), url));
+    assert.equal(repeated.status, "SCAN_INCOMPLETE");
+  } finally { restore(); }
+});
+
+test("SWEA club detail binds the club, box, title, source and native submission before capture", async () => {
+  const restore = installedDomParser();
+  try {
+    const candidate = { submissionId: "Submission00010001", problemNumber: "1", title: "Problem 1", contestProbId: "KeyAAAAAAA1", userProblem: true, solvingClub: clubContext, language: "JAVA", solvedAt: "2026-09-28 08:26:00.000+09:00", codeByteLength: 5 };
+    const markup = clubMarkup(detail(1).replace('>1. Problem 1<', '>Problem 1<'));
+    const captured = await hydrateSweaCandidate(candidate, { userId: uid, nickname: nick }, async (url, init) => {
+      assert.equal(new URL(url).pathname, "/main/talk/solvingClub/problemSubmitDetail.do");
+      const form = new URLSearchParams(String(init?.body));
+      assert.equal(form.get("contestHistoryId"), candidate.submissionId);
+      assert.equal(form.get("solveclubId"), clubContext.solveclubId); assert.equal(form.get("nickName"), nick);
+      return response(markup, url);
+    });
+    assert.equal(captured?.sourceCode, "hello");
+    assert.equal(new URL(captured!.problemUrl).pathname, "/main/talk/solvingClub/problemView.do");
+    for (const invalid of [markup.replace(clubContext.solveclubId, "OtherClub"), markup.replace(clubContext.probBoxId, "OtherBox"), markup.replace("Problem 1", "Other title"), markup.replace("hello", "helloo"), markup.replace(`userInformationPopup('${uid}')`, "userInformationPopup('OtherUser')"), markup.replace("08:26", "08:27")]) {
+      assert.equal(await hydrateSweaCandidate(candidate, { userId: uid, nickname: nick }, async url => response(invalid, url)), null);
+    }
+  } finally { restore(); }
+});
 
 test("SWEA traverses complete My Page/history pages and accepts only raw Pass rows", async () => {
   const restore = installedDomParser();
