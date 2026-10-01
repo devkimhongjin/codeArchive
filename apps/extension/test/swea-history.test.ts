@@ -9,7 +9,7 @@ const uid = "UserA123", nick = "fixture-user";
 const response = (html: string, url: string, ok = true) => ({ ok, url, text: async () => html } as Response);
 
 function listPage(page: number, total = 40) {
-  const cards = Array.from({ length: 20 }, (_, index) => { const number = (page - 1) * 20 + index + 1; const key = `Key${String(number).padStart(8, "A")}`;
+  const cards = Array.from({ length: Math.min(20, total - (page - 1) * 20) }, (_, index) => { const number = (page - 1) * 20 + index + 1; const key = `Key${String(number).padStart(8, "A")}`;
     return `<div class="widget-list solvingclub"><div class="widget-box-sub"><div class="widget-header-sub"><span class="header-caption"><span class="week_num">${number}.</span><span class="week_text"><a onclick="javascript:fn_move_prob('${key}','N','CODE','','${key}','')">Problem ${number}</a></span></span></div></div></div>`; }).join("");
   return `<div class="my-login"><span class="name hidden-sm-down">${nick}</span></div><div class="mypage_wrap"><div class="my_label"><span class="nick">${nick}</span></div></div>
     <form id="searchForm"><input name="userId" value="${uid}"><input name="pageIndex" value="${page}"><input name="rowNum" value="20"></form><form id="solvingForm"><input name="userId" value="${uid}"></form><h2 class="club_box_tit">제출한 Problem(${total})</h2>${cards}<nav aria-label="Page navigation"><a href="javascript:document.searchForm.pageIndex.value=2;javascript:fn_search();">2</a></nav>`;
@@ -33,6 +33,83 @@ test("SWEA traverses complete My Page/history pages and accepts only raw Pass ro
     const first = parseHTML(listPage(2)).document;
     const result = await loadSweaHistoryPreview(first, location, fetcher as typeof fetch);
     assert.equal(result.status, "READY"); if (result.status === "READY") assert.equal(result.candidates.length, 40);
+  } finally { restore(); }
+});
+
+test("SWEA follows all five pageIndex pages including User Problem cards and the final partial page", async () => {
+  const restore = installedDomParser();
+  try {
+    const mixedPage = (page: number) => listPage(page, 95).replace(/,'N','CODE'/g, ",'Y','CODE'");
+    const seenPages: number[] = [];
+    const result = await loadSweaHistoryPreview(parseHTML(mixedPage(2)).document, location, async (url, init) => {
+      const request = new URL(url);
+      if (request.pathname.endsWith("userSubmitProblem.do")) {
+        const page = Number(request.searchParams.get("pageIndex")); seenPages.push(page);
+        assert.equal(request.searchParams.get("problemTitle"), "");
+        assert.equal(init?.credentials, "include");
+        return response(mixedPage(page), url);
+      }
+      assert.equal(request.pathname, "/main/code/userProblem/userProblemSubmitHistory.do");
+      assert.equal(init?.body, undefined); assert.notEqual(init?.method, "POST");
+      assert.equal(request.searchParams.get("isChecked"), "checked");
+      assert.equal(request.searchParams.get("checkUserId"), uid);
+      const number = Number((request.searchParams.get("contestProbId") ?? "").replace(/\D/g, ""));
+      const page = Number(request.searchParams.get("pageIndex"));
+      return response(history(number, page).replace('id="problemForm"', 'id="contestProbForm"')
+        .replace(/javascript:codeview\(/g, "javascript:fnShowCodeView(")
+        .replace(/<dt><a ([^>]+)>([^<]+)<\/a><\/dt>/g, "<a $1><dt>$2</dt></a>")
+        .replace(/실행시간/g, "시간"), url);
+    });
+    assert.deepEqual(seenPages, [1, 3, 4, 5]);
+    assert.equal(result.status, "READY");
+    if (result.status === "READY") { assert.equal(result.candidates.length, 95); assert.ok(result.candidates.every(item => item.userProblem)); assert.equal(result.candidates[0]?.executionTime, 669); }
+  } finally { restore(); }
+});
+
+test("SWEA rejects repeated pageIndex content before traversing submission histories", async () => {
+  const restore = installedDomParser();
+  try {
+    let requests = 0;
+    const result = await loadSweaHistoryPreview(parseHTML(listPage(1)).document, location, async url => {
+      requests++; assert.match(url, /pageIndex=2/); return response(listPage(1), url);
+    });
+    assert.equal(result.status, "SCAN_INCOMPLETE"); assert.equal(requests, 1);
+  } finally { restore(); }
+});
+
+test("SWEA normalizes a source listing using a non-default select page size", async () => {
+  const restore = installedDomParser();
+  try {
+    const source = parseHTML(listPage(1).replace('<input name="rowNum" value="20">', '<select name="rowNum"><option value="40" selected>40개씩 보기</option></select>')).document;
+    const seenPages: number[] = [];
+    const result = await loadSweaHistoryPreview(source, location, async (url, init) => {
+      if (url.includes("userSubmitProblem")) {
+        const page = Number(new URL(url).searchParams.get("pageIndex")); seenPages.push(page);
+        assert.equal(new URL(url).searchParams.get("rowNum"), "20");
+        return response(listPage(page), url);
+      }
+      const form = new URLSearchParams(String(init?.body));
+      return response(history(Number((form.get("contestProbId") ?? "").replace(/\D/g, "")), Number(form.get("pageIndex"))), url);
+    });
+    assert.equal(result.status, "READY"); assert.deepEqual(seenPages, [1, 2]);
+  } finally { restore(); }
+});
+
+test("SWEA User Problem detail retains owner/code byte checks and its observed detail route", async () => {
+  const restore = installedDomParser();
+  try {
+    const candidate = { submissionId: "Submission00010001", problemNumber: "1", title: "Problem 1", contestProbId: "KeyAAAAAAA1", userProblem: true, language: "JAVA", solvedAt: "2026-09-28 08:26:00.000+09:00", codeByteLength: 5 };
+    const markup = detail(1).replace('id="problemForm"', 'id="contestProbForm"')
+      .replace('<textarea class="brush:java">hello</textarea>', '<pre class="brush: java;">hello</pre>')
+      .replace(/<dt><a ([^>]+)>([^<]+)<\/a><\/dt>/g, "<a $1><dt>$2</dt></a>");
+    const fetcher = async (url: string, init?: RequestInit) => {
+      assert.equal(new URL(url).pathname, "/main/code/userProblem/userProblemSubmitDetail.do");
+      assert.equal(new URLSearchParams(String(init?.body)).get("contestHistoryId"), candidate.submissionId);
+      return response(markup, url);
+    };
+    const capture = await hydrateSweaCandidate(candidate, { userId: uid, nickname: nick }, fetcher);
+    assert.equal(capture?.sourceCode, "hello"); assert.match(capture?.problemUrl ?? "", /userProblem\/userProblemDetail/);
+    assert.equal(await hydrateSweaCandidate(candidate, { userId: uid, nickname: nick }, async url => response(markup.replace("hello", "helloo"), url)), null);
   } finally { restore(); }
 });
 

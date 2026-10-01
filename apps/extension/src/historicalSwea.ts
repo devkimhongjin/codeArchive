@@ -9,9 +9,13 @@ const DETAIL_PATH = "/main/code/problem/problemSubmitDetail.do";
 const ID = /^[A-Za-z0-9_-]{1,100}$/;
 type FetchHtml = (url: string, init?: RequestInit) => Promise<Response>;
 
-export interface SweaHistoryCandidate { submissionId: string; problemNumber: string; title: string; contestProbId: string; language: string; solvedAt: string; codeByteLength: number; executionTime?: number; memoryValue?: number; }
+export interface SweaHistoryCandidate { submissionId: string; problemNumber: string; title: string; contestProbId: string; userProblem?: boolean; language: string; solvedAt: string; codeByteLength: number; executionTime?: number; memoryValue?: number; }
 export type SweaHistoryPreview = { status: "LOGIN_REQUIRED" | "OWNERSHIP_UNVERIFIED" | "SCAN_INCOMPLETE"; candidates: []; skipped: number } | { status: "READY"; candidates: SweaHistoryCandidate[]; skipped: number; truncated: boolean };
 type Identity = { userId: string; nickname: string };
+type SweaProblem = { contestProbId: string; problemNumber: string; title: string; userProblem?: boolean };
+function historyPath(problem: SweaProblem): string { return problem.userProblem ? "/main/code/userProblem/userProblemSubmitHistory.do" : HISTORY_PATH; }
+function detailPath(problem: SweaProblem): string { return problem.userProblem ? "/main/code/userProblem/userProblemSubmitDetail.do" : DETAIL_PATH; }
+function problemFormId(problem: SweaProblem): string { return problem.userProblem ? "contestProbForm" : "problemForm"; }
 
 function parser(html: string): Document { return new DOMParser().parseFromString(html, "text/html"); }
 function text(el: Element | null): string { return el?.textContent?.replace(/\s+/g, " ").trim() ?? ""; }
@@ -34,20 +38,20 @@ export function authenticatedSweaUserId(profile: Document): string | null {
   const action = link?.getAttribute("onclick") ?? link?.getAttribute("href") ?? "";
   return action.match(/(?:javascript:)?fnMoveToMenu\('CODE','([A-Za-z0-9_-]{1,100})'\)/)?.[1] ?? null;
 }
-function problemFromCard(card: HTMLElement): { contestProbId: string; problemNumber: string; title: string } | null {
+function problemFromCard(card: HTMLElement): SweaProblem | null {
   const anchor = card.querySelector<HTMLAnchorElement>('a[onclick*="fn_move_prob"]');
-  const match = anchor?.getAttribute("onclick")?.match(/fn_move_prob\('([A-Za-z0-9_-]{1,100})','N','CODE','','\1',''\)/);
+  const match = anchor?.getAttribute("onclick")?.match(/fn_move_prob\('([A-Za-z0-9_-]{1,100})','([NY])','CODE','','\1',''\)/);
   const header = card.querySelector(".widget-header-sub");
   const raw = text(header);
   const number = raw.match(/(?:^|\s)(\d{1,40})(?:\.|\s)/)?.[1];
   const title = text(anchor);
-  return match && number && title ? { contestProbId: match[1]!, problemNumber: number, title } : null;
+  return match && number && title ? { contestProbId: match[1]!, problemNumber: number, title, ...(match[2] === "Y" ? { userProblem: true } : {}) } : null;
 }
 
 /** Only own My Page cards are problem traversal inputs, never submission records. */
-export function previewSweaProblems(document: Document, location: Location): { identity: Identity; problems: { contestProbId: string; problemNumber: string; title: string }[]; pages: number[]; total: number | null; pageIndex: number; rowNum: number } | null {
+export function previewSweaProblems(document: Document, location: Location): { identity: Identity; problems: SweaProblem[]; pages: number[]; total: number | null; pageIndex: number; rowNum: number } | null {
   const identity = ownIdentity(document, location); if (!identity) return null;
-  const problems: { contestProbId: string; problemNumber: string; title: string }[] = [];
+  const problems: SweaProblem[] = [];
   for (const card of document.querySelectorAll<HTMLElement>(".widget-list.solvingclub .widget-box-sub")) {
     const item = problemFromCard(card); if (item) problems.push(item);
   }
@@ -56,7 +60,7 @@ export function previewSweaProblems(document: Document, location: Location): { i
     .filter(n => Number.isSafeInteger(n) && n > 0 && n <= 999);
   return { identity, problems, pages: [...new Set(pages)], total: exactCount(text(document.querySelector(".club_box_tit")), /제출한 Problem\((\d+)\)/),
     pageIndex: Number(document.querySelector<HTMLInputElement>('#searchForm input[name="pageIndex"]')?.value) || 1,
-    rowNum: Number(document.querySelector<HTMLInputElement>('#searchForm input[name="rowNum"]')?.value) || 20 };
+    rowNum: Number(document.querySelector<HTMLInputElement | HTMLSelectElement>('#searchForm [name="rowNum"]')?.value) || 20 };
 }
 /** Legacy preview is intentionally problem-only; historical submission rows require the history transport. */
 export function previewSweaHistory(document: Document, location: Location, authenticatedUserId: string | null = null) {
@@ -71,6 +75,18 @@ export function previewSweaHistory(document: Document, location: Location, authe
 function historyForm(identity: Identity, contestProbId: string, contestHistoryId = "", pageIndex = 1): URLSearchParams {
   return new URLSearchParams({ contestProbId, contestHistoryId, codeLangSet: "", sortType: "", nickName: "", isChecked: "checked", checkUserId: identity.userId, pageSize: "20", pageIndex: String(pageIndex) });
 }
+function fetchHistoryDocument(fetchHtml: FetchHtml, identity: Identity, problem: SweaProblem, page = 1): Promise<Document | null> {
+  const url = new URL(`${ORIGIN}${historyPath(problem)}`);
+  const form = historyForm(identity, problem.contestProbId, "", page);
+  // User Problem's observed contestProbForm submits with GET, unlike the
+  // standard problemForm POST. Keep My submission filtering on every page.
+  if (problem.userProblem) {
+    form.set("sortType", "1");
+    url.search = form.toString();
+    return fetchDocument(fetchHtml, url.href, { credentials: "include" });
+  }
+  return fetchDocument(fetchHtml, url.href, { method: "POST", credentials: "include", headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: form.toString() });
+}
 function metric(row: Element, label: string): string {
   for (const item of row.querySelectorAll(".info > ul > li")) {
     const spans = [...item.querySelectorAll("span")].map(text);
@@ -78,15 +94,18 @@ function metric(row: Element, label: string): string {
   }
   return "";
 }
-function rowCandidate(row: HTMLElement, problem: { contestProbId: string; problemNumber: string; title: string }, identity: Identity): SweaHistoryCandidate | null {
-  const link = row.querySelector<HTMLAnchorElement>('a[href^="javascript:codeview("]');
-  const linkedId = link?.getAttribute("href")?.match(/^javascript:codeview\('([A-Za-z0-9_-]{8,160})'\);?$/)?.[1];
+function submissionIdFromRow(row: Element): string | undefined {
+  const links = [...row.querySelectorAll<HTMLAnchorElement>('a[href]')].map(link => link.getAttribute("href")?.match(/^javascript:(?:codeview|fnShowCodeView)\('([A-Za-z0-9_-]{8,160})'\);?$/)?.[1]).filter(Boolean);
+  return links.length === 1 ? links[0] : undefined;
+}
+function rowCandidate(row: HTMLElement, problem: SweaProblem, identity: Identity): SweaHistoryCandidate | null {
+  const linkedId = submissionIdFromRow(row);
   const fallbackId = "submissionId" in problem ? (problem as { submissionId?: unknown }).submissionId : undefined;
   const id = linkedId ?? (typeof fallbackId === "string" ? fallbackId : undefined);
-  const ownerAction = row.querySelector(".submitter .smt_txt dt a")?.getAttribute("onclick") ?? "";
+  const ownerAction = row.querySelector(".submitter .smt_txt a[onclick]")?.getAttribute("onclick") ?? "";
   const owner = ownerAction.match(new RegExp(`^userInformationPopup\\('${identity.userId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\'\\);?$`));
   const solved = text(row.querySelector(".submitter .smt_txt dd")).replace(/^제출일\s*:\s*/, "");
-  const language = metric(row, "언어"); const memory = metric(row, "메모리"); const time = metric(row, "실행시간");
+  const language = metric(row, "언어"); const memory = metric(row, "메모리"); const time = metric(row, "실행시간") || metric(row, "시간");
   const length = metric(row, "코드길이"); const result = metric(row, "결과");
   const parse = (value: string) => { const match = value.match(/\d[\d,]*(?:\.\d+)?/); return match ? Number(match[0].replace(/,/g, "")) : NaN; };
   const bytes = parse(length); const executionTime = parse(time); const memoryValue = parse(memory);
@@ -96,11 +115,12 @@ function rowCandidate(row: HTMLElement, problem: { contestProbId: string; proble
     ...(Number.isFinite(executionTime) ? { executionTime } : {}), ...(Number.isFinite(memoryValue) ? { memoryValue } : {}) };
 }
 function ownerIs(row: Element, identity: Identity): boolean {
-  const action = row.querySelector(".submitter .smt_txt dt a")?.getAttribute("onclick") ?? "";
+  const action = row.querySelector(".submitter .smt_txt a[onclick]")?.getAttribute("onclick") ?? "";
   return action === `userInformationPopup('${identity.userId}')` || action === `userInformationPopup('${identity.userId}');`;
 }
 function problemTitle(document: Document): { problemNumber: string; title: string } | null {
-  const node = document.querySelector<HTMLElement>(".problem_box .problem_title");
+  const nodes = document.querySelectorAll<HTMLElement>(".problem_title");
+  const node = nodes.length === 1 ? nodes[0] : null;
   if (!node) return null;
   const clone = node.cloneNode(true) as HTMLElement; clone.querySelectorAll(".badge").forEach(item => item.remove());
   const raw = text(clone); const match = raw.match(/(?:^|\s)(\d{1,40})(?:\.|\s)+(.*)$/);
@@ -128,15 +148,15 @@ export async function loadSweaHistoryPreview(document: Document, location: Locat
   const first = previewSweaProblems(document, location); if (!first) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
   const total = first.total;
   if (total === null || total < first.problems.length) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
-  const pagesTotal = Math.ceil(total / 20); const allProblems: { contestProbId: string; problemNumber: string; title: string }[] = [];
+  const pagesTotal = Math.ceil(total / 20); const allProblems: SweaProblem[] = [];
   for (let page = 1; page <= pagesTotal; page++) {
     if (!isCurrent()) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
     const current = page === first.pageIndex && first.rowNum === 20 ? document : await (async () => {
-    const url = new URL(`${ORIGIN}${LIST_PATH}`); url.searchParams.set("userId", first.identity.userId); url.searchParams.set("rowNum", "20"); url.searchParams.set("pageIndex", String(page));
-      return fetchDocument(fetchHtml, url.href);
+    const url = new URL(`${ORIGIN}${LIST_PATH}`); url.searchParams.set("userId", first.identity.userId); url.searchParams.set("problemTitle", ""); url.searchParams.set("rowNum", "20"); url.searchParams.set("pageIndex", String(page));
+      return fetchDocument(fetchHtml, url.href, { credentials: "include" });
     })();
     const preview = current && previewSweaProblems(current, location);
-    if (!preview || preview.total !== total || preview.identity.userId !== first.identity.userId || preview.identity.nickname !== first.identity.nickname || preview.problems.length !== Math.min(20, total - (page - 1) * 20)) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
+    if (!preview || preview.pageIndex !== page || preview.rowNum !== 20 || preview.total !== total || preview.identity.userId !== first.identity.userId || preview.identity.nickname !== first.identity.nickname || preview.problems.length !== Math.min(20, total - (page - 1) * 20)) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
     allProblems.push(...preview.problems);
     onProgress({ problems: allProblems.length, pages: page });
   }
@@ -145,18 +165,18 @@ export async function loadSweaHistoryPreview(document: Document, location: Locat
   for (const [problemIndex, problem] of allProblems.entries()) {
     if (!isCurrent()) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
     onProgress({ problems: allProblems.length, pages: pagesRead, historiesRead: problemIndex, historiesTotal: allProblems.length });
-    const history = await fetchDocument(fetchHtml, `${ORIGIN}${HISTORY_PATH}`, { method: "POST", credentials: "include", headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: historyForm(first.identity, problem.contestProbId).toString() });
-    if (!history || !sameSignedInIdentity(history, first.identity) || history.querySelector<HTMLInputElement>('#problemForm input[name="contestProbId"]')?.value !== problem.contestProbId) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
+    const history = await fetchHistoryDocument(fetchHtml, first.identity, problem);
+    if (!history || !sameSignedInIdentity(history, first.identity) || history.querySelector<HTMLInputElement>(`#${problemFormId(problem)} input[name="contestProbId"]`)?.value !== problem.contestProbId) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
     const historyTotal = exactCount(text(history.querySelector("h5.section_tit")), /총\s*(\d+)\s*회\s*제출/);
     if (historyTotal === null) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
     for (let page = 1; page <= Math.ceil(historyTotal / 20); page++) {
-      const current = page === 1 ? history : await fetchDocument(fetchHtml, `${ORIGIN}${HISTORY_PATH}`, { method: "POST", credentials: "include", headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: historyForm(first.identity, problem.contestProbId, "", page).toString() });
-      if (!current || !sameSignedInIdentity(current, first.identity) || current.querySelector<HTMLInputElement>('#problemForm input[name="contestProbId"]')?.value !== problem.contestProbId || exactCount(text(current.querySelector("h5.section_tit")), /총\s*(\d+)\s*회\s*제출/) !== historyTotal) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
+      const current = page === 1 ? history : await fetchHistoryDocument(fetchHtml, first.identity, problem, page);
+      if (!current || !sameSignedInIdentity(current, first.identity) || current.querySelector<HTMLInputElement>(`#${problemFormId(problem)} input[name="contestProbId"]`)?.value !== problem.contestProbId || exactCount(text(current.querySelector("h5.section_tit")), /총\s*(\d+)\s*회\s*제출/) !== historyTotal) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
       const rows = [...current.querySelectorAll<HTMLElement>(".box-list-inner .problem_smt")];
       if (rows.length !== Math.min(20, historyTotal - (page - 1) * 20)) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
       if (rows.some(row => !ownerIs(row, first.identity))) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
       for (const row of rows) {
-        const rawId = row.querySelector<HTMLAnchorElement>('a[href^="javascript:codeview("]')?.getAttribute("href")?.match(/^javascript:codeview\('([A-Za-z0-9_-]{8,160})'\);?$/)?.[1];
+        const rawId = submissionIdFromRow(row);
         if (!rawId || seen.has(rawId)) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
         seen.add(rawId); const candidate = rowCandidate(row, problem, first.identity); if (!candidate) { skipped++; continue; } output.push(candidate);
       }
@@ -171,19 +191,20 @@ export async function loadSweaHistoryPreview(document: Document, location: Locat
 /** Fetches raw, unhighlighted detail HTML and verifies the selected row before local storage. */
 export type SweaHydrationResult = { status: "DONE"; capture: ReturnType<typeof createCapture> } | { status: "OWNERSHIP_UNVERIFIED" | "TAB_NOT_FOUND" | "SOURCE_UNAVAILABLE" };
 export async function hydrateSweaCandidateResult(candidate: SweaHistoryCandidate, identity: { userId: string; nickname: string }, fetchHtml: FetchHtml = fetch): Promise<SweaHydrationResult> {
-  const fetched = await fetchSweaDocument(fetchHtml, `${ORIGIN}${DETAIL_PATH}`, { method: "POST", credentials: "include", headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: historyForm(identity, candidate.contestProbId, candidate.submissionId).toString() });
+  const fetched = await fetchSweaDocument(fetchHtml, `${ORIGIN}${detailPath(candidate)}`, { method: "POST", credentials: "include", headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: historyForm(identity, candidate.contestProbId, candidate.submissionId).toString() });
   if (fetched.status !== "DONE") return fetched;
   const detail = fetched.document;
   if (!sameSignedInIdentity(detail, identity)) return { status: "OWNERSHIP_UNVERIFIED" };
-  if (detail.querySelector<HTMLInputElement>('#problemForm input[name="contestProbId"]')?.value !== candidate.contestProbId) return { status: "SOURCE_UNAVAILABLE" };
-  const row = detail.querySelector<HTMLElement>(".box-list-inner > .problem_smt_detail"); const sources = detail.querySelectorAll<HTMLTextAreaElement>('textarea[class^="brush:"]'); const source = sources.length === 1 ? sources[0] : null;
+  if (detail.querySelector<HTMLInputElement>(`#${problemFormId(candidate)} input[name="contestProbId"]`)?.value !== candidate.contestProbId) return { status: "SOURCE_UNAVAILABLE" };
+  const row = detail.querySelector<HTMLElement>(".box-list-inner > .problem_smt_detail"); const sources = detail.querySelectorAll<HTMLElement>('textarea[class^="brush:"],pre[class^="brush:"]'); const source = sources.length === 1 ? sources[0] : null;
+  const sourceCode = source?.tagName === "TEXTAREA" ? (source as HTMLTextAreaElement).value : source?.textContent ?? "";
   const title = problemTitle(detail);
-  const brushLanguage = source?.className.match(/^brush:([^\s]+)/)?.[1] ?? "";
+  const brushLanguage = source?.className.match(/^brush:\s*([^\s;]+)/)?.[1] ?? "";
   if (!row || !source || !title || title.problemNumber !== candidate.problemNumber || title.title !== candidate.title ||
-      canonicalLanguageKey(brushLanguage) !== canonicalLanguageKey(candidate.language) || sweaDisplayedCodeLength(source.value) !== candidate.codeByteLength) return { status: "SOURCE_UNAVAILABLE" };
+      canonicalLanguageKey(brushLanguage) !== canonicalLanguageKey(candidate.language) || sweaDisplayedCodeLength(sourceCode) !== candidate.codeByteLength) return { status: "SOURCE_UNAVAILABLE" };
   const again = rowCandidate(row, candidate, identity);
   if (!again || again.submissionId !== candidate.submissionId || again.solvedAt !== candidate.solvedAt || again.language !== candidate.language || again.codeByteLength !== candidate.codeByteLength) return { status: "SOURCE_UNAVAILABLE" };
-  const capture = createCapture({ platform: "SWEA", problemNumber: candidate.problemNumber, title: candidate.title, problemUrl: `${ORIGIN}/main/code/problem/problemDetail.do?contestProbId=${encodeURIComponent(candidate.contestProbId)}`, language: candidate.language, sourceCode: source.value, result: "ACCEPTED", solvedAt: candidate.solvedAt, observedAt: new Date(), historicalImport: true, historicalSubmissionId: candidate.submissionId, ...(candidate.executionTime === undefined ? {} : { executionTime: candidate.executionTime }), ...(candidate.memoryValue === undefined ? {} : { memoryValue: candidate.memoryValue, memoryUnit: "KB" }) });
+  const capture = createCapture({ platform: "SWEA", problemNumber: candidate.problemNumber, title: candidate.title, problemUrl: `${ORIGIN}/main/code/${candidate.userProblem ? "userProblem/userProblemDetail" : "problem/problemDetail"}.do?contestProbId=${encodeURIComponent(candidate.contestProbId)}`, language: candidate.language, sourceCode, result: "ACCEPTED", solvedAt: candidate.solvedAt, observedAt: new Date(), historicalImport: true, historicalSubmissionId: candidate.submissionId, ...(candidate.executionTime === undefined ? {} : { executionTime: candidate.executionTime }), ...(candidate.memoryValue === undefined ? {} : { memoryValue: candidate.memoryValue, memoryUnit: "KB" }) });
   return capture ? { status: "DONE", capture } : { status: "SOURCE_UNAVAILABLE" };
 }
 
