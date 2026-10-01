@@ -9,14 +9,16 @@ const cases = [
   { name: "late metadata still rejects a different owner", id: "2001", owner: "10", code: "hello", date: "2026. 9. 22. 오전 11:36:55", accepted: false },
   { name: "late metadata still rejects a changed source length", id: "2001", owner: "9", code: "hello!", date: "2026. 9. 22. 오전 11:36:55", accepted: false },
   { name: "late metadata still rejects an invalid exact submission date", id: "2001", owner: "9", code: "hello", date: "2026. 2. 30. 오전 11:36:55", accepted: false },
-  { name: "source navigation while metadata loads cannot click or store the old submission", id: "2001", owner: "9", code: "hello", date: "2026. 9. 22. 오전 11:36:55", accepted: false, moved: true }
+  { name: "source navigation while metadata loads cannot click or store the old submission", id: "2001", owner: "9", code: "hello", date: "2026. 9. 22. 오전 11:36:55", accepted: false, moved: true },
+  { name: "listing and detail normalize repeated title whitespace identically", id: "2001", owner: "9", code: "hello", date: "2026. 9. 22. 오전 11:36:55", accepted: true, title: "최대공약수,  최소공배수" },
+  { name: "detail cannot substitute a title containing the candidate as a substring", id: "2001", owner: "9", code: "hello", date: "2026. 9. 22. 오전 11:36:55", accepted: false, detailTitle: "Other Fixture" }
 ];
 for (const sample of cases) test(sample.name, async () => {
   const { document } = parseHTML(`<html><body><a class="crumb" href="/account/9">@mine</a>
     <a href="/account/9/edit">정보 수정</a><a class="active" href="/account/9/submission">제출현황</a>
     <table><tr><td data-col="번호"><span class="sl-id">2001</span></td>
       <td data-col="제출자"><a href="/account/9">mine</a></td>
-      <td data-col="문제"><a href="/problem/2000">Fixture #2000</a></td>
+      <td data-col="문제"><a href="/problem/2000">${"title" in sample ? sample.title : "Fixture"} #2000</a></td>
       <td data-col="결과">정답 <span>100점</span></td><td data-col="코드 길이">5B</td>
       <td data-col="언어"><a href="?sid=2001">Java 8</a></td></tr></table></body></html>`);
   const location = new URL("https://jungol.co.kr/account/9/submission") as unknown as Location;
@@ -42,7 +44,7 @@ for (const sample of cases) test(sample.name, async () => {
       dialog.querySelector("code")!.textContent = sample.code;
       const metadata = document.createElement("div");
       metadata.innerHTML = `<span class="sd-heading-score">100점</span><span class="sd-heading-status">정답</span>
-        <a href="/account/${sample.owner}">mine</a><a href="/problem/2000">Fixture #2000</a>
+        <a href="/account/${sample.owner}">mine</a><a href="/problem/2000">${"detailTitle" in sample ? sample.detailTitle : "title" in sample ? sample.title : "Fixture"} #2000</a>
         <span class="sd-meta-item"><div role="button" aria-expanded="false"><span class="time">어제</span></div></span>`;
       const trigger = metadata.querySelector<HTMLElement>('[role="button"]')!;
       trigger.addEventListener("click", () => {

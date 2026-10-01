@@ -457,8 +457,10 @@ export function verifyJungolHistoryDetail(document: Document, location: Location
   // its B suffix; the legacy filtered listing reports UTF-8 bytes. Keep the
   // route-specific metric exact rather than accepting either representation.
   const reportedCodeLength = profileId ? code.length : new TextEncoder().encode(code).length;
+  const problemText = problem?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+  const problemMatch = problemText.match(/^(.*?)\s*#(\d{1,40})$/);
   if (!account || owner !== account || (profileId && ownerLink?.getAttribute("href") !== `/account/${profileId}`) || !problem ||
-      !problem.textContent?.includes(candidate.title) || !problem.textContent?.includes(`#${candidate.problemNumber}`) ||
+      problemMatch?.[1]?.trim() !== candidate.title || problemMatch?.[2] !== candidate.problemNumber ||
       detailId !== `#${candidate.submissionId}` || score !== "100점" || status !== "정답" ||
       !code.trim() || reportedCodeLength !== candidate.codeByteLength) return null;
   const date = timeText.match(/^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.\s*(오전|오후)\s*(\d{1,2}):(\d{2}):(\d{2})$/);
