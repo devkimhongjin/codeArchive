@@ -8,7 +8,8 @@ import { importVisibleJungolHistory, isJungolHistoryPath, loadJungolHistoryPrevi
 import { loadSweaHistoryPreview } from "./historicalSwea";
 import { mayStoreLocalHistoryCapture, sameHistorySource } from "./historyRouting";
 import { HistoricalTaskController } from "./historicalTaskController";
-import { persistHistoricalTimingSample, timingSampleFromCompletedTask, type HistoricalTimingSample } from "./historyTiming";
+import { persistHistoricalTimingSample, timingSampleFromCompletedTask, type HistoricalTimingSample,
+  persistHistoricalScanTimingSample, scanTimingSampleFromCompletedTask, type HistoricalScanTimingSample } from "./historyTiming";
 import { previewProgrammersHistory } from "./historicalProgrammers";
 import {
   createSweaProblemContext,
@@ -358,10 +359,10 @@ type JungolImportState = {
   problemCount?: number; submissionCount?: number;
 };
 type JungolLocalTaskState = (JungolScanState | JungolImportState) & {
-  startedAt?: number; endedAt?: number; lastProgressAt?: number;
+  startedAt?: number; endedAt?: number; lastProgressAt?: number; scanTimingSample?: HistoricalScanTimingSample;
 };
 type JungolLocalTask = { url: string; state: JungolLocalTaskState; cancelling: boolean;
-  startedAt: number; endedAt?: number; completedProblemKeys?: Set<string> };
+  startedAt: number; endedAt?: number; completedProblemKeys?: Set<string>; scanTimingSample?: HistoricalScanTimingSample };
 let jungolScan: { url: string; table: Element | null; state: JungolScanState;
   onState?: (state: JungolScanState) => void } | null = null;
 let jungolLocalTask: JungolLocalTask | null = null;
@@ -382,6 +383,7 @@ function withScanTiming(task: JungolLocalTask, state: JungolScanState): JungolLo
     : state;
   const lastProgressAt = current.status === "SCANNING" ? current.progress.lastProgressAt : undefined;
   return { ...current, startedAt: task.startedAt, ...(task.endedAt === undefined ? {} : { endedAt: task.endedAt }),
+    ...(task.scanTimingSample ? { scanTimingSample: task.scanTimingSample } : {}),
     ...(lastProgressAt === undefined ? {} : { lastProgressAt }) } as JungolLocalTaskState;
 }
 
@@ -491,6 +493,11 @@ function startLocalJungolScan(document: Document, location: Location): JungolLoc
     }
     task.state = state;
     if (state.status !== "SCANNING") task.endedAt = Date.now();
+    const sample = scanTimingSampleFromCompletedTask({ ...state, startedAt: task.startedAt, endedAt: task.endedAt });
+    if (sample) {
+      task.scanTimingSample = sample;
+      if (chrome.storage?.local) void persistHistoricalScanTimingSample(chrome.storage.local, sample).catch(() => undefined);
+    }
   };
   const scan = startJungolScan(document, location, receiveScanState);
   receiveScanState(scan);
