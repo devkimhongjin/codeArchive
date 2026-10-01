@@ -28,6 +28,7 @@ test("SWEA traverses complete My Page/history pages and accepts only raw Pass ro
     const fetcher = async (url: string, init?: RequestInit) => { const form = new URLSearchParams(String(init?.body ?? ""));
       if (url.includes("userSubmitProblem")) return response(listPage(Number(new URL(url).searchParams.get("pageIndex"))), url);
       const number = Number((form.get("contestProbId") ?? "").replace(/\D/g, "")); const page = Number(form.get("pageIndex") ?? 1);
+      assert.equal(form.get("sortType"), "1", "standard histories use the actual form's submission-order value");
       return response(history(number, page), url);
     };
     const first = parseHTML(listPage(2)).document;
@@ -74,6 +75,30 @@ test("SWEA rejects repeated pageIndex content before traversing submission histo
       requests++; assert.match(url, /pageIndex=2/); return response(listPage(1), url);
     });
     assert.equal(result.status, "SCAN_INCOMPLETE"); assert.equal(requests, 1);
+    assert.equal(result.failureReason, "LIST_PAGE_INCOMPLETE"); assert.equal(result.failurePage, 2);
+  } finally { restore(); }
+});
+
+test("SWEA uses the displayed active page when the next-search form field is stale", async () => {
+  const restore = installedDomParser();
+  try {
+    const source = parseHTML(listPage(2).replace('name="pageIndex" value="2"', 'name="pageIndex" value="1"').replace('<nav aria-label="Page navigation">', '<nav aria-label="Page navigation"><li class="active">2 (current)</li>')).document;
+    const requests: number[] = [];
+    const result = await loadSweaHistoryPreview(source, location, async (url, init) => {
+      if (url.includes("userSubmitProblem")) { const page = Number(new URL(url).searchParams.get("pageIndex")); requests.push(page); return response(listPage(page), url); }
+      const form = new URLSearchParams(String(init?.body));
+      return response(history(Number((form.get("contestProbId") ?? "").replace(/\D/g, "")), Number(form.get("pageIndex"))), url);
+    });
+    assert.equal(result.status, "READY"); assert.deepEqual(requests, [1]);
+  } finally { restore(); }
+});
+
+test("SWEA keeps the exact problem and history page when an observed response is unavailable", async () => {
+  const restore = installedDomParser();
+  try {
+    const result = await loadSweaHistoryPreview(parseHTML(listPage(1, 20)).document, location, async url => response("", url, false));
+    assert.equal(result.status, "SCAN_INCOMPLETE");
+    assert.equal(result.failureReason, "HISTORY_RESPONSE_UNAVAILABLE"); assert.equal(result.failedProblemNumber, "1"); assert.equal(result.failurePage, 1);
   } finally { restore(); }
 });
 

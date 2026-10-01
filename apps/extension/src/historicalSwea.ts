@@ -10,7 +10,8 @@ const ID = /^[A-Za-z0-9_-]{1,100}$/;
 type FetchHtml = (url: string, init?: RequestInit) => Promise<Response>;
 
 export interface SweaHistoryCandidate { submissionId: string; problemNumber: string; title: string; contestProbId: string; userProblem?: boolean; language: string; solvedAt: string; codeByteLength: number; executionTime?: number; memoryValue?: number; }
-export type SweaHistoryPreview = { status: "LOGIN_REQUIRED" | "OWNERSHIP_UNVERIFIED" | "SCAN_INCOMPLETE"; candidates: []; skipped: number } | { status: "READY"; candidates: SweaHistoryCandidate[]; skipped: number; truncated: boolean };
+export type SweaScanFailureReason = "LIST_PAGE_INCOMPLETE" | "HISTORY_RESPONSE_UNAVAILABLE" | "HISTORY_PAGE_INCOMPLETE" | "SUBMISSION_ID_UNAVAILABLE" | "HISTORY_PAGE_REPEATED";
+export type SweaHistoryPreview = { status: "LOGIN_REQUIRED" | "OWNERSHIP_UNVERIFIED" | "SCAN_INCOMPLETE"; candidates: []; skipped: number; failureReason?: SweaScanFailureReason; failurePage?: number; failedProblemNumber?: string } | { status: "READY"; candidates: SweaHistoryCandidate[]; skipped: number; truncated: boolean };
 type Identity = { userId: string; nickname: string };
 type SweaProblem = { contestProbId: string; problemNumber: string; title: string; userProblem?: boolean };
 function historyPath(problem: SweaProblem): string { return problem.userProblem ? "/main/code/userProblem/userProblemSubmitHistory.do" : HISTORY_PATH; }
@@ -59,7 +60,9 @@ export function previewSweaProblems(document: Document, location: Location): { i
     .map(a => a.getAttribute("href")?.match(/pageIndex\.value=(\d{1,4})/)?.[1]).filter((v): v is string => !!v).map(Number)
     .filter(n => Number.isSafeInteger(n) && n > 0 && n <= 999);
   return { identity, problems, pages: [...new Set(pages)], total: exactCount(text(document.querySelector(".club_box_tit")), /제출한 Problem\((\d+)\)/),
-    pageIndex: Number(document.querySelector<HTMLInputElement>('#searchForm input[name="pageIndex"]')?.value) || 1,
+    // The displayed active page is authoritative. A form field may retain the
+    // next-search default until its pagination link is clicked.
+    pageIndex: Number(text(document.querySelector('nav[aria-label="Page navigation"] .active')).match(/^\d+/)?.[0]) || Number(document.querySelector<HTMLInputElement>('#searchForm input[name="pageIndex"]')?.value) || 1,
     rowNum: Number(document.querySelector<HTMLInputElement | HTMLSelectElement>('#searchForm [name="rowNum"]')?.value) || 20 };
 }
 /** Legacy preview is intentionally problem-only; historical submission rows require the history transport. */
@@ -73,7 +76,7 @@ export function previewSweaHistory(document: Document, location: Location, authe
 }
 
 function historyForm(identity: Identity, contestProbId: string, contestHistoryId = "", pageIndex = 1): URLSearchParams {
-  return new URLSearchParams({ contestProbId, contestHistoryId, codeLangSet: "", sortType: "", nickName: "", isChecked: "checked", checkUserId: identity.userId, pageSize: "20", pageIndex: String(pageIndex) });
+  return new URLSearchParams({ contestProbId, contestHistoryId, codeLangSet: "", sortType: "1", nickName: "", isChecked: "checked", checkUserId: identity.userId, pageSize: "20", pageIndex: String(pageIndex) });
 }
 function fetchHistoryDocument(fetchHtml: FetchHtml, identity: Identity, problem: SweaProblem, page = 1): Promise<Document | null> {
   const url = new URL(`${ORIGIN}${historyPath(problem)}`);
@@ -147,6 +150,8 @@ export async function loadSweaHistoryPreview(document: Document, location: Locat
   onProgress: (value: { problems: number; pages: number; historiesRead?: number; historiesTotal?: number }) => void = () => undefined, isCurrent: () => boolean = () => true): Promise<SweaHistoryPreview> {
   const first = previewSweaProblems(document, location); if (!first) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
   const total = first.total;
+  const incomplete = (failureReason: SweaScanFailureReason, failurePage: number, failedProblemNumber?: string): SweaHistoryPreview =>
+    ({ status: "SCAN_INCOMPLETE", candidates: [], skipped: 0, failureReason, failurePage, ...(failedProblemNumber ? { failedProblemNumber } : {}) });
   if (total === null || total < first.problems.length) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
   const pagesTotal = Math.ceil(total / 20); const allProblems: SweaProblem[] = [];
   for (let page = 1; page <= pagesTotal; page++) {
@@ -156,7 +161,7 @@ export async function loadSweaHistoryPreview(document: Document, location: Locat
       return fetchDocument(fetchHtml, url.href, { credentials: "include" });
     })();
     const preview = current && previewSweaProblems(current, location);
-    if (!preview || preview.pageIndex !== page || preview.rowNum !== 20 || preview.total !== total || preview.identity.userId !== first.identity.userId || preview.identity.nickname !== first.identity.nickname || preview.problems.length !== Math.min(20, total - (page - 1) * 20)) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
+    if (!preview || preview.pageIndex !== page || preview.rowNum !== 20 || preview.total !== total || preview.identity.userId !== first.identity.userId || preview.identity.nickname !== first.identity.nickname || preview.problems.length !== Math.min(20, total - (page - 1) * 20)) return incomplete("LIST_PAGE_INCOMPLETE", page);
     allProblems.push(...preview.problems);
     onProgress({ problems: allProblems.length, pages: page });
   }
@@ -166,18 +171,22 @@ export async function loadSweaHistoryPreview(document: Document, location: Locat
     if (!isCurrent()) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
     onProgress({ problems: allProblems.length, pages: pagesRead, historiesRead: problemIndex, historiesTotal: allProblems.length });
     const history = await fetchHistoryDocument(fetchHtml, first.identity, problem);
-    if (!history || !sameSignedInIdentity(history, first.identity) || history.querySelector<HTMLInputElement>(`#${problemFormId(problem)} input[name="contestProbId"]`)?.value !== problem.contestProbId) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
+    if (!history) return incomplete("HISTORY_RESPONSE_UNAVAILABLE", 1, problem.problemNumber);
+    if (!sameSignedInIdentity(history, first.identity)) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
+    if (history.querySelector<HTMLInputElement>(`#${problemFormId(problem)} input[name="contestProbId"]`)?.value !== problem.contestProbId) return incomplete("HISTORY_PAGE_INCOMPLETE", 1, problem.problemNumber);
     const historyTotal = exactCount(text(history.querySelector("h5.section_tit")), /총\s*(\d+)\s*회\s*제출/);
     if (historyTotal === null) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
     for (let page = 1; page <= Math.ceil(historyTotal / 20); page++) {
       const current = page === 1 ? history : await fetchHistoryDocument(fetchHtml, first.identity, problem, page);
-      if (!current || !sameSignedInIdentity(current, first.identity) || current.querySelector<HTMLInputElement>(`#${problemFormId(problem)} input[name="contestProbId"]`)?.value !== problem.contestProbId || exactCount(text(current.querySelector("h5.section_tit")), /총\s*(\d+)\s*회\s*제출/) !== historyTotal) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
+      if (!current || current.querySelector<HTMLInputElement>(`#${problemFormId(problem)} input[name="contestProbId"]`)?.value !== problem.contestProbId || exactCount(text(current.querySelector("h5.section_tit")), /총\s*(\d+)\s*회\s*제출/) !== historyTotal) return incomplete("HISTORY_PAGE_INCOMPLETE", page, problem.problemNumber);
+      if (!sameSignedInIdentity(current, first.identity)) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
       const rows = [...current.querySelectorAll<HTMLElement>(".box-list-inner .problem_smt")];
-      if (rows.length !== Math.min(20, historyTotal - (page - 1) * 20)) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
+      if (rows.length !== Math.min(20, historyTotal - (page - 1) * 20)) return incomplete("HISTORY_PAGE_INCOMPLETE", page, problem.problemNumber);
       if (rows.some(row => !ownerIs(row, first.identity))) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
       for (const row of rows) {
         const rawId = submissionIdFromRow(row);
-        if (!rawId || seen.has(rawId)) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
+        if (!rawId) return incomplete("SUBMISSION_ID_UNAVAILABLE", page, problem.problemNumber);
+        if (seen.has(rawId)) return incomplete("HISTORY_PAGE_REPEATED", page, problem.problemNumber);
         seen.add(rawId); const candidate = rowCandidate(row, problem, first.identity); if (!candidate) { skipped++; continue; } output.push(candidate);
       }
       pagesRead += 1;

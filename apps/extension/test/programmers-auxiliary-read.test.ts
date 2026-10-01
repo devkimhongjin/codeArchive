@@ -70,6 +70,19 @@ test("Programmers auxiliary preview parses the observed nested history metadata 
   assert.equal(result.candidates[0]?.score, 100);
 });
 
+test("Programmers SQL without a history component reports unsupported immediately without an editor fallback", async () => {
+  const sqlLocation = locationFor("https://school.programmers.co.kr/learn/courses/30/lessons/299310");
+  const document = parseHTML(`<html><body><div class="challenge-content lesson-algorithm-main-section" data-user-id="947840" data-challengeable-id="829" data-challengeable-type="database"></div><h1 class="challenge-title">SQL 문제</h1><textarea id="code">SELECT current editor</textarea></body></html>`).document;
+  let waits = 0;
+  const result = await readProgrammersAuxiliaryLesson(document, sqlLocation, { lessonUrl: sqlLocation.href, mode: "preview" }, { sleep: async () => { waits++; } });
+  assert.deepEqual(result, { status: "UNSUPPORTED_HISTORY", accountId: "947840", lessonId: "299310", title: "SQL 문제", candidates: [] });
+  assert.equal(waits, 0);
+  const foreignId = programmersHistoricalSubmissionId("111", "299310", timestamp, "sql")!;
+  assert.deepEqual(await readProgrammersAuxiliaryLesson(document, sqlLocation, { lessonUrl: sqlLocation.href, mode: "import", submissionId: foreignId }), { status: "OWNERSHIP_UNVERIFIED" });
+  document.querySelector(".challenge-content")!.setAttribute("data-challengeable-type", "algorithm");
+  assert.equal((await readProgrammersAuxiliaryLesson(document, sqlLocation, { lessonUrl: sqlLocation.href, mode: "preview" }, { attempts: 1 })).status, "OWNERSHIP_UNVERIFIED");
+});
+
 test("Programmers auxiliary rejects mismatched accounts, lesson routes, malformed rows, and duplicate tuple identities", async () => {
   const foreign = lessonDocument({ historyAccount: "111" });
   assert.deepEqual(await readProgrammersAuxiliaryLesson(foreign, locationFor(), { lessonUrl, mode: "preview" }, { attempts: 1 }), { status: "OWNERSHIP_UNVERIFIED" });

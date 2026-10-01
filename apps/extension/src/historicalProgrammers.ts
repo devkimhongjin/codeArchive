@@ -113,6 +113,18 @@ export function authenticatedProgrammersUserId(document: Document, location: Loc
   return account;
 }
 
+/** SQL lessons currently expose no submission history component or tab. */
+export function unsupportedProgrammersSqlHistory(document: Document, location: Location): { accountId: string; lessonId: string; title: string } | null {
+  if (!canonicalProgrammersLessonUrl(location)) return null;
+  const challenges = document.querySelectorAll<HTMLElement>('.challenge-content.lesson-algorithm-main-section[data-user-id][data-challengeable-id][data-challengeable-type="database"]');
+  const title = programmersLessonTitle(document);
+  const accountId = challenges.length === 1 ? challenges[0]!.dataset.userId ?? "" : "";
+  const lessonId = location.pathname.match(LESSON_PATH)?.[1] ?? "";
+  return title && /^\d{1,40}$/.test(accountId) && /^\d{1,40}$/.test(challenges[0]?.dataset.challengeableId ?? "") &&
+    !document.querySelector('[data-challengeable-submission-history-component],.submission-history-title')
+    ? { accountId, lessonId, title } : null;
+}
+
 function submissionRowValue(row: HTMLElement): SubmissionRowValue | null {
   const raw = row.getAttribute("data-hackle-value");
   if (!raw || raw.length > 2_000) return null;

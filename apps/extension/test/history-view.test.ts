@@ -143,6 +143,20 @@ test("Programmers first auxiliary wait shows the current problem and 0 of the kn
   assert.equal(view.document.querySelector("#task-time")!.textContent, "");
 });
 
+test("scan errors retain their problem/page context and unsupported SQL is not presented as collected", async () => {
+  const failed = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : {
+    status: "SCAN_INCOMPLETE", failureReason: "HISTORY_RESPONSE_UNAVAILABLE", failedProblemNumber: "4014", failurePage: 1,
+    progress: { phase: "histories", stage: "reading-histories", rows: 95, pagesLoaded: 5, groupsExpanded: 0, groupsTotal: 0, historiesRead: 0, historiesTotal: 95 }
+  });
+  await tick(); await tick();
+  assert.match(failed.document.querySelector("#status")!.textContent!, /문제 #4014의 제출 이력 1페이지/);
+  assert.equal(failed.document.querySelector("#task-stage")!.textContent, "목록 확인이 중단되었습니다.");
+  assert.match(failed.document.querySelector("#progress")!.textContent!, /0\/95/);
+  const readySql = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { status: "READY", candidates: [], unsupportedProblemNumbers: ["299310"] });
+  await tick(); await tick();
+  assert.match(readySql.document.querySelector("#status")!.textContent!, /제출 이력을 제공하지 않는 SQL 문제 1건은 수집 대상에서 제외/);
+});
+
 test("late platform results are ignored after a switch and switching back reloads safely", async () => {
   let resolveIds!: (value: unknown) => void; let idCalls = 0; const calls: string[] = [];
   const jungolReady = { status: "READY", candidates: [{ ...candidate, submissionId: "jungol-101" }], truncated: false };

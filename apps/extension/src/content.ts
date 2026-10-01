@@ -10,7 +10,7 @@ import { mayStoreLocalHistoryCapture, sameHistorySource } from "./historyRouting
 import { HistoricalTaskController, HistoricalImportFailure, type HistoricalImportFailureReason } from "./historicalTaskController";
 import { persistHistoricalTimingSample, timingSampleFromCompletedTask, type HistoricalTimingSample } from "./historyTiming";
 import { authenticatedProgrammersUserId, canonicalProgrammersLessonUrl, previewProgrammersHistory, readProgrammersLessonHistory,
-  readProgrammersSolvedListingPage, selectedProgrammersHistoryEditorUri,
+  readProgrammersSolvedListingPage, selectedProgrammersHistoryEditorUri, unsupportedProgrammersSqlHistory,
   type ProgrammersLessonHistoryRow, type ProgrammersLessonSubmission } from "./historicalProgrammers";
 import { isHistoricalSubmissionId, programmersHistoricalSubmissionAccount } from "./historicalIdentity";
 import {
@@ -32,6 +32,7 @@ export type ProgrammersAuxiliaryResponse =
   | { status: "READY"; accountId: string; lessonId: string; title: string; candidates: ProgrammersAuxiliaryCandidate[] }
   | { status: "DONE"; accountId: string; capture: Capture }
   | { status: "EMPTY"; accountId: string; lessonId: string; title: string; candidates: [] }
+  | { status: "UNSUPPORTED_HISTORY"; accountId: string; lessonId: string; title: string; candidates: [] }
   | { status: "BAD_REQUEST" | "TAB_NOT_FOUND" | "OWNERSHIP_UNVERIFIED" | "HISTORY_INCOMPLETE" | "AMBIGUOUS_HISTORY" | "STALE_SUBMISSION" | "SOURCE_UNAVAILABLE" };
 
 export interface ProgrammersAuxiliaryServices {
@@ -220,6 +221,12 @@ export async function readProgrammersAuxiliaryLesson(document: Document, locatio
   if (message.mode !== "preview" && message.mode !== "import") return { status: "BAD_REQUEST" };
   if (message.mode === "import" && typeof message.submissionId !== "string") return { status: "BAD_REQUEST" };
   const selectedAccount = message.mode === "import" ? programmersHistoricalSubmissionAccount(message.submissionId) : null;
+
+  const unsupported = unsupportedProgrammersSqlHistory(document, location);
+  if (unsupported) {
+    if (message.mode === "import" && unsupported.accountId !== selectedAccount) return { status: "OWNERSHIP_UNVERIFIED" };
+    return { status: "UNSUPPORTED_HISTORY", ...unsupported, candidates: [] };
+  }
 
   const history = await collectProgrammersLessonHistory(document, location, services);
   if (!programmersAuxiliaryRouteCurrent(location, lessonUrl)) return { status: "TAB_NOT_FOUND" };
@@ -638,7 +645,7 @@ type ExternalHistoryScanProgress = Omit<JungolHistoryScanProgress, "phase" | "st
   historiesTotal?: number;
   currentProblemNumber?: string;
 };
-let sweaState: { status: string; candidates?: SweaHistoryCandidate[]; completed?: number; total?: number; saved?: number; duplicate?: number; skipped?: number; startedAt?: number; endedAt?: number; lastProgressAt?: number; progress?: ExternalHistoryScanProgress; problemCount?: number; submissionCount?: number; timingSample?: HistoricalTimingSample } = { status: "SCAN_IDLE" };
+let sweaState: { status: string; failureReason?: string; failurePage?: number; failedProblemNumber?: string; candidates?: SweaHistoryCandidate[]; completed?: number; total?: number; saved?: number; duplicate?: number; skipped?: number; startedAt?: number; endedAt?: number; lastProgressAt?: number; progress?: ExternalHistoryScanProgress; problemCount?: number; submissionCount?: number; timingSample?: HistoricalTimingSample } = { status: "SCAN_IDLE" };
 let sweaController: HistoricalTaskController<SweaHistoryCandidate> | null = null;
 let sweaGeneration = 0;
 let sweaScanIdentity: ReturnType<typeof authenticatedSweaHistoryIdentity> = null;
@@ -656,7 +663,7 @@ function startSweaScan(document: Document, location: Location): typeof sweaState
   }, () => generation === sweaGeneration && sweaState.status === "SCANNING" && location.href === sourceUrl && (() => { const current = authenticatedSweaHistoryIdentity(document, location); return !!current && current.userId === identity.userId && current.nickname === identity.nickname; })()).then(result => {
     if (generation !== sweaGeneration) return;
     if (result.status === "READY") sweaState = { status: "READY", candidates: result.candidates, skipped: result.skipped, startedAt: sweaState.startedAt, endedAt: Date.now() };
-    else { sweaScanIdentity = null; sweaSourceUrl = ""; sweaState = { status: result.status, startedAt: sweaState.startedAt, endedAt: Date.now() }; }
+    else { sweaScanIdentity = null; sweaSourceUrl = ""; sweaState = { ...sweaState, status: result.status, failureReason: result.failureReason, failurePage: result.failurePage, failedProblemNumber: result.failedProblemNumber, endedAt: Date.now() }; }
   }).catch(() => { if (generation === sweaGeneration) { sweaScanIdentity = null; sweaSourceUrl = ""; sweaState = { status: "FAILED", startedAt: sweaState.startedAt, endedAt: Date.now() }; } });
   return sweaState;
 }
@@ -692,6 +699,7 @@ function startSweaImport(document: Document, location: Location, ids: unknown): 
 
 type ProgrammersLocalCandidate = { submissionId: string; problemNumber: string; title: string; language: string; createdAt: string; lessonUrl: string; order: number };
 type ProgrammersLocalState = { status: string; candidates?: ProgrammersLocalCandidate[]; truncated?: false; skipped?: number;
+  unsupportedProblemNumbers?: string[];
   progress?: ExternalHistoryScanProgress; completed?: number; total?: number; saved?: number; duplicate?: number; problemCount?: number;
   submissionCount?: number; startedAt?: number; endedAt?: number; timingSample?: HistoricalTimingSample; failedSubmissionIds?: string[]; failureReason?: string };
 let programmersLocalState: ProgrammersLocalState = { status: "SCAN_IDLE" };
@@ -731,7 +739,7 @@ function validProgrammersAuxiliaryPreview(value: unknown, lesson: { problemNumbe
   if (!value || typeof value !== "object" || (value as { ok?: unknown }).ok !== true) return null;
   const response = (value as { result?: unknown }).result as { status?: unknown; accountId?: unknown; lessonId?: unknown; title?: unknown; candidates?: unknown } | null;
   if (!response) return null;
-  if (response.status === "EMPTY") return typeof response.accountId === "string" && /^\d{1,40}$/.test(response.accountId) && (accountId === null || response.accountId === accountId) &&
+  if (response.status === "EMPTY" || response.status === "UNSUPPORTED_HISTORY") return typeof response.accountId === "string" && /^\d{1,40}$/.test(response.accountId) && (accountId === null || response.accountId === accountId) &&
     response.lessonId === lesson.problemNumber && typeof response.title === "string" && normalizedProgrammersTitle(response.title) === lesson.title
     ? { accountId: response.accountId, candidates: [] } : null;
   if (response.status !== "READY" || typeof response.accountId !== "string" || !/^\d{1,40}$/.test(response.accountId) ||
@@ -789,6 +797,7 @@ function startProgrammersScan(document: Document, location: Location): Programme
       current = await waitForProgrammersListingPage(document, location, priorPage + 1, priorSignature, generation);
     }
     const candidates: ProgrammersLocalCandidate[] = [];
+    const unsupportedProblemNumbers: string[] = [];
     let accountId: string | null = null;
     for (const lesson of lessons) {
       if (generation !== programmersLocalGeneration || !programmersSourceCurrent(location)) throw new HistoricalImportFailure("LIST_CHANGED");
@@ -801,12 +810,13 @@ function startProgrammersScan(document: Document, location: Location): Programme
       if (!parsed) throw new HistoricalImportFailure("DETAIL_UNVERIFIED");
       accountId ??= parsed.accountId;
       if (parsed.accountId !== accountId) throw new HistoricalImportFailure("DETAIL_UNVERIFIED");
+      if ((response as { result?: { status?: string } }).result?.status === "UNSUPPORTED_HISTORY") unsupportedProblemNumbers.push(lesson.problemNumber);
       for (const candidate of parsed.candidates) candidates.push({ ...candidate, title: lesson.title, lessonUrl: lesson.lessonUrl, order: lesson.order });
       programmersLocalState = { ...programmersLocalState, progress: programmersProgress(Math.ceil(initial.total / 20), lesson.order + 1, lessons.length) };
     }
     if (generation !== programmersLocalGeneration) return;
     programmersLocalAccountId = accountId;
-    programmersLocalState = { status: "READY", candidates, truncated: false, skipped: 0, startedAt: programmersLocalState.startedAt, endedAt: Date.now() };
+    programmersLocalState = { status: "READY", candidates, unsupportedProblemNumbers, truncated: false, skipped: 0, startedAt: programmersLocalState.startedAt, endedAt: Date.now() };
   })().catch(error => {
     if (generation !== programmersLocalGeneration) return;
     programmersLocalState = { status: error instanceof HistoricalImportFailure && error.reason === "LIST_CHANGED" ? "INTERRUPTED" : "SCAN_INCOMPLETE",
@@ -822,6 +832,7 @@ function startProgrammersImport(document: Document, location: Location, ids: unk
   if (selected.some(candidate => !candidate)) return { status: "FAILED" };
   const generation = ++programmersLocalGeneration;
   const controller = new HistoricalTaskController<ProgrammersLocalCandidate>(); programmersLocalController = controller;
+  const unsupportedProblemNumbers = programmersLocalState.unsupportedProblemNumbers;
   const completedProblems = new Set<string>();
   controller.start(selected as ProgrammersLocalCandidate[], async (candidate, mayStore) => {
     if (!mayStore() || generation !== programmersLocalGeneration || !programmersSourceCurrent(location)) { controller.cancel(); return { saved: 0, duplicate: 0, skipped: 0 }; }
@@ -851,11 +862,11 @@ function startProgrammersImport(document: Document, location: Location, ids: unk
       return { saved: stored.created === true ? 1 : 0, duplicate: stored.created === true ? 0 : 1, skipped: 0 };
     } catch (error) { if (error instanceof HistoricalImportFailure) throw error; throw new HistoricalImportFailure("STORE_FAILED"); }
   }, (candidate, result) => { if (result.saved + result.duplicate) completedProblems.add(`PROGRAMMERS:${candidate.problemNumber}`); });
-  programmersLocalState = { status: "IMPORTING", startedAt: Date.now() };
+  programmersLocalState = { status: "IMPORTING", startedAt: Date.now(), unsupportedProblemNumbers };
   void controller.settled().then(() => {
     if (generation !== programmersLocalGeneration || programmersLocalController !== controller || !controller.state) return;
     const timingSample = timingSampleFromCompletedTask(controller.state, "PROGRAMMERS");
-    programmersLocalState = { ...controller.state, problemCount: completedProblems.size, submissionCount: controller.state.saved + controller.state.duplicate,
+    programmersLocalState = { ...controller.state, unsupportedProblemNumbers, problemCount: completedProblems.size, submissionCount: controller.state.saved + controller.state.duplicate,
       ...(timingSample ? { timingSample } : {}) };
     if (timingSample && chrome.storage?.local) void persistHistoricalTimingSample(chrome.storage.local, timingSample).catch(() => undefined);
   });

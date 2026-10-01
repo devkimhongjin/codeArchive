@@ -9,9 +9,9 @@ type State = { status: string; candidates?: Candidate[]; truncated?: boolean; pr
   lastProgressAt?: number; sourceVisibility?: "visible" | "hidden" | "prerender" | "unknown";
 }; completed?: number; total?: number; saved?: number; duplicate?: number;
   startedAt?: number; endedAt?: number; lastProgressAt?: number; timingSample?: unknown;
-  failureReason?: string;
+  failureReason?: string; failurePage?: number; failedProblemNumber?: string;
   skipped?: number; failedSubmissionIds?: string[];
-  problemCount?: number; submissionCount?: number };
+  problemCount?: number; submissionCount?: number; unsupportedProblemNumbers?: string[] };
 export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
   schedule?: (work: () => void, delay: number) => unknown; now?: () => number;
   readTiming?: () => Promise<unknown>; openSite?: (url: string) => Promise<unknown> };
@@ -47,6 +47,8 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   const platform = (): Platform => platformSelect.value as Platform;
   const validState = (value: unknown): State | null => value && typeof value === "object" && typeof (value as State).status === "string" ? value as State : null;
   function label(state: State) {
+    const unsupportedNotice = state.unsupportedProblemNumbers?.length
+      ? ` 제출 이력을 제공하지 않는 SQL 문제 ${state.unsupportedProblemNumbers.length}건은 수집 대상에서 제외했습니다.` : "";
     if (state.status === "SCANNING") return "목록을 확인하고 있어요.";
     if (state.status === "IMPORTING") return `로컬 저장 중 ${state.completed ?? 0}/${state.total ?? 0}건`;
     if (state.status === "CANCELLING") return `현재 제출 처리를 마무리하는 중입니다. ${state.completed ?? 0}/${state.total ?? 0}건 처리했습니다.`;
@@ -56,7 +58,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       const failures = state.skipped ? ` · 확인 실패 ${state.skipped}건${state.failedSubmissionIds?.length ? ` (제출 ${state.failedSubmissionIds.map(id => `#${id}`).join(", ")})` : ""}` : "";
       return `${problems}제출 ${submissions}건 · 새로 저장 ${state.saved ?? 0}건 · 이미 저장됨 ${state.duplicate ?? 0}건${failures}`;
     };
-    if (state.status === "DONE") return `로컬 저장 완료 · ${resultSummary()}`;
+    if (state.status === "DONE") return `로컬 저장 완료 · ${resultSummary()}${unsupportedNotice}`;
     if (state.status === "INTERRUPTED" && (state.completed ?? 0) > 0) return `수집이 중단되었습니다. 현재까지 ${resultSummary()}`;
     const failureLabels: Record<string, string> = {
       LIST_CHANGED: "제출 목록이 바뀌었습니다. 후보 찾기를 다시 실행해 주세요.",
@@ -73,9 +75,14 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     if (state.status === "CONNECTION_FAILED") return platform() === "JUNGOL" ? "정올 탭과 연결하지 못했습니다. 제출현황을 새로고침한 뒤 후보 찾기를 다시 눌러 주세요." : `${platformInfo[platform()].guide} 새로고침한 뒤 다시 눌러 주세요.`;
     if (state.status === "MULTIPLE_TABS") return platform() === "JUNGOL" ? "정올 제출 탭이 여러 개입니다. 하나만 남긴 뒤 다시 시도해 주세요." : `${platformInfo[platform()].guide} 탭을 하나만 남긴 뒤 다시 눌러 주세요.`;
     if (state.status === "INTERRUPTED") return "원본 탭이 닫혔거나 이동했습니다. 저장된 항목은 유지됩니다.";
+    if (state.status === "OWNERSHIP_UNVERIFIED" || state.status === "LOGIN_REQUIRED") return "로그인한 본인의 제출 이력을 확인하지 못했습니다. 원본 사이트의 로그인 상태를 확인해 주세요.";
+    if (state.status === "SCAN_INCOMPLETE" && state.failurePage) {
+      const where = state.failedProblemNumber ? `문제 #${state.failedProblemNumber}의 제출 이력 ${state.failurePage}페이지` : `문제 목록 ${state.failurePage}페이지`;
+      return `${where}를 확인하지 못해 후보 찾기를 중단했습니다. 원본 사이트에서 해당 목록을 확인한 뒤 다시 시도해 주세요.`;
+    }
     if (state.status === "SCAN_INCOMPLETE") return "목록이 끝까지 열리지 않았습니다. 원본 탭을 유지한 뒤 다시 시도해 주세요.";
     if (state.status === "FAILED") return "수집을 완료하지 못했습니다. 원본 탭 상태를 확인해 주세요.";
-    return state.status === "READY" ? "후보 목록을 확인했습니다." : platformInfo[platform()].guide;
+    return state.status === "READY" ? `후보 목록을 확인했습니다.${unsupportedNotice}` : platformInfo[platform()].guide;
   }
   function clearCandidates() { candidates = []; selected.clear(); readyForImport = false; candidatesPanel.hidden = true; list.replaceChildren(); }
   function formatElapsed(milliseconds: number) {
@@ -173,7 +180,8 @@ export function mountHistory(doc: Document, services: HistoryServices) {
         progressBar.max = scanProgress.historiesTotal!; progressBar.value = Math.min(scanProgress.historiesRead!, scanProgress.historiesTotal!);
       } else if (groupTotalKnown) {
         progressBar.max = scanProgress.groupsTotal; progressBar.value = scanProgress.groupsExpanded;
-      } else { progressBar.removeAttribute("value"); progressBar.removeAttribute("max"); }
+      } else if (!active) { progressBar.max = 1; progressBar.value = 0; }
+      else { progressBar.removeAttribute("value"); progressBar.removeAttribute("max"); }
       const waiting = scanProgress.stage === "waiting-pages" || scanProgress.stage === "waiting-groups";
       progress.textContent = historiesTotalKnown
         ? `문제 ${scanProgress.historiesTotal}건 · 제출 이력 ${scanProgress.historiesRead}/${scanProgress.historiesTotal}개 확인`
@@ -187,6 +195,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
         : scanProgress.phase === "pages" ? "목록을 읽는 중입니다." : historiesTotalKnown
           ? scanProgress.currentProblemNumber ? `문제 #${scanProgress.currentProblemNumber}의 제출 이력을 확인하는 중입니다.` : "문제별 제출 이력을 읽는 중입니다."
           : "그룹을 펼치는 중입니다.";
+      if (!active && taskStage) taskStage.textContent = "목록 확인이 중단되었습니다.";
     } else if ((state.status === "IMPORTING" || state.status === "CANCELLING" || state.status === "DONE" || state.status === "FAILED" || state.status === "INTERRUPTED") &&
       typeof state.total === "number" && typeof state.completed === "number") {
       progressBar.hidden = false; progressBar.max = Math.max(1, state.total); progressBar.value = state.completed;

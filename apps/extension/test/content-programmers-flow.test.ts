@@ -23,9 +23,12 @@ test("Programmers listing owns auxiliary envelopes and the only local store", as
   let importResults: unknown[] = [{ ok: true, result: { status: "DONE", accountId: "947840", capture } }];
   let releasePreview!: () => void;
   let previewGate: Promise<void> | null = new Promise<void>(resolve => { releasePreview = resolve; });
+  let sqlAccount = "947840";
   const chrome = { runtime: { onMessage: { addListener(callback: typeof listener) { listener = callback; } }, sendMessage: async (message: unknown) => {
     calls.push(message); const type = (message as { type?: string }).type;
-    if (type === "PROGRAMMERS_AUX_READ" && (message as { mode?: string }).mode === "preview") { if (previewGate) await previewGate; return { ok: true, result: { status: "READY", accountId: "947840", lessonId: "389481", title: "가장 큰 수", candidates: previewCandidates } }; }
+    if (type === "PROGRAMMERS_AUX_READ" && (message as { mode?: string }).mode === "preview") {
+      if ((message as { lessonUrl: string }).lessonUrl.endsWith("/299310")) return { ok: true, result: { status: "UNSUPPORTED_HISTORY", accountId: sqlAccount, lessonId: "299310", title: "SQL 문제", candidates: [] } };
+      if (previewGate) await previewGate; return { ok: true, result: { status: "READY", accountId: "947840", lessonId: "389481", title: "가장 큰 수", candidates: previewCandidates } }; }
     if (type === "PROGRAMMERS_AUX_READ") return importResults.shift() ?? { ok: true, result: { status: "SOURCE_UNAVAILABLE" } };
     if (type === "STORE_HISTORICAL_CAPTURE") return { ok: true, created: true };
     return { ok: true };
@@ -91,5 +94,23 @@ test("Programmers listing owns auxiliary envelopes and the only local store", as
     assert.equal(staleDone.status, "DONE"); assert.equal(staleDone.completed, 2); assert.equal(staleDone.saved, 1); assert.equal(staleDone.skipped, 1);
     assert.equal(calls.filter(call => (call as { type?: string; mode?: string }).type === "PROGRAMMERS_AUX_READ" && (call as { mode?: string }).mode === "import").length, staleReadsBefore + 2);
     assert.equal(calls.filter(call => (call as { type?: string }).type === "STORE_HISTORICAL_CAPTURE").length, storesBefore + 1);
+    // A SQL lesson in the middle must settle as unsupported and allow the
+    // subsequent algorithm history request. No SQL capture may be stored.
+    document.querySelector(".total .text")!.textContent = "3 문제";
+    document.querySelector("tbody")!.insertAdjacentHTML("beforeend", `<tr><td class="status solved"></td><td class="title"><a href="/learn/courses/30/lessons/299310">SQL 문제</a></td></tr><tr><td class="status solved"></td><td class="title"><a href="/learn/courses/30/lessons/42861">가장 큰 수</a></td></tr>`);
+    // Return a separate final algorithm lesson envelope in the fake service.
+    const originalSend = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = async message => (message as { lessonUrl?: string }).lessonUrl?.endsWith("/42861")
+      ? { ok: true, result: { status: "EMPTY", accountId: "947840", lessonId: "42861", title: "가장 큰 수", candidates: [] } }
+      : originalSend(message);
+    await message({ type: "LOCAL_HISTORY_SCAN_START", platform: "PROGRAMMERS" });
+    await new Promise(resolve => globals.setTimeout(resolve, 30));
+    const withSql = await message({ type: "LOCAL_HISTORY_STATUS", platform: "PROGRAMMERS" }) as { status: string; unsupportedProblemNumbers?: string[] };
+    assert.equal(withSql.status, "READY"); assert.deepEqual(withSql.unsupportedProblemNumbers, ["299310"]);
+    assert.equal(calls.filter(call => (call as { type?: string }).type === "STORE_HISTORICAL_CAPTURE").length, storesBefore + 1);
+    sqlAccount = "111";
+    await message({ type: "LOCAL_HISTORY_SCAN_START", platform: "PROGRAMMERS" });
+    await new Promise(resolve => globals.setTimeout(resolve, 30));
+    assert.equal((await message({ type: "LOCAL_HISTORY_STATUS", platform: "PROGRAMMERS" }) as { status: string }).status, "SCAN_INCOMPLETE");
   } finally { Object.assign(globalThis, globals); }
 });

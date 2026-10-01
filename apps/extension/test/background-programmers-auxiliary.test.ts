@@ -34,6 +34,13 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
     [routeKey]: { tabId: sourceTabId, url: sourceUrl, status: "SCANNING", platform: "PROGRAMMERS" }
   };
   const fakeChrome = {
+    windows: {
+      create: async ({ url, type, focused }: { url: string; type: string; focused: boolean }) => {
+        assert.equal(type, "popup"); assert.equal(focused, true);
+        const created = await fakeChrome.tabs.create({ url, active: true });
+        return { id: created.id, tabs: [created] };
+      }
+    },
     runtime: {
       id: extensionId,
       onMessage: { addListener(callback: Listener) { listener = callback; } },
@@ -95,7 +102,7 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
     assert.equal(sent[0]!.tabId, 31);
     assert.deepEqual(sent[0]!.options, { frameId: 0 });
     assert.deepEqual(removed, [31]);
-    assert.deepEqual(creates[0], { url: lessonUrl, active: false });
+    assert.deepEqual(creates[0], { url: lessonUrl, active: true });
 
     session[routeKey] = { ...preservedScanningRoute, status: "IMPORTING" };
     const preservedImportingRoute = structuredClone(session[routeKey]);
