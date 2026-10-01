@@ -15,6 +15,21 @@ npm run build
 npm test
 ```
 
+### Optional installed-folder update
+
+`npm run build` always writes `dist`. On a local machine, create the ignored
+`build.local.json` beside this README to also replace files in an already
+loaded extension folder after the build succeeds:
+
+```json
+{ "installedExtensionDir": "C:\\path\\to\\existing-extension-folder" }
+```
+
+The folder must already contain a CodeArchive manifest with the same pinned
+public key. The build copies generated files only, preserves unrelated files,
+and backs up overwritten generated files under `output/extension-build-backups`.
+Without this local file, the build does not publish anywhere.
+
 The root project can invoke the same commands with `npm --prefix apps/extension`;
 this package does not require a root workspace or root package script.
 

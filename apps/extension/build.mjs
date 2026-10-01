@@ -3,6 +3,7 @@ import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildDefines, resolveBuildInfo } from "../../shared/build-info.mjs";
+import { publishConfiguredBuild } from "./build-output.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const dist = resolve(root, "dist");
@@ -41,3 +42,6 @@ await cp(resolve(root, "src/archive.css"), resolve(dist, "archive.css"));
 await cp(resolve(root, "src/archive-viewer.css"), resolve(dist, "archive-viewer.css"));
 await cp(resolve(root, "src/history.html"), resolve(dist, "history.html"));
 await cp(resolve(root, "src/history.css"), resolve(dist, "history.css"));
+
+const published = await publishConfiguredBuild({ extensionRoot: root, dist, backupRoot: resolve(root, "../../output/extension-build-backups") });
+if (published.published) console.log(`Updated installed extension (${published.files} files); backup: ${published.backup ?? "none"}`);
