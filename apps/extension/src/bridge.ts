@@ -25,6 +25,8 @@ export type DashboardMessage =
   | { type: "GET_HISTORICAL_SUMMARY"; capability: string }
   | { type: "GET_HISTORICAL_SUBMISSION_IDS"; capability: string; platform: "JUNGOL" }
   | { type: "GET_HISTORICAL_BY_SUBMISSION_IDS"; capability: string; platform: "JUNGOL"; submissionIds: string[] }
+  /** Opens the extension-owned local collection page. This deliberately exposes no scan/import command to the dashboard. */
+  | { type: "OPEN_HISTORY"; capability: string }
   | { type: "HISTORY_PREVIEW"; capability: string; platform: "SWEA" | "JUNGOL" | "PROGRAMMERS" }
   | { type: "HISTORY_SCAN_START" | "HISTORY_SCAN_STATUS"; capability: string; platform: "JUNGOL" }
   | { type: "HISTORY_IMPORT"; capability: string; platform: "JUNGOL"; submissionIds: string[] }
@@ -77,6 +79,7 @@ export interface DashboardBridgeOptions {
   onHistoryScanStart?: () => Promise<unknown>;
   onHistoryScanStatus?: () => Promise<unknown>;
   onHistoryImport?: (submissionIds: string[]) => Promise<unknown>;
+  onOpenHistory?: () => Promise<unknown>;
 }
 
 function exactDashboardSender(sender: DashboardSender): boolean {
@@ -112,7 +115,7 @@ function asObject(value: unknown): Record<string, unknown> | null {
 }
 
 function isMessageType(value: unknown): value is DashboardMessage["type"] {
-  return value === "CONNECT" || value === "PING" || value === "GET_STATUS" || value === "GET_PENDING" || value === "GET_LOCAL_ARCHIVE" || value === "GET_HISTORICAL_ARCHIVE" || value === "GET_HISTORICAL_SUMMARY" || value === "GET_HISTORICAL_SUBMISSION_IDS" || value === "GET_HISTORICAL_BY_SUBMISSION_IDS" || value === "HISTORY_PREVIEW" || value === "HISTORY_SCAN_START" || value === "HISTORY_SCAN_STATUS" || value === "HISTORY_IMPORT" || value === "REUSE_RELAY" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
+  return value === "CONNECT" || value === "PING" || value === "GET_STATUS" || value === "GET_PENDING" || value === "GET_LOCAL_ARCHIVE" || value === "GET_HISTORICAL_ARCHIVE" || value === "GET_HISTORICAL_SUMMARY" || value === "GET_HISTORICAL_SUBMISSION_IDS" || value === "GET_HISTORICAL_BY_SUBMISSION_IDS" || value === "OPEN_HISTORY" || value === "HISTORY_PREVIEW" || value === "HISTORY_SCAN_START" || value === "HISTORY_SCAN_STATUS" || value === "HISTORY_IMPORT" || value === "REUSE_RELAY" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
 }
 
 export class DashboardBridge {
@@ -126,6 +129,7 @@ export class DashboardBridge {
   private readonly onHistoryScanStart?: () => Promise<unknown>;
   private readonly onHistoryScanStatus?: () => Promise<unknown>;
   private readonly onHistoryImport?: (submissionIds: string[]) => Promise<unknown>;
+  private readonly onOpenHistory?: () => Promise<unknown>;
 
   constructor(private readonly store: CaptureStore, options: DashboardBridgeOptions = {}) {
     this.now = options.now ?? (() => Date.now());
@@ -137,6 +141,7 @@ export class DashboardBridge {
     this.onHistoryScanStart = options.onHistoryScanStart;
     this.onHistoryScanStatus = options.onHistoryScanStatus;
     this.onHistoryImport = options.onHistoryImport;
+    this.onOpenHistory = options.onOpenHistory;
   }
 
   async handleMessage(message: unknown, sender: DashboardSender): Promise<BridgeResponse> {
@@ -159,26 +164,25 @@ export class DashboardBridge {
 
     if (type === "PING") return { ok: true };
 
-    if (type === "HISTORY_PREVIEW") {
-      if ((object?.platform !== "SWEA" && object?.platform !== "JUNGOL" && object?.platform !== "PROGRAMMERS") || !this.onHistoryPreview) return { error: "BAD_REQUEST" };
-      try { return { history: await this.onHistoryPreview(object.platform) }; }
+    if (type === "OPEN_HISTORY") {
+      if (!this.onOpenHistory) return { error: "BAD_REQUEST" };
+      try { return { history: await this.onOpenHistory() }; }
       catch { return { error: "HISTORY_UNAVAILABLE" }; }
+    }
+
+    if (type === "HISTORY_PREVIEW") {
+      // Historical collection is extension-owned. Legacy dashboard callers
+      // receive an explicit unavailable response instead of attaching to a
+      // source-tab job that may be running independently of their document.
+      return { error: "HISTORY_UNAVAILABLE" };
     }
 
     if (type === "HISTORY_SCAN_START" || type === "HISTORY_SCAN_STATUS") {
-      if (object?.platform !== "JUNGOL") return { error: "BAD_REQUEST" };
-      const action = type === "HISTORY_SCAN_START" ? this.onHistoryScanStart : this.onHistoryScanStatus;
-      if (!action) return { error: "BAD_REQUEST" };
-      try { return { history: await action() }; }
-      catch { return { error: "HISTORY_UNAVAILABLE" }; }
+      return { error: "HISTORY_UNAVAILABLE" };
     }
 
     if (type === "HISTORY_IMPORT") {
-      const ids = object?.submissionIds;
-      if (object?.platform !== "JUNGOL" || !this.onHistoryImport || !Array.isArray(ids) || ids.length < 1 || ids.length > 10 ||
-          ids.some(id => typeof id !== "string" || !/^\d{1,40}$/.test(id)) || new Set(ids).size !== ids.length) return { error: "BAD_REQUEST" };
-      try { return { history: await this.onHistoryImport(ids as string[]) }; }
-      catch { return { error: "HISTORY_UNAVAILABLE" }; }
+      return { error: "HISTORY_UNAVAILABLE" };
     }
 
     if (type === "GET_STATUS") {

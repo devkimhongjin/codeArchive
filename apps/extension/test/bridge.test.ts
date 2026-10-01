@@ -93,27 +93,26 @@ test('historical summary counts all retained captures by platform without return
   assert.equal(await store.countPending(), 0);
 });
 
-test('historical preview and import require the exact dashboard capability and bounded submission IDs', async () => {
+test('dashboard capability can open the extension page but cannot start a source-tab collection job', async () => {
   const store = new MemoryCaptureStore();
   const calls: string[] = [];
   const bridge = new DashboardBridge(store, {
     onHistoryPreview: async platform => { calls.push(`preview:${platform}`); return { status: 'READY', candidates: [] }; },
     onHistoryScanStart: async () => { calls.push('scan:start'); return { status: 'SCANNING', progress: { phase: 'pages', rows: 13 } }; },
     onHistoryScanStatus: async () => { calls.push('scan:status'); return { status: 'READY', candidates: [] }; },
-    onHistoryImport: async ids => { calls.push(`import:${ids.join(',')}`); return { status: 'DONE', saved: ids.length }; }
+    onHistoryImport: async ids => { calls.push(`import:${ids.join(',')}`); return { status: 'DONE', saved: ids.length }; },
+    onOpenHistory: async () => ({ status: 'OPENED' })
   });
   const connected = await bridge.handleMessage({ type: 'CONNECT' }, sender());
   assert.ok('capability' in connected);
   assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_PREVIEW', capability: connected.capability, platform: 'JUNGOL' }, sender('other')), { error: 'UNAUTHORIZED' });
   assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_SCAN_START', capability: connected.capability, platform: 'JUNGOL' }, sender('other')), { error: 'UNAUTHORIZED' });
-  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_SCAN_START', capability: connected.capability, platform: 'SWEA' }, sender()), { error: 'BAD_REQUEST' });
-  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_SCAN_START', capability: connected.capability, platform: 'JUNGOL' }, sender()), { history: { status: 'SCANNING', progress: { phase: 'pages', rows: 13 } } });
-  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_SCAN_STATUS', capability: connected.capability, platform: 'JUNGOL' }, sender()), { history: { status: 'READY', candidates: [] } });
-  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_IMPORT', capability: connected.capability, platform: 'JUNGOL', submissionIds: ['1', '1'] }, sender()), { error: 'BAD_REQUEST' });
-  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_IMPORT', capability: connected.capability, platform: 'SWEA', submissionIds: ['1'] }, sender()), { error: 'BAD_REQUEST' });
-  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_PREVIEW', capability: connected.capability, platform: 'SWEA' }, sender()), { history: { status: 'READY', candidates: [] } });
-  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_IMPORT', capability: connected.capability, platform: 'JUNGOL', submissionIds: ['123'] }, sender()), { history: { status: 'DONE', saved: 1 } });
-  assert.deepEqual(calls, ['scan:start', 'scan:status', 'preview:SWEA', 'import:123']);
+  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_SCAN_START', capability: connected.capability, platform: 'SWEA' }, sender()), { error: 'HISTORY_UNAVAILABLE' });
+  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_SCAN_START', capability: connected.capability, platform: 'JUNGOL' }, sender()), { error: 'HISTORY_UNAVAILABLE' });
+  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_SCAN_STATUS', capability: connected.capability, platform: 'JUNGOL' }, sender()), { error: 'HISTORY_UNAVAILABLE' });
+  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_IMPORT', capability: connected.capability, platform: 'JUNGOL', submissionIds: ['123'] }, sender()), { error: 'HISTORY_UNAVAILABLE' });
+  assert.deepEqual(await bridge.handleMessage({ type: 'OPEN_HISTORY', capability: connected.capability }, sender()), { history: { status: 'OPENED' } });
+  assert.deepEqual(calls, []);
 });
 
 test('heartbeat is capability-bound, exposes no captures and keeps absolute expiry', async () => {

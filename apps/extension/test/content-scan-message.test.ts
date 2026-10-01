@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseHTML } from 'linkedom';
 
-test('legacy Jungol preview joins the active managed scan without a second immediate click', async () => {
+test('content scanner joins legacy requests and publishes a moved source as terminal after it returns', async () => {
   const { document } = parseHTML(`<html><body>
     <button role="switch" aria-checked="true">내 제출</button><button aria-label="@mine 필터 해제"></button>
     <table><tr><th>번호</th></tr><tr><td data-col="번호">12345</td>
@@ -43,6 +43,26 @@ test('legacy Jungol preview joins the active managed scan without a second immed
     assert.equal(clicks, 1);
     assert.deepEqual(legacy, start);
     await new Promise(resolve => globals.setTimeout(resolve, 50));
+
+    // Local collection owns the scanner. A source move must settle rather
+    // than leaving the task permanently SCANNING, even if the user returns
+    // to the original owned listing before asking for status or retrying.
+    let localStart: unknown;
+    listener!({ type: 'LOCAL_HISTORY_SCAN_START' }, null, value => { localStart = value; });
+    assert.equal((localStart as { status: string }).status, 'SCANNING');
+    location.href = 'https://jungol.co.kr/submission?account=other';
+    await new Promise(resolve => globals.setTimeout(resolve, 30));
+    location.href = 'https://jungol.co.kr/submission?account=mine';
+    await new Promise(resolve => globals.setTimeout(resolve, 30));
+    let terminal: unknown;
+    listener!({ type: 'LOCAL_HISTORY_STATUS' }, null, value => { terminal = value; });
+    assert.equal((terminal as { status: string }).status, 'SCAN_INCOMPLETE');
+    let terminalCancel: unknown;
+    listener!({ type: 'LOCAL_HISTORY_CANCEL' }, null, value => { terminalCancel = value; });
+    assert.equal((terminalCancel as { status: string }).status, 'SCAN_INCOMPLETE');
+    let retry: unknown;
+    listener!({ type: 'LOCAL_HISTORY_SCAN_START' }, null, value => { retry = value; });
+    assert.equal((retry as { status: string }).status, 'SCANNING');
   } finally {
     Object.assign(globalThis, globals);
   }

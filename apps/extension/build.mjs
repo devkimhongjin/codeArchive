@@ -17,7 +17,8 @@ await build({
     content: resolve(root, "src/content.ts"),
     mainWorld: resolve(root, "src/mainWorld.ts"),
     popup: resolve(root, "src/popup.ts"),
-    archive: resolve(root, "src/archive.ts")
+    archive: resolve(root, "src/archive.ts"),
+    history: resolve(root, "src/history.ts")
   },
   bundle: true,
   format: "iife",
@@ -38,3 +39,5 @@ await cp(resolve(root, "src/popup-layout.css"), resolve(dist, "popup-layout.css"
 await cp(resolve(root, "src/archive.html"), resolve(dist, "archive.html"));
 await cp(resolve(root, "src/archive.css"), resolve(dist, "archive.css"));
 await cp(resolve(root, "src/archive-viewer.css"), resolve(dist, "archive-viewer.css"));
+await cp(resolve(root, "src/history.html"), resolve(dist, "history.html"));
+await cp(resolve(root, "src/history.css"), resolve(dist, "history.css"));

@@ -13,6 +13,7 @@ import { SWEA_ORIGIN, SWEA_SOLVING_PATH } from "./adapters/sweaSelectors";
 import { activeSubmissionProgress, SUBMISSION_PROGRESS_KEY, updateSubmissionProgress } from "./submissionProgress";
 import type { Platform } from "./types";
 import { isJungolHistoryPath, isJungolHistorySenderUrl } from "./historicalJungol";
+import { mayRediscoverHistorySource, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
 
 const store = new IndexedDbCaptureStore();
 const bridge = new DashboardBridge(store, {
@@ -22,11 +23,71 @@ const bridge = new DashboardBridge(store, {
   onHistoryPreview: platform => requestHistoryTab(platform, { type: "HISTORY_PREVIEW" }),
   onHistoryScanStart: () => requestHistoryTab("JUNGOL", { type: "HISTORY_SCAN_START" }),
   onHistoryScanStatus: () => requestHistoryTab("JUNGOL", { type: "HISTORY_SCAN_STATUS" }),
-  onHistoryImport: requestHistoryImport
+  onHistoryImport: requestHistoryImport,
+  onOpenHistory: openHistoryPage
 });
+
+const LOCAL_HISTORY_ROUTE_KEY = "codearchive-local-history-route";
+type LocalHistoryRoute = { tabId: number; url: string; status: string };
+
+async function openHistoryPage(): Promise<{ status: "OPENED" }> {
+  await chrome.tabs.create({ url: chrome.runtime.getURL("history.html") });
+  return { status: "OPENED" };
+}
+
+async function readLocalHistoryRoute(): Promise<LocalHistoryRoute | null> {
+  const value = (await chrome.storage.session.get(LOCAL_HISTORY_ROUTE_KEY))[LOCAL_HISTORY_ROUTE_KEY];
+  if (!value || typeof value !== "object") return null;
+  const route = value as Partial<LocalHistoryRoute>;
+  return Number.isSafeInteger(route.tabId) && route.tabId! >= 0 && typeof route.url === "string" && route.url.length <= 2_000 && typeof route.status === "string" ? route as LocalHistoryRoute : null;
+}
+
+async function writeLocalHistoryRoute(route: LocalHistoryRoute | null): Promise<void> {
+  if (route) await chrome.storage.session.set({ [LOCAL_HISTORY_ROUTE_KEY]: route });
+  else await chrome.storage.session.remove(LOCAL_HISTORY_ROUTE_KEY);
+}
+
+async function resolveLocalHistoryTab(allowNewSource = false): Promise<{ tabId: number; url: string } | { error: "TAB_NOT_FOUND" | "MULTIPLE_TABS" }> {
+  const route = await readLocalHistoryRoute();
+  if (route) {
+    try {
+      const tab = await chrome.tabs.get(route.tabId);
+      if (tab.url && sameHistorySource(route.url, tab.url)) return { tabId: route.tabId, url: route.url };
+    } catch { /* The saved source tab was closed. */ }
+    await writeLocalHistoryRoute({ ...route, status: "INTERRUPTED" });
+    if (!allowNewSource) return { error: "TAB_NOT_FOUND" };
+    await writeLocalHistoryRoute(null);
+  }
+  // A status read must never bind an arbitrary currently-open source tab.
+  // Only a user initiated scan is allowed to choose a new source route.
+  if (!allowNewSource) return { error: "TAB_NOT_FOUND" };
+  const tabs = await chrome.tabs.query({ url: "https://jungol.co.kr/*" });
+  const matches = tabs.filter(tab => Number.isSafeInteger(tab.id) && tab.url && (() => {
+    try { const url = new URL(tab.url!); return isJungolHistoryPath(url.pathname); } catch { return false; }
+  })());
+  if (matches.length !== 1) return { error: matches.length === 0 ? "TAB_NOT_FOUND" : "MULTIPLE_TABS" };
+  const match = matches[0]!;
+  return { tabId: match.id!, url: match.url! };
+}
+
+async function localHistoryCommand(type: LocalHistoryCommand, submissionIds?: string[]): Promise<unknown> {
+  const target = await resolveLocalHistoryTab(mayRediscoverHistorySource(type));
+  if ("error" in target) return { status: target.error };
+  try {
+    const response = await chrome.tabs.sendMessage(target.tabId, submissionIds ? { type, submissionIds } : { type }, { frameId: 0 }) as { status?: unknown };
+    const status = typeof response?.status === "string" ? response.status : "FAILED";
+    await writeLocalHistoryRoute({ ...target, status });
+    return response;
+  } catch {
+    await writeLocalHistoryRoute({ ...target, status: "INTERRUPTED" });
+    return { status: "INTERRUPTED" };
+  }
+}
 
 let historyImportInFlight = false;
 async function requestHistoryImport(submissionIds: string[]): Promise<unknown> {
+  const route = await readLocalHistoryRoute();
+  if (route?.status === "SCANNING" || route?.status === "IMPORTING") return { status: "BUSY" };
   if (historyImportInFlight) return { status: "BUSY" };
   historyImportInFlight = true;
   try { return await requestHistoryTab("JUNGOL", { type: "HISTORY_IMPORT", submissionIds }); }
@@ -130,7 +191,11 @@ type InternalMessage =
   | { type: "UPDATE_ARCHIVE_THEMES"; lightTheme: unknown; darkTheme: unknown }
   | { type: "UPDATE_SETTINGS"; patch: Record<string, unknown> }
   | { type: "STORE_SWEA_PROBLEM_CONTEXT"; context: unknown }
-  | { type: "GET_SWEA_PROBLEM_CONTEXT"; sourceUrl: unknown };
+  | { type: "GET_SWEA_PROBLEM_CONTEXT"; sourceUrl: unknown }
+  | { type: "OPEN_LOCAL_HISTORY" }
+  | { type: "LOCAL_HISTORY_IDS" }
+  | { type: "LOCAL_HISTORY_SCAN_START" | "LOCAL_HISTORY_STATUS" | "LOCAL_HISTORY_CANCEL" }
+  | { type: "LOCAL_HISTORY_IMPORT_START"; submissionIds: unknown };
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -152,6 +217,12 @@ function isArchivePageSender(sender: chrome.runtime.MessageSender): boolean {
 function isPopupSender(sender: chrome.runtime.MessageSender): boolean {
   if (typeof sender.url !== "string") return false;
   try { const url = new URL(sender.url); return url.protocol === "chrome-extension:" && url.hostname === chrome.runtime.id && url.pathname === "/popup.html"; } catch { return false; }
+}
+
+function isHistoryPageSender(sender: chrome.runtime.MessageSender): boolean {
+  if (sender.id !== chrome.runtime.id || sender.frameId !== 0 || typeof sender.url !== "string") return false;
+  try { const url = new URL(sender.url); return url.protocol === "chrome-extension:" && url.hostname === chrome.runtime.id && url.pathname === "/history.html"; }
+  catch { return false; }
 }
 
 function senderUrl(sender: chrome.runtime.MessageSender): URL | null {
@@ -236,6 +307,26 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     void Promise.all([loadPopupLocalState(store), chrome.storage.session.get(SUBMISSION_PROGRESS_KEY).catch(() => ({} as Record<string, unknown>))])
       .then(([state, progress]) => sendResponse({ ...state, submissionProgress: activeSubmissionProgress(progress[SUBMISSION_PROGRESS_KEY]) }))
       .catch(() => sendResponse({ pendingCount: 0, settings: null, recentCaptures: [], error: "STORAGE_ERROR" }));
+    return true;
+  }
+
+  if (object.type === "OPEN_LOCAL_HISTORY") {
+    if (!isPopupSender(sender) && !isArchivePageSender(sender)) { sendResponse({ ok: false, error: "UNAUTHORIZED" }); return false; }
+    void openHistoryPage().then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false, error: "OPEN_FAILED" }));
+    return true;
+  }
+
+  if (object.type === "LOCAL_HISTORY_IDS") {
+    if (!isHistoryPageSender(sender)) { sendResponse({ error: "UNAUTHORIZED" }); return false; }
+    void store.listHistoricalSubmissionIds("JUNGOL").then(submissionIds => sendResponse({ submissionIds })).catch(() => sendResponse({ error: "STORAGE_ERROR" }));
+    return true;
+  }
+
+  if (object.type === "LOCAL_HISTORY_SCAN_START" || object.type === "LOCAL_HISTORY_STATUS" || object.type === "LOCAL_HISTORY_CANCEL" || object.type === "LOCAL_HISTORY_IMPORT_START") {
+    if (!isHistoryPageSender(sender)) { sendResponse({ status: "UNAUTHORIZED" }); return false; }
+    const ids = object.type === "LOCAL_HISTORY_IMPORT_START" ? object.submissionIds : undefined;
+    if (ids !== undefined && (!Array.isArray(ids) || ids.length < 1 || ids.length > 5_000 || ids.some(id => typeof id !== "string" || !/^\d{1,40}$/.test(id)) || new Set(ids).size !== ids.length)) { sendResponse({ status: "BAD_REQUEST" }); return false; }
+    void localHistoryCommand(object.type, ids as string[] | undefined).then(sendResponse).catch(() => sendResponse({ status: "FAILED" }));
     return true;
   }
 

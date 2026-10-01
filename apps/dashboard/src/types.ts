@@ -3,7 +3,7 @@ import type { HeaderField } from '../../../shared/headerFields'
 
 export type Platform = 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'
 
-export type ViewName = 'solutions' | 'history' | 'community' | 'guide' | 'settings' | 'github'
+export type ViewName = 'solutions' | 'community' | 'guide' | 'settings' | 'github'
 
 export type User = {
   id: number

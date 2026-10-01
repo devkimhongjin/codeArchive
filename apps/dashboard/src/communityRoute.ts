@@ -7,7 +7,7 @@ const routeKeys = ['view', 'platform', 'problemNumber', 'languageKey', 'page', '
 
 export function readView(search = window.location.search): ViewName {
   const view = new URLSearchParams(search).get('view')
-  return view === 'community' || view === 'history' || view === 'guide' || view === 'settings' || view === 'github' ? view : 'solutions'
+  return view === 'community' || view === 'guide' || view === 'settings' || view === 'github' ? view : 'solutions'
 }
 
 export function readCommunityRoute(search = window.location.search): CommunityRoute {
