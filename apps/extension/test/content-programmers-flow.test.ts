@@ -21,9 +21,11 @@ test("Programmers listing owns auxiliary envelopes and the only local store", as
   const calls: unknown[] = [];
   let previewCandidates = [{ submissionId: id, problemNumber: "389481", language: "java", createdAt: "2026-09-21T16:43:28.310+09:00", score: 100 }];
   let importResults: unknown[] = [{ ok: true, result: { status: "DONE", accountId: "947840", capture } }];
+  let releasePreview!: () => void;
+  let previewGate: Promise<void> | null = new Promise<void>(resolve => { releasePreview = resolve; });
   const chrome = { runtime: { onMessage: { addListener(callback: typeof listener) { listener = callback; } }, sendMessage: async (message: unknown) => {
     calls.push(message); const type = (message as { type?: string }).type;
-    if (type === "PROGRAMMERS_AUX_READ" && (message as { mode?: string }).mode === "preview") return { ok: true, result: { status: "READY", accountId: "947840", lessonId: "389481", title: "가장 큰 수", candidates: previewCandidates } };
+    if (type === "PROGRAMMERS_AUX_READ" && (message as { mode?: string }).mode === "preview") { if (previewGate) await previewGate; return { ok: true, result: { status: "READY", accountId: "947840", lessonId: "389481", title: "가장 큰 수", candidates: previewCandidates } }; }
     if (type === "PROGRAMMERS_AUX_READ") return importResults.shift() ?? { ok: true, result: { status: "SOURCE_UNAVAILABLE" } };
     if (type === "STORE_HISTORICAL_CAPTURE") return { ok: true, created: true };
     return { ok: true };
@@ -36,6 +38,11 @@ test("Programmers listing owns auxiliary envelopes and the only local store", as
     const contentModule = "../src/content?programmers-flow";
     await import(contentModule); assert.ok(listener);
     assert.equal((await message({ type: "LOCAL_HISTORY_SCAN_START", platform: "PROGRAMMERS" }) as { status: string }).status, "SCANNING");
+    const waiting = await message({ type: "LOCAL_HISTORY_STATUS", platform: "PROGRAMMERS" }) as { status: string; progress: { phase: string; rows: number; historiesRead: number; historiesTotal: number; currentProblemNumber: string } };
+    assert.equal(waiting.status, "SCANNING"); assert.equal(waiting.progress.phase, "histories");
+    assert.equal(waiting.progress.rows, 1); assert.equal(waiting.progress.historiesRead, 0); assert.equal(waiting.progress.historiesTotal, 1);
+    assert.equal(waiting.progress.currentProblemNumber, "389481");
+    releasePreview(); previewGate = null;
     await new Promise(resolve => globals.setTimeout(resolve, 30));
     const ready = await message({ type: "LOCAL_HISTORY_STATUS", platform: "PROGRAMMERS" }) as { status: string; candidates?: Array<{ submissionId: string }> };
     assert.equal(ready.status, "READY"); assert.deepEqual(ready.candidates?.map(item => item.submissionId), [id]);

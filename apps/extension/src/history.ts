@@ -5,7 +5,7 @@ type Platform = "JUNGOL" | "SWEA" | "PROGRAMMERS";
 type Candidate = { submissionId: string; problemNumber: string; title: string; language?: string; createdAt?: string; executionTime?: number; memoryValue?: number };
 type State = { status: string; candidates?: Candidate[]; truncated?: boolean; progress?: {
   phase: string; stage?: string; rows: number; pagesLoaded: number; groupsExpanded: number; groupsTotal: number; groupsTotalKnown?: boolean;
-  historiesRead?: number; historiesTotal?: number;
+  historiesRead?: number; historiesTotal?: number; currentProblemNumber?: string;
   lastProgressAt?: number; sourceVisibility?: "visible" | "hidden" | "prerender" | "unknown";
 }; completed?: number; total?: number; saved?: number; duplicate?: number;
   startedAt?: number; endedAt?: number; lastProgressAt?: number; timingSample?: unknown;
@@ -184,7 +184,9 @@ export function mountHistory(doc: Document, services: HistoryServices) {
           : `그룹 ${scanProgress.groupsExpanded}개를 확인했습니다.`;
       if (taskStage) taskStage.textContent = waiting
         ? `${scanProgress.stage === "waiting-pages" ? "다음 목록 또는 마지막 목록" : "그룹 펼침"} 응답을 기다리는 중${scanProgress.sourceVisibility === "hidden" ? " · 원본 탭이 백그라운드 상태입니다." : "."}`
-        : scanProgress.phase === "pages" ? "목록을 읽는 중입니다." : historiesTotalKnown ? "문제별 제출 이력을 읽는 중입니다." : "그룹을 펼치는 중입니다.";
+        : scanProgress.phase === "pages" ? "목록을 읽는 중입니다." : historiesTotalKnown
+          ? scanProgress.currentProblemNumber ? `문제 #${scanProgress.currentProblemNumber}의 제출 이력을 확인하는 중입니다.` : "문제별 제출 이력을 읽는 중입니다."
+          : "그룹을 펼치는 중입니다.";
     } else if ((state.status === "IMPORTING" || state.status === "CANCELLING" || state.status === "DONE" || state.status === "FAILED" || state.status === "INTERRUPTED") &&
       typeof state.total === "number" && typeof state.completed === "number") {
       progressBar.hidden = false; progressBar.max = Math.max(1, state.total); progressBar.value = state.completed;

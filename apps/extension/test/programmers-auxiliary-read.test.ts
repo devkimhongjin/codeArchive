@@ -28,7 +28,7 @@ function lessonDocument(options: { account?: string; historyAccount?: string; le
   const rows = options.rows ?? [{}];
   const total = rows.length;
   return parseHTML(`<html><body>
-    <div class="challenge-content lesson-algorithm-main-section" data-user-id="${account}" data-challengeable-id="${options.challengeableLesson ?? lessonId}"></div>
+    <div class="challenge-content lesson-algorithm-main-section" data-user-id="${account}" data-challengeable-id="${options.challengeableLesson ?? "26803"}"></div>
     <h1 class="challenge-title">${options.title ?? "가장 큰 수"}</h1><textarea id="code">CURRENT EDITOR MUST NOT BE USED</textarea>
     ${options.history === false ? "" : `<button class="submission-history-title">제출 이력</button>
       <div data-challengeable-submission-history-component data-user-id="${historyAccount}" data-lesson-id="${options.lesson ?? lessonId}">
@@ -75,7 +75,7 @@ test("Programmers auxiliary rejects mismatched accounts, lesson routes, malforme
   assert.deepEqual(await readProgrammersAuxiliaryLesson(foreign, locationFor(), { lessonUrl, mode: "preview" }, { attempts: 1 }), { status: "OWNERSHIP_UNVERIFIED" });
   const wrongLesson = lessonDocument({ lesson: "999" });
   assert.deepEqual(await readProgrammersAuxiliaryLesson(wrongLesson, locationFor(), { lessonUrl, mode: "preview" }, { attempts: 1 }), { status: "OWNERSHIP_UNVERIFIED" });
-  const mismatchedChallengeable = lessonDocument({ challengeableLesson: "999" });
+  const mismatchedChallengeable = lessonDocument({ challengeableLesson: "not-an-id" });
   assert.deepEqual(await readProgrammersAuxiliaryLesson(mismatchedChallengeable, locationFor(), { lessonUrl, mode: "preview" }, { attempts: 1 }), { status: "OWNERSHIP_UNVERIFIED" });
   const duplicate = lessonDocument({ rows: [{}, {}] });
   assert.equal(readProgrammersLessonHistory(duplicate, locationFor()).status, "AMBIGUOUS");

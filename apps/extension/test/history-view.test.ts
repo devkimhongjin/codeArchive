@@ -129,6 +129,20 @@ test("non-Jungol failure guidance does not direct users to Jungol", async () => 
   assert.doesNotMatch(view.document.querySelector("#status")!.textContent!, /정올/);
 });
 
+test("Programmers first auxiliary wait shows the current problem and 0 of the known total", async () => {
+  const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : {
+    status: "SCANNING", startedAt: 1_000,
+    progress: { phase: "histories", stage: "reading-histories", rows: 49, pagesLoaded: 3,
+      groupsExpanded: 0, groupsTotal: 0, historiesRead: 0, historiesTotal: 49, currentProblemNumber: "389481" }
+  });
+  await tick(); await tick();
+  assert.equal(view.document.querySelector("#progress")!.textContent, "문제 49건 · 제출 이력 0/49개 확인");
+  assert.equal(view.document.querySelector("#task-stage")!.textContent, "문제 #389481의 제출 이력을 확인하는 중입니다.");
+  const bar = view.document.querySelector<HTMLProgressElement>("#task-progress")!;
+  assert.equal(bar.max, 49); assert.equal(bar.value, 0);
+  assert.equal(view.document.querySelector("#task-time")!.textContent, "");
+});
+
 test("late platform results are ignored after a switch and switching back reloads safely", async () => {
   let resolveIds!: (value: unknown) => void; let idCalls = 0; const calls: string[] = [];
   const jungolReady = { status: "READY", candidates: [{ ...candidate, submissionId: "jungol-101" }], truncated: false };

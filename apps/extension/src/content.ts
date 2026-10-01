@@ -636,6 +636,7 @@ type ExternalHistoryScanProgress = Omit<JungolHistoryScanProgress, "phase" | "st
   stage: "reading-pages" | "reading-histories";
   historiesRead?: number;
   historiesTotal?: number;
+  currentProblemNumber?: string;
 };
 let sweaState: { status: string; candidates?: SweaHistoryCandidate[]; completed?: number; total?: number; saved?: number; duplicate?: number; skipped?: number; startedAt?: number; endedAt?: number; lastProgressAt?: number; progress?: ExternalHistoryScanProgress; problemCount?: number; submissionCount?: number; timingSample?: HistoricalTimingSample } = { status: "SCAN_IDLE" };
 let sweaController: HistoricalTaskController<SweaHistoryCandidate> | null = null;
@@ -709,8 +710,8 @@ function programmersLocalStatus(): ProgrammersLocalState {
   return { ...programmersLocalState, ...state,
     ...(programmersLocalState.problemCount === undefined ? {} : { problemCount: programmersLocalState.problemCount, submissionCount: programmersLocalState.submissionCount, timingSample: programmersLocalState.timingSample }) };
 }
-function programmersProgress(pagesLoaded: number, historiesRead: number, historiesTotal: number): ExternalHistoryScanProgress {
-  return { phase: historiesTotal > 0 ? "histories" : "pages", stage: historiesTotal > 0 ? "reading-histories" : "reading-pages", rows: historiesTotal || historiesRead, pagesLoaded,
+function programmersProgress(pagesLoaded: number, historiesRead: number, historiesTotal: number, rows = historiesTotal, currentProblemNumber?: string): ExternalHistoryScanProgress {
+  return { phase: historiesTotal > 0 ? "histories" : "pages", stage: historiesTotal > 0 ? "reading-histories" : "reading-pages", rows, pagesLoaded, currentProblemNumber,
     groupsExpanded: 0, groupsTotal: 0, groupsTotalKnown: false, historiesRead: historiesTotal > 0 ? historiesRead : undefined,
     historiesTotal: historiesTotal > 0 ? historiesTotal : undefined, lastProgressAt: Date.now(), sourceVisibility: "unknown" };
 }
@@ -775,7 +776,7 @@ function startProgrammersScan(document: Document, location: Location): Programme
         if (seenLessons.has(lesson.problemNumber)) throw new HistoricalImportFailure("LIST_CHANGED");
         seenLessons.add(lesson.problemNumber); lessons.push(lesson);
       }
-      programmersLocalState = { ...programmersLocalState, progress: programmersProgress(current.page, 0, 0) };
+      programmersLocalState = { ...programmersLocalState, progress: programmersProgress(current.page, 0, 0, lessons.length) };
       if (current.nextDisabled) {
         if (lessons.length !== initial.total) throw new HistoricalImportFailure("LIST_CHANGED");
         break;
@@ -791,6 +792,7 @@ function startProgrammersScan(document: Document, location: Location): Programme
     let accountId: string | null = null;
     for (const lesson of lessons) {
       if (generation !== programmersLocalGeneration || !programmersSourceCurrent(location)) throw new HistoricalImportFailure("LIST_CHANGED");
+      programmersLocalState = { ...programmersLocalState, progress: programmersProgress(Math.ceil(initial.total / 20), lesson.order, lessons.length, lessons.length, lesson.problemNumber) };
       const response = await chrome.runtime.sendMessage({ type: "PROGRAMMERS_AUX_READ", lessonUrl: lesson.lessonUrl, mode: "preview" });
       if (generation !== programmersLocalGeneration || !programmersSourceCurrent(location)) throw new HistoricalImportFailure("LIST_CHANGED");
       if ((response as { ok?: unknown; error?: unknown } | null)?.ok !== true && /INTERRUPTED|UNAUTHORIZED|REDIRECTED/.test(String((response as { error?: unknown } | null)?.error ?? "")))

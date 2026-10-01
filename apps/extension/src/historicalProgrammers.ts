@@ -106,7 +106,10 @@ export function authenticatedProgrammersUserId(document: Document, location: Loc
   const history = document.querySelector<HTMLElement>('[data-challengeable-submission-history-component][data-user-id][data-lesson-id]');
   const account = challenge?.dataset.userId ?? "";
   const lesson = location.pathname.match(LESSON_PATH)?.[1] ?? "";
-  if (!/^\d{1,40}$/.test(account) || challenge?.dataset.challengeableId !== lesson || history?.dataset.userId !== account || history.dataset.lessonId !== lesson) return null;
+  // challengeable-id is the internal algorithm id (e.g. 26803), not the
+  // lesson id in the URL (e.g. 389481). The history component binds the lesson;
+  // both independent components must still agree on the signed-in account.
+  if (!/^\d{1,40}$/.test(account) || !/^\d{1,40}$/.test(challenge?.dataset.challengeableId ?? "") || history?.dataset.userId !== account || history.dataset.lessonId !== lesson) return null;
   return account;
 }
 

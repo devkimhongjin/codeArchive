@@ -16,7 +16,7 @@ test("Programmers historical key is precise and rejects ambiguous or fabricated 
 });
 
 test("Programmers requires the matching source-owned user and selected-row editor", () => {
-  const { document } = parseHTML(`<div class="challenge-content lesson-algorithm-main-section" data-user-id="947840" data-challengeable-id="389481"></div>
+  const { document } = parseHTML(`<div class="challenge-content lesson-algorithm-main-section" data-user-id="947840" data-challengeable-id="26803"></div>
     <div data-challengeable-submission-history-component data-user-id="947840" data-lesson-id="389481" class="submission-history-wrapper">
       <div class="SubmissionListstyle__ListRow" data-hackle-value='{"key":"open_challenge_lesson_submission_history_list_item_toggle_clicked","properties":{"lesson_id":389481,"created_at":"2026-09-21T16:43:28.310+09:00","language":"java","score":100,"is_perfect_score":true}}'>
         <div class="ListItemCodeWrapper"><div class="monaco-editor" role="code" data-uri="inmemory://model/1"></div></div>
@@ -25,9 +25,9 @@ test("Programmers requires the matching source-owned user and selected-row edito
   const rows = programmersLessonHistory(document, lessonUrl)!;
   assert.equal(rows.length, 1);
   assert.equal(hasUniqueProgrammersHistoryIdentity(rows, rows[0]!), true);
-  document.querySelector(".challenge-content")!.setAttribute("data-challengeable-id", "999");
+  document.querySelector("[data-challengeable-submission-history-component]")!.setAttribute("data-lesson-id", "999");
   assert.equal(authenticatedProgrammersUserId(document, lessonUrl), null);
-  document.querySelector(".challenge-content")!.setAttribute("data-challengeable-id", "389481");
+  document.querySelector("[data-challengeable-submission-history-component]")!.setAttribute("data-lesson-id", "389481");
   assert.equal(selectedProgrammersHistoryEditorUri(rows[0]!.row), "inmemory://model/1");
   document.querySelector("[data-challengeable-submission-history-component]")!.setAttribute("data-user-id", "999");
   assert.equal(authenticatedProgrammersUserId(document, lessonUrl), null);
