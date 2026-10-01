@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseHTML } from "linkedom";
-import { hydrateSweaCandidate, loadSweaHistoryPreview } from "../src/historicalSwea";
+import { hydrateSweaCandidate, hydrateSweaCandidateResult, loadSweaHistoryPreview } from "../src/historicalSwea";
 
 const origin = "https://swexpertacademy.com";
 const location = { origin, pathname: "/main/userpage/code/userSubmitProblem.do", href: `${origin}/main/userpage/code/userSubmitProblem.do` } as Location;
@@ -46,6 +46,8 @@ test("SWEA rejects owner/header changes and detail identity/source mismatches", 
     assert.equal(await hydrateSweaCandidate(candidate, identity, (async url => response(detail(1, "hello", "other"), String(url))) as typeof fetch), null);
     assert.equal(await hydrateSweaCandidate(candidate, identity, (async url => response(detail(1, "helloo"), String(url))) as typeof fetch), null);
     assert.equal(await hydrateSweaCandidate(candidate, identity, (async url => response(detail(1, "hello", "Problem 1", "other-account"), String(url))) as typeof fetch), null);
+    assert.deepEqual(await hydrateSweaCandidateResult(candidate, identity, (async url => response(detail(1, "hello", "Problem 1", "other-account"), String(url))) as typeof fetch), { status: "OWNERSHIP_UNVERIFIED" });
+    assert.deepEqual(await hydrateSweaCandidateResult(candidate, identity, (async () => response("", `${origin}/login`, false)) as typeof fetch), { status: "TAB_NOT_FOUND" });
   } finally { restore(); }
 });
 

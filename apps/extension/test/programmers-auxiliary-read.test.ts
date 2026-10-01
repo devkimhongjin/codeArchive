@@ -82,6 +82,10 @@ test("Programmers auxiliary rejects mismatched accounts, lesson routes, malforme
   assert.deepEqual(await readProgrammersAuxiliaryLesson(duplicate, locationFor(), { lessonUrl, mode: "preview" }, { attempts: 1 }), { status: "AMBIGUOUS_HISTORY" });
   const malformed = lessonDocument({ rows: [{ score: 101 }] });
   assert.deepEqual(await readProgrammersAuxiliaryLesson(malformed, locationFor(), { lessonUrl, mode: "preview" }, { attempts: 1 }), { status: "HISTORY_INCOMPLETE" });
+  const knownAccountSubmission = programmersHistoricalSubmissionId(accountId, lessonId, timestamp, "java")!;
+  assert.deepEqual(await readProgrammersAuxiliaryLesson(malformed, locationFor(), { lessonUrl, mode: "import", submissionId: knownAccountSubmission }, { attempts: 1 }), { status: "HISTORY_INCOMPLETE" });
+  const foreignMalformed = lessonDocument({ account: "111", historyAccount: "111", rows: [{ score: 101 }] });
+  assert.deepEqual(await readProgrammersAuxiliaryLesson(foreignMalformed, locationFor(), { lessonUrl, mode: "import", submissionId: knownAccountSubmission }, { attempts: 1 }), { status: "OWNERSHIP_UNVERIFIED" });
   const fractionalFailed = lessonDocument({ rows: [{ score: 99.5, perfect: false }] });
   const fractional = await readProgrammersAuxiliaryLesson(fractionalFailed, locationFor(), { lessonUrl, mode: "preview" }, { attempts: 1 });
   assert.equal(fractional.status, "READY");
@@ -122,6 +126,11 @@ test("Programmers auxiliary waits for late history UI and returns an explicit em
   empty.querySelector(".submission-history-wrapper")!.append("제출 이력이 없습니다");
   const emptyResult = await readProgrammersAuxiliaryLesson(empty, locationFor(), { lessonUrl, mode: "preview" }, { attempts: 1 });
   assert.equal(emptyResult.status, "EMPTY");
+  const foreignEmpty = lessonDocument({ account: "111", historyAccount: "111", rows: [] });
+  foreignEmpty.querySelectorAll("button").forEach(button => button.remove());
+  foreignEmpty.querySelector(".submission-history-wrapper")!.append("제출 이력이 없습니다");
+  const emptyKnownAccountSubmission = programmersHistoricalSubmissionId(accountId, lessonId, timestamp, "java")!;
+  assert.deepEqual(await readProgrammersAuxiliaryLesson(foreignEmpty, locationFor(), { lessonUrl, mode: "import", submissionId: emptyKnownAccountSubmission }, { attempts: 1 }), { status: "OWNERSHIP_UNVERIFIED" });
 });
 
 test("Programmers auxiliary traverses every history page and counts failed rows without offering them as AC candidates", async () => {
@@ -174,6 +183,24 @@ test("Programmers auxiliary rejects a page control that advances before its rows
   assert.deepEqual(result, { status: "HISTORY_INCOMPLETE" });
 });
 
+test("Programmers auxiliary treats an account change during history pagination as ownership loss", async () => {
+  const document = lessonDocument({ rows: [{}, { createdAt: "2026-09-21T16:43:27.310+09:00", score: 0, perfect: false }] });
+  const wrapper = document.querySelector<HTMLElement>(".submission-history-wrapper")!;
+  wrapper.querySelector<HTMLElement>(".Headerstyle__TotalSubmissionCount")!.textContent = "3개의 제출";
+  wrapper.querySelector<HTMLElement>("[data-hackle-value]")!.setAttribute("data-hackle-value", JSON.stringify({ key: "open_challenge_lesson_submission_history_refresh_clicked", properties: { total_entries: 3, lesson_id: lessonId } }));
+  const next = wrapper.querySelector<HTMLButtonElement>("button[aria-label='다음 페이지']")!;
+  next.disabled = false;
+  next.addEventListener("click", () => {
+    document.querySelector(".challenge-content")!.setAttribute("data-user-id", "111");
+    document.querySelector("[data-challengeable-submission-history-component]")!.setAttribute("data-user-id", "111");
+    wrapper.querySelector("[data-testid='page-active']")!.textContent = "2";
+    wrapper.querySelectorAll('[class*="SubmissionListstyle__ListRow"]').forEach(row => row.remove());
+    wrapper.insertAdjacentHTML("beforeend", rowMarkup({ createdAt: "2026-09-21T16:43:26.310+09:00" }));
+    next.disabled = true;
+  });
+  assert.deepEqual(await readProgrammersAuxiliaryLesson(document, locationFor(), { lessonUrl, mode: "preview" }, { attempts: 1 }), { status: "OWNERSHIP_UNVERIFIED" });
+});
+
 test("Programmers auxiliary import uses only the selected matching Monaco bridge source and fabricates no metrics", async () => {
   const document = lessonDocument();
   installEditorOnClick(document);
@@ -222,7 +249,18 @@ test("Programmers auxiliary rejects stale bridge data and account or row changes
       bridge(accountChanged)(uri, stamp);
     }
   });
-  assert.deepEqual(accountResult, { status: "SOURCE_UNAVAILABLE" });
+  assert.deepEqual(accountResult, { status: "OWNERSHIP_UNVERIFIED" });
+
+  const routeChanged = lessonDocument(); installEditorOnClick(routeChanged);
+  const route = locationFor();
+  const routeResult = await readProgrammersAuxiliaryLesson(routeChanged, route, { lessonUrl, mode: "import", submissionId }, {
+    attempts: 2,
+    onBridgeRequested: (uri, stamp) => {
+      route.pathname = "/learn/challenges";
+      bridge(routeChanged)(uri, stamp);
+    }
+  });
+  assert.deepEqual(routeResult, { status: "TAB_NOT_FOUND" });
 
   const rowChanged = lessonDocument(); installEditorOnClick(rowChanged);
   const rowResult = await readProgrammersAuxiliaryLesson(rowChanged, locationFor(), { lessonUrl, mode: "import", submissionId }, {

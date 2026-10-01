@@ -20,3 +20,9 @@ export function programmersHistoricalSubmissionId(account: string, problemNumber
   const key = `pg:${account}:${problemNumber}:${createdAt}:${normalizedLanguage}`;
   return isHistoricalSubmissionId("PROGRAMMERS", key) ? key : null;
 }
+
+/** Read only the account segment from a previously validated PROGRAMMERS key. */
+export function programmersHistoricalSubmissionAccount(value: unknown): string | null {
+  if (!isHistoricalSubmissionId("PROGRAMMERS", value)) return null;
+  return value.match(/^pg:([A-Za-z0-9_-]{1,100}):/)?.[1] ?? null;
+}

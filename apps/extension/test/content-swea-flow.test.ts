@@ -18,8 +18,8 @@ function historyDocument(problem: number) {
   const id = `Submission0000000${problem}`;
   return `<div class="my-login"><span class="name hidden-sm-down">${nickname}</span></div><form id="problemForm"><input name="contestProbId" value="KeyAAAAAAA${problem}"></form><h5 class="section_tit">총 1회 제출</h5><div class="box-list-inner"><div class="problem_smt"><a href="javascript:codeview('${id}')">code</a><div class="submitter"><div class="smt_txt"><dt><a onclick="userInformationPopup('${userId}')">${nickname}</a></dt><dd>제출일 : 2026-09-28 08:26</dd></div></div><div class="info"><ul><li><span>JAVA</span><span>언어</span></li><li><span>102,076kb</span><span>메모리</span></li><li><span>669ms</span><span>실행시간</span></li><li><span>5B</span><span>코드길이</span></li><li><span>Pass</span><span>결과</span></li></ul></div></div></div>`;
 }
-function detailDocument(problem: number, title = `Problem ${problem}`) {
-  return `<div class="my-login"><span class="name hidden-sm-down">${nickname}</span></div><form id="problemForm"><input name="contestProbId" value="KeyAAAAAAA${problem}"><input name="contestHistoryId" value=""></form><div class="problem_box"><h1 class="problem_title">${problem}. ${title}<span class="badge">D3</span></h1></div><div class="box-list-inner"><div class="problem_smt_detail"><div class="submitter"><div class="smt_txt"><dt><a onclick="userInformationPopup('${userId}')">${nickname}</a></dt><dd>제출일 : 2026-09-28 08:26</dd></div></div><div class="info"><ul><li><span>JAVA</span><span>언어</span></li><li><span>102,076kb</span><span>메모리</span></li><li><span>669ms</span><span>실행시간</span></li><li><span>5B</span><span>코드길이</span></li><li><span>Pass</span><span>결과</span></li></ul></div></div></div><textarea class="brush:java">hello</textarea>`;
+function detailDocument(problem: number, title = `Problem ${problem}`, header = nickname) {
+  return `<div class="my-login"><span class="name hidden-sm-down">${header}</span></div><form id="problemForm"><input name="contestProbId" value="KeyAAAAAAA${problem}"><input name="contestHistoryId" value=""></form><div class="problem_box"><h1 class="problem_title">${problem}. ${title}<span class="badge">D3</span></h1></div><div class="box-list-inner"><div class="problem_smt_detail"><div class="submitter"><div class="smt_txt"><dt><a onclick="userInformationPopup('${userId}')">${nickname}</a></dt><dd>제출일 : 2026-09-28 08:26</dd></div></div><div class="info"><ul><li><span>JAVA</span><span>언어</span></li><li><span>102,076kb</span><span>메모리</span></li><li><span>669ms</span><span>실행시간</span></li><li><span>5B</span><span>코드길이</span></li><li><span>Pass</span><span>결과</span></li></ul></div></div></div><textarea class="brush:java">hello</textarea>`;
 }
 function response(body: string, url: string) {
   const value = new Response(body, { status: 200, headers: { "content-type": "text/html" } });
@@ -34,13 +34,14 @@ test("SWEA source owner skips an isolated detail failure, preserves an in-flight
   const window = document.defaultView!; Object.defineProperty(window, "location", { value: location, configurable: true });
   let listener: ((message: unknown, sender: unknown, reply: (value: unknown) => void) => boolean) | undefined;
   let pendingStore: { promise: Promise<unknown>; resolve: (value: unknown) => void } | undefined; let notifyStoreStarted: (() => void) | undefined; let stores = 0;
+  let firstTitleMismatch = true; let detailHeader = nickname;
   const requests: Array<{ url: string; body: string }> = [];
   const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input); const body = String(init?.body ?? ""); requests.push({ url, body });
     if (url.includes("userSubmitProblem")) return response(listDocument(), url);
     const form = new URLSearchParams(body); const problem = Number((form.get("contestProbId") ?? "").slice(-1));
     if (url === historyUrl) return response(historyDocument(problem), url);
-    return response(detailDocument(problem, problem === 1 ? "Wrong title" : `Problem ${problem}`), url);
+    return response(detailDocument(problem, firstTitleMismatch && problem === 1 ? "Wrong title" : `Problem ${problem}`, detailHeader), url);
   };
   const chrome = { runtime: { onMessage: { addListener(callback: typeof listener) { listener = callback; } }, sendMessage: async (message: unknown) => {
     if ((message as { type?: string }).type !== "STORE_HISTORICAL_CAPTURE") return { ok: true };
@@ -77,5 +78,20 @@ test("SWEA source owner skips an isolated detail failure, preserves an in-flight
     assert.equal(cancelling.status, "CANCELLING"); pendingStore.resolve({ ok: true, created: true }); await wait();
     const interrupted = await message({ type: "LOCAL_HISTORY_STATUS", platform: "SWEA" }) as { status: string; saved?: number; completed?: number; problemCount?: number };
     assert.equal(interrupted.status, "INTERRUPTED"); assert.equal(interrupted.saved, 1); assert.equal(interrupted.completed, 1); assert.equal(interrupted.problemCount, 1); assert.equal(stores, 2);
+
+    // The listing document remains unchanged, but a detail response reveals a
+    // different signed-in account. That is terminal, so no second detail/store.
+    firstTitleMismatch = false; detailHeader = "other-account";
+    assert.equal((await message({ type: "LOCAL_HISTORY_SCAN_START", platform: "SWEA" }) as { status: string }).status, "SCANNING");
+    await wait();
+    const accountShifted = await message({ type: "LOCAL_HISTORY_STATUS", platform: "SWEA" }) as { status: string; candidates?: Array<{ submissionId: string }> };
+    assert.equal(accountShifted.status, "READY");
+    const detailReadsBefore = requests.filter(request => request.url === detailUrl).length;
+    await message({ type: "LOCAL_HISTORY_IMPORT_START", platform: "SWEA", submissionIds: accountShifted.candidates!.map(candidate => candidate.submissionId) });
+    await wait();
+    const accountInterrupted = await message({ type: "LOCAL_HISTORY_STATUS", platform: "SWEA" }) as { status: string; completed?: number; saved?: number };
+    assert.equal(accountInterrupted.status, "INTERRUPTED"); assert.equal(accountInterrupted.completed, 1); assert.equal(accountInterrupted.saved, 0);
+    assert.equal(requests.filter(request => request.url === detailUrl).length, detailReadsBefore + 1);
+    assert.equal(stores, 2);
   } finally { Object.assign(globalThis, globals); }
 });

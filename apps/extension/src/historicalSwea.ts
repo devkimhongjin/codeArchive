@@ -108,7 +108,18 @@ function problemTitle(document: Document): { problemNumber: string; title: strin
 }
 
 async function fetchDocument(fetchHtml: FetchHtml, url: string, init?: RequestInit): Promise<Document | null> {
-  try { const response = await fetchHtml(url, init); const final = new URL(response.url); const requested = new URL(url); if (!response.ok || final.origin !== ORIGIN || final.pathname !== requested.pathname) return null; return parser(await response.text()); } catch { return null; }
+  const result = await fetchSweaDocument(fetchHtml, url, init);
+  return result.status === "DONE" ? result.document : null;
+}
+
+type SweaDocumentResult = { status: "DONE"; document: Document } | { status: "TAB_NOT_FOUND" | "SOURCE_UNAVAILABLE" };
+async function fetchSweaDocument(fetchHtml: FetchHtml, url: string, init?: RequestInit): Promise<SweaDocumentResult> {
+  try {
+    const response = await fetchHtml(url, init); const final = new URL(response.url); const requested = new URL(url);
+    if (final.origin !== ORIGIN || final.pathname !== requested.pathname) return { status: "TAB_NOT_FOUND" };
+    if (!response.ok) return { status: "SOURCE_UNAVAILABLE" };
+    return { status: "DONE", document: parser(await response.text()) };
+  } catch { return { status: "SOURCE_UNAVAILABLE" }; }
 }
 
 /** Follows only observed My Page pagination and fails closed if identity changes. */
@@ -158,16 +169,26 @@ export async function loadSweaHistoryPreview(document: Document, location: Locat
 }
 
 /** Fetches raw, unhighlighted detail HTML and verifies the selected row before local storage. */
-export async function hydrateSweaCandidate(candidate: SweaHistoryCandidate, identity: { userId: string; nickname: string }, fetchHtml: FetchHtml = fetch) {
-  const detail = await fetchDocument(fetchHtml, `${ORIGIN}${DETAIL_PATH}`, { method: "POST", credentials: "include", headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: historyForm(identity, candidate.contestProbId, candidate.submissionId).toString() });
-  if (!detail || !sameSignedInIdentity(detail, identity) || detail.querySelector<HTMLInputElement>('#problemForm input[name="contestProbId"]')?.value !== candidate.contestProbId) return null;
+export type SweaHydrationResult = { status: "DONE"; capture: ReturnType<typeof createCapture> } | { status: "OWNERSHIP_UNVERIFIED" | "TAB_NOT_FOUND" | "SOURCE_UNAVAILABLE" };
+export async function hydrateSweaCandidateResult(candidate: SweaHistoryCandidate, identity: { userId: string; nickname: string }, fetchHtml: FetchHtml = fetch): Promise<SweaHydrationResult> {
+  const fetched = await fetchSweaDocument(fetchHtml, `${ORIGIN}${DETAIL_PATH}`, { method: "POST", credentials: "include", headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: historyForm(identity, candidate.contestProbId, candidate.submissionId).toString() });
+  if (fetched.status !== "DONE") return fetched;
+  const detail = fetched.document;
+  if (!sameSignedInIdentity(detail, identity)) return { status: "OWNERSHIP_UNVERIFIED" };
+  if (detail.querySelector<HTMLInputElement>('#problemForm input[name="contestProbId"]')?.value !== candidate.contestProbId) return { status: "SOURCE_UNAVAILABLE" };
   const row = detail.querySelector<HTMLElement>(".box-list-inner > .problem_smt_detail"); const sources = detail.querySelectorAll<HTMLTextAreaElement>('textarea[class^="brush:"]'); const source = sources.length === 1 ? sources[0] : null;
   const title = problemTitle(detail);
   const brushLanguage = source?.className.match(/^brush:([^\s]+)/)?.[1] ?? "";
   if (!row || !source || !title || title.problemNumber !== candidate.problemNumber || title.title !== candidate.title ||
-      canonicalLanguageKey(brushLanguage) !== canonicalLanguageKey(candidate.language) || sweaDisplayedCodeLength(source.value) !== candidate.codeByteLength) return null;
+      canonicalLanguageKey(brushLanguage) !== canonicalLanguageKey(candidate.language) || sweaDisplayedCodeLength(source.value) !== candidate.codeByteLength) return { status: "SOURCE_UNAVAILABLE" };
   const again = rowCandidate(row, candidate, identity);
-  if (!again || again.submissionId !== candidate.submissionId || again.solvedAt !== candidate.solvedAt || again.language !== candidate.language || again.codeByteLength !== candidate.codeByteLength) return null;
+  if (!again || again.submissionId !== candidate.submissionId || again.solvedAt !== candidate.solvedAt || again.language !== candidate.language || again.codeByteLength !== candidate.codeByteLength) return { status: "SOURCE_UNAVAILABLE" };
   const capture = createCapture({ platform: "SWEA", problemNumber: candidate.problemNumber, title: candidate.title, problemUrl: `${ORIGIN}/main/code/problem/problemDetail.do?contestProbId=${encodeURIComponent(candidate.contestProbId)}`, language: candidate.language, sourceCode: source.value, result: "ACCEPTED", solvedAt: candidate.solvedAt, observedAt: new Date(), historicalImport: true, historicalSubmissionId: candidate.submissionId, ...(candidate.executionTime === undefined ? {} : { executionTime: candidate.executionTime }), ...(candidate.memoryValue === undefined ? {} : { memoryValue: candidate.memoryValue, memoryUnit: "KB" }) });
-  return capture;
+  return capture ? { status: "DONE", capture } : { status: "SOURCE_UNAVAILABLE" };
+}
+
+/** Compatibility helper for callers that only need an isolated detail outcome. */
+export async function hydrateSweaCandidate(candidate: SweaHistoryCandidate, identity: { userId: string; nickname: string }, fetchHtml: FetchHtml = fetch) {
+  const result = await hydrateSweaCandidateResult(candidate, identity, fetchHtml);
+  return result.status === "DONE" ? result.capture : null;
 }

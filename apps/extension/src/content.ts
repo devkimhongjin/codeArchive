@@ -5,14 +5,14 @@ import { canonicalLanguageKey } from "../../../shared/language";
 import { BUILD_METADATA } from "../../../shared/buildMetadata";
 import { importVisibleJungolHistory, isJungolHistoryPath, loadJungolHistoryPreview, previewJungolHistory,
   type JungolHistoryCandidate, type JungolHistoryPreview, type JungolHistoryScanProgress } from "./historicalJungol";
-import { authenticatedSweaHistoryIdentity, hydrateSweaCandidate, loadSweaHistoryPreview, type SweaHistoryCandidate } from "./historicalSwea";
+import { authenticatedSweaHistoryIdentity, hydrateSweaCandidateResult, loadSweaHistoryPreview, type SweaHistoryCandidate } from "./historicalSwea";
 import { mayStoreLocalHistoryCapture, sameHistorySource } from "./historyRouting";
 import { HistoricalTaskController, HistoricalImportFailure, type HistoricalImportFailureReason } from "./historicalTaskController";
 import { persistHistoricalTimingSample, timingSampleFromCompletedTask, type HistoricalTimingSample } from "./historyTiming";
-import { canonicalProgrammersLessonUrl, previewProgrammersHistory, readProgrammersLessonHistory,
+import { authenticatedProgrammersUserId, canonicalProgrammersLessonUrl, previewProgrammersHistory, readProgrammersLessonHistory,
   readProgrammersSolvedListingPage, selectedProgrammersHistoryEditorUri,
   type ProgrammersLessonHistoryRow, type ProgrammersLessonSubmission } from "./historicalProgrammers";
-import { isHistoricalSubmissionId } from "./historicalIdentity";
+import { isHistoricalSubmissionId, programmersHistoricalSubmissionAccount } from "./historicalIdentity";
 import {
   createSweaProblemContext,
   normalizeSweaDetailUrl,
@@ -55,6 +55,10 @@ function sameProgrammersSubmission(left: ProgrammersLessonSubmission, right: Pro
     left.createdAt === right.createdAt && left.language === right.language && left.score === right.score;
 }
 
+function programmersAuxiliaryRouteCurrent(location: Location, lessonUrl: string): boolean {
+  return canonicalProgrammersLessonUrl(location) === lessonUrl;
+}
+
 function currentProgrammersLesson(document: Document, location: Location, accountId: string, lessonId: string, title: string,
   submissionId?: string): ProgrammersLessonSubmission | null {
   const current = readProgrammersLessonHistory(document, location);
@@ -89,8 +93,10 @@ async function waitForProgrammersHistoryPage(document: Document, location: Locat
   const sleep = services.sleep ?? (delayMs => new Promise<void>(resolve => setTimeout(resolve, delayMs)));
   for (let attempt = 0; attempt < (services.attempts ?? 100); attempt += 1) {
     const state = readProgrammersLessonHistory(document, location);
-    if (state.status === "READY" && state.accountId === accountId && state.lessonId === lessonId && state.title === title && state.page === expectedPage &&
-        state.rows.map(row => row.submissionId).join(",") !== priorSignature) return state;
+    if (state.status === "READY") {
+      if (state.accountId !== accountId || state.lessonId !== lessonId || state.title !== title) return { status: "OWNERSHIP_UNVERIFIED" } as const;
+      if (state.page === expectedPage && state.rows.map(row => row.submissionId).join(",") !== priorSignature) return state;
+    }
     if (state.status === "INCOMPLETE" || state.status === "AMBIGUOUS" || state.status === "OWNERSHIP_UNVERIFIED") return state;
     await sleep(PROGRAMMERS_AUXILIARY_WAIT_MS);
   }
@@ -112,8 +118,10 @@ async function collectProgrammersLessonHistory(document: Document, location: Loc
   const allCandidates: ProgrammersLessonSubmission[] = [];
   const seen = new Set<string>();
   for (let guard = 0; guard < 10_000; guard += 1) {
-    if (current.status !== "READY" || current.accountId !== first.accountId || current.lessonId !== first.lessonId ||
-        current.title !== first.title || current.totalEntries !== first.totalEntries || current.page !== guard + 1) return { status: "INCOMPLETE" } as const;
+    if (current.status !== "READY") return current;
+    if (current.accountId !== first.accountId || current.lessonId !== first.lessonId || current.title !== first.title)
+      return { status: "OWNERSHIP_UNVERIFIED" } as const;
+    if (current.totalEntries !== first.totalEntries || current.page !== guard + 1) return { status: "INCOMPLETE" } as const;
     for (const row of current.rows) {
       if (seen.has(row.submissionId)) return { status: "AMBIGUOUS" } as const;
       seen.add(row.submissionId); allRows.push(row);
@@ -137,7 +145,8 @@ async function collectProgrammersLessonHistory(document: Document, location: Loc
 async function openProgrammersHistoryPage(document: Document, location: Location, targetPage: number,
   accountId: string, lessonId: string, title: string, services: ProgrammersAuxiliaryServices) {
   let current = readProgrammersLessonHistory(document, location);
-  if (current.status !== "READY" || current.accountId !== accountId || current.lessonId !== lessonId || current.title !== title) return current;
+  if (current.status !== "READY") return current;
+  if (current.accountId !== accountId || current.lessonId !== lessonId || current.title !== title) return { status: "OWNERSHIP_UNVERIFIED" } as const;
   if (current.page > targetPage) {
     const first = programmersHistoryWrapper(document)?.querySelectorAll<HTMLButtonElement>("button[aria-label='처음 페이지']") ?? [];
     if (first.length !== 1 || first[0]!.disabled) return { status: "INCOMPLETE" } as const;
@@ -174,24 +183,31 @@ function requestProgrammersHistorySource(document: Document, uri: string, servic
   return requestStamp;
 }
 
-async function waitForProgrammersHistorySource(document: Document, location: Location, accountId: string, lessonId: string,
-  title: string, target: ProgrammersLessonSubmission, uri: string, requestStamp: string, services: ProgrammersAuxiliaryServices): Promise<string | null> {
+async function waitForProgrammersHistorySource(document: Document, location: Location, lessonUrl: string, accountId: string, lessonId: string,
+  title: string, target: ProgrammersLessonSubmission, uri: string, requestStamp: string, services: ProgrammersAuxiliaryServices): Promise<
+    { status: "DONE"; sourceCode: string } | { status: "TAB_NOT_FOUND" | "OWNERSHIP_UNVERIFIED" | "SOURCE_UNAVAILABLE" }> {
   const sleep = services.sleep ?? (delayMs => new Promise<void>(resolve => setTimeout(resolve, delayMs)));
   const attempts = services.attempts ?? 100;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const current = currentProgrammersLesson(document, location, accountId, lessonId, title, target.submissionId);
-    if (!current || !sameProgrammersSubmission(target, current)) return null;
-    if (selectedProgrammersHistoryEditorUri(current.row) !== uri) return null;
+    if (!programmersAuxiliaryRouteCurrent(location, lessonUrl)) return { status: "TAB_NOT_FOUND" };
+    const state = readProgrammersLessonHistory(document, location);
+    if (state.status === "OWNERSHIP_UNVERIFIED") return { status: "OWNERSHIP_UNVERIFIED" };
+    if (state.status !== "READY") return { status: "SOURCE_UNAVAILABLE" };
+    if (state.accountId !== accountId || state.lessonId !== lessonId || state.title !== title) return { status: "OWNERSHIP_UNVERIFIED" };
+    const matches = state.candidates.filter(candidate => candidate.submissionId === target.submissionId);
+    if (matches.length !== 1 || !sameProgrammersSubmission(target, matches[0]!)) return { status: "SOURCE_UNAVAILABLE" };
+    const current = matches[0]!;
+    if (selectedProgrammersHistoryEditorUri(current.row) !== uri) return { status: "SOURCE_UNAVAILABLE" };
     const root = document.documentElement;
     const source = document.querySelector<HTMLTextAreaElement>("textarea[data-codearchive-programmers-history-source]");
-    if (root?.dataset.codearchiveProgrammersHistoryRequest !== requestStamp) return null;
+    if (root?.dataset.codearchiveProgrammersHistoryRequest !== requestStamp) return { status: "SOURCE_UNAVAILABLE" };
     const response = root?.getAttribute("data-codearchive-programmers-history-response") ?? "";
     if (response.startsWith(`${requestStamp}:`) && source?.dataset.codearchiveProgrammersHistoryUri === uri &&
         source.dataset.codearchiveProgrammersHistoryRequest === requestStamp && typeof source.value === "string" &&
-        source.value.trim() && source.value.length <= 1_000_000) return source.value;
+        source.value.trim() && source.value.length <= 1_000_000) return { status: "DONE", sourceCode: source.value };
     await sleep(PROGRAMMERS_AUXILIARY_WAIT_MS);
   }
-  return null;
+  return { status: "SOURCE_UNAVAILABLE" };
 }
 
 /** Read-only auxiliary lesson operation. It never sends a runtime store command. */
@@ -203,9 +219,16 @@ export async function readProgrammersAuxiliaryLesson(document: Document, locatio
   if (!lessonUrl || !currentUrl || lessonUrl !== currentUrl) return { status: "TAB_NOT_FOUND" };
   if (message.mode !== "preview" && message.mode !== "import") return { status: "BAD_REQUEST" };
   if (message.mode === "import" && typeof message.submissionId !== "string") return { status: "BAD_REQUEST" };
+  const selectedAccount = message.mode === "import" ? programmersHistoricalSubmissionAccount(message.submissionId) : null;
 
   const history = await collectProgrammersLessonHistory(document, location, services);
-  if (history.status === "EMPTY") return { status: "EMPTY", accountId: history.accountId, lessonId: history.lessonId, title: history.title, candidates: [] };
+  if (!programmersAuxiliaryRouteCurrent(location, lessonUrl)) return { status: "TAB_NOT_FOUND" };
+  const observedAccount = authenticatedProgrammersUserId(document, location);
+  if (message.mode === "import" && observedAccount !== null && selectedAccount !== observedAccount) return { status: "OWNERSHIP_UNVERIFIED" };
+  if (history.status === "EMPTY") {
+    if (message.mode === "import" && selectedAccount !== history.accountId) return { status: "OWNERSHIP_UNVERIFIED" };
+    return { status: "EMPTY", accountId: history.accountId, lessonId: history.lessonId, title: history.title, candidates: [] };
+  }
   if (history.status === "OWNERSHIP_UNVERIFIED" || history.status === "PENDING") return { status: "OWNERSHIP_UNVERIFIED" };
   if (history.status === "INCOMPLETE") return { status: "HISTORY_INCOMPLETE" };
   if (history.status === "AMBIGUOUS") return { status: "AMBIGUOUS_HISTORY" };
@@ -214,11 +237,13 @@ export async function readProgrammersAuxiliaryLesson(document: Document, locatio
   if (message.mode === "preview") return { status: "READY", accountId: readyHistory.accountId, lessonId: readyHistory.lessonId, title: readyHistory.title,
     candidates: readyHistory.candidates.map(programmersCandidateView) };
 
+  if (!selectedAccount || selectedAccount !== readyHistory.accountId) return { status: "OWNERSHIP_UNVERIFIED" };
   const matches = readyHistory.candidates.filter(candidate => candidate.submissionId === message.submissionId);
   if (matches.length !== 1) return { status: "STALE_SUBMISSION" };
   const target = matches[0]!;
   const livePage = await openProgrammersHistoryPage(document, location, target.page, readyHistory.accountId, readyHistory.lessonId, readyHistory.title, services);
-  if (livePage.status !== "READY") return livePage.status === "AMBIGUOUS" ? { status: "AMBIGUOUS_HISTORY" } : { status: "SOURCE_UNAVAILABLE" };
+  if (!programmersAuxiliaryRouteCurrent(location, lessonUrl)) return { status: "TAB_NOT_FOUND" };
+  if (livePage.status !== "READY") return livePage.status === "OWNERSHIP_UNVERIFIED" ? { status: "OWNERSHIP_UNVERIFIED" } : livePage.status === "AMBIGUOUS" ? { status: "AMBIGUOUS_HISTORY" } : { status: "SOURCE_UNAVAILABLE" };
   const liveMatches = livePage.candidates.filter(candidate => candidate.submissionId === target.submissionId);
   if (liveMatches.length !== 1 || !sameProgrammersSubmission(target, liveMatches[0]!)) return { status: "STALE_SUBMISSION" };
   const liveTarget = liveMatches[0]!;
@@ -227,8 +252,15 @@ export async function readProgrammersAuxiliaryLesson(document: Document, locatio
   let uri: string | null = null;
   const sleep = services.sleep ?? (delayMs => new Promise<void>(resolve => setTimeout(resolve, delayMs)));
   for (let attempt = 0; attempt < (services.attempts ?? 100); attempt += 1) {
-    selected = currentProgrammersLesson(document, location, readyHistory.accountId, readyHistory.lessonId, readyHistory.title, target.submissionId);
-    if (!selected || !sameProgrammersSubmission(liveTarget, selected)) return { status: "STALE_SUBMISSION" };
+    if (!programmersAuxiliaryRouteCurrent(location, lessonUrl)) return { status: "TAB_NOT_FOUND" };
+    const state = readProgrammersLessonHistory(document, location);
+    if (state.status === "OWNERSHIP_UNVERIFIED") return { status: "OWNERSHIP_UNVERIFIED" };
+    if (state.status !== "READY") return { status: "SOURCE_UNAVAILABLE" };
+    if (state.accountId !== readyHistory.accountId || state.lessonId !== readyHistory.lessonId || state.title !== readyHistory.title)
+      return { status: "OWNERSHIP_UNVERIFIED" };
+    const selectedMatches = state.candidates.filter(candidate => candidate.submissionId === target.submissionId);
+    if (selectedMatches.length !== 1 || !sameProgrammersSubmission(liveTarget, selectedMatches[0]!)) return { status: "STALE_SUBMISSION" };
+    selected = selectedMatches[0]!;
     uri = selectedProgrammersHistoryEditorUri(selected.row);
     if (uri) break;
     await sleep(PROGRAMMERS_AUXILIARY_WAIT_MS);
@@ -236,13 +268,19 @@ export async function readProgrammersAuxiliaryLesson(document: Document, locatio
   if (!selected || !uri) return { status: "SOURCE_UNAVAILABLE" };
   const requestStamp = requestProgrammersHistorySource(document, uri, services);
   if (!requestStamp) return { status: "SOURCE_UNAVAILABLE" };
-  const sourceCode = await waitForProgrammersHistorySource(document, location, readyHistory.accountId, readyHistory.lessonId, readyHistory.title,
+  const source = await waitForProgrammersHistorySource(document, location, lessonUrl, readyHistory.accountId, readyHistory.lessonId, readyHistory.title,
     liveTarget, uri, requestStamp, services);
-  if (!sourceCode) return { status: "SOURCE_UNAVAILABLE" };
-  const finalTarget = currentProgrammersLesson(document, location, readyHistory.accountId, readyHistory.lessonId, readyHistory.title, liveTarget.submissionId);
-  if (!finalTarget || !sameProgrammersSubmission(liveTarget, finalTarget) || selectedProgrammersHistoryEditorUri(finalTarget.row) !== uri) return { status: "SOURCE_UNAVAILABLE" };
+  if (source.status !== "DONE") return source;
+  if (!programmersAuxiliaryRouteCurrent(location, lessonUrl)) return { status: "TAB_NOT_FOUND" };
+  const finalState = readProgrammersLessonHistory(document, location);
+  if (finalState.status === "OWNERSHIP_UNVERIFIED") return { status: "OWNERSHIP_UNVERIFIED" };
+  if (finalState.status !== "READY") return { status: "SOURCE_UNAVAILABLE" };
+  if (finalState.accountId !== readyHistory.accountId || finalState.lessonId !== readyHistory.lessonId || finalState.title !== readyHistory.title)
+    return { status: "OWNERSHIP_UNVERIFIED" };
+  const finalMatches = finalState.candidates.filter(candidate => candidate.submissionId === liveTarget.submissionId);
+  if (finalMatches.length !== 1 || !sameProgrammersSubmission(liveTarget, finalMatches[0]!) || selectedProgrammersHistoryEditorUri(finalMatches[0]!.row) !== uri) return { status: "SOURCE_UNAVAILABLE" };
   const capture = createCapture({ platform: "PROGRAMMERS", problemNumber: liveTarget.problemNumber, title: readyHistory.title, problemUrl: lessonUrl,
-    language: liveTarget.language, sourceCode, result: CAPTURE_RESULT, solvedAt: liveTarget.createdAt, observedAt: new Date(services.now?.() ?? Date.now()),
+    language: liveTarget.language, sourceCode: source.sourceCode, result: CAPTURE_RESULT, solvedAt: liveTarget.createdAt, observedAt: new Date(services.now?.() ?? Date.now()),
     historicalImport: true, historicalSubmissionId: liveTarget.submissionId });
   return capture ? { status: "DONE", accountId: readyHistory.accountId, capture } : { status: "SOURCE_UNAVAILABLE" };
 }
@@ -632,10 +670,12 @@ function startSweaImport(document: Document, location: Location, ids: unknown): 
   controller.start(candidates as SweaHistoryCandidate[], async (candidate, mayStore) => {
     const currentIdentity = authenticatedSweaHistoryIdentity(document, location);
     if (!mayStore() || !currentIdentity || currentIdentity.userId !== identity.userId || currentIdentity.nickname !== identity.nickname) { controller.cancel(); return { saved: 0, duplicate: 0, skipped: 0 }; }
-    const capture = await hydrateSweaCandidate(candidate, identity);
+    const hydrated = await hydrateSweaCandidateResult(candidate, identity);
     const beforeStore = authenticatedSweaHistoryIdentity(document, location);
     if (!mayStore() || !beforeStore || beforeStore.userId !== identity.userId || beforeStore.nickname !== identity.nickname) { controller.cancel(); return { saved: 0, duplicate: 0, skipped: 0 }; }
-    if (!capture) return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId };
+    if (hydrated.status === "OWNERSHIP_UNVERIFIED" || hydrated.status === "TAB_NOT_FOUND") { controller.cancel(); return { saved: 0, duplicate: 0, skipped: 0 }; }
+    if (hydrated.status !== "DONE" || !hydrated.capture) return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId };
+    const capture = hydrated.capture;
     try { const response = await chrome.runtime.sendMessage({ type: "STORE_HISTORICAL_CAPTURE", capture }); if (!(response as { ok?: boolean })?.ok) throw new HistoricalImportFailure("STORE_REJECTED"); return { saved: (response as { created?: boolean }).created ? 1 : 0, duplicate: (response as { created?: boolean }).created ? 0 : 1, skipped: 0 }; }
     catch (error) { if (error instanceof HistoricalImportFailure) throw error; throw new HistoricalImportFailure("STORE_FAILED"); }
   }, (candidate, result) => { if (result.saved + result.duplicate > 0) completedProblems.add(`SWEA:${candidate.problemNumber}`); });
@@ -701,7 +741,7 @@ function validProgrammersAuxiliaryPreview(value: unknown, lesson: { problemNumbe
   for (const item of response.candidates) {
     if (!item || typeof item !== "object") return null;
     const candidate = item as { submissionId?: unknown; problemNumber?: unknown; language?: unknown; createdAt?: unknown; score?: unknown };
-    if (!isHistoricalSubmissionId("PROGRAMMERS", candidate.submissionId) || candidate.problemNumber !== lesson.problemNumber ||
+    if (!isHistoricalSubmissionId("PROGRAMMERS", candidate.submissionId) || programmersHistoricalSubmissionAccount(candidate.submissionId) !== response.accountId || candidate.problemNumber !== lesson.problemNumber ||
         typeof candidate.language !== "string" || !candidate.language.trim() || typeof candidate.createdAt !== "string" ||
         !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/.test(candidate.createdAt) || candidate.score !== 100 || seen.has(candidate.submissionId)) return null;
     seen.add(candidate.submissionId); candidates.push({ submissionId: candidate.submissionId, problemNumber: candidate.problemNumber, language: candidate.language,
