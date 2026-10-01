@@ -11,7 +11,7 @@ type State = { status: string; candidates?: Candidate[]; truncated?: boolean; pr
   problemCount?: number; submissionCount?: number };
 export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
   schedule?: (work: () => void, delay: number) => unknown; now?: () => number;
-  readTiming?: () => Promise<unknown> };
+  readTiming?: () => Promise<unknown>; openSite?: (url: string) => Promise<unknown> };
 
 const platformInfo: Record<Platform, { href: string; linkLabel: string; description: string; guide: string; unsupported?: string }> = {
   JUNGOL: { href: "https://jungol.co.kr/", linkLabel: "정올 열기 ↗", description: "정올에서 제출 내역을 연 뒤 이 브라우저에 로컬로 저장할 수 있습니다.", guide: "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요." },
@@ -193,6 +193,13 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     }, 500);
   }
   async function loadJungol() { const expected = platform(), epoch = platformEpoch; if (expected !== "JUNGOL") return; try { if (!await refreshLocalIds(expected, epoch) || !ownsPlatform(expected, epoch)) return; await applyState(await send({ type: "LOCAL_HISTORY_STATUS" }), expected, epoch); } catch { if (ownsPlatform(expected, epoch)) status.textContent = "확장 프로그램에 연결할 수 없습니다."; } }
+  siteLink.addEventListener("click", async event => {
+    if (!services.openSite || event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const current = platform(), epoch = platformEpoch;
+    try { await services.openSite(platformInfo[current].href); }
+    catch { if (platform() === current && platformEpoch === epoch) status.textContent = "사이트를 새 창에서 열지 못했습니다. 다시 눌러 주세요."; }
+  });
   scan.addEventListener("click", async () => { const expected = platform(), epoch = platformEpoch; if (expected !== "JUNGOL") return; try { if (!await refreshLocalIds(expected, epoch) || !ownsPlatform(expected, epoch)) return; clearCandidates(); render(); await applyState(await send({ type: "LOCAL_HISTORY_SCAN_START" }), expected, epoch); } catch { if (ownsPlatform(expected, epoch)) { status.textContent = "후보 찾기를 시작하지 못했습니다. 원본 정올 제출 탭을 확인해 주세요."; scan.disabled = false; } } });
   cancel.addEventListener("click", async () => { const expected = platform(), epoch = platformEpoch; if (expected !== "JUNGOL") return; try { await applyState(await send({ type: "LOCAL_HISTORY_CANCEL" }), expected, epoch); } catch { if (ownsPlatform(expected, epoch)) { status.textContent = "중단 요청을 전달하지 못했습니다. 원본 정올 탭을 확인해 주세요."; cancel.disabled = false; } } });
   policy.addEventListener("change", () => { if (!isJungol()) return; selected = new Set(selectHistoricalSubmissionIds(candidates.filter(item => !localIds.has(item.submissionId)), policy.value as HistoricalSelectionMode)); render(); });
@@ -203,5 +210,6 @@ export function mountHistory(doc: Document, services: HistoryServices) {
 
 if (typeof document !== "undefined" && typeof chrome !== "undefined") mountHistory(document, {
   send: message => chrome.runtime.sendMessage(message) as Promise<unknown>,
-  readTiming: () => chrome.storage.local.get(HISTORY_TIMING_STORAGE_KEY)
+  readTiming: () => chrome.storage.local.get(HISTORY_TIMING_STORAGE_KEY),
+  openSite: url => chrome.windows.create({ url, type: "normal", focused: true })
 });
