@@ -885,14 +885,16 @@ test("Jungol account listing imports a verified detail without requiring a sid U
 function sweaPage(options: { signedIn?: string; profile?: string; ownLink?: string; unfinished?: boolean } = {}): Document {
   const userId = options.ownLink ?? "user123";
   const { document } = parseHTML(`<html><body>
-    <a class="my-login"><span class="name">${options.signedIn ?? "me"}</span></a>
+    <a class="my-login"><span class="name hidden-sm-down">${options.signedIn ?? "me"}</span></a>
     <div class="mypage_wrap"><div class="my_label"><span class="nick">${options.profile ?? "me"}</span></div></div>
+    <form id="searchForm"><input name="userId" value="${userId}"><input name="rowNum" value="20"><input name="pageIndex" value="1"></form>
+    <form id="solvingForm"><input name="userId" value="${userId}"></form>
     <a onclick="javascript:fnMoveToMenu('CODE','${userId}');">Code</a>
     <div class="widget-box-sub"><span class="week_num">9999.</span><span class="week_text"><a onclick="javascript:fn_move_prob('OUTSIDE','N','CODE','','OUTSIDE','');">다른 영역</a></span></div>
-    <div id="submitProb"><div class="widget-box-sub">
-      <span class="week_num">4796.</span><span class="week_text"><a onclick="javascript:fn_move_prob('AWS2h6AKBCoDFAVT','N','CODE','','AWS2h6AKBCoDFAVT','');">의석이의 우뚝 선 산</a></span>
+    <h3 class="club_box_tit">제출한 Problem(1)</h3><div class="widget-list solvingclub"><div class="widget-box-sub"><div class="widget-header-sub">
+      <span class="header-caption"><span class="week_num">4796.</span><span class="week_text"><a onclick="javascript:fn_move_prob('AWS2h6AKBCoDFAVT','N','CODE','','AWS2h6AKBCoDFAVT','');">의석이의 우뚝 선 산</a></span></span>
       ${options.unfinished ? "<span>풀이중</span>" : ""}
-    </div></div></body></html>`);
+    </div></div></div></body></html>`);
   return document;
 }
 
@@ -907,7 +909,7 @@ test("SWEA previews only the signed-in owner's problem candidates and never trea
   assert.equal(previewSweaHistory(sweaPage({ profile: "other" }), url, "user123").status, "OWNERSHIP_UNVERIFIED");
   assert.equal(previewSweaHistory(sweaPage({ ownLink: "anotherUser" }), url, "user123").status, "OWNERSHIP_UNVERIFIED");
   const unfinished = previewSweaHistory(sweaPage({ unfinished: true }), url, "user123");
-  if (unfinished.status === "READY") assert.equal(unfinished.candidates.length, 0);
+  if (unfinished.status === "READY") assert.equal(unfinished.candidates.length, 1, "a problem marked 풀이중 can still have an accepted historical submission");
 });
 
 test("SWEA authenticated profile identifies the signed-in user only from the exact Code menu", () => {
@@ -926,7 +928,7 @@ test("SWEA recognizes query-less own submission list and real javascript href me
   const result = previewSweaHistory(page, locationFor("https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do"), "user123");
   assert.equal(result.status, "READY");
   if (result.status === "READY") assert.equal(result.candidates.length, 1);
-  assert.equal(previewSweaHistory(page, locationFor("https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do?userId=other"), "user123").status, "OWNERSHIP_UNVERIFIED");
+  assert.equal(previewSweaHistory(page, locationFor("https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do?userId=other"), "user123").status, "READY");
 });
 
 test("Programmers previews signed-in solved list only, without treating it as source evidence", () => {

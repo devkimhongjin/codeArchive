@@ -80,34 +80,72 @@ test("Jungol runtime navigation uses the homepage and agreed profile guidance", 
   assert.equal(view.document.querySelector("#platform-help")!.textContent, "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요.");
 });
 
-test("unsupported platforms navigate without dispatching Jungol collection commands", async () => {
+test("SWEA uses its own platform-tagged local collection commands", async () => {
   const calls: string[] = [];
   const view = page(async message => { calls.push(message.type); return message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : ready; });
   await tick(); await tick(); calls.length = 0;
   const platform = view.document.querySelector<HTMLSelectElement>("#platform")!;
   choose(platform, "SWEA"); await tick();
-  assert.deepEqual(calls, []);
-  assert.equal((view.document.querySelector("#scan") as HTMLButtonElement).disabled, true);
+  assert.ok(calls.includes("LOCAL_HISTORY_IDS"));
+  assert.ok(calls.includes("LOCAL_HISTORY_STATUS"));
+  assert.equal((view.document.querySelector("#scan") as HTMLButtonElement).disabled, false);
   assert.equal((view.document.querySelector("#selection") as HTMLSelectElement).disabled, false);
   assert.equal((view.document.querySelector("#history-page-link") as HTMLAnchorElement).href, "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do");
-  assert.match(view.document.querySelector("#status")!.textContent!, /아직 지원하지 않습니다/);
+  assert.match(view.document.querySelector("#status")!.textContent!, /후보 목록/);
 });
 
-test("late Jungol results are ignored after a platform switch and switching back reloads safely", async () => {
+test("SWEA and Programmers use their own guidance, candidate metadata, and history progress", async () => {
+  const sweaCandidate = { submissionId: "Swea0001", problemNumber: "4796", title: "산", language: "JAVA", executionTime: 669, memoryValue: 102076 };
+  const programmersCandidate = { submissionId: "pg:947840:389481:2026-09-21T16:43:28.310+09:00:java", problemNumber: "389481", title: "가장 큰 수", language: "java", createdAt: "2026-09-21T16:43:28.310+09:00" };
+  const programmersCandidate2 = { ...programmersCandidate, submissionId: "pg:947840:389481:2026-09-21T16:43:27.310+09:00:java", createdAt: "2026-09-21T16:43:27.310+09:00" };
+  const view = page(async message => {
+    if (message.type === "LOCAL_HISTORY_IDS") return { submissionIds: ["unrelated", programmersCandidate.submissionId] };
+    const current = (message as { platform?: string }).platform;
+    if (current === "SWEA") return { status: "SCANNING", progress: { phase: "histories", stage: "reading-histories", rows: 93, pagesLoaded: 8, groupsExpanded: 0, groupsTotal: 0, historiesRead: 8, historiesTotal: 93 } };
+    if (current === "PROGRAMMERS") return { status: "READY", candidates: [programmersCandidate, programmersCandidate2], truncated: false };
+    return { status: "READY", candidates: [sweaCandidate], truncated: false };
+  });
+  await tick(); await tick();
+  const platform = view.document.querySelector<HTMLSelectElement>("#platform")!;
+  choose(platform, "SWEA"); await tick(); await tick();
+  assert.match(view.document.querySelector("#progress")!.textContent!, /문제 93건 · 제출 이력 8\/93개 확인/);
+  assert.match(view.document.querySelector("#platform-help")!.textContent!, /My Page Code/);
+  choose(platform, "PROGRAMMERS"); await tick(); await tick();
+  const meta = view.document.querySelector("#candidate-list .meta")!.textContent!;
+  assert.match(meta, /2026-09-21T16:43:27\.310\+09:00 · java/);
+  assert.doesNotMatch(meta, /pg:947840/);
+  assert.match(view.document.querySelector("#candidate-help")!.textContent!, /후보 문제 1건 · 제출 1건.*제외했습니다/);
+});
+
+test("non-Jungol failure guidance does not direct users to Jungol", async () => {
+  const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { status: "FAILED", failureReason: "DETAIL_NOT_FOUND", completed: 0, total: 1 });
+  await tick(); await tick();
+  const platform = view.document.querySelector<HTMLSelectElement>("#platform")!;
+  choose(platform, "SWEA"); await tick(); await tick();
+  assert.match(view.document.querySelector("#status")!.textContent!, /My Page Code/);
+  assert.doesNotMatch(view.document.querySelector("#status")!.textContent!, /정올/);
+  choose(platform, "PROGRAMMERS"); await tick(); await tick();
+  assert.match(view.document.querySelector("#status")!.textContent!, /해결한 문제 목록/);
+  assert.doesNotMatch(view.document.querySelector("#status")!.textContent!, /정올/);
+});
+
+test("late platform results are ignored after a switch and switching back reloads safely", async () => {
   let resolveIds!: (value: unknown) => void; let idCalls = 0; const calls: string[] = [];
+  const jungolReady = { status: "READY", candidates: [{ ...candidate, submissionId: "jungol-101" }], truncated: false };
+  const programmersReady = { status: "READY", candidates: [{ ...candidate, submissionId: "pg:947840:389481:2026-09-21T16:43:28.310+09:00:java", createdAt: "2026-09-21T16:43:28.310+09:00", language: "java" }], truncated: false };
   const view = page(message => {
     calls.push(message.type);
     if (message.type === "LOCAL_HISTORY_IDS") { idCalls += 1; return idCalls === 1 ? new Promise(resolve => { resolveIds = resolve; }) : Promise.resolve({ submissionIds: [] }); }
-    return Promise.resolve(ready);
+    return Promise.resolve((message as { platform?: string }).platform === "PROGRAMMERS" ? programmersReady : jungolReady);
   });
   await tick();
   const platform = view.document.querySelector<HTMLSelectElement>("#platform")!;
   choose(platform, "PROGRAMMERS"); resolveIds!({ submissionIds: ["101"] }); await tick(); await tick();
-  assert.equal(view.document.querySelector("#candidate-list input"), null);
-  assert.match(view.document.querySelector("#status")!.textContent!, /아직 지원하지 않습니다/);
+  assert.deepEqual([...view.document.querySelectorAll<HTMLInputElement>("#candidate-list input")].map(input => input.getAttribute("aria-label")), ["제출 #pg:947840:389481:2026-09-21T16:43:28.310+09:00:java"]);
+  assert.match(view.document.querySelector("#status")!.textContent!, /후보 목록/);
   choose(platform, "JUNGOL"); await tick(); await tick();
   assert.ok(calls.filter(type => type === "LOCAL_HISTORY_IDS").length >= 2);
-  assert.ok(view.document.querySelector("#candidate-list input"));
+  assert.deepEqual([...view.document.querySelectorAll<HTMLInputElement>("#candidate-list input")].map(input => input.getAttribute("aria-label")), ["제출 #jungol-101"]);
 });
 
 test("an ABA platform switch cannot let an old scan click start Jungol collection", async () => {
@@ -185,7 +223,7 @@ test("history view refreshes local IDs after completion and removes saved candid
   await tick();
   view.scheduled.shift()!(); await tick(); await tick();
   assert.equal(view.document.querySelector("#candidate-list input"), null);
-  assert.match(view.document.querySelector("#candidate-help")!.textContent!, /제외/);
+  assert.doesNotMatch(view.document.querySelector("#candidate-help")!.textContent!, /제외/);
 });
 
 test("history view recovers after a rejected status poll and safely retries scanning", async () => {

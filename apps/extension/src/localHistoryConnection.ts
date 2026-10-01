@@ -1,7 +1,8 @@
 import { sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
+import type { Platform } from "./types";
 
-type Target = { tabId: number; url: string };
-type Message = { type: LocalHistoryCommand; submissionIds?: string[] };
+type Target = { tabId: number; url: string; platform?: Platform };
+type Message = { type: LocalHistoryCommand; platform?: Platform; submissionIds?: string[] };
 type Services = {
   send: (tabId: number, message: Message) => Promise<unknown>;
   currentUrl: (tabId: number) => Promise<string | undefined>;
@@ -13,7 +14,7 @@ export async function requestLocalHistoryMessage(target: Target, message: Messag
   const sourceStillOpen = async () => {
     try {
       const url = await services.currentUrl(target.tabId);
-      return !!url && sameHistorySource(target.url, url);
+      return !!url && sameHistorySource(target.url, url, target.platform);
     } catch { return false; }
   };
   if (!await sourceStillOpen()) return { status: "INTERRUPTED" };

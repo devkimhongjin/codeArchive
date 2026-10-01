@@ -1,8 +1,9 @@
 export const HISTORY_TIMING_STORAGE_KEY = "codearchive.history-timing.v1" as const;
+import type { Platform } from "./types";
 
 export type HistoricalTimingSample = {
   version: 1;
-  platform: "JUNGOL";
+  platform: Platform;
   count: number;
   durationMs: number;
   startedAt: number;
@@ -19,14 +20,14 @@ export function readHistoricalTimingSample(value: unknown): HistoricalTimingSamp
   const sample = value as Partial<HistoricalTimingSample>;
   const count = sample.count, startedAt = sample.startedAt, endedAt = sample.endedAt, durationMs = sample.durationMs;
   if (typeof count !== "number" || typeof startedAt !== "number" || typeof endedAt !== "number" || typeof durationMs !== "number") return null;
-  if (sample.version !== 1 || sample.platform !== "JUNGOL" || !Number.isSafeInteger(count) || count < 1 || count > 5_000 ||
+  if (sample.version !== 1 || (sample.platform !== "JUNGOL" && sample.platform !== "SWEA" && sample.platform !== "PROGRAMMERS") || !Number.isSafeInteger(count) || count < 1 || count > 5_000 ||
       !validTimestamp(startedAt) || !validTimestamp(endedAt) || !Number.isFinite(durationMs) || durationMs <= 0 ||
       endedAt < startedAt || Math.abs((endedAt - startedAt) - durationMs) > 1) return null;
-  return { version: 1, platform: "JUNGOL", count, durationMs, startedAt, endedAt };
+  return { version: 1, platform: sample.platform, count, durationMs, startedAt, endedAt };
 }
 
 /** Completed local imports become timing evidence only when every selected store settled successfully. */
-export function timingSampleFromCompletedTask(task: CompletedTask): HistoricalTimingSample | null {
+export function timingSampleFromCompletedTask(task: CompletedTask, platform: Platform = "JUNGOL"): HistoricalTimingSample | null {
   const count = task.total, startedAt = task.startedAt, endedAt = task.endedAt;
   if (typeof count !== "number" || typeof startedAt !== "number" || typeof endedAt !== "number") return null;
   if (task.status !== "DONE" || !Number.isSafeInteger(count) || count < 1 || count > 5_000 ||
@@ -34,7 +35,7 @@ export function timingSampleFromCompletedTask(task: CompletedTask): HistoricalTi
       typeof task.duplicate !== "number" || task.saved + task.duplicate !== count ||
       !validTimestamp(startedAt) || !validTimestamp(endedAt)) return null;
   const durationMs = endedAt - startedAt;
-  return durationMs > 0 ? { version: 1, platform: "JUNGOL", count, durationMs, startedAt, endedAt } : null;
+  return durationMs > 0 ? { version: 1, platform, count, durationMs, startedAt, endedAt } : null;
 }
 
 export async function persistHistoricalTimingSample(

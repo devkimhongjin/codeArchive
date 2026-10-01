@@ -13,7 +13,8 @@ import { SWEA_ORIGIN, SWEA_SOLVING_PATH } from "./adapters/sweaSelectors";
 import { activeSubmissionProgress, SUBMISSION_PROGRESS_KEY, updateSubmissionProgress } from "./submissionProgress";
 import type { Platform } from "./types";
 import { isJungolHistoryPath } from "./historicalJungol";
-import { mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
+import { isHistoricalSubmissionId } from "./historicalIdentity";
+import { historyPlatformForUrl, mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
 import { requestLocalHistoryMessage } from "./localHistoryConnection";
 
 const store = new IndexedDbCaptureStore();
@@ -29,7 +30,7 @@ const bridge = new DashboardBridge(store, {
 });
 
 const LOCAL_HISTORY_ROUTE_KEY = "codearchive-local-history-route";
-type LocalHistoryRoute = { tabId: number; url: string; status: string };
+type LocalHistoryRoute = { tabId: number; url: string; status: string; platform: Platform };
 
 async function openHistoryPage(): Promise<{ status: "OPENED" }> {
   await chrome.tabs.create({ url: chrome.runtime.getURL("history.html") });
@@ -40,7 +41,11 @@ async function readLocalHistoryRoute(): Promise<LocalHistoryRoute | null> {
   const value = (await chrome.storage.session.get(LOCAL_HISTORY_ROUTE_KEY))[LOCAL_HISTORY_ROUTE_KEY];
   if (!value || typeof value !== "object") return null;
   const route = value as Partial<LocalHistoryRoute>;
-  return Number.isSafeInteger(route.tabId) && route.tabId! >= 0 && typeof route.url === "string" && route.url.length <= 2_000 && typeof route.status === "string" ? route as LocalHistoryRoute : null;
+  if (typeof route.url !== "string") return null;
+  const platform = route.platform === "JUNGOL" || route.platform === "SWEA" || route.platform === "PROGRAMMERS"
+    ? route.platform : historyPlatformForUrl(route.url);
+  return Number.isSafeInteger(route.tabId) && route.tabId! >= 0 && typeof route.url === "string" && route.url.length <= 2_000 && typeof route.status === "string" && platform
+    ? { ...route, platform } as LocalHistoryRoute : null;
 }
 
 async function writeLocalHistoryRoute(route: LocalHistoryRoute | null): Promise<void> {
@@ -48,12 +53,12 @@ async function writeLocalHistoryRoute(route: LocalHistoryRoute | null): Promise<
   else await chrome.storage.session.remove(LOCAL_HISTORY_ROUTE_KEY);
 }
 
-async function resolveLocalHistoryTab(allowNewSource = false): Promise<{ tabId: number; url: string } | { error: "TAB_NOT_FOUND" | "MULTIPLE_TABS" }> {
+async function resolveLocalHistoryTab(platform: Platform, allowNewSource = false): Promise<{ tabId: number; url: string; platform: Platform } | { error: "TAB_NOT_FOUND" | "MULTIPLE_TABS" }> {
   const route = await readLocalHistoryRoute();
   if (route) {
     try {
       const tab = await chrome.tabs.get(route.tabId);
-      if (tab.url && sameHistorySource(route.url, tab.url)) return { tabId: route.tabId, url: route.url };
+      if (route.platform === platform && tab.url && sameHistorySource(route.url, tab.url, platform)) return { tabId: route.tabId, url: route.url, platform };
     } catch { /* The saved source tab was closed. */ }
     await writeLocalHistoryRoute({ ...route, status: "INTERRUPTED" });
     if (!allowNewSource) return { error: "TAB_NOT_FOUND" };
@@ -62,28 +67,36 @@ async function resolveLocalHistoryTab(allowNewSource = false): Promise<{ tabId: 
   // A status read must never bind an arbitrary currently-open source tab.
   // Only a user initiated scan is allowed to choose a new source route.
   if (!allowNewSource) return { error: "TAB_NOT_FOUND" };
-  const tabs = await chrome.tabs.query({ url: "https://jungol.co.kr/*" });
+  const origin = platform === "JUNGOL" ? "https://jungol.co.kr/*" : platform === "SWEA" ? "https://swexpertacademy.com/*" : "https://school.programmers.co.kr/*";
+  const tabs = await chrome.tabs.query({ url: origin });
   const matches = tabs.filter(tab => Number.isSafeInteger(tab.id) && tab.url && (() => {
-    try { const url = new URL(tab.url!); return isJungolHistoryPath(url.pathname); } catch { return false; }
+    try { return historyPlatformForUrl(tab.url!) === platform; } catch { return false; }
   })());
   if (matches.length !== 1) return { error: matches.length === 0 ? "TAB_NOT_FOUND" : "MULTIPLE_TABS" };
   const match = matches[0]!;
-  return { tabId: match.id!, url: match.url! };
+  return { tabId: match.id!, url: match.url!, platform };
 }
 
 let localHistoryCommands: Promise<unknown> = Promise.resolve();
-function localHistoryCommand(type: LocalHistoryCommand, submissionIds?: string[]): Promise<unknown> {
+function localHistoryCommand(type: LocalHistoryCommand, platform: Platform = "JUNGOL", submissionIds?: string[]): Promise<unknown> {
   // Serialize connection setup so simultaneous clicks cannot inject two listeners.
-  const command = localHistoryCommands.catch(() => undefined).then(() => runLocalHistoryCommand(type, submissionIds));
+  const command = localHistoryCommands.catch(() => undefined).then(() => runLocalHistoryCommand(type, platform, submissionIds));
   localHistoryCommands = command;
   return command;
 }
 
-async function runLocalHistoryCommand(type: LocalHistoryCommand, submissionIds?: string[]): Promise<unknown> {
-  const target = await resolveLocalHistoryTab(mayRediscoverHistorySource(type));
+async function runLocalHistoryCommand(type: LocalHistoryCommand, platform: Platform, submissionIds?: string[]): Promise<unknown> {
+  const target = await resolveLocalHistoryTab(platform, mayRediscoverHistorySource(type));
   if ("error" in target) return { status: target.error };
+  // The content script can request an owned auxiliary tab before this command
+  // replies. Persist that intent first, so the auxiliary service has a route
+  // to bind to from its very first request.
+  const initialStatus = type === "LOCAL_HISTORY_SCAN_START" ? "SCANNING" :
+    type === "LOCAL_HISTORY_IMPORT_START" ? "IMPORTING" :
+      type === "LOCAL_HISTORY_CANCEL" ? "CANCELLING" : undefined;
+  if (initialStatus) await writeLocalHistoryRoute({ ...target, status: initialStatus });
   try {
-    const response = await requestLocalHistoryMessage(target, submissionIds ? { type, submissionIds } : { type }, {
+    const response = await requestLocalHistoryMessage(target, submissionIds ? { type, platform, submissionIds } : { type, platform }, {
       send: (tabId, message) => chrome.tabs.sendMessage(tabId, message, { frameId: 0 }),
       currentUrl: async tabId => (await chrome.tabs.get(tabId)).url,
       connect: tabId => chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ["content.js"], world: "ISOLATED" })
@@ -206,9 +219,150 @@ type InternalMessage =
   | { type: "STORE_SWEA_PROBLEM_CONTEXT"; context: unknown }
   | { type: "GET_SWEA_PROBLEM_CONTEXT"; sourceUrl: unknown }
   | { type: "OPEN_LOCAL_HISTORY" }
-  | { type: "LOCAL_HISTORY_IDS" }
-  | { type: "LOCAL_HISTORY_SCAN_START" | "LOCAL_HISTORY_STATUS" | "LOCAL_HISTORY_CANCEL" }
-  | { type: "LOCAL_HISTORY_IMPORT_START"; submissionIds: unknown };
+  | { type: "LOCAL_HISTORY_IDS"; platform?: unknown }
+  | { type: "LOCAL_HISTORY_SCAN_START" | "LOCAL_HISTORY_STATUS" | "LOCAL_HISTORY_CANCEL"; platform?: unknown }
+  | { type: "LOCAL_HISTORY_IMPORT_START"; platform?: unknown; submissionIds: unknown };
+
+type ProgrammersAuxiliaryMessage = { type: "PROGRAMMERS_AUX_READ"; lessonUrl: unknown; mode: unknown; submissionId?: unknown } | { type: "PROGRAMMERS_AUX_CANCEL" };
+type ProgrammersAuxiliaryRun = { sourceTabId: number; generation: number; lessonUrl: string; auxiliaryTabId?: number; cancelled: boolean; cleaned: boolean };
+const programmersAuxiliaryRuns = new Map<number, ProgrammersAuxiliaryRun>();
+let nextProgrammersAuxiliaryGeneration = 0;
+
+function canonicalProgrammersLessonUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 2_000) return null;
+  try { const url = new URL(value); return url.origin === "https://school.programmers.co.kr" && !url.search && !url.hash &&
+    /^\/learn\/courses\/30\/lessons\/\d{1,40}$/.test(url.pathname) ? url.href : null; } catch { return null; }
+}
+
+async function cleanupProgrammersAuxiliary(run: ProgrammersAuxiliaryRun): Promise<void> {
+  if (programmersAuxiliaryRuns.get(run.sourceTabId) === run) programmersAuxiliaryRuns.delete(run.sourceTabId);
+  // A cancellation may arrive while tabs.create is pending. Keep the cleanup
+  // pending until create supplies its id, then finally closes that tab.
+  if (!Number.isSafeInteger(run.auxiliaryTabId) || run.cleaned) return;
+  run.cleaned = true;
+  await chrome.tabs.remove(run.auxiliaryTabId!).catch(() => undefined);
+}
+
+async function waitForProgrammersAuxiliaryTab(run: ProgrammersAuxiliaryRun): Promise<"READY" | "INTERRUPTED" | "REDIRECTED" | "OPEN_FAILED"> {
+  if (!Number.isSafeInteger(run.auxiliaryTabId)) return "OPEN_FAILED";
+  // Cold lesson loads are routinely slower than a second, so keep a bounded
+  // twenty-second window while observing cancellation every 100 ms.
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (run.cancelled) return "INTERRUPTED";
+    let tab: chrome.tabs.Tab;
+    try { tab = await chrome.tabs.get(run.auxiliaryTabId!); } catch { return run.cancelled ? "INTERRUPTED" : "OPEN_FAILED"; }
+    if (tab.url === run.lessonUrl && tab.status === "complete") return "READY";
+    // Chrome can report a newly opened inactive tab as about:blank until its
+    // requested navigation commits. That transient state is not a redirect.
+    if (tab.url && tab.url !== "about:blank" && tab.url !== run.lessonUrl) return "REDIRECTED";
+    await new Promise<void>(resolve => setTimeout(resolve, 100));
+  }
+  return run.cancelled ? "INTERRUPTED" : "OPEN_FAILED";
+}
+
+function isNoProgrammersAuxiliaryReceiver(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /receiving end does not exist|could not establish connection|no receiver/i.test(message);
+}
+
+function isProgrammersAuxiliarySender(sender: chrome.runtime.MessageSender): sender is chrome.runtime.MessageSender & { tab: chrome.tabs.Tab } {
+  return sender.id === chrome.runtime.id && sender.frameId === 0 && Number.isSafeInteger(sender.tab?.id);
+}
+
+async function programmersListingRoute(sender: chrome.runtime.MessageSender): Promise<LocalHistoryRoute | null> {
+  if (!isProgrammersAuxiliarySender(sender) || !sender.url) return null;
+  if (historyPlatformForUrl(sender.url) !== "PROGRAMMERS") return null;
+  const route = await readLocalHistoryRoute();
+  return route && route.platform === "PROGRAMMERS" && route.tabId === sender.tab!.id &&
+    (route.status === "SCANNING" || route.status === "IMPORTING") && sameHistorySource(route.url, sender.url, "PROGRAMMERS") ? route : null;
+}
+
+async function runProgrammersAuxiliary(sender: chrome.runtime.MessageSender, message: Extract<ProgrammersAuxiliaryMessage, { type: "PROGRAMMERS_AUX_READ" }>): Promise<unknown> {
+  const lessonUrl = canonicalProgrammersLessonUrl(message.lessonUrl);
+  if (!lessonUrl || (message.mode !== "preview" && message.mode !== "import") ||
+      (message.submissionId !== undefined && !isHistoricalSubmissionId("PROGRAMMERS", message.submissionId))) return { ok: false, error: "BAD_REQUEST" };
+  const route = await programmersListingRoute(sender); if (!route) return { ok: false, error: "UNAUTHORIZED" };
+  const sourceTabId = sender.tab!.id!;
+  const prior = programmersAuxiliaryRuns.get(sourceTabId); if (prior) return { ok: false, error: "BUSY" };
+  const run: ProgrammersAuxiliaryRun = { sourceTabId, generation: ++nextProgrammersAuxiliaryGeneration, lessonUrl, cancelled: false, cleaned: false }; programmersAuxiliaryRuns.set(sourceTabId, run);
+  try {
+    const created = await chrome.tabs.create({ url: lessonUrl, active: false });
+    if (!Number.isSafeInteger(created.id)) return { ok: false, error: "OPEN_FAILED" };
+    run.auxiliaryTabId = created.id!;
+    if (run.cancelled) return { ok: false, error: "INTERRUPTED" };
+    const before = await chrome.tabs.get(sourceTabId);
+    if (!before.url || run.cancelled || !sameHistorySource(route.url, before.url, "PROGRAMMERS")) return { ok: false, error: "INTERRUPTED" };
+    const readiness = await waitForProgrammersAuxiliaryTab(run);
+    if (readiness !== "READY") return { ok: false, error: readiness };
+    const readMessage = { type: "PROGRAMMERS_AUXILIARY_READ", lessonUrl, mode: message.mode,
+      ...(message.submissionId === undefined ? {} : { submissionId: message.submissionId }) };
+    let result: unknown;
+    try {
+      result = await chrome.tabs.sendMessage(run.auxiliaryTabId, readMessage, { frameId: 0 });
+    } catch (error) {
+      if (!isNoProgrammersAuxiliaryReceiver(error)) throw error;
+      // Inject at most once after a verified missing-receiver failure. The
+      // auxiliary request only reads the selected submission and is sent once
+      // after injection; create/navigation are never retried.
+      await chrome.scripting.executeScript({ target: { tabId: run.auxiliaryTabId, frameIds: [0] }, files: ["content.js"], world: "ISOLATED" });
+      if (run.cancelled) return { ok: false, error: "INTERRUPTED" };
+      result = await chrome.tabs.sendMessage(run.auxiliaryTabId, readMessage, { frameId: 0 });
+    }
+    const after = await chrome.tabs.get(sourceTabId);
+    if (!after.url || run.cancelled || !sameHistorySource(route.url, after.url, "PROGRAMMERS")) return { ok: false, error: "INTERRUPTED" };
+    const finalAuxiliary = await chrome.tabs.get(run.auxiliaryTabId);
+    if (finalAuxiliary.url !== lessonUrl) return { ok: false, error: "REDIRECTED" };
+    return { ok: true, result };
+  } catch { return { ok: false, error: "READ_FAILED" }; }
+  finally { await cleanupProgrammersAuxiliary(run); }
+}
+
+async function cancelProgrammersAuxiliary(sender: chrome.runtime.MessageSender): Promise<{ ok: boolean }> {
+  // Cancellation is allowed only by the extension's top-frame source tab. It
+  // deliberately does not require the route to remain current, so a source
+  // navigation cannot strand an owned auxiliary tab.
+  if (!isProgrammersAuxiliarySender(sender)) return { ok: false };
+  const run = programmersAuxiliaryRuns.get(sender.tab.id!);
+  if (!run) return { ok: false };
+  run.cancelled = true;
+  await cleanupProgrammersAuxiliary(run);
+  return { ok: true };
+}
+
+// The registry represents only tabs created by this service. Browser tab
+// events can therefore release a source-bound run without ever touching a
+// user tab, including if the source navigates away while an auxiliary read is
+// awaiting its receiver.
+const backgroundTabs = chrome.tabs as unknown as {
+  onRemoved?: { addListener(callback: (tabId: number) => void): void };
+  onUpdated?: { addListener(callback: (tabId: number, changeInfo: { url?: string }) => void): void };
+};
+backgroundTabs.onRemoved?.addListener(tabId => {
+  for (const run of programmersAuxiliaryRuns.values()) {
+    if (run.sourceTabId === tabId || run.auxiliaryTabId === tabId) {
+      run.cancelled = true;
+      void cleanupProgrammersAuxiliary(run);
+    }
+  }
+});
+backgroundTabs.onUpdated?.addListener((tabId, changeInfo) => {
+  if (typeof changeInfo.url !== "string") return;
+  for (const run of programmersAuxiliaryRuns.values()) {
+    if (run.auxiliaryTabId === tabId && changeInfo.url !== run.lessonUrl) {
+      run.cancelled = true;
+      void cleanupProgrammersAuxiliary(run);
+      continue;
+    }
+    if (run.sourceTabId === tabId) {
+      void readLocalHistoryRoute().then(route => {
+        if (!route || route.tabId !== tabId || route.platform !== "PROGRAMMERS" || !sameHistorySource(route.url, changeInfo.url!, "PROGRAMMERS")) {
+          run.cancelled = true;
+          return cleanupProgrammersAuxiliary(run);
+        }
+      }).catch(() => undefined);
+    }
+  }
+});
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -265,9 +419,21 @@ function mutateProgress(update: Parameters<typeof updateSubmissionProgress>[1]):
   return progressWrite;
 }
 
+type AnyInternalMessage = InternalMessage | ProgrammersAuxiliaryMessage;
+
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
-  const object = asObject(message) as Partial<InternalMessage> | null;
+  const object = asObject(message) as Partial<AnyInternalMessage> | null;
   if (!object?.type) return false;
+
+  if (object.type === "PROGRAMMERS_AUX_READ") {
+    void runProgrammersAuxiliary(sender, object as ProgrammersAuxiliaryMessage & { type: "PROGRAMMERS_AUX_READ" })
+      .then(sendResponse).catch(() => sendResponse({ ok: false, error: "READ_FAILED" }));
+    return true;
+  }
+  if (object.type === "PROGRAMMERS_AUX_CANCEL") {
+    void cancelProgrammersAuxiliary(sender).then(sendResponse).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
 
   if (object.type === "STORE_CAPTURE") {
     const capture = object.capture;
@@ -284,8 +450,8 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   if (object.type === "STORE_HISTORICAL_CAPTURE") {
     const capture = object.capture;
     const url = senderUrl(sender);
-    if (!isCaptureRecord(capture) || capture.historicalImport !== true || capture.platform !== "JUNGOL" ||
-        !url || url.origin !== "https://jungol.co.kr" || sender.id !== chrome.runtime.id ||
+    if (!isCaptureRecord(capture) || capture.historicalImport !== true || !isHistoricalSubmissionId(capture.platform, capture.historicalSubmissionId) ||
+        !url || (capture.platform === "JUNGOL" ? url.origin !== "https://jungol.co.kr" : historyPlatformForUrl(url) !== capture.platform) || sender.id !== chrome.runtime.id ||
         !Number.isSafeInteger(sender.tab?.id) || sender.frameId !== 0) {
       sendResponse({ ok: false, error: "INVALID_HISTORICAL_CAPTURE" });
       return false;
@@ -298,7 +464,8 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       const tabId = sender.tab!.id!;
       const currentUrl = (await chrome.tabs.get(tabId)).url;
       const route = await readLocalHistoryRoute();
-      if (!currentUrl || !mayStoreHistoricalFromSender(url.href, currentUrl, tabId, route)) {
+      if (!currentUrl || (route && route.platform !== capture.platform) ||
+          (!route && capture.platform !== "JUNGOL") || !mayStoreHistoricalFromSender(url.href, currentUrl, tabId, route, capture.platform)) {
         sendResponse({ ok: false, error: "INVALID_HISTORICAL_CAPTURE" });
         return;
       }
@@ -343,15 +510,19 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 
   if (object.type === "LOCAL_HISTORY_IDS") {
     if (!isHistoryPageSender(sender)) { sendResponse({ error: "UNAUTHORIZED" }); return false; }
-    void store.listHistoricalSubmissionIds("JUNGOL").then(submissionIds => sendResponse({ submissionIds })).catch(() => sendResponse({ error: "STORAGE_ERROR" }));
+    const platform = object.platform === undefined ? "JUNGOL" : object.platform;
+    if (platform !== "JUNGOL" && platform !== "SWEA" && platform !== "PROGRAMMERS") { sendResponse({ error: "BAD_REQUEST" }); return false; }
+    void store.listHistoricalSubmissionIds(platform).then(submissionIds => sendResponse({ submissionIds })).catch(() => sendResponse({ error: "STORAGE_ERROR" }));
     return true;
   }
 
   if (object.type === "LOCAL_HISTORY_SCAN_START" || object.type === "LOCAL_HISTORY_STATUS" || object.type === "LOCAL_HISTORY_CANCEL" || object.type === "LOCAL_HISTORY_IMPORT_START") {
     if (!isHistoryPageSender(sender)) { sendResponse({ status: "UNAUTHORIZED" }); return false; }
+    const platform = object.platform === undefined ? "JUNGOL" : object.platform;
+    if (platform !== "JUNGOL" && platform !== "SWEA" && platform !== "PROGRAMMERS") { sendResponse({ status: "BAD_REQUEST" }); return false; }
     const ids = object.type === "LOCAL_HISTORY_IMPORT_START" ? object.submissionIds : undefined;
-    if (ids !== undefined && (!Array.isArray(ids) || ids.length < 1 || ids.length > 5_000 || ids.some(id => typeof id !== "string" || !/^\d{1,40}$/.test(id)) || new Set(ids).size !== ids.length)) { sendResponse({ status: "BAD_REQUEST" }); return false; }
-    void localHistoryCommand(object.type, ids as string[] | undefined).then(sendResponse).catch(() => sendResponse({ status: "FAILED" }));
+    if (ids !== undefined && (!Array.isArray(ids) || ids.length < 1 || ids.length > 5_000 || ids.some(id => !isHistoricalSubmissionId(platform, id)) || new Set(ids).size !== ids.length)) { sendResponse({ status: "BAD_REQUEST" }); return false; }
+    void localHistoryCommand(object.type, platform, ids as string[] | undefined).then(sendResponse).catch(() => sendResponse({ status: "FAILED" }));
     return true;
   }
 

@@ -83,6 +83,42 @@ function syncProgrammers(document: Document): boolean {
   }
 }
 
+/**
+ * History source is read only from the Monaco model belonging to the selected
+ * history row.  In particular, `#code` is the current solution editor and is
+ * never a fallback for an older submission.
+ */
+export function syncProgrammersHistoryModel(document: Document, window: MainWorldWindow): boolean {
+  try {
+    const root = document.documentElement;
+    const requestedUri = root?.dataset.codearchiveProgrammersHistoryUri ?? "";
+    const requestStamp = root?.dataset.codearchiveProgrammersHistoryRequest ?? "";
+    if (!/^inmemory:\/\/model\/\d{1,20}$/.test(requestedUri)) return false;
+    if (!new RegExp(`^${requestedUri.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:\\d{1,20}$`).test(requestStamp)) return false;
+    const editors = [...document.querySelectorAll<HTMLElement>(
+      `.submission-history-wrapper [class*="ListItemCodeWrapper"] .monaco-editor[role="code"][data-uri="${requestedUri}"]`
+    )];
+    if (editors.length !== 1) return false;
+    const api = typeof monaco !== "undefined" ? monaco : window.monaco;
+    const models = api?.editor?.getModels?.().filter(model => model.uri.toString() === requestedUri) ?? [];
+    if (models.length !== 1) return false;
+    const sourceCode = models[0]?.getValue();
+    if (typeof sourceCode !== "string" || !sourceCode.trim() || sourceCode.length > 1_000_000) return false;
+    let target = document.querySelector<HTMLTextAreaElement>('textarea[data-codearchive-programmers-history-source]');
+    if (!target) {
+      target = document.createElement("textarea");
+      target.hidden = true;
+      target.dataset.codearchiveProgrammersHistorySource = "";
+      (document.body ?? root)?.append(target);
+    }
+    target.value = sourceCode;
+    target.dataset.codearchiveProgrammersHistoryUri = requestedUri;
+    target.dataset.codearchiveProgrammersHistoryRequest = requestStamp;
+    root?.setAttribute("data-codearchive-programmers-history-response", `${requestStamp}:${Date.now()}`);
+    return true;
+  } catch { return false; }
+}
+
 function syncJungol(document: Document, location: Location, window: MainWorldWindow): boolean {
   try {
     const problemNumber = location.pathname.match(JUNGOL_PROBLEM_PATH)?.[1];
@@ -208,8 +244,23 @@ export function installMainWorldSync(document: Document, location: Location, win
     if (submitTarget(event.target, document, location)) void syncEditorAtSubmitClick(document, location, window);
   };
   document.addEventListener("click", onClick, true);
+  const MutationObserverConstructor = document.defaultView?.MutationObserver ?? globalThis.MutationObserver;
+  const historySourceObserver = MutationObserverConstructor ? new MutationObserverConstructor(() => {
+    if (isProgrammers(location)) syncProgrammersHistoryModel(document, window);
+  }) : null;
+  let observingHistoryRoot = false;
+  const observeHistoryRoot = () => {
+    const root = document.documentElement;
+    if (!root || observingHistoryRoot) return;
+    observingHistoryRoot = true;
+    historySourceObserver?.observe(root, { attributes: true, attributeFilter: ["data-codearchive-programmers-history-uri"] });
+  };
+  observeHistoryRoot();
+  if (!observingHistoryRoot) document.addEventListener("DOMContentLoaded", observeHistoryRoot, { once: true });
   return () => {
     document.removeEventListener("click", onClick, true);
+    document.removeEventListener("DOMContentLoaded", observeHistoryRoot);
+    historySourceObserver?.disconnect();
     removeJungolObserver();
   };
 }

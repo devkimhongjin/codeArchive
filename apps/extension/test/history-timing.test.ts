@@ -45,3 +45,10 @@ test("a fully completed ordinary import of any bounded size becomes timing evide
     saved: 2, duplicate: 1, startedAt: 10, endedAt: 910 });
   assert.deepEqual(sample, { version: 1, platform: "JUNGOL", count: 3, durationMs: 900, startedAt: 10, endedAt: 910 });
 });
+
+test("SWEA timing retains its own platform", () => {
+  const sample = timingSampleFromCompletedTask({ status: "DONE", total: 2, completed: 2, skipped: 0,
+    saved: 1, duplicate: 1, startedAt: 10, endedAt: 210 }, "SWEA");
+  assert.equal(sample?.platform, "SWEA");
+  assert.equal(readHistoricalTimingSample(sample)?.platform, "SWEA");
+});
