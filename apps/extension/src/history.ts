@@ -9,6 +9,7 @@ type State = { status: string; candidates?: Candidate[]; truncated?: boolean; pr
 }; completed?: number; total?: number; saved?: number; duplicate?: number;
   startedAt?: number; endedAt?: number; lastProgressAt?: number; timingSample?: unknown;
   failureReason?: string;
+  skipped?: number; failedSubmissionIds?: string[];
   problemCount?: number; submissionCount?: number };
 export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
   schedule?: (work: () => void, delay: number) => unknown; now?: () => number;
@@ -52,7 +53,8 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     const resultSummary = () => {
       const submissions = typeof state.submissionCount === "number" ? state.submissionCount : (state.saved ?? 0) + (state.duplicate ?? 0);
       const problems = typeof state.problemCount === "number" ? `문제 ${state.problemCount}건 · ` : "";
-      return `${problems}제출 ${submissions}건 · 새로 저장 ${state.saved ?? 0}건 · 이미 저장됨 ${state.duplicate ?? 0}건`;
+      const failures = state.skipped ? ` · 확인 실패 ${state.skipped}건${state.failedSubmissionIds?.length ? ` (제출 ${state.failedSubmissionIds.map(id => `#${id}`).join(", ")})` : ""}` : "";
+      return `${problems}제출 ${submissions}건 · 새로 저장 ${state.saved ?? 0}건 · 이미 저장됨 ${state.duplicate ?? 0}건${failures}`;
     };
     if (state.status === "DONE") return `로컬 저장 완료 · ${resultSummary()}`;
     if (state.status === "INTERRUPTED" && (state.completed ?? 0) > 0) return `수집이 중단되었습니다. 현재까지 ${resultSummary()}`;

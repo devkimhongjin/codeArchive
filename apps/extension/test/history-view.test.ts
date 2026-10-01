@@ -7,6 +7,14 @@ import { mountHistory } from "../src/history";
 const candidate = { submissionId: "101", problemNumber: "1000", title: "테스트", executionTime: 1, memoryValue: 2 };
 const ready = { status: "READY", candidates: [candidate], truncated: false };
 const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+test("completed local collection reports rejected submissions without hiding successful saves", async () => {
+  const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } :
+    { status: "DONE", completed: 2, total: 2, saved: 1, duplicate: 0, skipped: 1, problemCount: 1, submissionCount: 1, failedSubmissionIds: ["13441823"] });
+  await tick(); await tick();
+  assert.match(view.document.querySelector("#status")!.textContent!, /문제 1건 · 제출 1건/);
+  assert.match(view.document.querySelector("#status")!.textContent!, /확인 실패 1건 \(제출 #13441823\)/);
+  assert.equal(view.document.querySelector("#progress")!.textContent, "2/2건 처리했습니다. (100%)");
+});
 function emit(element: Element, type: string) {
   const EventConstructor = element.ownerDocument.defaultView!.Event;
   element.dispatchEvent(new EventConstructor(type));

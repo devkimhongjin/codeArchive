@@ -85,10 +85,10 @@ test('terminal local import ignores a delayed cancel and permits a fresh product
     await new Promise(resolve => globals.setTimeout(resolve, 40));
     let finished: unknown;
     listener!({ type: 'LOCAL_HISTORY_STATUS' }, null, value => { finished = value; });
-    assert.equal((finished as { status: string }).status, 'FAILED');
+    assert.equal((finished as { status: string }).status, 'DONE');
     let cancelled: unknown;
     listener!({ type: 'LOCAL_HISTORY_CANCEL' }, null, value => { cancelled = value; });
-    assert.equal((cancelled as { status: string }).status, 'FAILED');
+    assert.equal((cancelled as { status: string }).status, 'DONE');
     let retry: unknown;
     listener!({ type: 'LOCAL_HISTORY_SCAN_START' }, null, value => { retry = value; });
     assert.equal((retry as { status: string }).status, 'SCANNING');

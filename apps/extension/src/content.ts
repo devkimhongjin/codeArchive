@@ -522,6 +522,7 @@ function startLocalJungolImport(document: Document, location: Location, ids: unk
   controller.start(candidates as JungolHistoryCandidate[], async (candidate, mayStore) => {
     let result: { saved: number; duplicate: number; skipped: number } | null = null;
     let failureReason: HistoricalImportFailureReason = "IMPORT_FAILED";
+    const isDetailFailure = (reason: HistoricalImportFailureReason) => reason === "DETAIL_NOT_FOUND" || reason === "DETAIL_UNVERIFIED";
     for (let attempt = 0; attempt < 3 && mayStore(); attempt++) {
       try {
         result = await importVisibleJungolHistory(document, location, [candidate], capture => {
@@ -530,6 +531,16 @@ function startLocalJungolImport(document: Document, location: Location, ids: unk
         }, () => undefined, reason => { failureReason = reason; });
       } catch { result = null; failureReason = "IMPORT_FAILED"; }
       if (result && result.skipped !== 1) break;
+      if (!isDetailFailure(failureReason)) break;
+    }
+    // A rejected detail is isolated to this submission only after cleanup and
+    // source ownership are confirmed. Never continue under a stale dialog/route.
+    if (result?.skipped === 1 && mayStore() &&
+        isDetailFailure(failureReason) &&
+        mayStoreLocalHistoryCapture(jungolLocalTask === task, task.cancelling, task.url, location.href) &&
+        previewJungolHistory(document, location).status === "READY" &&
+        !document.querySelector('[role="dialog"][aria-label="제출 상세"]')) {
+      return { ...result, failedSubmissionId: candidate.submissionId };
     }
     if (!result || (!mayStore() && result.saved === 0 && result.duplicate === 0) || result.skipped === 1) throw new HistoricalImportFailure(failureReason);
     return result;

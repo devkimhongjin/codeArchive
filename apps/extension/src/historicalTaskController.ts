@@ -4,6 +4,7 @@ export type HistoricalImportState = {
   /** Wall-clock ownership timestamps, retained by the content-owned task. */
   startedAt?: number; endedAt?: number; lastProgressAt?: number;
   failureReason?: HistoricalImportFailureReason;
+  failedSubmissionIds?: string[];
 };
 
 export type HistoricalImportFailureReason = "LIST_CHANGED" | "DETAIL_NOT_FOUND" | "DETAIL_UNVERIFIED" |
@@ -12,7 +13,8 @@ export class HistoricalImportFailure extends Error {
   constructor(readonly reason: HistoricalImportFailureReason) { super(reason); }
 }
 
-export type HistoricalImportResult = { saved: number; duplicate: number; skipped: number };
+export type HistoricalImportResult = { saved: number; duplicate: number; skipped: number;
+  failedSubmissionId?: string };
 
 /** Content-owned sequential lifetime. Its caller supplies the DOM verifier/store step. */
 export class HistoricalTaskController<T> {
@@ -36,6 +38,7 @@ export class HistoricalTaskController<T> {
         onItemSettled?.(item, result);
         this.state = { ...this.state!, completed: this.state!.completed + 1, saved: this.state!.saved + result.saved,
           duplicate: this.state!.duplicate + result.duplicate, skipped: this.state!.skipped + result.skipped,
+          ...(result.failedSubmissionId ? { failedSubmissionIds: [...(this.state!.failedSubmissionIds ?? []), result.failedSubmissionId] } : {}),
           status: this.cancelling ? "CANCELLING" : "IMPORTING", lastProgressAt: this.now() };
         if (this.cancelling) break;
       }
