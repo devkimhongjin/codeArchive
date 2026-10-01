@@ -56,6 +56,11 @@ async function writeLocalHistoryRoute(route: LocalHistoryRoute | null): Promise<
 async function resolveLocalHistoryTab(platform: Platform, allowNewSource = false): Promise<{ tabId: number; url: string; platform: Platform } | { error: "TAB_NOT_FOUND" | "MULTIPLE_TABS" }> {
   const route = await readLocalHistoryRoute();
   if (route) {
+    // history.html initially mounts the compatible Jungol view while a different
+    // platform task may still be running. Read-only commands for that default
+    // view must not inspect, interrupt, or replace the task's saved source.
+    // Only an explicit scan is allowed to choose a different platform source.
+    if (route.platform !== platform && !allowNewSource) return { error: "TAB_NOT_FOUND" };
     try {
       const tab = await chrome.tabs.get(route.tabId);
       if (route.platform === platform && tab.url && sameHistorySource(route.url, tab.url, platform)) return { tabId: route.tabId, url: route.url, platform };

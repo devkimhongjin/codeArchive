@@ -27,6 +27,7 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
   const creates: Array<{ url: string; active: boolean }> = [];
   const sent: Array<{ tabId: number; message: unknown; options: unknown }> = [];
   let injections = 0;
+  let sourceQueries = 0;
   let removedListener: ((tabId: number) => void) | undefined;
   let updatedListener: ((tabId: number, change: { url?: string }) => void) | undefined;
   const session: Record<string, unknown> = {
@@ -61,7 +62,7 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
         sent.push({ tabId, message, options });
         return sendResult(tabId, message);
       },
-      query: async () => [],
+      query: async () => { sourceQueries += 1; return []; },
       onRemoved: { addListener(callback: (tabId: number) => void) { removedListener = callback; } },
       onUpdated: { addListener(callback: (tabId: number, change: { url?: string }) => void) { updatedListener = callback; } }
     },
@@ -70,6 +71,7 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
   const previous = { chrome: globalThis.chrome, indexedDB: globalThis.indexedDB, IDBKeyRange: globalThis.IDBKeyRange };
   Object.assign(globalThis, { chrome: fakeChrome, indexedDB, IDBKeyRange });
   const sender = { id: extensionId, frameId: 0, tab: { id: sourceTabId }, url: sourceUrl };
+  const historySender = { id: extensionId, frameId: 0, url: `chrome-extension://${extensionId}/history.html` };
   const request = (message: unknown, from: unknown = sender) => new Promise<unknown>(resolve => {
     assert.equal(listener!(message, from, resolve), true);
   });
@@ -77,12 +79,37 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
     await import("../src/background");
     assert.ok(listener);
 
+    // A newly reopened history page defaults to Jungol while the persisted
+    // Programmers task remains source-owned. Its read-only commands must not
+    // turn that task into an interruption or disturb auxiliary authorization.
+    const preservedScanningRoute = structuredClone(session[routeKey]) as { tabId: number; url: string; status: string; platform: string };
+    assert.deepEqual(await request({ type: "LOCAL_HISTORY_STATUS" }, historySender), { status: "TAB_NOT_FOUND" });
+    assert.deepEqual(session[routeKey], preservedScanningRoute);
+    assert.deepEqual(await request({ type: "LOCAL_HISTORY_IMPORT_START", submissionIds: ["12345"] }, historySender), { status: "TAB_NOT_FOUND" });
+    assert.deepEqual(await request({ type: "LOCAL_HISTORY_CANCEL" }, historySender), { status: "TAB_NOT_FOUND" });
+    assert.deepEqual(session[routeKey], preservedScanningRoute);
+    assert.equal(sourceQueries, 0); assert.equal(sent.length, 0); assert.equal(injections, 0);
+
     assert.deepEqual(await request({ type: "PROGRAMMERS_AUX_READ", lessonUrl, mode: "preview" }), { ok: true, result: { accountId: "947840" } });
     assert.equal(sent.length, 1);
     assert.equal(sent[0]!.tabId, 31);
     assert.deepEqual(sent[0]!.options, { frameId: 0 });
     assert.deepEqual(removed, [31]);
     assert.deepEqual(creates[0], { url: lessonUrl, active: false });
+
+    session[routeKey] = { ...preservedScanningRoute, status: "IMPORTING" };
+    const preservedImportingRoute = structuredClone(session[routeKey]);
+    assert.deepEqual(await request({ type: "LOCAL_HISTORY_STATUS" }, historySender), { status: "TAB_NOT_FOUND" });
+    assert.deepEqual(session[routeKey], preservedImportingRoute);
+    assert.deepEqual(await request({ type: "PROGRAMMERS_AUX_READ", lessonUrl, mode: "import", submissionId: "pg:947840:389481:2026-09-21T16:43:28.310+09:00:java" }), { ok: true, result: { accountId: "947840" } });
+    assert.equal(removed.filter(tabId => tabId === 32).length, 1, "the active importing route still authorizes and cleans up its auxiliary tab");
+
+    const sweaRoute = { tabId: 99, url: "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do", status: "SCANNING", platform: "SWEA" };
+    session[routeKey] = sweaRoute;
+    assert.deepEqual(await request({ type: "LOCAL_HISTORY_STATUS" }, historySender), { status: "TAB_NOT_FOUND" });
+    assert.deepEqual(session[routeKey], sweaRoute);
+    // Restore the status the remaining preview-only auxiliary cases expect.
+    session[routeKey] = preservedScanningRoute;
 
     // A new inactive Chrome tab can remain loading longer than the original
     // 1.5-second window. Advance the background's polling clock without a
