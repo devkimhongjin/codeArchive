@@ -226,6 +226,8 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
       knownSubmissionIds: currentIds, groupsExpanded: 0, lastProgressAt: Date.now(), pendingGroups: new Map() };
   observedPagination.set(document, observed);
   let paginationClicks = observed.clicks;
+  sawMoreButton = paginationClicks > 0;
+  finishedPageWithoutMore = sawMoreButton && !moreButton();
   let groupsExpanded = observed.groupsExpanded;
   let lastProgressAt = observed.lastProgressAt;
   const sourceVisibility = (): JungolHistoryScanProgress["sourceVisibility"] => {
@@ -282,7 +284,7 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
       const changed = await waitFor(document, () => {
         const rowCount = document.querySelectorAll('table tr').length;
         return moreButton() || rowCount !== lastRowCount ? true : null;
-      }, stepWaitMs);
+      }, sawMoreButton && finishedPageWithoutMore ? Math.min(stepWaitMs, 2_000) : stepWaitMs);
       if (!isCurrent()) return cancelled();
       if (location.href !== startingUrl) { incomplete = true; break; }
       if (changed) {
@@ -302,7 +304,8 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
         incomplete = true;
       } else if (++idlePageChecks < Math.min(maxIdlePageChecks, 4)) {
         // After a loaded page the next cursor can mount later than the rows.
-        // Require several quiet windows before treating its absence as final.
+        // Require several short quiet windows after a confirmed page response;
+        // keep the full wait budget for initial and in-flight requests.
         continue;
       }
       break;
