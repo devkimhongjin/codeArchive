@@ -541,9 +541,20 @@ export async function importVisibleJungolHistory(document: Document, location: L
         ? document.querySelector<HTMLElement>('[role="dialog"][aria-label="제출 상세"] code.hljs')?.closest<HTMLElement>('[role="dialog"]') ?? null
         : null);
     if (dialog) {
-      const timeTrigger = dialog.querySelector<HTMLElement>('.sd-meta-item .time')?.closest<HTMLElement>('[role="button"]');
+      // The site renders the ID/code shell before hydrating its metadata.
+      // Wait for this exact dialog's time control; an early optional click
+      // permanently misses the timestamp popover when the control arrives later.
+      const timeTrigger = await waitFor(document, () => {
+        const currentUrl = new URL(location.href);
+        if (currentUrl.origin !== originalUrl.origin || currentUrl.pathname !== originalUrl.pathname ||
+            currentUrl.searchParams.get("account") !== originalUrl.searchParams.get("account") ||
+            !dialog.isConnected || document.querySelector('[role="dialog"][aria-label="제출 상세"]') !== dialog ||
+            dialog.querySelector('.sd-id')?.textContent?.trim() !== `#${candidate.submissionId}` ||
+            !dialog.querySelector('code.hljs')?.textContent?.trim()) return null;
+        return dialog.querySelector<HTMLElement>('.sd-meta-item .time')?.closest<HTMLElement>('[role="button"]') ?? null;
+      });
       if (timeTrigger?.getAttribute("aria-expanded") !== "true") timeTrigger?.click();
-      const verified = await waitFor(document, () => verifyJungolHistoryDetail(document, location, candidate));
+      const verified = timeTrigger ? await waitFor(document, () => verifyJungolHistoryDetail(document, location, candidate)) : null;
       const capture = verified && historicalJungolCapture(verified);
       const stillOwnSubmission = previewJungolHistory(document, location);
       if (capture && stillOwnSubmission.status === "READY" &&
