@@ -8,6 +8,7 @@ import { importVisibleJungolHistory, isJungolHistoryPath, loadJungolHistoryPrevi
 import { loadSweaHistoryPreview } from "./historicalSwea";
 import { mayStoreLocalHistoryCapture, sameHistorySource } from "./historyRouting";
 import { HistoricalTaskController } from "./historicalTaskController";
+import { persistHistoricalTimingSample, timingSampleFromCompletedTask, type HistoricalTimingSample } from "./historyTiming";
 import { previewProgrammersHistory } from "./historicalProgrammers";
 import {
   createSweaProblemContext,
@@ -349,29 +350,64 @@ type JungolScanState =
   | { status: "SCANNING"; progress: JungolHistoryScanProgress }
   | JungolHistoryPreview
   | { status: "SCAN_INCOMPLETE" | "SCAN_FAILED" };
-let jungolScan: { url: string; table: Element | null; state: JungolScanState } | null = null;
-
 type JungolImportState = {
   status: "IMPORTING" | "CANCELLING" | "DONE" | "FAILED" | "INTERRUPTED";
   completed: number; total: number; saved: number; duplicate: number; skipped: number;
+  startedAt?: number; endedAt?: number; lastProgressAt?: number; timingSample?: HistoricalTimingSample;
+  /** Unique JUNGOL/problemNumber identities whose local store settled. */
+  problemCount?: number; submissionCount?: number;
 };
-type JungolLocalTaskState = JungolScanState | JungolImportState;
-let jungolLocalTask: { url: string; state: JungolLocalTaskState; cancelling: boolean } | null = null;
+type JungolLocalTaskState = (JungolScanState | JungolImportState) & {
+  startedAt?: number; endedAt?: number; lastProgressAt?: number;
+};
+type JungolLocalTask = { url: string; state: JungolLocalTaskState; cancelling: boolean;
+  startedAt: number; endedAt?: number; completedProblemKeys?: Set<string> };
+let jungolScan: { url: string; table: Element | null; state: JungolScanState;
+  onState?: (state: JungolScanState) => void } | null = null;
+let jungolLocalTask: JungolLocalTask | null = null;
 let jungolImportController: HistoricalTaskController<JungolHistoryCandidate> | null = null;
 // Controller state is only meaningful for the task that created it. A later
 // explicit scan must not inherit a completed import's terminal status.
 let jungolImportOwner: object | null = null;
 
-function startJungolScan(document: Document, location: Location): JungolScanState {
+function emptyLocalState(status: "INTERRUPTED" | "CANCELLING" = "INTERRUPTED"): JungolImportState {
+  return { status, completed: 0, total: 0, saved: 0, duplicate: 0, skipped: 0 };
+}
+
+function withScanTiming(task: JungolLocalTask, state: JungolScanState): JungolLocalTaskState {
+  const visibility = document.visibilityState === "visible" ? "visible" : document.visibilityState === "hidden" ? "hidden" :
+    document.visibilityState === "prerender" ? "prerender" : "unknown";
+  const current = state.status === "SCANNING"
+    ? { ...state, progress: { ...state.progress, sourceVisibility: visibility } } as JungolScanState
+    : state;
+  const lastProgressAt = current.status === "SCANNING" ? current.progress.lastProgressAt : undefined;
+  return { ...current, startedAt: task.startedAt, ...(task.endedAt === undefined ? {} : { endedAt: task.endedAt }),
+    ...(lastProgressAt === undefined ? {} : { lastProgressAt }) } as JungolLocalTaskState;
+}
+
+function startJungolScan(document: Document, location: Location,
+  onState?: (state: JungolScanState) => void): JungolScanState {
   const table = document.querySelector("table");
+  // A legacy status read may restart after the site replaces its table. Keep
+  // the local task's state receiver so that replacement cannot orphan it.
+  const activeLocalReplacement = !!jungolLocalTask && !jungolLocalTask.cancelling &&
+    jungolLocalTask.state.status === "SCANNING" && sameHistorySource(jungolLocalTask.url, location.href) &&
+    jungolScan?.url === location.href;
+  const inheritedOnState = onState ?? (activeLocalReplacement ? jungolScan?.onState : undefined);
   if (jungolScan?.url === location.href && jungolScan.table === table &&
-      jungolScan.state.status === "SCANNING") return jungolScan.state;
+      jungolScan.state.status === "SCANNING") {
+    if (onState) jungolScan.onState = onState;
+    return jungolScan.state;
+  }
   const initial = previewJungolHistory(document, location);
   if (initial.status !== "READY") return initial;
   const url = location.href;
-  const progress: JungolHistoryScanProgress = { phase: "pages", rows: document.querySelectorAll("table tr").length,
-    pagesLoaded: 0, groupsExpanded: 0, groupsTotal: 0 };
-  const run = { url, table, state: { status: "SCANNING", progress } as JungolScanState };
+  const progress: JungolHistoryScanProgress = { phase: "pages", stage: "reading-pages",
+    rows: document.querySelectorAll("table tr").length, pagesLoaded: 0, groupsExpanded: 0, groupsTotal: 0, groupsTotalKnown: false,
+    lastProgressAt: Date.now(), sourceVisibility: document.visibilityState === "visible" ? "visible" :
+      document.visibilityState === "hidden" ? "hidden" : document.visibilityState === "prerender" ? "prerender" : "unknown" };
+  const run = { url, table, state: { status: "SCANNING", progress } as JungolScanState, onState: inheritedOnState };
+  const setState = (state: JungolScanState) => { run.state = state; run.onState?.(state); };
   jungolScan = run;
   void (async () => {
     try {
@@ -379,16 +415,16 @@ function startJungolScan(document: Document, location: Location): JungolScanStat
       let priorSignature = "";
       for (;;) {
         const result = await loadJungolHistoryPreview(document, location, next => {
-          if (jungolScan === run) run.state = { status: "SCANNING", progress: next };
+          if (jungolScan === run) setState({ status: "SCANNING", progress: next });
         }, 12, 8_000, () => jungolScan === run && document.querySelector("table") === table && location.href === url &&
           (!jungolLocalTask || jungolLocalTask.url !== url || !jungolLocalTask.cancelling));
         if (jungolScan !== run) return;
         if (location.href !== url) {
-          run.state = { status: "SCAN_INCOMPLETE" };
+          setState({ status: "SCAN_INCOMPLETE" });
           return;
         }
         if (result.status !== "READY" || !result.truncated) {
-          run.state = result;
+          setState(result);
           return;
         }
         const signature = `${result.candidates.length}:${result.paginationClicks ?? 0}:${result.remainingGroups ?? 0}`;
@@ -396,19 +432,38 @@ function startJungolScan(document: Document, location: Location): JungolScanStat
         priorSignature = signature;
         // Continue delayed pagination/group discovery while it changes. Two
         // complete passes with no movement is a diagnosed site stall.
-        if (stalledPasses >= 2) { run.state = { status: "SCAN_INCOMPLETE" }; return; }
+        if (stalledPasses >= 2) { setState({ status: "SCAN_INCOMPLETE" }); return; }
       }
     } catch {
-      if (jungolScan === run) run.state = { status: "SCAN_FAILED" };
+      if (jungolScan === run) setState({ status: "SCAN_FAILED" });
     }
   })();
   return run.state;
 }
 
 function localTaskStatus(location: Location): JungolLocalTaskState {
-  if (!jungolLocalTask || !sameHistorySource(jungolLocalTask.url, location.href)) return { status: "INTERRUPTED", completed: 0, total: 0, saved: 0, duplicate: 0, skipped: 0 };
-  if (jungolImportOwner === jungolLocalTask && jungolImportController?.state) return jungolImportController.state;
-  return jungolLocalTask.state;
+  if (!jungolLocalTask || !sameHistorySource(jungolLocalTask.url, location.href)) return emptyLocalState();
+  const task = jungolLocalTask;
+  if (jungolImportOwner === task && jungolImportController?.state) {
+    // The controller is authoritative for live counters. Preserve a completed
+    // observed timing sample attached after settlement for immediate UI estimates.
+    task.state = { ...jungolImportController.state,
+      ...(task.state.status === "DONE" && "timingSample" in task.state && task.state.timingSample
+        ? { timingSample: task.state.timingSample } : {}),
+      ...( (jungolImportController.state.status === "DONE" || jungolImportController.state.status === "FAILED" || jungolImportController.state.status === "INTERRUPTED") && task.completedProblemKeys
+        ? { problemCount: task.completedProblemKeys.size, submissionCount: jungolImportController.state.saved + jungolImportController.state.duplicate }
+        : (task.state.status === "DONE" || task.state.status === "FAILED" || task.state.status === "INTERRUPTED") && "problemCount" in task.state && typeof task.state.problemCount === "number"
+          ? { problemCount: task.state.problemCount, submissionCount: task.state.submissionCount } : {}) };
+    return task.state;
+  }
+  if (task.cancelling && jungolScan?.url === task.url && jungolScan.state.status === "SCANNING") {
+    return { ...emptyLocalState("CANCELLING"), startedAt: task.startedAt };
+  }
+  if (task.cancelling && task.state.status === "CANCELLING") {
+    task.endedAt ??= Date.now();
+    task.state = emptyLocalState();
+  }
+  return withScanTiming(task, task.state as JungolScanState);
 }
 
 function startLocalJungolScan(document: Document, location: Location): JungolLocalTaskState {
@@ -416,33 +471,30 @@ function startLocalJungolScan(document: Document, location: Location): JungolLoc
   // Replace a terminal task before scanner construction. The scanner's
   // isCurrent callback reads jungolLocalTask, so a cancelled predecessor on
   // the same URL must never poison the first explicit retry.
-  const task: { url: string; state: JungolLocalTaskState; cancelling: boolean } = {
+  const task: JungolLocalTask = {
     url: location.href,
-    state: { status: "SCANNING", progress: { phase: "pages", rows: 0, pagesLoaded: 0, groupsExpanded: 0, groupsTotal: 0 } },
-    cancelling: false
+    state: { status: "SCANNING", progress: { phase: "pages", stage: "reading-pages", rows: 0, pagesLoaded: 0,
+      groupsExpanded: 0, groupsTotal: 0, groupsTotalKnown: false, lastProgressAt: Date.now(), sourceVisibility: "unknown" } },
+    cancelling: false, startedAt: Date.now()
   };
   jungolLocalTask = task;
   jungolImportController = null;
   jungolImportOwner = null;
-  const scan = startJungolScan(document, location);
-  task.state = scan;
-  const refresh = () => {
+  const receiveScanState = (state: JungolScanState) => {
     if (jungolLocalTask !== task) return;
     if (task.cancelling) {
-      // Keep ownership until the scanner's isCurrent callback has made its
-      // in-flight DOM operation settle. A new task cannot overlap cleanup.
-      if (jungolScan?.state.status === "SCANNING") { setTimeout(refresh, 100); return; }
-      task.state = { status: "INTERRUPTED", completed: 0, total: 0, saved: 0, duplicate: 0, skipped: 0 };
+      if (state.status !== "SCANNING") {
+        task.state = emptyLocalState();
+        task.endedAt = Date.now();
+      }
       return;
     }
-    // The scanner owns its in-flight DOM work. If the tab moves, it will
-    // settle as SCAN_INCOMPLETE; keep observing that result even while the
-    // URL differs so a later return to the listing can explicitly retry.
-    task.state = jungolScan?.url === task.url ? jungolScan.state : { status: "INTERRUPTED", completed: 0, total: 0, saved: 0, duplicate: 0, skipped: 0 };
-    if (task.state.status === "SCANNING") setTimeout(refresh, 200);
+    task.state = state;
+    if (state.status !== "SCANNING") task.endedAt = Date.now();
   };
-  refresh();
-  return task.state;
+  const scan = startJungolScan(document, location, receiveScanState);
+  receiveScanState(scan);
+  return localTaskStatus(location);
 }
 
 function validHistoricalIds(value: unknown): value is string[] {
@@ -457,11 +509,15 @@ function startLocalJungolImport(document: Document, location: Location, ids: unk
   if (!scan || scan.status !== "READY" || scan.truncated) return { status: "INTERRUPTED", completed: 0, total: ids.length, saved: 0, duplicate: 0, skipped: 0 };
   const candidates = ids.map(id => scan.candidates.find(candidate => candidate.submissionId === id));
   if (candidates.some(candidate => !candidate)) return { status: "FAILED", completed: 0, total: ids.length, saved: 0, duplicate: 0, skipped: 0 };
-  const task: { url: string; cancelling: boolean; state: JungolImportState } = { url: location.href, cancelling: false, state: { status: "IMPORTING", completed: 0, total: ids.length, saved: 0, duplicate: 0, skipped: 0 } };
+  const task: JungolLocalTask = { url: location.href, cancelling: false, startedAt: Date.now(),
+    state: { status: "IMPORTING", completed: 0, total: ids.length, saved: 0, duplicate: 0, skipped: 0 } };
   jungolLocalTask = task;
   const controller = new HistoricalTaskController<JungolHistoryCandidate>();
   jungolImportController = controller;
   jungolImportOwner = task;
+  // Only Jungol candidates reach this runner, so this is the platform/problem identity.
+  const completedProblemKeys = new Set<string>();
+  task.completedProblemKeys = completedProblemKeys;
   controller.start(candidates as JungolHistoryCandidate[], async (candidate, mayStore) => {
     let result: { saved: number; duplicate: number; skipped: number } | null = null;
     for (let attempt = 0; attempt < 3 && mayStore(); attempt++) {
@@ -475,8 +531,22 @@ function startLocalJungolImport(document: Document, location: Location, ids: unk
     }
     if (!result || (!mayStore() && result.saved === 0 && result.duplicate === 0) || result.skipped === 1) throw new Error("IMPORT_FAILED");
     return result;
+  }, (candidate, result) => {
+    if (result.saved + result.duplicate > 0) completedProblemKeys.add(`JUNGOL:${candidate.problemNumber}`);
   });
-  void controller.settled().then(() => { if (jungolLocalTask === task && jungolImportOwner === task && controller.state) task.state = controller.state; });
+  void controller.settled().then(() => {
+    if (jungolLocalTask !== task || jungolImportOwner !== task || !controller.state) return;
+    const timingSample = timingSampleFromCompletedTask(controller.state);
+    const submissionCount = controller.state.saved + controller.state.duplicate;
+    task.state = { ...controller.state, ...(timingSample ? { timingSample } : {}),
+      ...(controller.state.status === "DONE" || controller.state.status === "FAILED" || controller.state.status === "INTERRUPTED"
+        ? { problemCount: completedProblemKeys.size, submissionCount } : {}) };
+    // The sample carries only completed local-import timing metadata. Persistence is
+    // source-owned so closing the extension page cannot lose an observed duration.
+    if (timingSample && chrome.storage?.local) {
+      void persistHistoricalTimingSample(chrome.storage.local, timingSample).catch(() => undefined);
+    }
+  });
   return controller.state!;
 }
 

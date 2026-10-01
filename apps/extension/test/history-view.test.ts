@@ -16,17 +16,19 @@ function choose(select: HTMLSelectElement, value: string) {
   emit(select, "change");
 }
 
-function page(send: (message: { type: string; submissionIds?: string[] }) => Promise<unknown>) {
+function page(send: (message: { type: string; submissionIds?: string[] }) => Promise<unknown>,
+  options: { now?: () => number; readTiming?: () => Promise<unknown> } = {}) {
   const { document } = parseHTML(`<!doctype html><body>
     <button id="scan"></button><button id="cancel" hidden></button><button id="import"></button>
     <select id="platform"><option value="JUNGOL" selected>JUNGOL</option><option value="SWEA">SWEA</option><option value="PROGRAMMERS">PROGRAMMERS</option></select>
     <a id="history-page-link"></a><p id="platform-description"></p><p id="platform-help"></p>
     <select id="selection"><option value="all" selected>all</option><option value="latest">latest</option></select>
-    <span id="status"></span><progress id="task-progress"></progress><p id="progress"></p>
-    <section id="candidates" hidden><p id="candidate-help"></p><div id="candidate-list"></div></section>
+    <span id="status"></span><progress id="task-progress"></progress><p id="task-stage"></p><p id="progress"></p><p id="task-time"></p>
+    <p id="timing-estimate"></p><section id="candidates" hidden><p id="candidate-help"></p><div id="candidate-list"></div></section>
   </body>`);
   const scheduled: (() => void)[] = [];
-  mountHistory(document, { send: message => send(message as { type: string; submissionIds?: string[] }), schedule: work => { scheduled.push(work); return scheduled.length; } });
+  mountHistory(document, { send: message => send(message as { type: string; submissionIds?: string[] }),
+    schedule: work => { scheduled.push(work); return scheduled.length; }, ...options });
   return { document, scheduled };
 }
 
@@ -53,6 +55,9 @@ test("history page separates settings, site navigation, and local collection", (
   assert.match(html, /<section class="settings-card"[\s\S]*?<section class="site-navigation"[\s\S]*?<section class="collection-card"/);
   assert.match(html, /우측 상단 프로필 → 내 정보 → 제출현황/);
   assert.match(html, /id="source-note"/);
+  assert.match(html, /id="task-time"/);
+  assert.match(html, /id="task-stage"/);
+  assert.match(html, /id="timing-estimate"/);
   assert.match(html, /id="history-page-link" href="https:\/\/jungol\.co\.kr\/"/);
   assert.doesNotMatch(html, /내 제출 필터/);
   assert.match(html, /id="history-page-link"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/);
@@ -209,4 +214,87 @@ test("history view reports a failed cancel request without leaving controls stuc
   emit(cancel, "click"); await tick(); await tick();
   assert.match(view.document.querySelector("#status")!.textContent!, /중단 요청/);
   assert.equal(cancel.disabled, false);
+});
+
+
+test("ordinary selected import sends every selected candidate with actual count progress", async () => {
+  const many = Array.from({ length: 12 }, (_, index) => ({ ...candidate, submissionId: String(index + 1) }));
+  const imports: string[][] = [];
+  const view = page(async message => {
+    if (message.type === "LOCAL_HISTORY_IDS") return { submissionIds: [] };
+    if (message.type === "LOCAL_HISTORY_STATUS") return { status: "READY", candidates: many, truncated: false };
+    if (message.type === "LOCAL_HISTORY_IMPORT_START") { imports.push(message.submissionIds!); return { status: "IMPORTING", completed: 0, total: 12, saved: 0, duplicate: 0, skipped: 0 }; }
+    throw new Error("unexpected message");
+  }, { readTiming: async () => ({ version: 1, platform: "JUNGOL", count: 10, durationMs: 100_000, startedAt: 1_000, endedAt: 101_000 }) });
+  await tick(); await tick();
+  emit(view.document.querySelector("#import")!, "click"); await tick(); await tick();
+  assert.deepEqual(imports, [Array.from({ length: 12 }, (_, index) => String(index + 1))]);
+  assert.equal((view.document.querySelector("#import") as HTMLButtonElement).disabled, true);
+  assert.match(view.document.querySelector("#progress")!.textContent!, /0\/12건.*0%/);
+  assert.equal((view.document.querySelector("#candidates") as HTMLElement).hidden, true);
+  assert.equal((view.document.querySelector("#timing-estimate") as HTMLElement).hidden, false);
+  assert.equal(view.document.querySelector("#timing-estimate")!.textContent, "로컬 저장 예상: 02:00");
+  assert.equal(view.document.querySelector("#measure"), null);
+});
+
+test("local timing estimate uses an ordinary completed sample and keeps a fixed terminal elapsed time after reopen", async () => {
+  const sample = { version: 1, platform: "JUNGOL", count: 10, durationMs: 100_000, startedAt: 1_000, endedAt: 101_000 };
+  const many = Array.from({ length: 10 }, (_, index) => ({ ...candidate, submissionId: String(index + 1) }));
+  const terminal = { status: "DONE", completed: 10, total: 10, saved: 10, duplicate: 0, skipped: 0,
+    startedAt: 1_000, endedAt: 66_000, timingSample: sample };
+  const respond = async (message: { type: string }) => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : terminal;
+  const first = page(respond, { now: () => 999_999, readTiming: async () => sample });
+  await tick(); await tick();
+  assert.equal(first.document.querySelector("#task-time")!.textContent, "작업 시간 01:05");
+  // A fresh page instance receives the same terminal timestamps instead of inventing elapsed time from its own mount.
+  const reopened = page(respond, { now: () => 4_000_000, readTiming: async () => sample });
+  await tick(); await tick();
+  assert.equal(reopened.document.querySelector("#task-time")!.textContent, "작업 시간 01:05");
+  // Loading candidates with that sample yields an estimate, while an absent sample remains explicit.
+  const readyView = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { status: "READY", candidates: many, truncated: false },
+    { readTiming: async () => sample });
+  await tick(); await tick(); await tick();
+  assert.equal(readyView.document.querySelector("#timing-estimate")!.textContent, "로컬 저장 예상: 01:40");
+  const noSample = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : ready);
+  await tick(); await tick();
+  assert.equal(noSample.document.querySelector("#timing-estimate")!.textContent, "실측 기록이 없어 예상 시간을 계산할 수 없습니다.");
+});
+
+test("waiting scan stage reports source visibility without inventing list progress", async () => {
+  const waiting = { status: "SCANNING", startedAt: 1_000, progress: { phase: "pages", stage: "waiting-pages",
+    rows: 37, pagesLoaded: 2, groupsExpanded: 0, groupsTotal: 0, lastProgressAt: 1_500, sourceVisibility: "hidden" } };
+  const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : waiting, { now: () => 62_000 });
+  await tick(); await tick();
+  assert.match(view.document.querySelector("#task-stage")!.textContent!, /다음 목록 또는 마지막 목록.*백그라운드/);
+  assert.equal(view.document.querySelector("#progress")!.textContent, "목록 행 37개 · 2개 페이지를 확인했습니다.");
+  assert.equal(view.document.querySelector("#task-time")!.textContent, "작업 시간 01:01");
+});
+
+
+test("candidate and completed import summaries keep unique problems separate from submissions", async () => {
+  const candidates = [candidate, { ...candidate, submissionId: "102" }];
+  const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } :
+    { status: "READY", candidates, truncated: false });
+  await tick(); await tick();
+  assert.match(view.document.querySelector("#candidate-help")!.textContent!, /후보 문제 1건 · 제출 2건/);
+
+  const done = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } :
+    { status: "DONE", completed: 3, total: 3, saved: 2, duplicate: 1, skipped: 0,
+      problemCount: 2, submissionCount: 3, startedAt: 1, endedAt: 2 });
+  await tick(); await tick();
+  assert.equal(done.document.querySelector("#status")!.textContent,
+    "로컬 저장 완료 · 문제 2건 · 제출 3건 · 새로 저장 2건 · 이미 저장됨 1건");
+});
+
+
+test("interrupted imports retain settled problem and submission results with actual progress", async () => {
+  const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } :
+    { status: "INTERRUPTED", completed: 2, total: 3, saved: 1, duplicate: 1, skipped: 0,
+      problemCount: 1, submissionCount: 2, startedAt: 1, endedAt: 2 });
+  await tick(); await tick();
+  assert.equal(view.document.querySelector("#status")!.textContent,
+    "수집이 중단되었습니다. 현재까지 문제 1건 · 제출 2건 · 새로 저장 1건 · 이미 저장됨 1건");
+  assert.equal(view.document.querySelector("#progress")!.textContent, "2/3건 처리했습니다. (66%)");
+  assert.equal((view.document.querySelector("#task-progress") as HTMLProgressElement).hidden, false);
+  assert.equal((view.document.querySelector("#timing-estimate") as HTMLElement).hidden, true);
 });

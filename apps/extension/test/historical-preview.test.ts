@@ -801,6 +801,30 @@ test("Jungol account detail accepts only exact owner and submission even when UR
   assert.equal(verifyJungolHistoryDetail(document, url, candidate), null);
 });
 
+test("Jungol profile code length uses UTF-16 characters while legacy listing keeps UTF-8 bytes", () => {
+  const candidate = { submissionId: "2001", problemNumber: "2000", title: "동전교환", language: "Java 8",
+    detailUrl: "https://jungol.co.kr/account/152511/submission?sid=2001", codeByteLength: 1, executionTime: 25, memoryValue: 33 };
+  const profile = parseHTML(`<html><body><a class="crumb" href="/account/152511">@mine</a><a href="/account/152511/edit">정보 수정</a>
+    <a class="active" href="/account/152511/submission">제출 현황</a><div role="dialog" aria-label="제출 상세">
+    <span class="sd-heading-score">100점</span><span class="sd-heading-status">정답</span><a href="/account/152511">mine</a>
+    <a href="/problem/2000">동전교환 #2000</a><span class="sd-id">#2001</span>
+    <span class="sd-meta-item"><div><span class="time">어제</span><div class="paper"><div class="content">2026. 9. 28. 오후 2:21:03</div></div></div></span>
+    <code class="hljs">가</code></div></body></html>`).document;
+  const profileUrl = locationFor("https://jungol.co.kr/account/152511/submission");
+  assert.equal(verifyJungolHistoryDetail(profile, profileUrl, candidate)?.sourceCode, "가");
+  assert.equal(verifyJungolHistoryDetail(profile, profileUrl, { ...candidate, codeByteLength: 3 }), null);
+
+  const legacy = parseHTML(`<html><body><button role="switch" aria-checked="true">내 제출</button><button aria-label="@mine 필터 해제"></button>
+    <div role="dialog" aria-label="제출 상세"><span class="sd-heading-score">100점</span><span class="sd-heading-status">정답</span>
+    <a href="/account/12">mine</a><a href="/problem/2000">동전교환 #2000</a><span class="sd-id">#2001</span>
+    <span class="sd-meta-item"><div><span class="time">어제</span><div class="paper"><div class="content">2026. 9. 28. 오후 2:21:03</div></div></div></span>
+    <code class="hljs">가</code></div></body></html>`).document;
+  const legacyCandidate = { ...candidate, detailUrl: "https://jungol.co.kr/submission?account=mine&sid=2001", codeByteLength: 3 };
+  const legacyUrl = locationFor("https://jungol.co.kr/submission?account=mine&sid=2001");
+  assert.equal(verifyJungolHistoryDetail(legacy, legacyUrl, legacyCandidate)?.sourceCode, "가");
+  assert.equal(verifyJungolHistoryDetail(legacy, legacyUrl, { ...legacyCandidate, codeByteLength: 1 }), null);
+});
+
 test("historical storage sender accepts the verified account route but rejects unrelated accounts and paths", () => {
   assert.equal(isJungolHistorySenderUrl(new URL("https://jungol.co.kr/account/152511/submission")), true);
   assert.equal(isJungolHistorySenderUrl(new URL("https://jungol.co.kr/submission?account=mine")), true);
@@ -921,4 +945,56 @@ test("Programmers previews signed-in solved list only, without treating it as so
   assert.equal(previewProgrammersHistory(document, locationFor("https://school.programmers.co.kr/learn/challenges?page=1")).status, "OWNERSHIP_UNVERIFIED");
   document.querySelector("button")!.remove();
   assert.equal(previewProgrammersHistory(document, url).status, "LOGIN_REQUIRED");
+});
+
+
+test("Jungol continuation keeps cumulative group progress and its last real-progress time", async () => {
+  const document = currentJungolAccountPage();
+  const location = locationFor("https://jungol.co.kr/account/152511/submission");
+  const parent = document.querySelector<HTMLTableRowElement>("table tr")!;
+  const toggle = document.createElement("button");
+  toggle.className = "sl-group-toggle";
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.innerHTML = '<span class="sl-group-count">+1</span>';
+  parent.querySelector('td[data-col="번호"]')!.append(toggle);
+  toggle.addEventListener("click", () => {
+    const child = parent.cloneNode(true) as HTMLTableRowElement;
+    child.classList.add("gr"); child.querySelector(".sl-group-toggle")?.remove();
+    child.querySelector('td[data-col="결과"] a')!.setAttribute("href", "?sid=13771704");
+    child.querySelector('td[data-col="언어"] a')!.setAttribute("href", "?sid=13771704");
+    parent.after(child); toggle.setAttribute("aria-expanded", "true");
+  });
+  const previousObserver = globalThis.MutationObserver;
+  globalThis.MutationObserver = document.defaultView!.MutationObserver;
+  try {
+    const first: import("../src/historicalJungol").JungolHistoryScanProgress[] = [];
+    await loadJungolHistoryPreview(document, location, progress => first.push(progress), 1, 1);
+    const progressAfterGroup = first.at(-1)!;
+    assert.equal(progressAfterGroup.groupsExpanded, 1);
+    const continuation: import("../src/historicalJungol").JungolHistoryScanProgress[] = [];
+    await loadJungolHistoryPreview(document, location, progress => continuation.push(progress), 1, 1);
+    assert.ok(continuation.length > 0);
+    assert.ok(continuation.every(progress => progress.groupsExpanded === 1));
+    assert.ok(continuation.every(progress => progress.lastProgressAt === progressAfterGroup.lastProgressAt));
+  } finally { globalThis.MutationObserver = previousObserver; }
+});
+
+test("Jungol scanner reports a real waiting stage without inflating rows or progress time", async () => {
+  const document = jungolPage();
+  const more = document.createElement("button");
+  more.textContent = "더 불러오기";
+  more.disabled = true;
+  document.body.append(more);
+  const previousObserver = globalThis.MutationObserver;
+  globalThis.MutationObserver = document.defaultView!.MutationObserver;
+  try {
+    const reports: import("../src/historicalJungol").JungolHistoryScanProgress[] = [];
+    await loadJungolHistoryPreview(document, locationFor("https://jungol.co.kr/submission?account=mine"), progress => reports.push(progress), 1, 1);
+    const initial = reports.find(progress => progress.stage === "reading-pages");
+    const waiting = reports.find(progress => progress.stage === "waiting-pages");
+    assert.ok(initial); assert.ok(waiting);
+    assert.equal(waiting!.rows, initial!.rows);
+    assert.equal(waiting!.pagesLoaded, initial!.pagesLoaded);
+    assert.equal(waiting!.lastProgressAt, initial!.lastProgressAt);
+  } finally { globalThis.MutationObserver = previousObserver; }
 });
