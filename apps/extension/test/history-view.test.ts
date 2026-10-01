@@ -270,6 +270,27 @@ test("waiting scan stage reports source visibility without inventing list progre
   assert.equal((view.document.querySelector("#task-time") as HTMLElement).hidden, true);
 });
 
+test("history view remains retryable before entering submissions and after connection failure", async () => {
+  let scanCalls = 0;
+  const view = page(async message => {
+    if (message.type === "LOCAL_HISTORY_IDS") return { submissionIds: [] };
+    if (message.type === "LOCAL_HISTORY_STATUS") return { status: "TAB_NOT_FOUND" };
+    return [{ status: "TAB_NOT_FOUND" }, { status: "CONNECTION_FAILED" }, ready][scanCalls++];
+  });
+  await tick(); await tick();
+  const scan = view.document.querySelector<HTMLButtonElement>("#scan")!;
+  for (const expected of [/프로필 → 내 정보 → 제출현황/, /연결하지 못했습니다/]) {
+    emit(scan, "click"); await tick(); await tick();
+    assert.equal(scan.disabled, false);
+    assert.match(view.document.querySelector("#status")!.textContent!, expected);
+    assert.equal(view.document.querySelector<HTMLElement>("#candidates")!.hidden, true);
+  }
+  emit(scan, "click"); await tick(); await tick();
+  assert.equal(scanCalls, 3);
+  assert.equal(view.document.querySelector<HTMLElement>("#candidates")!.hidden, false);
+  assert.equal(view.document.querySelector<HTMLButtonElement>("#import")!.disabled, false);
+});
+
 test("local import shows elapsed over estimated total and pending time does not inflate the settled-item mean", async () => {
   let clock = 5_000;
   let state = { status: "IMPORTING", total: 4, completed: 0, saved: 0, duplicate: 0,

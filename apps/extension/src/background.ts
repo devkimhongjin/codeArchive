@@ -14,6 +14,7 @@ import { activeSubmissionProgress, SUBMISSION_PROGRESS_KEY, updateSubmissionProg
 import type { Platform } from "./types";
 import { isJungolHistoryPath, isJungolHistorySenderUrl } from "./historicalJungol";
 import { mayRediscoverHistorySource, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
+import { requestLocalHistoryMessage } from "./localHistoryConnection";
 
 const store = new IndexedDbCaptureStore();
 const bridge = new DashboardBridge(store, {
@@ -70,11 +71,23 @@ async function resolveLocalHistoryTab(allowNewSource = false): Promise<{ tabId: 
   return { tabId: match.id!, url: match.url! };
 }
 
-async function localHistoryCommand(type: LocalHistoryCommand, submissionIds?: string[]): Promise<unknown> {
+let localHistoryCommands: Promise<unknown> = Promise.resolve();
+function localHistoryCommand(type: LocalHistoryCommand, submissionIds?: string[]): Promise<unknown> {
+  // Serialize connection setup so simultaneous clicks cannot inject two listeners.
+  const command = localHistoryCommands.catch(() => undefined).then(() => runLocalHistoryCommand(type, submissionIds));
+  localHistoryCommands = command;
+  return command;
+}
+
+async function runLocalHistoryCommand(type: LocalHistoryCommand, submissionIds?: string[]): Promise<unknown> {
   const target = await resolveLocalHistoryTab(mayRediscoverHistorySource(type));
   if ("error" in target) return { status: target.error };
   try {
-    const response = await chrome.tabs.sendMessage(target.tabId, submissionIds ? { type, submissionIds } : { type }, { frameId: 0 }) as { status?: unknown };
+    const response = await requestLocalHistoryMessage(target, submissionIds ? { type, submissionIds } : { type }, {
+      send: (tabId, message) => chrome.tabs.sendMessage(tabId, message, { frameId: 0 }),
+      currentUrl: async tabId => (await chrome.tabs.get(tabId)).url,
+      connect: tabId => chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ["content.js"], world: "ISOLATED" })
+    }) as { status?: unknown };
     const status = typeof response?.status === "string" ? response.status : "FAILED";
     await writeLocalHistoryRoute({ ...target, status });
     return response;

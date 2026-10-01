@@ -57,7 +57,9 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     if (state.status === "DONE") return `로컬 저장 완료 · ${resultSummary()}`;
     if (state.status === "INTERRUPTED" && (state.completed ?? 0) > 0) return `수집이 중단되었습니다. 현재까지 ${resultSummary()}`;
     if (state.status === "FAILED" && (state.completed ?? 0) > 0) return `수집을 완료하지 못했습니다. 현재까지 ${resultSummary()}`;
-    if (state.status === "TAB_NOT_FOUND") return "정올의 내 제출 탭을 하나 열어 주세요.";
+    if (state.status === "TAB_NOT_FOUND") return "정올 우측 상단 프로필 → 내 정보 → 제출현황을 연 뒤 후보 찾기를 다시 눌러 주세요.";
+    if (state.status === "CONNECTION_REQUIRED") return "정올 제출현황을 열고 후보 찾기를 다시 눌러 주세요. 수집 연결을 복구합니다.";
+    if (state.status === "CONNECTION_FAILED") return "정올 탭과 연결하지 못했습니다. 제출현황을 새로고침한 뒤 후보 찾기를 다시 눌러 주세요.";
     if (state.status === "MULTIPLE_TABS") return "정올 제출 탭이 여러 개입니다. 하나만 남긴 뒤 다시 시도해 주세요.";
     if (state.status === "INTERRUPTED") return "원본 탭이 닫혔거나 이동했습니다. 저장된 항목은 유지됩니다.";
     if (state.status === "SCAN_INCOMPLETE") return "목록이 끝까지 열리지 않았습니다. 원본 탭을 유지한 뒤 다시 시도해 주세요.";
