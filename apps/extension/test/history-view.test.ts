@@ -3,7 +3,6 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { parseHTML } from "linkedom";
 import { mountHistory } from "../src/history";
-import { HISTORY_SCAN_TIMING_STORAGE_KEY } from "../src/historyTiming";
 
 const candidate = { submissionId: "101", problemNumber: "1000", title: "테스트", executionTime: 1, memoryValue: 2 };
 const ready = { status: "READY", candidates: [candidate], truncated: false };
@@ -25,7 +24,7 @@ function page(send: (message: { type: string; submissionIds?: string[] }) => Pro
     <a id="history-page-link"></a><p id="platform-description"></p><p id="platform-help"></p>
     <select id="selection"><option value="all" selected>all</option><option value="latest">latest</option></select>
     <span id="status"></span><progress id="task-progress"></progress><p id="task-stage"></p><p id="progress"></p><p id="task-time"></p>
-    <p id="scan-estimate"></p><p id="timing-estimate"></p><section id="candidates" hidden><p id="candidate-help"></p><div id="candidate-list"></div></section>
+    <p id="timing-estimate"></p><section id="candidates" hidden><p id="candidate-help"></p><div id="candidate-list"></div></section>
   </body>`);
   const scheduled: (() => void)[] = [];
   mountHistory(document, { send: message => send(message as { type: string; submissionIds?: string[] }),
@@ -233,8 +232,7 @@ test("ordinary selected import sends every selected candidate with actual count 
   assert.equal((view.document.querySelector("#import") as HTMLButtonElement).disabled, true);
   assert.match(view.document.querySelector("#progress")!.textContent!, /0\/12건.*0%/);
   assert.equal((view.document.querySelector("#candidates") as HTMLElement).hidden, true);
-  assert.equal((view.document.querySelector("#timing-estimate") as HTMLElement).hidden, false);
-  assert.equal(view.document.querySelector("#timing-estimate")!.textContent, "로컬 저장 예상: 02:00");
+  assert.equal((view.document.querySelector("#timing-estimate") as HTMLElement).hidden, true);
   assert.equal(view.document.querySelector("#measure"), null);
 });
 
@@ -246,11 +244,11 @@ test("local timing estimate uses an ordinary completed sample and keeps a fixed 
   const respond = async (message: { type: string }) => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : terminal;
   const first = page(respond, { now: () => 999_999, readTiming: async () => sample });
   await tick(); await tick();
-  assert.equal(first.document.querySelector("#task-time")!.textContent, "작업 시간 01:05");
+  assert.equal(first.document.querySelector("#task-time")!.textContent, "진행 시간 01:05 / 예상 총 시간 01:05");
   // A fresh page instance receives the same terminal timestamps instead of inventing elapsed time from its own mount.
   const reopened = page(respond, { now: () => 4_000_000, readTiming: async () => sample });
   await tick(); await tick();
-  assert.equal(reopened.document.querySelector("#task-time")!.textContent, "작업 시간 01:05");
+  assert.equal(reopened.document.querySelector("#task-time")!.textContent, "진행 시간 01:05 / 예상 총 시간 01:05");
   // Loading candidates with that sample yields an estimate, while an absent sample remains explicit.
   const readyView = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { status: "READY", candidates: many, truncated: false },
     { readTiming: async () => sample });
@@ -258,28 +256,7 @@ test("local timing estimate uses an ordinary completed sample and keeps a fixed 
   assert.equal(readyView.document.querySelector("#timing-estimate")!.textContent, "로컬 저장 예상: 01:40");
   const noSample = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : ready);
   await tick(); await tick();
-  assert.equal(noSample.document.querySelector("#timing-estimate")!.textContent, "로컬 저장 예상: 저장 완료 기록이 쌓이면 표시됩니다.");
-});
-
-test("candidate estimate starts at the user-observed 41 seconds and a fresh source sample wins a delayed storage read", async () => {
-  let finishRead!: (value: unknown) => void;
-  const storageRead = new Promise<unknown>(resolve => { finishRead = resolve; });
-  const sample = { version: 1, platform: "JUNGOL", phase: "SCAN", durationMs: 32_000, startedAt: 100_000, endedAt: 132_000 };
-  const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } :
-    { ...ready, scanTimingSample: sample }, { readTiming: () => storageRead });
-  assert.equal(view.document.querySelector("#scan-estimate")!.textContent, "후보 확인 예상: 약 00:41");
-  await tick(); await tick();
-  assert.equal(view.document.querySelector("#scan-estimate")!.textContent, "후보 확인 예상: 약 00:32");
-  finishRead({ [HISTORY_SCAN_TIMING_STORAGE_KEY]: { ...sample, startedAt: 1_000, endedAt: 91_000, durationMs: 90_000 } });
-  await tick(); await tick();
-  assert.equal(view.document.querySelector("#scan-estimate")!.textContent, "후보 확인 예상: 약 00:32");
-  assert.equal(view.document.querySelector("#timing-estimate")!.textContent, "로컬 저장 예상: 저장 완료 기록이 쌓이면 표시됩니다.");
-  const reopened = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : ready,
-    { readTiming: async () => ({ [HISTORY_SCAN_TIMING_STORAGE_KEY]: sample }) });
-  await tick(); await tick();
-  assert.equal(reopened.document.querySelector("#scan-estimate")!.textContent, "후보 확인 예상: 약 00:32");
-  choose(view.document.querySelector<HTMLSelectElement>("#platform")!, "SWEA");
-  assert.equal((view.document.querySelector("#scan-estimate") as HTMLElement).hidden, true);
+  assert.equal(noSample.document.querySelector("#timing-estimate")!.textContent, "로컬 저장 예상: ?시간");
 });
 
 test("waiting scan stage reports source visibility without inventing list progress", async () => {
@@ -289,8 +266,28 @@ test("waiting scan stage reports source visibility without inventing list progre
   await tick(); await tick();
   assert.match(view.document.querySelector("#task-stage")!.textContent!, /다음 목록 또는 마지막 목록.*백그라운드/);
   assert.equal(view.document.querySelector("#progress")!.textContent, "목록 행 37개 · 2개 페이지를 확인했습니다.");
-  assert.equal(view.document.querySelector("#task-time")!.textContent, "작업 시간 01:01");
-  assert.equal(view.document.querySelector("#scan-estimate")!.textContent, "후보 확인 예상: 약 00:41");
+  assert.equal(view.document.querySelector("#task-time")!.textContent, "");
+  assert.equal((view.document.querySelector("#task-time") as HTMLElement).hidden, true);
+});
+
+test("local import shows elapsed over estimated total and pending time does not inflate the settled-item mean", async () => {
+  let clock = 5_000;
+  let state = { status: "IMPORTING", total: 4, completed: 0, saved: 0, duplicate: 0,
+    startedAt: 1_000, lastProgressAt: 1_000 };
+  const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : state,
+    { now: () => clock });
+  await tick(); await tick();
+  assert.equal(view.document.querySelector("#task-time")!.textContent, "진행 시간 00:04 / 예상 총 시간 ?시간");
+  state = { ...state, completed: 1, saved: 1, lastProgressAt: 11_000 }; clock = 12_000;
+  view.scheduled.shift()!(); await tick(); await tick();
+  assert.equal(view.document.querySelector("#task-time")!.textContent, "진행 시간 00:11 / 예상 총 시간 00:40");
+  clock = 19_000;
+  view.scheduled.shift()!(); await tick(); await tick();
+  assert.equal(view.document.querySelector("#task-time")!.textContent, "진행 시간 00:18 / 예상 총 시간 00:40");
+  assert.match(view.document.querySelector("#progress")!.textContent!, /1\/4건.*25%/);
+  state = { ...state, completed: 2, saved: 2, lastProgressAt: 15_000 };
+  view.scheduled.shift()!(); await tick(); await tick();
+  assert.equal(view.document.querySelector("#task-time")!.textContent, "진행 시간 00:18 / 예상 총 시간 00:28");
 });
 
 

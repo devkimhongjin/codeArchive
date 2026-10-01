@@ -1,25 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HISTORY_TIMING_STORAGE_KEY, estimateHistoricalDuration, persistHistoricalTimingSample, readHistoricalTimingSample, timingSampleFromCompletedTask } from "../src/historyTiming";
-import { HISTORY_SCAN_TIMING_STORAGE_KEY, INITIAL_JUNGOL_SCAN_DURATION_MS, persistHistoricalScanTimingSample,
-  readHistoricalScanTimingSample, scanTimingSampleFromCompletedTask } from "../src/historyTiming";
+import { HISTORY_TIMING_STORAGE_KEY, estimateHistoricalDuration, estimateHistoricalTotalDuration, persistHistoricalTimingSample, readHistoricalTimingSample, timingSampleFromCompletedTask } from "../src/historyTiming";
 
-test("candidate scan evidence stays separate from import timing and rejects unfinished scans", async () => {
-  assert.equal(INITIAL_JUNGOL_SCAN_DURATION_MS, 41_000);
-  const task = { status: "READY", truncated: false, startedAt: 1_000, endedAt: 42_000 };
-  const sample = scanTimingSampleFromCompletedTask(task)!;
-  assert.equal(sample.durationMs, 41_000);
-  assert.deepEqual(readHistoricalScanTimingSample(sample), sample);
-  assert.equal(readHistoricalTimingSample(sample), null);
-  for (const status of ["SCANNING", "SCAN_INCOMPLETE", "SCAN_FAILED", "INTERRUPTED"]) {
-    assert.equal(scanTimingSampleFromCompletedTask({ ...task, status }), null);
-  }
-  assert.equal(scanTimingSampleFromCompletedTask({ ...task, truncated: true }), null);
-  assert.equal(scanTimingSampleFromCompletedTask({ ...task, endedAt: 1_000 }), null);
-  assert.equal(readHistoricalScanTimingSample({ ...sample, phase: "IMPORT" }), null);
-  const writes: Record<string, unknown>[] = [];
-  await persistHistoricalScanTimingSample({ set: async value => { writes.push(value); } }, sample);
-  assert.deepEqual(writes, [{ [HISTORY_SCAN_TIMING_STORAGE_KEY]: sample }]);
+test("current-run estimate learns from each settled item and the complete run uses actual duration", () => {
+  const sample = timingSampleFromCompletedTask({ status: "DONE", total: 2, completed: 2, skipped: 0,
+    saved: 2, duplicate: 0, startedAt: 1_000, endedAt: 9_000 })!;
+  const task = { status: "IMPORTING", total: 4, completed: 0, startedAt: 1_000, lastProgressAt: 1_000 };
+  assert.equal(estimateHistoricalTotalDuration(task, null), null);
+  assert.equal(estimateHistoricalTotalDuration(task, sample), 16_000);
+  assert.equal(estimateHistoricalTotalDuration({ ...task, completed: 1, lastProgressAt: 11_000 }, sample), 40_000);
+  assert.equal(estimateHistoricalTotalDuration({ ...task, completed: 2, lastProgressAt: 15_000 }, sample), 28_000);
+  assert.equal(estimateHistoricalTotalDuration({ ...task, status: "DONE", completed: 4, lastProgressAt: 30_000, endedAt: 31_000 }, sample), 30_000);
+  assert.equal(estimateHistoricalTotalDuration({ ...task, completed: 5 }, sample), null);
+  assert.equal(estimateHistoricalTotalDuration({ ...task, completed: -1 }, sample), null);
 });
 
 test("a completed local run creates timing evidence and a proportional forecast", () => {

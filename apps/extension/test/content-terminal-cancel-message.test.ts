@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseHTML } from 'linkedom';
-import { HISTORY_SCAN_TIMING_STORAGE_KEY } from '../src/historyTiming';
 
 test('terminal local import ignores a delayed cancel and permits a fresh production scan', async () => {
   const { document } = parseHTML(`<html><body>
@@ -16,9 +15,7 @@ test('terminal local import ignores a delayed cancel and permits a fresh product
   const window = document.defaultView!;
   Object.defineProperty(window, 'location', { value: location, configurable: true });
   let listener: ((message: unknown, sender: unknown, reply: (value: unknown) => void) => boolean) | undefined;
-  const timingWrites: Record<string, unknown>[] = [];
-  const chrome = { runtime: { onMessage: { addListener(callback: typeof listener) { listener = callback; } }, sendMessage: async () => ({}) },
-    storage: { local: { set: async (value: Record<string, unknown>) => { timingWrites.push(value); } } } };
+  const chrome = { runtime: { onMessage: { addListener(callback: typeof listener) { listener = callback; } }, sendMessage: async () => ({}) } };
   const globals = { document: globalThis.document, window: globalThis.window, chrome: globalThis.chrome,
     MutationObserver: globalThis.MutationObserver, Element: globalThis.Element, setTimeout: globalThis.setTimeout };
   Object.assign(globalThis, { document, window, chrome, MutationObserver: window.MutationObserver, Element: window.Element,
@@ -41,9 +38,6 @@ test('terminal local import ignores a delayed cancel and permits a fresh product
     let ready: unknown;
     listener!({ type: 'LOCAL_HISTORY_STATUS' }, null, value => { ready = value; });
     assert.equal((ready as { status: string }).status, 'READY');
-    const learnedSample = (ready as { scanTimingSample?: { durationMs: number } }).scanTimingSample;
-    assert.ok((learnedSample?.durationMs ?? 0) > 0);
-    assert.deepEqual(timingWrites, [{ [HISTORY_SCAN_TIMING_STORAGE_KEY]: learnedSample }]);
 
     // Cancel actual scan work, wait for the old task to settle, then prove
     // the first retry gets fresh ownership and reaches a usable READY state.
@@ -57,7 +51,6 @@ test('terminal local import ignores a delayed cancel and permits a fresh product
     let interruptedScan: unknown;
     listener!({ type: 'LOCAL_HISTORY_STATUS' }, null, value => { interruptedScan = value; });
     assert.equal((interruptedScan as { status: string }).status, 'INTERRUPTED');
-    assert.equal(timingWrites.length, 1, 'a cancelled scan must not replace the completed timing sample');
     let firstRetry: unknown;
     listener!({ type: 'LOCAL_HISTORY_SCAN_START' }, null, value => { firstRetry = value; });
     assert.equal((firstRetry as { status: string }).status, 'SCANNING');

@@ -1,6 +1,5 @@
 import { selectHistoricalSubmissionIds, type HistoricalSelectionMode } from "../../../shared/historicalSelection";
-import { HISTORY_TIMING_STORAGE_KEY, estimateHistoricalDuration, readHistoricalTimingSample, type HistoricalTimingSample,
-  HISTORY_SCAN_TIMING_STORAGE_KEY, INITIAL_JUNGOL_SCAN_DURATION_MS, readHistoricalScanTimingSample, type HistoricalScanTimingSample } from "./historyTiming";
+import { HISTORY_TIMING_STORAGE_KEY, estimateHistoricalDuration, estimateHistoricalTotalDuration, readHistoricalTimingSample, type HistoricalTimingSample } from "./historyTiming";
 
 type Platform = "JUNGOL" | "SWEA" | "PROGRAMMERS";
 type Candidate = { submissionId: string; problemNumber: string; title: string; language?: string; executionTime?: number; memoryValue?: number };
@@ -9,7 +8,7 @@ type State = { status: string; candidates?: Candidate[]; truncated?: boolean; pr
   lastProgressAt?: number; sourceVisibility?: "visible" | "hidden" | "prerender" | "unknown";
 }; completed?: number; total?: number; saved?: number; duplicate?: number;
   startedAt?: number; endedAt?: number; lastProgressAt?: number; timingSample?: unknown;
-  problemCount?: number; submissionCount?: number; scanTimingSample?: unknown };
+  problemCount?: number; submissionCount?: number };
 export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
   schedule?: (work: () => void, delay: number) => unknown; now?: () => number;
   readTiming?: () => Promise<unknown>; openSite?: (url: string) => Promise<unknown> };
@@ -36,7 +35,6 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   const taskStage = doc.querySelector<HTMLElement>("#task-stage");
   const taskTime = doc.querySelector<HTMLElement>("#task-time");
   const timingEstimate = doc.querySelector<HTMLElement>("#timing-estimate");
-  const scanEstimate = doc.querySelector<HTMLElement>("#scan-estimate");
   const now = services.now ?? (() => Date.now());
   const candidatesPanel = doc.querySelector<HTMLElement>("#candidates")!;
   const list = doc.querySelector<HTMLElement>("#candidate-list")!;
@@ -44,7 +42,6 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   let candidates: Candidate[] = [], localIds = new Set<string>(), selected = new Set<string>();
   let pollingEpoch: number | null = null, readyForImport = false, platformEpoch = 0, taskActive = false;
   let timingSample: HistoricalTimingSample | null = null;
-  let scanTimingSample: HistoricalScanTimingSample | null = null, showScanEstimate = true;
   const platform = (): Platform => platformSelect.value as Platform;
   const isJungol = () => platform() === "JUNGOL";
   const validState = (value: unknown): State | null => value && typeof value === "object" && typeof (value as State).status === "string" ? value as State : null;
@@ -76,34 +73,26 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   }
   function renderTiming(state: State) {
     if (!taskTime) return;
-    if (typeof state.startedAt !== "number") { taskTime.textContent = ""; return; }
+    if (typeof state.startedAt !== "number" || typeof state.total !== "number" || state.total < 1) {
+      taskTime.hidden = true; taskTime.textContent = ""; return;
+    }
+    taskTime.hidden = false;
     const finishedAt = typeof state.endedAt === "number" ? state.endedAt : now();
-    taskTime.textContent = `작업 시간 ${formatElapsed(finishedAt - state.startedAt)}`;
+    const estimatedTotal = estimateHistoricalTotalDuration(state, timingSample);
+    taskTime.textContent = `진행 시간 ${formatElapsed(finishedAt - state.startedAt)} / 예상 총 시간 ${estimatedTotal === null ? "?시간" : formatElapsed(estimatedTotal)}`;
   }
   function renderEstimate(count: number) {
     if (!timingEstimate || !isJungol()) return;
     if (count < 1) { timingEstimate.hidden = true; timingEstimate.textContent = ""; return; }
     const estimate = estimateHistoricalDuration(timingSample, count);
     timingEstimate.hidden = false;
-    timingEstimate.textContent = estimate === null ? "로컬 저장 예상: 저장 완료 기록이 쌓이면 표시됩니다." :
+    timingEstimate.textContent = estimate === null ? "로컬 저장 예상: ?시간" :
       `로컬 저장 예상: ${formatElapsed(estimate)}`;
-  }
-  function renderScanEstimate() {
-    if (!scanEstimate) return;
-    scanEstimate.hidden = !isJungol() || !showScanEstimate;
-    scanEstimate.textContent = scanEstimate.hidden ? "" :
-      `후보 확인 예상: 약 ${formatElapsed(scanTimingSample?.durationMs ?? INITIAL_JUNGOL_SCAN_DURATION_MS)}`;
-  }
-  function receiveScanTiming(value: unknown) {
-    const sample = readHistoricalScanTimingSample(value);
-    // A delayed storage read must not replace a newer source-owned observation.
-    if (sample && (!scanTimingSample || sample.endedAt >= scanTimingSample.endedAt)) scanTimingSample = sample;
   }
   function selectedInCandidateOrder() {
     return candidates.filter(item => !localIds.has(item.submissionId) && selected.has(item.submissionId)).map(item => item.submissionId);
   }
   function render() {
-    renderScanEstimate();
     const allowed = candidates.filter(item => !localIds.has(item.submissionId));
     selected = new Set([...selected].filter(id => allowed.some(item => item.submissionId === id)));
     list.replaceChildren();
@@ -126,10 +115,9 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   function showPlatform() {
     const current = platform(), info = platformInfo[current];
     siteLink.href = info.href; siteLink.textContent = info.linkLabel; description.textContent = info.description; platformHelp.textContent = info.guide;
-    clearCandidates(); progressBar.hidden = true; progress.textContent = ""; if (taskStage) taskStage.textContent = ""; if (taskTime) taskTime.textContent = "";
+    clearCandidates(); progressBar.hidden = true; progress.textContent = ""; if (taskStage) taskStage.textContent = ""; if (taskTime) { taskTime.textContent = ""; taskTime.hidden = true; }
     if (timingEstimate) { timingEstimate.textContent = ""; timingEstimate.hidden = true; }
     cancel.hidden = true; policy.disabled = false; platformSelect.disabled = false; taskActive = false;
-    showScanEstimate = true;
     if (current === "JUNGOL") { scan.textContent = "정올 제출 후보 찾기"; scan.disabled = false; status.textContent = "원본 정올 제출 탭을 확인하세요."; }
     else { scan.textContent = "원본 코드 일괄 수집 준비 중"; scan.disabled = true; status.textContent = info.unsupported!; }
     render();
@@ -143,12 +131,11 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   }
   async function loadTiming(expected: Platform = platform(), epoch = platformEpoch) {
     try {
-      const value = await (services.readTiming ? services.readTiming() : chrome.storage.local.get([HISTORY_TIMING_STORAGE_KEY, HISTORY_SCAN_TIMING_STORAGE_KEY]));
+      const value = await (services.readTiming ? services.readTiming() : chrome.storage.local.get(HISTORY_TIMING_STORAGE_KEY));
       if (!ownsPlatform(expected, epoch)) return;
       const record = value && typeof value === "object" && HISTORY_TIMING_STORAGE_KEY in value
         ? (value as Record<string, unknown>)[HISTORY_TIMING_STORAGE_KEY] : value;
       timingSample = readHistoricalTimingSample(record);
-      if (value && typeof value === "object") receiveScanTiming((value as Record<string, unknown>)[HISTORY_SCAN_TIMING_STORAGE_KEY]);
       render();
     } catch { /* An estimate is optional; collecting remains local and available. */ }
   }
@@ -157,8 +144,6 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     const state = validState(value); if (!state) { status.textContent = "확장 프로그램 응답을 확인할 수 없습니다."; return; }
     const active = state.status === "SCANNING" || state.status === "IMPORTING" || state.status === "CANCELLING";
     taskActive = active;
-    showScanEstimate = state.status !== "IMPORTING" && state.status !== "CANCELLING" && state.status !== "DONE" && !(state.total && state.total > 0);
-    receiveScanTiming(state.scanTimingSample);
     const stateSample = readHistoricalTimingSample(state.timingSample);
     if (stateSample) timingSample = stateSample;
     status.textContent = label(state); scan.disabled = active; policy.disabled = active; platformSelect.disabled = active; cancel.hidden = !active; cancel.disabled = state.status === "CANCELLING";
@@ -188,7 +173,9 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       progress.textContent = `${completed}/${total}건 처리했습니다. (${percent}%)`;
       if (taskStage) taskStage.textContent = state.status === "CANCELLING" ? "현재 제출 처리를 마무리하는 중입니다." :
         state.status === "IMPORTING" ? "제출을 확인하고 로컬에 저장하는 중입니다." : "처리된 제출 기준 진행률입니다.";
-      if (state.status === "IMPORTING" || state.status === "CANCELLING") renderEstimate(Math.max(0, total - completed));
+      if ((state.status === "IMPORTING" || state.status === "CANCELLING") && timingEstimate) {
+        timingEstimate.hidden = true; timingEstimate.textContent = "";
+      }
     } else { progressBar.hidden = true; progress.textContent = ""; if (taskStage) taskStage.textContent = ""; }
     if (state.status === "READY" && !state.truncated && Array.isArray(state.candidates)) {
       candidates = state.candidates.filter(item => typeof item.submissionId === "string" && /^\d{1,40}$/.test(item.submissionId)); selected = new Set(selectHistoricalSubmissionIds(candidates.filter(item => !localIds.has(item.submissionId)), policy.value as HistoricalSelectionMode)); readyForImport = true; candidatesPanel.hidden = false; render();
@@ -229,6 +216,6 @@ export function mountHistory(doc: Document, services: HistoryServices) {
 
 if (typeof document !== "undefined" && typeof chrome !== "undefined") mountHistory(document, {
   send: message => chrome.runtime.sendMessage(message) as Promise<unknown>,
-  readTiming: () => chrome.storage.local.get([HISTORY_TIMING_STORAGE_KEY, HISTORY_SCAN_TIMING_STORAGE_KEY]),
+  readTiming: () => chrome.storage.local.get(HISTORY_TIMING_STORAGE_KEY),
   openSite: url => chrome.windows.create({ url, type: "normal", focused: true })
 });
