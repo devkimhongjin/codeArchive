@@ -1,6 +1,7 @@
 import { canonicalLanguageDisplayName, canonicalLanguageKey } from "../../../shared/language";
 import { createCapture } from "./capture";
 import { CAPTURE_RESULT, type Capture } from "./types";
+import type { HistoricalImportFailureReason } from "./historicalTaskController";
 
 const JUNGOL_ORIGIN = "https://jungol.co.kr";
 const MAX_IMPORT_BATCH = 10;
@@ -492,7 +493,7 @@ export function historicalJungolCapture(verified: JungolHistoryVerified): Captur
   });
 }
 
-type StoreHistorical = (capture: Capture) => Promise<{ ok?: boolean; created?: boolean }>;
+type StoreHistorical = (capture: Capture) => Promise<{ ok?: boolean; created?: boolean; error?: string }>;
 
 function waitFor<T>(document: Document, read: () => T | null, timeoutMs = 8_000): Promise<T | null> {
   const found = read();
@@ -510,7 +511,8 @@ function waitFor<T>(document: Document, read: () => T | null, timeoutMs = 8_000)
 /** User-initiated, bounded local import. No relay, auto-download, or GitHub job is started here. */
 export async function importVisibleJungolHistory(document: Document, location: Location,
   candidates: JungolHistoryCandidate[], store: StoreHistorical,
-  onProgress: (completed: number, total: number) => void = () => undefined): Promise<{ saved: number; duplicate: number; skipped: number }> {
+  onProgress: (completed: number, total: number) => void = () => undefined,
+  onFailure: (reason: HistoricalImportFailureReason) => void = () => undefined): Promise<{ saved: number; duplicate: number; skipped: number }> {
   const selected = candidates.slice(0, MAX_IMPORT_BATCH);
   let saved = 0, duplicate = 0, skipped = 0;
   const originalUrl = new URL(location.href);
@@ -524,12 +526,13 @@ export async function importVisibleJungolHistory(document: Document, location: L
           item.codeByteLength === candidate.codeByteLength &&
           item.executionTime === candidate.executionTime && item.memoryValue === candidate.memoryValue)) {
       skipped += selected.length - index;
+      onFailure("LIST_CHANGED");
       break;
     }
     const row = [...document.querySelectorAll<HTMLTableRowElement>('table tr')]
       .find(item => rowSubmissionIdentity(item, location)?.submissionId === candidate.submissionId);
     const link = row?.querySelector<HTMLAnchorElement>('td[data-col="언어"] a[href]');
-    if (!link || new URL(link.getAttribute("href") ?? "", location.href).href !== candidate.detailUrl) { skipped++; onProgress(index + 1, selected.length); continue; }
+    if (!link || new URL(link.getAttribute("href") ?? "", location.href).href !== candidate.detailUrl) { skipped++; onFailure("LIST_CHANGED"); onProgress(index + 1, selected.length); continue; }
     link.click();
     const dialog = await waitFor(document, () =>
       (new URL(location.href).pathname.match(ACCOUNT_HISTORY_PATH) ||
@@ -551,9 +554,9 @@ export async function importVisibleJungolHistory(document: Document, location: L
           const response = await store(capture);
           if (response.ok && response.created) saved++;
           else if (response.ok) duplicate++;
-          else skipped++;
-        } catch { skipped++; }
-      } else skipped++;
+          else { skipped++; onFailure(response.error === "STORAGE_ERROR" ? "STORE_FAILED" : "STORE_REJECTED"); }
+        } catch { skipped++; onFailure("STORE_FAILED"); }
+      } else { skipped++; onFailure("DETAIL_UNVERIFIED"); }
       // Jungol's open time popover consumes the first outside click. Dismiss
       // it explicitly, then retry Close once if the dialog remains open.
       if (timeTrigger?.getAttribute("aria-expanded") === "true") timeTrigger.click();
@@ -567,7 +570,7 @@ export async function importVisibleJungolHistory(document: Document, location: L
         closed = await waitFor(document, isClosed, 2_000);
       }
       if (!closed) { skipped += selected.length - index - 1; break; }
-    } else skipped++;
+    } else { skipped++; onFailure("DETAIL_NOT_FOUND"); }
     onProgress(index + 1, selected.length);
   }
   return { saved, duplicate, skipped };

@@ -1,5 +1,5 @@
 import { selectHistoricalSubmissionIds, type HistoricalSelectionMode } from "../../../shared/historicalSelection";
-import { HISTORY_TIMING_STORAGE_KEY, estimateHistoricalDuration, estimateHistoricalTotalDuration, readHistoricalTimingSample, type HistoricalTimingSample } from "./historyTiming";
+import { HISTORY_TIMING_STORAGE_KEY, estimateHistoricalTotalDuration, readHistoricalTimingSample, type HistoricalTimingSample } from "./historyTiming";
 
 type Platform = "JUNGOL" | "SWEA" | "PROGRAMMERS";
 type Candidate = { submissionId: string; problemNumber: string; title: string; language?: string; executionTime?: number; memoryValue?: number };
@@ -8,6 +8,7 @@ type State = { status: string; candidates?: Candidate[]; truncated?: boolean; pr
   lastProgressAt?: number; sourceVisibility?: "visible" | "hidden" | "prerender" | "unknown";
 }; completed?: number; total?: number; saved?: number; duplicate?: number;
   startedAt?: number; endedAt?: number; lastProgressAt?: number; timingSample?: unknown;
+  failureReason?: string;
   problemCount?: number; submissionCount?: number };
 export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
   schedule?: (work: () => void, delay: number) => unknown; now?: () => number;
@@ -34,7 +35,6 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   const progressBar = doc.querySelector<HTMLProgressElement>("#task-progress")!;
   const taskStage = doc.querySelector<HTMLElement>("#task-stage");
   const taskTime = doc.querySelector<HTMLElement>("#task-time");
-  const timingEstimate = doc.querySelector<HTMLElement>("#timing-estimate");
   const now = services.now ?? (() => Date.now());
   const candidatesPanel = doc.querySelector<HTMLElement>("#candidates")!;
   const list = doc.querySelector<HTMLElement>("#candidate-list")!;
@@ -56,6 +56,15 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     };
     if (state.status === "DONE") return `로컬 저장 완료 · ${resultSummary()}`;
     if (state.status === "INTERRUPTED" && (state.completed ?? 0) > 0) return `수집이 중단되었습니다. 현재까지 ${resultSummary()}`;
+    const failureLabels: Record<string, string> = {
+      LIST_CHANGED: "제출 목록이 바뀌었습니다. 후보 찾기를 다시 실행해 주세요.",
+      DETAIL_NOT_FOUND: "제출 상세를 열지 못했습니다. 정올 창을 확인해 주세요.",
+      DETAIL_UNVERIFIED: "제출 상세의 본인·정답·원본 코드·제출 시각을 확인하지 못했습니다.",
+      STORE_REJECTED: "로컬 저장 요청이 거부되었습니다. 확장과 정올 탭의 연결을 확인해 주세요.",
+      STORE_FAILED: "로컬 저장 요청을 완료하지 못했습니다. 확장 연결과 저장 공간을 확인해 주세요."
+    };
+    if (state.status === "FAILED" && state.failureReason && failureLabels[state.failureReason])
+      return `${failureLabels[state.failureReason]}${(state.completed ?? 0) > 0 ? ` 현재까지 ${resultSummary()}` : ""}`;
     if (state.status === "FAILED" && (state.completed ?? 0) > 0) return `수집을 완료하지 못했습니다. 현재까지 ${resultSummary()}`;
     if (state.status === "TAB_NOT_FOUND") return "정올 우측 상단 프로필 → 내 정보 → 제출현황을 연 뒤 후보 찾기를 다시 눌러 주세요.";
     if (state.status === "CONNECTION_REQUIRED") return "정올 제출현황을 열고 후보 찾기를 다시 눌러 주세요. 수집 연결을 복구합니다.";
@@ -83,14 +92,6 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     const estimatedTotal = estimateHistoricalTotalDuration(state, timingSample);
     taskTime.textContent = `진행 시간 ${formatElapsed(finishedAt - state.startedAt)} / 예상 총 시간 ${estimatedTotal === null ? "?시간" : formatElapsed(estimatedTotal)}`;
   }
-  function renderEstimate(count: number) {
-    if (!timingEstimate || !isJungol()) return;
-    if (count < 1) { timingEstimate.hidden = true; timingEstimate.textContent = ""; return; }
-    const estimate = estimateHistoricalDuration(timingSample, count);
-    timingEstimate.hidden = false;
-    timingEstimate.textContent = estimate === null ? "로컬 저장 예상: ?시간" :
-      `로컬 저장 예상: ${formatElapsed(estimate)}`;
-  }
   function selectedInCandidateOrder() {
     return candidates.filter(item => !localIds.has(item.submissionId) && selected.has(item.submissionId)).map(item => item.submissionId);
   }
@@ -112,13 +113,11 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       localIds.size ? `${summary} · 이미 이 브라우저에 저장한 제출 ${localIds.size}건은 후보에서 제외했습니다.` : summary;
     importButton.textContent = `선택한 ${selected.size}건 로컬 저장`;
     importButton.disabled = !isJungol() || taskActive || !readyForImport || selected.size === 0 || selected.size > 5_000;
-    if (!taskActive) renderEstimate(selected.size);
   }
   function showPlatform() {
     const current = platform(), info = platformInfo[current];
     siteLink.href = info.href; siteLink.textContent = info.linkLabel; description.textContent = info.description; platformHelp.textContent = info.guide;
     clearCandidates(); progressBar.hidden = true; progress.textContent = ""; if (taskStage) taskStage.textContent = ""; if (taskTime) { taskTime.textContent = ""; taskTime.hidden = true; }
-    if (timingEstimate) { timingEstimate.textContent = ""; timingEstimate.hidden = true; }
     cancel.hidden = true; policy.disabled = false; platformSelect.disabled = false; taskActive = false;
     if (current === "JUNGOL") { scan.textContent = "정올 제출 후보 찾기"; scan.disabled = false; status.textContent = "원본 정올 제출 탭을 확인하세요."; }
     else { scan.textContent = "원본 코드 일괄 수집 준비 중"; scan.disabled = true; status.textContent = info.unsupported!; }
@@ -174,10 +173,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       const percent = total ? Math.min(100, Math.floor(completed / total * 100)) : 0;
       progress.textContent = `${completed}/${total}건 처리했습니다. (${percent}%)`;
       if (taskStage) taskStage.textContent = state.status === "CANCELLING" ? "현재 제출 처리를 마무리하는 중입니다." :
-        state.status === "IMPORTING" ? "제출을 확인하고 로컬에 저장하는 중입니다." : "처리된 제출 기준 진행률입니다.";
-      if ((state.status === "IMPORTING" || state.status === "CANCELLING") && timingEstimate) {
-        timingEstimate.hidden = true; timingEstimate.textContent = "";
-      }
+        state.status === "IMPORTING" ? "제출을 확인하고 로컬에 저장하는 중입니다." : "";
     } else { progressBar.hidden = true; progress.textContent = ""; if (taskStage) taskStage.textContent = ""; }
     if (state.status === "READY" && !state.truncated && Array.isArray(state.candidates)) {
       candidates = state.candidates.filter(item => typeof item.submissionId === "string" && /^\d{1,40}$/.test(item.submissionId)); selected = new Set(selectHistoricalSubmissionIds(candidates.filter(item => !localIds.has(item.submissionId)), policy.value as HistoricalSelectionMode)); readyForImport = true; candidatesPanel.hidden = false; render();

@@ -7,7 +7,7 @@ import { importVisibleJungolHistory, isJungolHistoryPath, loadJungolHistoryPrevi
   type JungolHistoryCandidate, type JungolHistoryPreview, type JungolHistoryScanProgress } from "./historicalJungol";
 import { loadSweaHistoryPreview } from "./historicalSwea";
 import { mayStoreLocalHistoryCapture, sameHistorySource } from "./historyRouting";
-import { HistoricalTaskController } from "./historicalTaskController";
+import { HistoricalTaskController, HistoricalImportFailure, type HistoricalImportFailureReason } from "./historicalTaskController";
 import { persistHistoricalTimingSample, timingSampleFromCompletedTask, type HistoricalTimingSample } from "./historyTiming";
 import { previewProgrammersHistory } from "./historicalProgrammers";
 import {
@@ -356,6 +356,7 @@ type JungolImportState = {
   startedAt?: number; endedAt?: number; lastProgressAt?: number; timingSample?: HistoricalTimingSample;
   /** Unique JUNGOL/problemNumber identities whose local store settled. */
   problemCount?: number; submissionCount?: number;
+  failureReason?: HistoricalImportFailureReason;
 };
 type JungolLocalTaskState = (JungolScanState | JungolImportState) & {
   startedAt?: number; endedAt?: number; lastProgressAt?: number;
@@ -520,16 +521,17 @@ function startLocalJungolImport(document: Document, location: Location, ids: unk
   task.completedProblemKeys = completedProblemKeys;
   controller.start(candidates as JungolHistoryCandidate[], async (candidate, mayStore) => {
     let result: { saved: number; duplicate: number; skipped: number } | null = null;
+    let failureReason: HistoricalImportFailureReason = "IMPORT_FAILED";
     for (let attempt = 0; attempt < 3 && mayStore(); attempt++) {
       try {
         result = await importVisibleJungolHistory(document, location, [candidate], capture => {
           if (!mayStore() || !mayStoreLocalHistoryCapture(jungolLocalTask === task, task.cancelling, task.url, location.href)) return Promise.resolve({ ok: false, created: false });
           return chrome.runtime.sendMessage({ type: "STORE_HISTORICAL_CAPTURE", capture });
-        });
-      } catch { result = null; }
+        }, () => undefined, reason => { failureReason = reason; });
+      } catch { result = null; failureReason = "IMPORT_FAILED"; }
       if (result && result.skipped !== 1) break;
     }
-    if (!result || (!mayStore() && result.saved === 0 && result.duplicate === 0) || result.skipped === 1) throw new Error("IMPORT_FAILED");
+    if (!result || (!mayStore() && result.saved === 0 && result.duplicate === 0) || result.skipped === 1) throw new HistoricalImportFailure(failureReason);
     return result;
   }, (candidate, result) => {
     if (result.saved + result.duplicate > 0) completedProblemKeys.add(`JUNGOL:${candidate.problemNumber}`);

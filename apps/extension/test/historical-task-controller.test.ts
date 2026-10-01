@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HistoricalTaskController } from "../src/historicalTaskController";
+import { HistoricalTaskController, HistoricalImportFailure } from "../src/historicalTaskController";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 
@@ -67,4 +67,16 @@ test("failed work reports only previously settled candidates to the result colle
   assert.equal(task.state?.status, "FAILED");
   assert.equal(task.state?.completed, 1);
   assert.deepEqual(settled, ["JUNGOL:1000"]);
+});
+
+test("failure keeps an allowlisted phase reason without exposing the thrown error", async () => {
+  const task = new HistoricalTaskController<number>(() => 1_000);
+  task.start([1], async () => { throw new HistoricalImportFailure("STORE_REJECTED"); });
+  await task.settled();
+  assert.equal(task.state?.failureReason, "STORE_REJECTED");
+  assert.equal(task.state?.completed, 0);
+  task.start([1], async () => { throw new Error("private diagnostic text"); });
+  await task.settled();
+  assert.equal(task.state?.failureReason, "IMPORT_FAILED");
+  assert.equal(JSON.stringify(task.state).includes("private diagnostic text"), false);
 });

@@ -3,7 +3,14 @@ export type HistoricalImportState = {
   completed: number; total: number; saved: number; duplicate: number; skipped: number;
   /** Wall-clock ownership timestamps, retained by the content-owned task. */
   startedAt?: number; endedAt?: number; lastProgressAt?: number;
+  failureReason?: HistoricalImportFailureReason;
 };
+
+export type HistoricalImportFailureReason = "LIST_CHANGED" | "DETAIL_NOT_FOUND" | "DETAIL_UNVERIFIED" |
+  "STORE_REJECTED" | "STORE_FAILED" | "IMPORT_FAILED";
+export class HistoricalImportFailure extends Error {
+  constructor(readonly reason: HistoricalImportFailureReason) { super(reason); }
+}
 
 export type HistoricalImportResult = { saved: number; duplicate: number; skipped: number };
 
@@ -33,7 +40,8 @@ export class HistoricalTaskController<T> {
         if (this.cancelling) break;
       }
       this.state = { ...this.state!, status: this.cancelling ? "INTERRUPTED" : "DONE", endedAt: this.now() };
-    })().catch(() => { this.state = { ...this.state!, status: this.cancelling ? "INTERRUPTED" : "FAILED", endedAt: this.now() }; })
+    })().catch(error => { this.state = { ...this.state!, status: this.cancelling ? "INTERRUPTED" : "FAILED", endedAt: this.now(),
+      failureReason: error instanceof HistoricalImportFailure ? error.reason : "IMPORT_FAILED" }; })
       .finally(() => { this.active = null; });
     return true;
   }

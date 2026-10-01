@@ -12,8 +12,8 @@ import {
 import { SWEA_ORIGIN, SWEA_SOLVING_PATH } from "./adapters/sweaSelectors";
 import { activeSubmissionProgress, SUBMISSION_PROGRESS_KEY, updateSubmissionProgress } from "./submissionProgress";
 import type { Platform } from "./types";
-import { isJungolHistoryPath, isJungolHistorySenderUrl } from "./historicalJungol";
-import { mayRediscoverHistorySource, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
+import { isJungolHistoryPath } from "./historicalJungol";
+import { mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
 import { requestLocalHistoryMessage } from "./localHistoryConnection";
 
 const store = new IndexedDbCaptureStore();
@@ -285,14 +285,26 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     const capture = object.capture;
     const url = senderUrl(sender);
     if (!isCaptureRecord(capture) || capture.historicalImport !== true || capture.platform !== "JUNGOL" ||
-        !url || !isJungolHistorySenderUrl(url) ||
+        !url || url.origin !== "https://jungol.co.kr" || sender.id !== chrome.runtime.id ||
         !Number.isSafeInteger(sender.tab?.id) || sender.frameId !== 0) {
       sendResponse({ ok: false, error: "INVALID_HISTORICAL_CAPTURE" });
       return false;
     }
     // Historical imports remain local until a separate, explicit upload action.
-    void store.putCapture(capture)
-      .then(({ created }) => sendResponse({ ok: true, created }))
+    void (async () => {
+      // The import start replies before its first async store. Wait for the
+      // owning route write, without waiting for the content-owned import itself.
+      await localHistoryCommands.catch(() => undefined);
+      const tabId = sender.tab!.id!;
+      const currentUrl = (await chrome.tabs.get(tabId)).url;
+      const route = await readLocalHistoryRoute();
+      if (!currentUrl || !mayStoreHistoricalFromSender(url.href, currentUrl, tabId, route)) {
+        sendResponse({ ok: false, error: "INVALID_HISTORICAL_CAPTURE" });
+        return;
+      }
+      const { created } = await store.putCapture(capture);
+      sendResponse({ ok: true, created });
+    })()
       .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;
   }

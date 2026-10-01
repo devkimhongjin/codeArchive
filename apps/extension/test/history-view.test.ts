@@ -24,7 +24,7 @@ function page(send: (message: { type: string; submissionIds?: string[] }) => Pro
     <a id="history-page-link"></a><p id="platform-description"></p><p id="platform-help"></p>
     <select id="selection"><option value="all" selected>all</option><option value="latest">latest</option></select>
     <span id="status"></span><progress id="task-progress"></progress><p id="task-stage"></p><p id="progress"></p><p id="task-time"></p>
-    <p id="timing-estimate"></p><section id="candidates" hidden><p id="candidate-help"></p><div id="candidate-list"></div></section>
+    <section id="candidates" hidden><p id="candidate-help"></p><div id="candidate-list"></div></section>
   </body>`);
   const scheduled: (() => void)[] = [];
   mountHistory(document, { send: message => send(message as { type: string; submissionIds?: string[] }),
@@ -57,7 +57,7 @@ test("history page separates settings, site navigation, and local collection", (
   assert.match(html, /id="source-note"/);
   assert.match(html, /id="task-time"/);
   assert.match(html, /id="task-stage"/);
-  assert.match(html, /id="timing-estimate"/);
+  assert.doesNotMatch(html, /id="timing-estimate"|로컬 저장 예상:/);
   assert.match(html, /id="history-page-link" href="https:\/\/jungol\.co\.kr\/"/);
   assert.doesNotMatch(html, /내 제출 필터/);
   assert.match(html, /id="history-page-link"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/);
@@ -232,7 +232,7 @@ test("ordinary selected import sends every selected candidate with actual count 
   assert.equal((view.document.querySelector("#import") as HTMLButtonElement).disabled, true);
   assert.match(view.document.querySelector("#progress")!.textContent!, /0\/12건.*0%/);
   assert.equal((view.document.querySelector("#candidates") as HTMLElement).hidden, true);
-  assert.equal((view.document.querySelector("#timing-estimate") as HTMLElement).hidden, true);
+  assert.equal(view.document.querySelector("#timing-estimate"), null);
   assert.equal(view.document.querySelector("#measure"), null);
 });
 
@@ -249,14 +249,16 @@ test("local timing estimate uses an ordinary completed sample and keeps a fixed 
   const reopened = page(respond, { now: () => 4_000_000, readTiming: async () => sample });
   await tick(); await tick();
   assert.equal(reopened.document.querySelector("#task-time")!.textContent, "진행 시간 01:05 / 예상 총 시간 01:05");
-  // Loading candidates with that sample yields an estimate, while an absent sample remains explicit.
+  // Candidate discovery has no separate forecast, even with past import timing.
   const readyView = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { status: "READY", candidates: many, truncated: false },
     { readTiming: async () => sample });
   await tick(); await tick(); await tick();
-  assert.equal(readyView.document.querySelector("#timing-estimate")!.textContent, "로컬 저장 예상: 01:40");
+  assert.equal(readyView.document.querySelector("#timing-estimate"), null);
+  assert.equal(readyView.document.querySelector<HTMLElement>("#task-time")!.hidden, true);
   const noSample = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : ready);
   await tick(); await tick();
-  assert.equal(noSample.document.querySelector("#timing-estimate")!.textContent, "로컬 저장 예상: ?시간");
+  assert.equal(noSample.document.querySelector("#timing-estimate"), null);
+  assert.equal(noSample.document.querySelector<HTMLElement>("#task-time")!.hidden, true);
 });
 
 test("waiting scan stage reports source visibility without inventing list progress", async () => {
@@ -337,5 +339,15 @@ test("interrupted imports retain settled problem and submission results with act
     "수집이 중단되었습니다. 현재까지 문제 1건 · 제출 2건 · 새로 저장 1건 · 이미 저장됨 1건");
   assert.equal(view.document.querySelector("#progress")!.textContent, "2/3건 처리했습니다. (66%)");
   assert.equal((view.document.querySelector("#task-progress") as HTMLProgressElement).hidden, false);
-  assert.equal((view.document.querySelector("#timing-estimate") as HTMLElement).hidden, true);
+  assert.equal(view.document.querySelector("#timing-estimate"), null);
+});
+
+test("first-item failure reports the failed phase without a redundant progress explanation", async () => {
+  const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } :
+    { status: "FAILED", failureReason: "STORE_REJECTED", completed: 0, total: 120, saved: 0, duplicate: 0,
+      startedAt: 1_000, endedAt: 2_000 });
+  await tick(); await tick();
+  assert.match(view.document.querySelector("#status")!.textContent!, /로컬 저장 요청이 거부/);
+  assert.equal(view.document.querySelector("#task-stage")!.textContent, "");
+  assert.equal(view.document.querySelector("#progress")!.textContent, "0/120건 처리했습니다. (0%)");
 });
