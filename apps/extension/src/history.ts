@@ -5,10 +5,10 @@ type Candidate = { submissionId: string; problemNumber: string; title: string; l
 type State = { status: string; candidates?: Candidate[]; truncated?: boolean; progress?: { phase: string; rows: number; pagesLoaded: number; groupsExpanded: number; groupsTotal: number }; completed?: number; total?: number; saved?: number; duplicate?: number };
 export type HistoryServices = { send: (message: unknown) => Promise<unknown>; schedule?: (work: () => void, delay: number) => unknown };
 
-const platformInfo: Record<Platform, { href: string; description: string; unsupported?: string }> = {
-  JUNGOL: { href: "https://jungol.co.kr/submission", description: "정올의 내 제출 필터를 켠 탭을 열어 둔 상태에서 이 브라우저에만 저장합니다. 수집 중에는 원본 탭을 닫거나 이동하지 마세요." },
-  SWEA: { href: "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do", description: "SWEA 해결 내역을 열어 볼 수 있습니다.", unsupported: "SWEA 원본 코드 일괄 수집은 아직 지원하지 않습니다." },
-  PROGRAMMERS: { href: "https://school.programmers.co.kr/learn/challenges?order=recent&statuses=solved%2Csolved_with_unlock&page=1", description: "프로그래머스 해결 내역을 열어 볼 수 있습니다.", unsupported: "프로그래머스 원본 코드 일괄 수집은 아직 지원하지 않습니다." }
+const platformInfo: Record<Platform, { href: string; linkLabel: string; description: string; guide: string; unsupported?: string }> = {
+  JUNGOL: { href: "https://jungol.co.kr/", linkLabel: "정올 열기 ↗", description: "정올에서 제출 내역을 연 뒤 이 브라우저에 로컬로 저장할 수 있습니다.", guide: "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요." },
+  SWEA: { href: "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do", linkLabel: "SWEA 해결 내역 열기 ↗", description: "SWEA 해결 내역을 열어 볼 수 있습니다.", guide: "사이트에서 해결 내역을 확인할 수 있습니다.", unsupported: "SWEA 원본 코드 일괄 수집은 아직 지원하지 않습니다." },
+  PROGRAMMERS: { href: "https://school.programmers.co.kr/learn/challenges?order=recent&statuses=solved%2Csolved_with_unlock&page=1", linkLabel: "프로그래머스 해결 내역 열기 ↗", description: "프로그래머스 해결 내역을 열어 볼 수 있습니다.", guide: "사이트에서 해결 내역을 확인할 수 있습니다.", unsupported: "프로그래머스 원본 코드 일괄 수집은 아직 지원하지 않습니다." }
 };
 
 export function mountHistory(doc: Document, services: HistoryServices) {
@@ -62,7 +62,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   }
   function showPlatform() {
     const current = platform(), info = platformInfo[current];
-    siteLink.href = info.href; description.textContent = info.description; platformHelp.textContent = info.unsupported ?? "정올은 내 제출 필터를 켠 뒤 후보를 확인할 수 있습니다.";
+    siteLink.href = info.href; siteLink.textContent = info.linkLabel; description.textContent = info.description; platformHelp.textContent = info.guide;
     clearCandidates(); progressBar.hidden = true; progress.textContent = ""; cancel.hidden = true; policy.disabled = false; platformSelect.disabled = false;
     if (current === "JUNGOL") { scan.textContent = "정올 제출 후보 찾기"; scan.disabled = false; status.textContent = "원본 정올 제출 탭을 확인하세요."; }
     else { scan.textContent = "원본 코드 일괄 수집 준비 중"; scan.disabled = true; status.textContent = info.unsupported!; }

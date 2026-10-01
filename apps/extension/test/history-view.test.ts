@@ -46,11 +46,25 @@ test("history view opens from local status without a CodeArchive login and disab
   assert.equal((view.document.querySelector("#task-progress") as HTMLProgressElement).hidden, false);
 });
 
-test("history page exposes all platform links and duplicate policies before scanning", () => {
+test("history page separates settings, site navigation, and local collection", () => {
   const html = readFileSync(new URL("../src/history.html", import.meta.url), "utf8");
   for (const platform of ["JUNGOL", "SWEA", "PROGRAMMERS"]) assert.match(html, new RegExp(`<option value="${platform}"`));
   for (const mode of ["all", "latest", "fastest", "lowest-memory"]) assert.match(html, new RegExp(`<option value="${mode}"`));
+  assert.match(html, /<section class="settings-card"[\s\S]*?<section class="site-navigation"[\s\S]*?<section class="collection-card"/);
+  assert.match(html, /우측 상단 프로필 → 내 정보 → 제출현황/);
+  assert.match(html, /id="source-note"/);
+  assert.match(html, /id="history-page-link" href="https:\/\/jungol\.co\.kr\/"/);
+  assert.doesNotMatch(html, /내 제출 필터/);
   assert.match(html, /id="history-page-link"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/);
+});
+
+test("Jungol runtime navigation uses the homepage and agreed profile guidance", async () => {
+  const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : ready);
+  await tick(); await tick();
+  const link = view.document.querySelector<HTMLAnchorElement>("#history-page-link")!;
+  assert.equal(link.href, "https://jungol.co.kr/");
+  assert.equal(link.textContent, "정올 열기 ↗");
+  assert.equal(view.document.querySelector("#platform-help")!.textContent, "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요.");
 });
 
 test("unsupported platforms navigate without dispatching Jungol collection commands", async () => {
