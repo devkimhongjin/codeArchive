@@ -76,14 +76,14 @@ test("Programmers listing owns auxiliary envelopes and the only local store", as
     assert.equal(calls.filter(call => (call as { type?: string }).type === "STORE_HISTORICAL_CAPTURE").length, 1);
     assert.equal(calls.filter(call => (call as { type?: string; mode?: string }).type === "PROGRAMMERS_AUX_READ" && (call as { mode?: string }).mode === "import").length, importReadsBefore + 1);
 
-    // A stale source for the first selected submission is isolated. The
-    // source owner proceeds to the second auxiliary read and stores it.
+    // A timed-out receiver for the first selected submission is isolated.
+    // The source owner proceeds to the next auxiliary read and stores it.
     assert.equal((await message({ type: "LOCAL_HISTORY_SCAN_START", platform: "PROGRAMMERS" }) as { status: string }).status, "SCANNING");
     await new Promise(resolve => globals.setTimeout(resolve, 30));
     const staleThenNext = await message({ type: "LOCAL_HISTORY_STATUS", platform: "PROGRAMMERS" }) as { status: string; candidates?: Array<{ submissionId: string }> };
     assert.equal(staleThenNext.status, "READY");
     importResults = [
-      { ok: true, result: { status: "SOURCE_UNAVAILABLE" } },
+      { ok: false, error: "READ_TIMEOUT" },
       { ok: true, result: { status: "DONE", accountId: "947840", capture: secondCapture } }
     ];
     const staleReadsBefore = calls.filter(call => (call as { type?: string; mode?: string }).type === "PROGRAMMERS_AUX_READ" && (call as { mode?: string }).mode === "import").length;

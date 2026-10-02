@@ -229,7 +229,11 @@ type InternalMessage =
   | { type: "LOCAL_HISTORY_IMPORT_START"; platform?: unknown; submissionIds: unknown };
 
 type ProgrammersAuxiliaryMessage = { type: "PROGRAMMERS_AUX_READ"; lessonUrl: unknown; mode: unknown; submissionId?: unknown } | { type: "PROGRAMMERS_AUX_CANCEL" };
-type ProgrammersAuxiliaryRun = { sourceTabId: number; generation: number; lessonUrl: string; auxiliaryTabId?: number; cancelled: boolean; cleaned: boolean };
+type ProgrammersAuxiliaryRun = { sourceTabId: number; generation: number; lessonUrl: string; auxiliaryTabId?: number; cancelled: boolean; cleaned: boolean; interruptRead?: () => void };
+const PROGRAMMERS_AUXILIARY_READ_TIMEOUT_MS = 45_000;
+class ProgrammersAuxiliaryReadError extends Error {
+  constructor(readonly reason: "READ_TIMEOUT" | "INTERRUPTED") { super(reason); }
+}
 const programmersAuxiliaryRuns = new Map<number, ProgrammersAuxiliaryRun>();
 let nextProgrammersAuxiliaryGeneration = 0;
 
@@ -240,12 +244,28 @@ function canonicalProgrammersLessonUrl(value: unknown): string | null {
 }
 
 async function cleanupProgrammersAuxiliary(run: ProgrammersAuxiliaryRun): Promise<void> {
+  run.interruptRead?.();
   if (programmersAuxiliaryRuns.get(run.sourceTabId) === run) programmersAuxiliaryRuns.delete(run.sourceTabId);
   // A cancellation may arrive while tabs.create is pending. Keep the cleanup
   // pending until create supplies its id, then finally closes that tab.
   if (!Number.isSafeInteger(run.auxiliaryTabId) || run.cleaned) return;
   run.cleaned = true;
   await chrome.tabs.remove(run.auxiliaryTabId!).catch(() => undefined);
+}
+
+/** A frozen content receiver must not hold the source's collection forever. */
+async function readProgrammersAuxiliaryMessage(run: ProgrammersAuxiliaryRun, message: unknown): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const interruption = new Promise<never>((_, reject) => {
+    run.interruptRead = () => reject(new ProgrammersAuxiliaryReadError("INTERRUPTED"));
+    timer = setTimeout(() => reject(new ProgrammersAuxiliaryReadError("READ_TIMEOUT")), PROGRAMMERS_AUXILIARY_READ_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([chrome.tabs.sendMessage(run.auxiliaryTabId!, message, { frameId: 0 }), interruption]);
+  } finally {
+    clearTimeout(timer);
+    delete run.interruptRead;
+  }
 }
 
 async function waitForProgrammersAuxiliaryTab(run: ProgrammersAuxiliaryRun): Promise<"READY" | "INTERRUPTED" | "REDIRECTED" | "OPEN_FAILED"> {
@@ -306,7 +326,7 @@ async function runProgrammersAuxiliary(sender: chrome.runtime.MessageSender, mes
       ...(message.submissionId === undefined ? {} : { submissionId: message.submissionId }) };
     let result: unknown;
     try {
-      result = await chrome.tabs.sendMessage(run.auxiliaryTabId, readMessage, { frameId: 0 });
+      result = await readProgrammersAuxiliaryMessage(run, readMessage);
     } catch (error) {
       if (!isNoProgrammersAuxiliaryReceiver(error)) throw error;
       // Inject at most once after a verified missing-receiver failure. The
@@ -314,14 +334,14 @@ async function runProgrammersAuxiliary(sender: chrome.runtime.MessageSender, mes
       // after injection; create/navigation are never retried.
       await chrome.scripting.executeScript({ target: { tabId: run.auxiliaryTabId, frameIds: [0] }, files: ["content.js"], world: "ISOLATED" });
       if (run.cancelled) return { ok: false, error: "INTERRUPTED" };
-      result = await chrome.tabs.sendMessage(run.auxiliaryTabId, readMessage, { frameId: 0 });
+      result = await readProgrammersAuxiliaryMessage(run, readMessage);
     }
     const after = await chrome.tabs.get(sourceTabId);
     if (!after.url || run.cancelled || !sameHistorySource(route.url, after.url, "PROGRAMMERS")) return { ok: false, error: "INTERRUPTED" };
     const finalAuxiliary = await chrome.tabs.get(run.auxiliaryTabId);
     if (finalAuxiliary.url !== lessonUrl) return { ok: false, error: "REDIRECTED" };
     return { ok: true, result };
-  } catch { return { ok: false, error: "READ_FAILED" }; }
+  } catch (error) { return { ok: false, error: error instanceof ProgrammersAuxiliaryReadError ? error.reason : "READ_FAILED" }; }
   finally { await cleanupProgrammersAuxiliary(run); }
 }
 

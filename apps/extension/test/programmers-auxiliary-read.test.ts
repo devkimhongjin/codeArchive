@@ -41,7 +41,8 @@ function lessonDocument(options: { account?: string; historyAccount?: string; le
 
 function installEditorOnClick(document: Document, uri = "inmemory://model/1"): void {
   const row = document.querySelector<HTMLElement>('[class*="SubmissionListstyle__ListRow"][data-hackle-value]')!;
-  row.click = () => {
+  row.click = () => { throw new Error("outer metadata container is not the native toggle"); };
+  row.querySelector<HTMLElement>(".ListItemColumnWrapper")!.click = () => {
     if (!row.querySelector(".monaco-editor")) row.querySelector(".ListItemCodeWrapper")!.insertAdjacentHTML("beforeend",
       `<div class="monaco-editor" role="code" data-uri="${uri}"><div>partial lines</div></div>`);
   };

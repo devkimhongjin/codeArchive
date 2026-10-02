@@ -129,6 +129,7 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
       : defaultGet(tabId);
     const realSetTimeout = globalThis.setTimeout;
     (globalThis as { setTimeout: typeof setTimeout }).setTimeout = ((callback: () => void, delay?: number) => {
+      if (delay === 45_000) return realSetTimeout(callback, delay);
       virtualElapsed += delay ?? 0;
       queueMicrotask(callback);
       return 0 as unknown as ReturnType<typeof setTimeout>;
@@ -190,6 +191,30 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
     assert.deepEqual(await request({ type: "PROGRAMMERS_AUX_CANCEL" }), { ok: true });
     duringRead.resolve({ accountId: "947840" });
     assert.deepEqual(await reading, { ok: false, error: "INTERRUPTED" });
+
+    // A hung receiver is released without requiring the user to close its
+    // window, and its eventual response cannot revive or store that read.
+    const hungRead = deferred<unknown>(); let expireRead: (() => void) | undefined;
+    sendResult = async () => hungRead.promise;
+    const nativeSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((callback: () => void, delay?: number) => {
+      if (delay === 45_000) { expireRead = callback; return nativeSetTimeout(() => undefined, 60_000); }
+      return nativeSetTimeout(callback, delay);
+    }) as typeof setTimeout;
+    try {
+      const timeoutId = nextTabId + 1;
+      const pendingTimeout = request({ type: "PROGRAMMERS_AUX_READ", lessonUrl, mode: "import", submissionId: "pg:947840:389481:2026-09-21T16:43:28.310+09:00:java" });
+      await new Promise(resolve => nativeSetTimeout(resolve, 0));
+      assert.ok(expireRead); expireRead();
+      assert.deepEqual(await pendingTimeout, { ok: false, error: "READ_TIMEOUT" });
+      assert.equal(removed.filter(id => id === timeoutId).length, 1);
+      assert.ok(tabs.has(sourceTabId), "the source is never closed by the deadline");
+      sendResult = async () => ({ accountId: "947840" });
+      assert.deepEqual(await request({ type: "PROGRAMMERS_AUX_READ", lessonUrl, mode: "preview" }), { ok: true, result: { accountId: "947840" } });
+      hungRead.resolve({ status: "DONE", capture: { sourceCode: "must be ignored" } });
+      await new Promise(resolve => nativeSetTimeout(resolve, 0));
+      assert.equal(removed.filter(id => id === timeoutId).length, 1);
+    } finally { globalThis.setTimeout = nativeSetTimeout; }
 
     sendResult = async () => { throw new Error("read failed"); };
     const beforeReadFailure = removed.length;

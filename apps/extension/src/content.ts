@@ -254,7 +254,13 @@ export async function readProgrammersAuxiliaryLesson(document: Document, locatio
   const liveMatches = livePage.candidates.filter(candidate => candidate.submissionId === target.submissionId);
   if (liveMatches.length !== 1 || !sameProgrammersSubmission(target, liveMatches[0]!)) return { status: "STALE_SUBMISSION" };
   const liveTarget = liveMatches[0]!;
-  liveTarget.row.click();
+  // The native toggle lives in the row's column wrapper. Clicking the outer
+  // metadata container does not dispatch an event to its child controls.
+  if (!selectedProgrammersHistoryEditorUri(liveTarget.row)) {
+    const toggles = [...liveTarget.row.querySelectorAll<HTMLElement>('[class*="ListItemColumnWrapper"]')].filter(child => child.parentElement === liveTarget.row);
+    if (toggles.length !== 1) return { status: "SOURCE_UNAVAILABLE" };
+    toggles[0]!.click();
+  }
   let selected: ProgrammersLessonSubmission | null = null;
   let uri: string | null = null;
   const sleep = services.sleep ?? (delayMs => new Promise<void>(resolve => setTimeout(resolve, delayMs)));
