@@ -25,7 +25,23 @@ function sameProblemContext(document: Document, problem: SweaProblem): boolean {
      form.querySelector<HTMLInputElement>('input[name="probBoxId"]')?.value === problem.solvingClub.probBoxId));
 }
 
-function parser(html: string): Document { return new DOMParser().parseFromString(html, "text/html"); }
+function parser(html: string): Document {
+  // HTML parsing normalizes CRLF and discards a textarea's initial LF. Preserve
+  // literal source newlines before parsing, so byte-length verification compares
+  // the original response rather than a browser-normalized copy.
+  let marker = "CODEARCHIVE_SOURCE_NEWLINE_";
+  while (html.includes(marker)) marker += "_";
+  const preserved = html.replace(/(<(textarea|pre)\b[^>]*>)([\s\S]*?)(<\/\2\s*>)/gi,
+    (_match, open: string, _tag: string, value: string, close: string) => `${open}${value.replace(/\r/g, `${marker}CR`).replace(/\n/g, `${marker}LF`)}${close}`);
+  const document = new DOMParser().parseFromString(preserved, "text/html");
+  for (const node of document.querySelectorAll<HTMLElement>("textarea,pre")) {
+    const original = node.tagName === "TEXTAREA" ? (node as HTMLTextAreaElement).value : node.textContent ?? "";
+    const restored = original.split(`${marker}CR`).join("\r").split(`${marker}LF`).join("\n");
+    if (node.tagName === "TEXTAREA") (node as HTMLTextAreaElement).value = restored;
+    else node.textContent = restored;
+  }
+  return document;
+}
 function text(el: Element | null): string { return el?.textContent?.replace(/\s+/g, " ").trim() ?? ""; }
 function exactCount(value: string, pattern: RegExp): number | null { const match = value.match(pattern); const count = match?.[1] ? Number(match[1]) : NaN; return Number.isSafeInteger(count) && count >= 0 ? count : null; }
 function ownIdentity(document: Document, location: Location): Identity | null {
@@ -230,15 +246,21 @@ export async function loadSweaHistoryPreview(document: Document, location: Locat
 }
 
 /** Fetches raw, unhighlighted detail HTML and verifies the selected row before local storage. */
-export type SweaHydrationResult = { status: "DONE"; capture: ReturnType<typeof createCapture> } | { status: "OWNERSHIP_UNVERIFIED" | "TAB_NOT_FOUND" | "SOURCE_UNAVAILABLE" };
+export type SweaHydrationResult = { status: "DONE"; capture: ReturnType<typeof createCapture> } |
+  { status: "OWNERSHIP_UNVERIFIED" | "TAB_NOT_FOUND" | "SOURCE_UNAVAILABLE"; verificationFailure?: "context" | "source" | "title" | "length" | "metadata" };
 export async function hydrateSweaCandidateResult(candidate: SweaHistoryCandidate, identity: { userId: string; nickname: string }, fetchHtml: FetchHtml = fetch): Promise<SweaHydrationResult> {
   const fetched = await fetchSweaDocument(fetchHtml, `${ORIGIN}${detailPath(candidate)}`, { method: "POST", credentials: "include", headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: historyForm(identity, candidate, candidate.submissionId).toString() });
   if (fetched.status !== "DONE") return fetched;
   const detail = fetched.document;
   if (!sameSignedInIdentity(detail, identity)) return { status: "OWNERSHIP_UNVERIFIED" };
-  if (!sameProblemContext(detail, candidate)) return { status: "SOURCE_UNAVAILABLE" };
+  if (!sameProblemContext(detail, candidate)) return { status: "SOURCE_UNAVAILABLE", verificationFailure: "context" };
   const row = detail.querySelector<HTMLElement>(".box-list-inner > .problem_smt_detail"); const sources = detail.querySelectorAll<HTMLElement>('textarea[class^="brush:"],pre[class^="brush:"]'); const source = sources.length === 1 ? sources[0] : null;
-  const sourceCode = source?.tagName === "TEXTAREA" ? (source as HTMLTextAreaElement).value : source?.textContent ?? "";
+  const responseSource = source?.tagName === "TEXTAREA" ? (source as HTMLTextAreaElement).value : source?.textContent ?? "";
+  // Keep the old HTML-decoded view when the template's leading newline is
+  // outside the submitted source. Both representations must match native bytes.
+  const htmlSource = responseSource.replace(/\r\n?/g, "\n").replace(/^\n/, "");
+  const matchesNativeLength = (code: string) => sweaDisplayedCodeLength(code) === candidate.codeByteLength;
+  const sourceCode = matchesNativeLength(responseSource) ? responseSource : htmlSource;
   const title = problemTitle(detail);
   const clubTitles = detail.querySelectorAll(".problem_title");
   const clubTitle = clubTitles.length === 1 ? clubTitles[0]!.cloneNode(true) as HTMLElement : null;
@@ -247,10 +269,11 @@ export async function hydrateSweaCandidateResult(candidate: SweaHistoryCandidate
   // SWEA renders Python submissions with its cpp brush. Highlighting is
   // presentation, not the submitted language; the native detail row below
   // must still exactly match the selected language and submission metadata.
-  if (!row || !source || !matchesTitle ||
-      sweaDisplayedCodeLength(sourceCode) !== candidate.codeByteLength) return { status: "SOURCE_UNAVAILABLE" };
+  if (!row || !source) return { status: "SOURCE_UNAVAILABLE", verificationFailure: "source" };
+  if (!matchesTitle) return { status: "SOURCE_UNAVAILABLE", verificationFailure: "title" };
+  if (!matchesNativeLength(sourceCode)) return { status: "SOURCE_UNAVAILABLE", verificationFailure: "length" };
   const again = rowCandidate(row, candidate, identity);
-  if (!again || again.submissionId !== candidate.submissionId || again.solvedAt !== candidate.solvedAt || again.language !== candidate.language || again.codeByteLength !== candidate.codeByteLength) return { status: "SOURCE_UNAVAILABLE" };
+  if (!again || again.submissionId !== candidate.submissionId || again.solvedAt !== candidate.solvedAt || again.language !== candidate.language || again.codeByteLength !== candidate.codeByteLength) return { status: "SOURCE_UNAVAILABLE", verificationFailure: "metadata" };
   const problemUrl = new URL(candidate.solvingClub ? `${ORIGIN}/main/talk/solvingClub/problemView.do` : `${ORIGIN}/main/code/${candidate.userProblem ? "userProblem/userProblemDetail" : "problem/problemDetail"}.do`);
   problemUrl.searchParams.set("contestProbId", candidate.contestProbId);
   if (candidate.solvingClub) for (const [key, value] of Object.entries(candidate.solvingClub)) problemUrl.searchParams.set(key, value);

@@ -62,8 +62,9 @@ test("SWEA source owner skips an isolated detail failure, preserves an in-flight
     assert.ok(requests.some(request => request.url === historyUrl && /isChecked=checked/.test(request.body) && /checkUserId=OwnerABC123/.test(request.body)));
     assert.equal((await message({ type: "LOCAL_HISTORY_IMPORT_START", platform: "SWEA", submissionIds: ready.candidates!.map(item => item.submissionId) }) as { status: string }).status, "IMPORTING");
     await wait();
-    const afterFailure = await message({ type: "LOCAL_HISTORY_STATUS", platform: "SWEA" }) as { status: string; saved?: number; skipped?: number; problemCount?: number };
+    const afterFailure = await message({ type: "LOCAL_HISTORY_STATUS", platform: "SWEA" }) as { status: string; saved?: number; skipped?: number; problemCount?: number; verificationFailures?: Record<string, number> };
     assert.equal(afterFailure.status, "DONE"); assert.equal(afterFailure.saved, 1); assert.equal(afterFailure.skipped, 1); assert.equal(afterFailure.problemCount, 1);
+    assert.deepEqual(afterFailure.verificationFailures, { title: 1 });
     assert.ok(requests.some(request => request.url === detailUrl && /contestHistoryId=Submission00000002/.test(request.body)));
 
     assert.equal((await message({ type: "LOCAL_HISTORY_SCAN_START", platform: "SWEA" }) as { status: string }).status, "SCANNING");

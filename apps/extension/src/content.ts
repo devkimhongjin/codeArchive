@@ -651,13 +651,13 @@ type ExternalHistoryScanProgress = Omit<JungolHistoryScanProgress, "phase" | "st
   historiesTotal?: number;
   currentProblemNumber?: string;
 };
-let sweaState: { status: string; failureReason?: string; failurePage?: number; failedProblemNumber?: string; candidates?: SweaHistoryCandidate[]; completed?: number; total?: number; saved?: number; duplicate?: number; skipped?: number; startedAt?: number; endedAt?: number; lastProgressAt?: number; progress?: ExternalHistoryScanProgress; problemCount?: number; submissionCount?: number; timingSample?: HistoricalTimingSample } = { status: "SCAN_IDLE" };
+let sweaState: { status: string; verificationFailures?: Record<string, number>; failureReason?: string; failurePage?: number; failedProblemNumber?: string; candidates?: SweaHistoryCandidate[]; completed?: number; total?: number; saved?: number; duplicate?: number; skipped?: number; startedAt?: number; endedAt?: number; lastProgressAt?: number; progress?: ExternalHistoryScanProgress; problemCount?: number; submissionCount?: number; timingSample?: HistoricalTimingSample } = { status: "SCAN_IDLE" };
 let sweaController: HistoricalTaskController<SweaHistoryCandidate> | null = null;
 let sweaGeneration = 0;
 let sweaScanIdentity: ReturnType<typeof authenticatedSweaHistoryIdentity> = null;
 let sweaSourceUrl = "";
 
-function sweaStatus(): typeof sweaState { return sweaController?.state ? { ...sweaController.state, ...(sweaState.problemCount === undefined ? {} : { problemCount: sweaState.problemCount, submissionCount: sweaState.submissionCount, timingSample: sweaState.timingSample }) } : sweaState; }
+function sweaStatus(): typeof sweaState { return sweaController?.state ? { ...sweaController.state, verificationFailures: sweaState.verificationFailures, ...(sweaState.problemCount === undefined ? {} : { problemCount: sweaState.problemCount, submissionCount: sweaState.submissionCount, timingSample: sweaState.timingSample }) } : sweaState; }
 function startSweaScan(document: Document, location: Location): typeof sweaState {
   if (sweaController?.isActive || sweaState.status === "SCANNING") return sweaStatus();
   const generation = ++sweaGeneration, sourceUrl = location.href, identity = authenticatedSweaHistoryIdentity(document, location);
@@ -681,6 +681,8 @@ function startSweaImport(document: Document, location: Location, ids: unknown): 
   const controller = new HistoricalTaskController<SweaHistoryCandidate>(); sweaController = controller;
   const generation = ++sweaGeneration;
   const completedProblems = new Set<string>();
+  const verificationFailures: Record<string, number> = {};
+  sweaState.verificationFailures = verificationFailures;
   controller.start(candidates as SweaHistoryCandidate[], async (candidate, mayStore) => {
     const currentIdentity = authenticatedSweaHistoryIdentity(document, location);
     if (!mayStore() || !currentIdentity || currentIdentity.userId !== identity.userId || currentIdentity.nickname !== identity.nickname) { controller.cancel(); return { saved: 0, duplicate: 0, skipped: 0 }; }
@@ -688,7 +690,11 @@ function startSweaImport(document: Document, location: Location, ids: unknown): 
     const beforeStore = authenticatedSweaHistoryIdentity(document, location);
     if (!mayStore() || !beforeStore || beforeStore.userId !== identity.userId || beforeStore.nickname !== identity.nickname) { controller.cancel(); return { saved: 0, duplicate: 0, skipped: 0 }; }
     if (hydrated.status === "OWNERSHIP_UNVERIFIED" || hydrated.status === "TAB_NOT_FOUND") { controller.cancel(); return { saved: 0, duplicate: 0, skipped: 0 }; }
-    if (hydrated.status !== "DONE" || !hydrated.capture) return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId };
+    if (hydrated.status !== "DONE" || !hydrated.capture) {
+      const reason = hydrated.status === "SOURCE_UNAVAILABLE" ? hydrated.verificationFailure ?? "source" : "source";
+      verificationFailures[reason] = (verificationFailures[reason] ?? 0) + 1;
+      return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId };
+    }
     const capture = hydrated.capture;
     try { const response = await chrome.runtime.sendMessage({ type: "STORE_HISTORICAL_CAPTURE", capture }); if (!(response as { ok?: boolean })?.ok) throw new HistoricalImportFailure("STORE_REJECTED"); return { saved: (response as { created?: boolean }).created ? 1 : 0, duplicate: (response as { created?: boolean }).created ? 0 : 1, skipped: 0 }; }
     catch (error) { if (error instanceof HistoricalImportFailure) throw error; throw new HistoricalImportFailure("STORE_FAILED"); }
@@ -696,7 +702,7 @@ function startSweaImport(document: Document, location: Location, ids: unknown): 
   void controller.settled().then(() => {
     if (generation !== sweaGeneration || sweaController !== controller || !controller.state) return;
     const timingSample = timingSampleFromCompletedTask(controller.state, "SWEA");
-    sweaState = { ...controller.state, problemCount: completedProblems.size, submissionCount: controller.state.saved + controller.state.duplicate,
+    sweaState = { ...controller.state, verificationFailures, problemCount: completedProblems.size, submissionCount: controller.state.saved + controller.state.duplicate,
       ...(timingSample ? { timingSample } : {}) };
     if (timingSample && chrome.storage?.local) void persistHistoricalTimingSample(chrome.storage.local, timingSample).catch(() => undefined);
   });

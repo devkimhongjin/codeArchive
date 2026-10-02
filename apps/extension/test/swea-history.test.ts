@@ -22,6 +22,18 @@ function detail(problem: number, body = "hello", title = `Problem ${problem}`, h
 
 function installedDomParser() { const prior = globalThis.DOMParser; Object.assign(globalThis, { DOMParser: parseHTML("<html></html>").window.DOMParser }); return () => Object.assign(globalThis, { DOMParser: prior }); }
 
+test("SWEA preserves raw source CRLF and initial LF while rejecting a real length mismatch", async () => {
+  const restore = installedDomParser();
+  try {
+    const candidate = { submissionId: "Submission00010001", problemNumber: "1", title: "Problem 1", contestProbId: "KeyAAAAAAA1", userProblem: true, language: "JAVA", solvedAt: "2026-09-28 08:26:00.000+09:00", codeByteLength: 9 };
+    const source = "\nhi\r\nbye\n";
+    const markup = detail(1, source).replace('id="problemForm"', 'id="contestProbForm"').replace("5B", "9B");
+    const captured = await hydrateSweaCandidate(candidate, { userId: uid, nickname: nick }, async url => response(markup, url));
+    assert.equal(captured?.sourceCode, source);
+    assert.equal(await hydrateSweaCandidate({ ...candidate, codeByteLength: 10 }, { userId: uid, nickname: nick }, async url => response(markup, url)), null);
+  } finally { restore(); }
+});
+
 const clubContext = { solveclubId: "FixtureClub123", probBoxId: "FixtureBox456", problemBoxTitle: " [난이도 상] SW 전공 자율" };
 function clubPage(page: number) {
   // The observed five-page profile has one BOX card on page 3 and eight on
