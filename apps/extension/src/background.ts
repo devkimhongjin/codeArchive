@@ -312,7 +312,7 @@ async function runProgrammersAuxiliary(sender: chrome.runtime.MessageSender, mes
   const run: ProgrammersAuxiliaryRun = { sourceTabId, generation: ++nextProgrammersAuxiliaryGeneration, lessonUrl, cancelled: false, cleaned: false }; programmersAuxiliaryRuns.set(sourceTabId, run);
   try {
     const sourceTab = await chrome.tabs.get(sourceTabId);
-    if (!Number.isSafeInteger(sourceTab.windowId) || sourceTab.url !== sender.url || run.cancelled)
+    if (!Number.isSafeInteger(sourceTab.windowId) || !sourceTab.url || !sameHistorySource(route.url, sourceTab.url, "PROGRAMMERS") || run.cancelled)
       return { ok: false, error: "INTERRUPTED" };
     // Keep auxiliary lessons in the existing source window, leaving the
     // collection window visible. Never create a popup for each problem.

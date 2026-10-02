@@ -140,6 +140,13 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
     }
     assert.ok(virtualElapsed >= 1_800, "the bounded readiness wait permits a delayed committed navigation");
 
+    // Chrome's sender.url can retain the document's original page while a
+    // React pagination transition updates tabs.get().url before the first read.
+    sourceCurrentUrl = sourceUrl.replace("page=1", "page=3");
+    assert.deepEqual(await request({ type: "PROGRAMMERS_AUX_READ", lessonUrl, mode: "preview" }), { ok: true, result: { accountId: "947840" } });
+    assert.equal(creates.at(-1)?.windowId, 9);
+    sourceCurrentUrl = sourceUrl;
+
     const createsAfterValidRead = nextTabId;
     assert.deepEqual(await request({ type: "PROGRAMMERS_AUX_READ", lessonUrl, mode: "preview" }, { ...sender, id: "other-extension" }), { ok: false, error: "UNAUTHORIZED" });
     assert.deepEqual(await request({ type: "PROGRAMMERS_AUX_READ", lessonUrl, mode: "preview" }, { ...sender, tab: { id: 31 } }), { ok: false, error: "UNAUTHORIZED" });
