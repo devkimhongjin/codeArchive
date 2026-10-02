@@ -165,6 +165,25 @@ function problemTitle(document: Document): { problemNumber: string; title: strin
   return match?.[1] && match[2]?.trim() ? { problemNumber: match[1], title: match[2].trim() } : null;
 }
 
+function verifiedSourceCode(responseSource: string, bytes: number): string | null {
+  const exact = (value: string) => sweaDisplayedCodeLength(value) === bytes;
+  if (exact(responseSource)) return responseSource;
+  const htmlSource = responseSource.replace(/\r\n?/g, "\n").replace(/^\n/, "");
+  if (exact(htmlSource)) return htmlSource;
+  // Some detail templates surround the submitted source with indentation.
+  // Remove only boundary whitespace, never interior tabs/spaces/newlines. A
+  // native byte count must select one unique result; ambiguous boundaries fail.
+  const matches = new Set<string>();
+  for (const value of new Set([responseSource, htmlSource])) {
+    for (const start of [value, value.trimStart()]) {
+      for (const end of [start, start.replace(/[ \t]+$/, ""), start.trimEnd()]) {
+        if (end.trim() && exact(end)) matches.add(end);
+      }
+    }
+  }
+  return matches.size === 1 ? [...matches][0]! : null;
+}
+
 async function fetchDocument(fetchHtml: FetchHtml, url: string, init?: RequestInit): Promise<Document | null> {
   const result = await fetchSweaDocument(fetchHtml, url, init);
   return result.status === "DONE" ? result.document : null;
@@ -256,11 +275,7 @@ export async function hydrateSweaCandidateResult(candidate: SweaHistoryCandidate
   if (!sameProblemContext(detail, candidate)) return { status: "SOURCE_UNAVAILABLE", verificationFailure: "context" };
   const row = detail.querySelector<HTMLElement>(".box-list-inner > .problem_smt_detail"); const sources = detail.querySelectorAll<HTMLElement>('textarea[class^="brush:"],pre[class^="brush:"]'); const source = sources.length === 1 ? sources[0] : null;
   const responseSource = source?.tagName === "TEXTAREA" ? (source as HTMLTextAreaElement).value : source?.textContent ?? "";
-  // Keep the old HTML-decoded view when the template's leading newline is
-  // outside the submitted source. Both representations must match native bytes.
-  const htmlSource = responseSource.replace(/\r\n?/g, "\n").replace(/^\n/, "");
-  const matchesNativeLength = (code: string) => sweaDisplayedCodeLength(code) === candidate.codeByteLength;
-  const sourceCode = matchesNativeLength(responseSource) ? responseSource : htmlSource;
+  const sourceCode = verifiedSourceCode(responseSource, candidate.codeByteLength);
   const title = problemTitle(detail);
   const clubTitles = detail.querySelectorAll(".problem_title");
   const clubTitle = clubTitles.length === 1 ? clubTitles[0]!.cloneNode(true) as HTMLElement : null;
@@ -271,7 +286,7 @@ export async function hydrateSweaCandidateResult(candidate: SweaHistoryCandidate
   // must still exactly match the selected language and submission metadata.
   if (!row || !source) return { status: "SOURCE_UNAVAILABLE", verificationFailure: "source" };
   if (!matchesTitle) return { status: "SOURCE_UNAVAILABLE", verificationFailure: "title" };
-  if (!matchesNativeLength(sourceCode)) return { status: "SOURCE_UNAVAILABLE", verificationFailure: "length" };
+  if (sourceCode === null) return { status: "SOURCE_UNAVAILABLE", verificationFailure: "length" };
   const again = rowCandidate(row, candidate, identity);
   if (!again || again.submissionId !== candidate.submissionId || again.solvedAt !== candidate.solvedAt || again.language !== candidate.language || again.codeByteLength !== candidate.codeByteLength) return { status: "SOURCE_UNAVAILABLE", verificationFailure: "metadata" };
   const problemUrl = new URL(candidate.solvingClub ? `${ORIGIN}/main/talk/solvingClub/problemView.do` : `${ORIGIN}/main/code/${candidate.userProblem ? "userProblem/userProblemDetail" : "problem/problemDetail"}.do`);

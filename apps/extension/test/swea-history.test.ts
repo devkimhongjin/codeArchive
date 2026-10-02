@@ -34,6 +34,27 @@ test("SWEA preserves raw source CRLF and initial LF while rejecting a real lengt
   } finally { restore(); }
 });
 
+test("SWEA template indentation is removed only when native bytes select one complete source", async () => {
+  const restore = installedDomParser();
+  try {
+    const code = "import X;\n\nclass Main {\n\tint x = 1;\n}\n";
+    const candidate = { submissionId: "Submission00010001", problemNumber: "1", title: "Problem 1", contestProbId: "KeyAAAAAAA1", userProblem: true, language: "JAVA", solvedAt: "2026-09-28 08:26:00.000+09:00", codeByteLength: code.length };
+    const markup = detail(1, `\n\t\t\t\t${code}\t\t\t`).replace('id="problemForm"', 'id="contestProbForm"').replace("5B", `${code.length}B`);
+    const captured = await hydrateSweaCandidate(candidate, { userId: uid, nickname: nick }, async url => response(markup, url));
+    assert.equal(captured?.sourceCode, code, "interior tabs, blank lines and the submitted final newline remain intact");
+    assert.equal(await hydrateSweaCandidate({ ...candidate, codeByteLength: code.length - 3 }, { userId: uid, nickname: nick }, async url => response(markup, url)), null);
+  } finally { restore(); }
+});
+
+test("SWEA refuses equally sized boundary interpretations rather than guessing the original", async () => {
+  const restore = installedDomParser();
+  try {
+    const candidate = { submissionId: "Submission00010001", problemNumber: "1", title: "Problem 1", contestProbId: "KeyAAAAAAA1", language: "JAVA", solvedAt: "2026-09-28 08:26:00.000+09:00", codeByteLength: 7 };
+    const result = await hydrateSweaCandidateResult(candidate, { userId: uid, nickname: nick }, async url => response(detail(1, " \thello \t").replace("5B", "7B"), url));
+    assert.deepEqual(result, { status: "SOURCE_UNAVAILABLE", verificationFailure: "length" });
+  } finally { restore(); }
+});
+
 const clubContext = { solveclubId: "FixtureClub123", probBoxId: "FixtureBox456", problemBoxTitle: " [난이도 상] SW 전공 자율" };
 function clubPage(page: number) {
   // The observed five-page profile has one BOX card on page 3 and eight on
