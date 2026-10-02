@@ -250,6 +250,19 @@ test("SWEA rejects owner/header changes and detail identity/source mismatches", 
   } finally { restore(); }
 });
 
+test("SWEA imports a Python submission displayed with the site's cpp syntax brush", async () => {
+  const restore = installedDomParser();
+  try {
+    const candidate = { submissionId: "Submission00010001", problemNumber: "1", title: "Problem 1", contestProbId: "KeyAAAAAAA1", language: "Python", solvedAt: "2026-09-28 08:26:00.000+09:00", codeByteLength: 5 };
+    const markup = detail(1).replace("JAVA", "Python").replace("brush:java", "brush:cpp");
+    const identity = { userId: uid, nickname: nick };
+    const captured = await hydrateSweaCandidate(candidate, identity, async url => response(markup, url));
+    assert.equal(captured?.language, "Python"); assert.equal(captured?.sourceCode, "hello");
+    for (const invalid of [markup.replace("Python", "JAVA"), markup.replace("hello", "helloo"), markup.replace("Pass", "Fail"), markup.replace("08:26", "08:27"), markup.replace(`userInformationPopup('${uid}')`, "userInformationPopup('OtherUser')")])
+      assert.equal(await hydrateSweaCandidate(candidate, identity, async url => response(invalid, url)), null);
+  } finally { restore(); }
+});
+
 test("SWEA never reports ready after a missing page, redirect, or other owner", async () => {
   const restore = installedDomParser();
   try {

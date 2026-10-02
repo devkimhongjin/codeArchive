@@ -244,9 +244,11 @@ export async function hydrateSweaCandidateResult(candidate: SweaHistoryCandidate
   const clubTitle = clubTitles.length === 1 ? clubTitles[0]!.cloneNode(true) as HTMLElement : null;
   clubTitle?.querySelectorAll(".badge").forEach(item => item.remove());
   const matchesTitle = candidate.solvingClub ? text(clubTitle) === candidate.title : !!title && title.problemNumber === candidate.problemNumber && title.title === candidate.title;
-  const brushLanguage = source?.className.match(/^brush:\s*([^\s;]+)/)?.[1] ?? "";
+  // SWEA renders Python submissions with its cpp brush. Highlighting is
+  // presentation, not the submitted language; the native detail row below
+  // must still exactly match the selected language and submission metadata.
   if (!row || !source || !matchesTitle ||
-      canonicalLanguageKey(brushLanguage) !== canonicalLanguageKey(candidate.language) || sweaDisplayedCodeLength(sourceCode) !== candidate.codeByteLength) return { status: "SOURCE_UNAVAILABLE" };
+      sweaDisplayedCodeLength(sourceCode) !== candidate.codeByteLength) return { status: "SOURCE_UNAVAILABLE" };
   const again = rowCandidate(row, candidate, identity);
   if (!again || again.submissionId !== candidate.submissionId || again.solvedAt !== candidate.solvedAt || again.language !== candidate.language || again.codeByteLength !== candidate.codeByteLength) return { status: "SOURCE_UNAVAILABLE" };
   const problemUrl = new URL(candidate.solvingClub ? `${ORIGIN}/main/talk/solvingClub/problemView.do` : `${ORIGIN}/main/code/${candidate.userProblem ? "userProblem/userProblemDetail" : "problem/problemDetail"}.do`);
