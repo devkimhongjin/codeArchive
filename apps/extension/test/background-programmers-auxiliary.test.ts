@@ -24,7 +24,7 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
   let sendResult: (tabId: number, message: unknown) => Promise<unknown> = async () => ({ accountId: "947840" });
   const tabs = new Map<number, { id: number; url?: string; status?: string }>([[sourceTabId, { id: sourceTabId, url: sourceUrl, status: "complete" }]]);
   const removed: number[] = [];
-  const creates: Array<{ url: string; active: boolean }> = [];
+  const creates: Array<{ url: string; active: boolean; windowId: number }> = [];
   const sent: Array<{ tabId: number; message: unknown; options: unknown }> = [];
   let injections = 0;
   let sourceQueries = 0;
@@ -35,10 +35,8 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
   };
   const fakeChrome = {
     windows: {
-      create: async ({ url, type, focused }: { url: string; type: string; focused: boolean }) => {
-        assert.equal(type, "popup"); assert.equal(focused, true);
-        const created = await fakeChrome.tabs.create({ url, active: true });
-        return { id: created.id, tabs: [created] };
+      create: async () => {
+        throw new Error("per-problem popup must never be opened");
       }
     },
     runtime: {
@@ -53,14 +51,14 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
       remove: async (key: string) => { delete session[key]; }
     } },
     tabs: {
-      create: async ({ url, active }: { url: string; active: boolean }) => {
-        creates.push({ url, active });
+      create: async ({ url, active, windowId }: { url: string; active: boolean; windowId: number }) => {
+        creates.push({ url, active, windowId });
         const created = await createResult(url);
         if (Number.isSafeInteger(created.id)) tabs.set(created.id!, { ...created, id: created.id! });
         return created;
       },
       get: async (tabId: number) => {
-        if (tabId === sourceTabId) return { id: sourceTabId, url: sourceCurrentUrl, status: "complete" };
+        if (tabId === sourceTabId) return { id: sourceTabId, windowId: 9, url: sourceCurrentUrl, status: "complete" };
         const tab = tabs.get(tabId); if (!tab) throw new Error("tab missing");
         return tab;
       },
@@ -102,7 +100,7 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
     assert.equal(sent[0]!.tabId, 31);
     assert.deepEqual(sent[0]!.options, { frameId: 0 });
     assert.deepEqual(removed, [31]);
-    assert.deepEqual(creates[0], { url: lessonUrl, active: true });
+    assert.deepEqual(creates[0], { url: lessonUrl, active: true, windowId: 9 });
 
     session[routeKey] = { ...preservedScanningRoute, status: "IMPORTING" };
     const preservedImportingRoute = structuredClone(session[routeKey]);

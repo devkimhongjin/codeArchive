@@ -2,6 +2,7 @@ import { PROGRAMMERS_CODE_SELECTOR, PROGRAMMERS_LESSON_PATH, PROGRAMMERS_ORIGIN,
 import { SWEA_EDITOR_SELECTORS, SWEA_ORIGIN, SWEA_SOLVING_PATH, SWEA_SUBMIT_SELECTORS } from "./adapters/sweaSelectors";
 import { JUNGOL_ORIGIN, JUNGOL_PROBLEM_PATH, JUNGOL_SOURCE_SELECTOR, jungolSelectedLanguage, jungolSubmitControl } from "./adapters/jungolSelectors";
 import { BUILD_METADATA } from "../../../shared/buildMetadata";
+import { installProgrammersHistorySource } from "./programmersHistorySource";
 
 export const EDITOR_SYNC_ATTRIBUTE = "data-codearchive-editor-sync";
 
@@ -84,11 +85,11 @@ function syncProgrammers(document: Document): boolean {
 }
 
 /**
- * History source is read only from the Monaco model belonging to the selected
- * history row.  In particular, `#code` is the current solution editor and is
- * never a fallback for an older submission.
+ * Read the selected history model, or its exact native response when the
+ * site's ESM Monaco instance has no global API. `#code` is the current editor
+ * and is never a fallback for an older submission.
  */
-export function syncProgrammersHistoryModel(document: Document, window: MainWorldWindow): boolean {
+export function syncProgrammersHistoryModel(document: Document, window: MainWorldWindow, readObservedSource?: (uri: string) => string | null): boolean {
   try {
     const root = document.documentElement;
     const requestedUri = root?.dataset.codearchiveProgrammersHistoryUri ?? "";
@@ -101,8 +102,8 @@ export function syncProgrammersHistoryModel(document: Document, window: MainWorl
     if (editors.length !== 1) return false;
     const api = typeof monaco !== "undefined" ? monaco : window.monaco;
     const models = api?.editor?.getModels?.().filter(model => model.uri.toString() === requestedUri) ?? [];
-    if (models.length !== 1) return false;
-    const sourceCode = models[0]?.getValue();
+    if (models.length > 1) return false;
+    const sourceCode = models.length === 1 ? models[0]?.getValue() : readObservedSource?.(requestedUri);
     if (typeof sourceCode !== "string" || !sourceCode.trim() || sourceCode.length > 1_000_000) return false;
     let target = document.querySelector<HTMLTextAreaElement>('textarea[data-codearchive-programmers-history-source]');
     if (!target) {
@@ -240,13 +241,28 @@ export function installMainWorldSync(document: Document, location: Location, win
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", markReady, { once: true });
   else markReady();
   const removeJungolObserver = location?.origin === JUNGOL_ORIGIN ? installJungolJudgeObserver(document, location, window) : () => {};
+  const historySource = location?.origin === PROGRAMMERS_ORIGIN ? installProgrammersHistorySource(document, location, window) : null;
+  let historyRetry: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+  const readHistorySource = () => {
+    if (historyRetry !== undefined) clearTimeout(historyRetry);
+    const stamp = document.documentElement?.dataset.codearchiveProgrammersHistoryRequest;
+    let attempts = 0;
+    const attempt = () => {
+      historyRetry = undefined;
+      if (disposed || !isProgrammers(location) || !stamp || document.documentElement?.dataset.codearchiveProgrammersHistoryRequest !== stamp) return;
+      if (syncProgrammersHistoryModel(document, window, historySource?.read) || ++attempts >= 100) return;
+      historyRetry = setTimeout(attempt, 100);
+    };
+    attempt();
+  };
   const onClick = (event: Event) => {
     if (submitTarget(event.target, document, location)) void syncEditorAtSubmitClick(document, location, window);
   };
   document.addEventListener("click", onClick, true);
   const MutationObserverConstructor = document.defaultView?.MutationObserver ?? globalThis.MutationObserver;
   const historySourceObserver = MutationObserverConstructor ? new MutationObserverConstructor(() => {
-    if (isProgrammers(location)) syncProgrammersHistoryModel(document, window);
+    if (isProgrammers(location)) readHistorySource();
   }) : null;
   let observingHistoryRoot = false;
   const observeHistoryRoot = () => {
@@ -258,6 +274,9 @@ export function installMainWorldSync(document: Document, location: Location, win
   observeHistoryRoot();
   if (!observingHistoryRoot) document.addEventListener("DOMContentLoaded", observeHistoryRoot, { once: true });
   return () => {
+    disposed = true;
+    if (historyRetry !== undefined) clearTimeout(historyRetry);
+    historySource?.cleanup();
     document.removeEventListener("click", onClick, true);
     document.removeEventListener("DOMContentLoaded", observeHistoryRoot);
     historySourceObserver?.disconnect();

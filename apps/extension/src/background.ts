@@ -311,10 +311,12 @@ async function runProgrammersAuxiliary(sender: chrome.runtime.MessageSender, mes
   const prior = programmersAuxiliaryRuns.get(sourceTabId); if (prior) return { ok: false, error: "BUSY" };
   const run: ProgrammersAuxiliaryRun = { sourceTabId, generation: ++nextProgrammersAuxiliaryGeneration, lessonUrl, cancelled: false, cleaned: false }; programmersAuxiliaryRuns.set(sourceTabId, run);
   try {
-    // A separate visible window keeps the lesson active without replacing or
-    // backgrounding the collection screen. Close only our lesson tab below.
-    const createdWindow = await chrome.windows.create({ url: lessonUrl, type: "popup", focused: true, width: 1100, height: 800 });
-    const created = createdWindow?.tabs?.length === 1 ? createdWindow.tabs[0] : undefined;
+    const sourceTab = await chrome.tabs.get(sourceTabId);
+    if (!Number.isSafeInteger(sourceTab.windowId) || sourceTab.url !== sender.url || run.cancelled)
+      return { ok: false, error: "INTERRUPTED" };
+    // Keep auxiliary lessons in the existing source window, leaving the
+    // collection window visible. Never create a popup for each problem.
+    const created = await chrome.tabs.create({ url: lessonUrl, active: true, windowId: sourceTab.windowId });
     if (!created || !Number.isSafeInteger(created.id)) return { ok: false, error: "OPEN_FAILED" };
     run.auxiliaryTabId = created.id!;
     if (run.cancelled) return { ok: false, error: "INTERRUPTED" };
