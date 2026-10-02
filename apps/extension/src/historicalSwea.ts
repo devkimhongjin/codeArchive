@@ -176,7 +176,19 @@ function verifiedSourceCode(responseSource: string, bytes: number): string | nul
   const matches = new Set<string>();
   for (const value of new Set([responseSource, htmlSource])) {
     for (const start of [value, value.trimStart()]) {
-      for (const end of [start, start.replace(/[ \t]+$/, ""), start.trimEnd()]) {
+      const endings = new Set([start, start.replace(/[ \t]+$/, ""), start.trimEnd()]);
+      // A template newline may follow the source's own final newline(s).
+      // Preserve every intermediate suffix instead of keeping all or none.
+      // Only remove complete boundary line endings; never insert characters.
+      let ending = start;
+      for (let lines = 0; lines < 64; lines++) {
+        const next = ending.replace(/(?:\r\n|\r|\n)[ \t]*$/, "");
+        if (next === ending) break;
+        endings.add(next);
+        endings.add(next.replace(/[ \t]+$/, ""));
+        ending = next;
+      }
+      for (const end of endings) {
         if (end.trim() && exact(end)) matches.add(end);
       }
     }

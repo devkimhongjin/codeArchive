@@ -55,6 +55,19 @@ test("SWEA refuses equally sized boundary interpretations rather than guessing t
   } finally { restore(); }
 });
 
+test("SWEA preserves submitted final blank lines when a template adds one more newline", async () => {
+  const restore = installedDomParser();
+  try {
+    for (const newline of ["\n", "\r\n"]) {
+      const code = `import X;${newline}class Main {${newline}\tint x = 1;${newline}}${newline}${newline}`;
+      const candidate = { submissionId: "Submission00010001", problemNumber: "1", title: "Problem 1", contestProbId: "KeyAAAAAAA1", userProblem: true, language: "JAVA", solvedAt: "2026-09-28 08:26:00.000+09:00", codeByteLength: code.length };
+      const markup = detail(1, `${newline}\t\t\t${code}${newline}\t\t`).replace('id="problemForm"', 'id="contestProbForm"').replace("5B", `${code.length}B`);
+      const captured = await hydrateSweaCandidate(candidate, { userId: uid, nickname: nick }, async url => response(markup, url));
+      assert.equal(captured?.sourceCode, code, "retain both submitted final line endings and remove only the template suffix");
+    }
+  } finally { restore(); }
+});
+
 const clubContext = { solveclubId: "FixtureClub123", probBoxId: "FixtureBox456", problemBoxTitle: " [난이도 상] SW 전공 자율" };
 function clubPage(page: number) {
   // The observed five-page profile has one BOX card on page 3 and eight on
