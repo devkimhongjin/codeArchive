@@ -67,6 +67,30 @@ test('historical submission lookup issues only the selected verified local captu
   assert.equal((await store.getCapture(historical.captureId))?.syncState, 'SYNCED');
 });
 
+test('all-platform historical metadata is code-free, read-only, and selected lookup authorizes ACK', async () => {
+  const store = new MemoryCaptureStore();
+  const identities = { SWEA: 'AaCkP4oKpD3HBISr', PROGRAMMERS: 'pg:account:123:2026-01-01T00:00:00.000+09:00:java' } as const;
+  const captures = [];
+  for (const platform of ['SWEA', 'PROGRAMMERS'] as const) {
+    const capture = createCapture({ platform, problemNumber: '123', title: 'history', problemUrl: 'https://example.test/123', language: 'Java', sourceCode: 'private raw code', result: 'ACCEPTED', historicalImport: true, historicalSubmissionId: identities[platform] });
+    assert.ok(capture); captures.push(capture); await store.putCapture(capture);
+  }
+  const bridge = new DashboardBridge(store);
+  const connected = await bridge.handleMessage({ type: 'CONNECT' }, sender()); assert.ok('capability' in connected);
+  const metadata = await bridge.handleMessage({ type: 'GET_HISTORICAL_METADATA', capability: connected.capability }, sender());
+  assert.ok('records' in metadata); assert.equal(metadata.records.length, 2);
+  assert.equal(JSON.stringify(metadata).includes('sourceCode'), false);
+  assert.deepEqual(await bridge.handleMessage({ type: 'ACK', capability: connected.capability, captureIds: [captures[0]!.captureId] }, sender()), { error: 'BAD_REQUEST' });
+  assert.deepEqual(await bridge.handleMessage({ type: 'GET_HISTORICAL_METADATA', capability: connected.capability }, sender('other')), { error: 'UNAUTHORIZED' });
+  for (const capture of captures) {
+    assert.deepEqual(await bridge.handleMessage({ type: 'GET_HISTORICAL_SUBMISSION_IDS', capability: connected.capability, platform: capture.platform }, sender()), { localOnly: true, submissionIds: [capture.historicalSubmissionId] });
+    const response = await bridge.handleMessage({ type: 'GET_HISTORICAL_BY_SUBMISSION_IDS', capability: connected.capability, platform: capture.platform, submissionIds: [capture.historicalSubmissionId] }, sender());
+    assert.ok('captures' in response); assert.equal(response.captures[0]!.captureId, capture.captureId);
+    assert.deepEqual(await bridge.handleMessage({ type: 'ACK', capability: connected.capability, captureIds: [capture.captureId] }, sender()), { ok: true });
+  }
+  assert.deepEqual(await bridge.handleMessage({ type: 'GET_HISTORICAL_BY_SUBMISSION_IDS', capability: connected.capability, platform: 'SWEA', submissionIds: [identities.PROGRAMMERS] }, sender()), { error: 'BAD_REQUEST' });
+});
+
 test('historical summary counts all retained captures by platform without returning source or issuing ACK', async () => {
   const store = new MemoryCaptureStore();
   const first = createCapture({ platform: 'JUNGOL', problemNumber: '1520', title: 'current', problemUrl: 'https://jungol.co.kr/problem/1520', language: 'Java', sourceCode: 'class Current {}', result: 'ACCEPTED' });
@@ -93,27 +117,26 @@ test('historical summary counts all retained captures by platform without return
   assert.equal(await store.countPending(), 0);
 });
 
-test('historical preview and import require the exact dashboard capability and bounded submission IDs', async () => {
+test('dashboard capability can open the extension page but cannot start a source-tab collection job', async () => {
   const store = new MemoryCaptureStore();
   const calls: string[] = [];
   const bridge = new DashboardBridge(store, {
     onHistoryPreview: async platform => { calls.push(`preview:${platform}`); return { status: 'READY', candidates: [] }; },
     onHistoryScanStart: async () => { calls.push('scan:start'); return { status: 'SCANNING', progress: { phase: 'pages', rows: 13 } }; },
     onHistoryScanStatus: async () => { calls.push('scan:status'); return { status: 'READY', candidates: [] }; },
-    onHistoryImport: async ids => { calls.push(`import:${ids.join(',')}`); return { status: 'DONE', saved: ids.length }; }
+    onHistoryImport: async ids => { calls.push(`import:${ids.join(',')}`); return { status: 'DONE', saved: ids.length }; },
+    onOpenHistory: async () => ({ status: 'OPENED' })
   });
   const connected = await bridge.handleMessage({ type: 'CONNECT' }, sender());
   assert.ok('capability' in connected);
   assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_PREVIEW', capability: connected.capability, platform: 'JUNGOL' }, sender('other')), { error: 'UNAUTHORIZED' });
   assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_SCAN_START', capability: connected.capability, platform: 'JUNGOL' }, sender('other')), { error: 'UNAUTHORIZED' });
-  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_SCAN_START', capability: connected.capability, platform: 'SWEA' }, sender()), { error: 'BAD_REQUEST' });
-  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_SCAN_START', capability: connected.capability, platform: 'JUNGOL' }, sender()), { history: { status: 'SCANNING', progress: { phase: 'pages', rows: 13 } } });
-  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_SCAN_STATUS', capability: connected.capability, platform: 'JUNGOL' }, sender()), { history: { status: 'READY', candidates: [] } });
-  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_IMPORT', capability: connected.capability, platform: 'JUNGOL', submissionIds: ['1', '1'] }, sender()), { error: 'BAD_REQUEST' });
-  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_IMPORT', capability: connected.capability, platform: 'SWEA', submissionIds: ['1'] }, sender()), { error: 'BAD_REQUEST' });
-  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_PREVIEW', capability: connected.capability, platform: 'SWEA' }, sender()), { history: { status: 'READY', candidates: [] } });
-  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_IMPORT', capability: connected.capability, platform: 'JUNGOL', submissionIds: ['123'] }, sender()), { history: { status: 'DONE', saved: 1 } });
-  assert.deepEqual(calls, ['scan:start', 'scan:status', 'preview:SWEA', 'import:123']);
+  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_SCAN_START', capability: connected.capability, platform: 'SWEA' }, sender()), { error: 'HISTORY_UNAVAILABLE' });
+  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_SCAN_START', capability: connected.capability, platform: 'JUNGOL' }, sender()), { error: 'HISTORY_UNAVAILABLE' });
+  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_SCAN_STATUS', capability: connected.capability, platform: 'JUNGOL' }, sender()), { error: 'HISTORY_UNAVAILABLE' });
+  assert.deepEqual(await bridge.handleMessage({ type: 'HISTORY_IMPORT', capability: connected.capability, platform: 'JUNGOL', submissionIds: ['123'] }, sender()), { error: 'HISTORY_UNAVAILABLE' });
+  assert.deepEqual(await bridge.handleMessage({ type: 'OPEN_HISTORY', capability: connected.capability }, sender()), { history: { status: 'OPENED' } });
+  assert.deepEqual(calls, []);
 });
 
 test('heartbeat is capability-bound, exposes no captures and keeps absolute expiry', async () => {

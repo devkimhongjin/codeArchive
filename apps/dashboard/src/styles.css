@@ -333,3 +333,10 @@ h1, h2, p { margin-top: 0; }
 .historical-import-saved ul { display: grid; gap: 7px; max-height: 320px; overflow: auto; margin: 0; padding: 0; list-style: none; }
 .historical-import-saved li { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
 .historical-import-saved li span { color: var(--muted); font-size: 11px; }
+/* Retain batch operations when navigating to another dashboard view. */
+[hidden] { display: none !important; }
+.history-batch-progress { display: flex; align-items: center; gap: 12px; margin: 16px 0; }
+.history-batch-progress progress { flex: 1; height: 12px; accent-color: var(--accent, #3154bc); }
+.history-commit-preview { border: 1px solid var(--border, #dbe2ee); border-radius: 12px; padding: 20px; margin-top: 16px; }
+.history-commit-preview ul { max-height: 240px; overflow: auto; overflow-wrap: anywhere; }
+.historical-import-list { max-height: 360px; overflow: auto; }

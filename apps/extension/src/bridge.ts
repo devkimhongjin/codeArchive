@@ -4,6 +4,7 @@ import type { CaptureStore, CaptureSummary } from "./storage";
 import type { Platform } from "./types";
 import { BUILD_METADATA } from "../../../shared/buildMetadata";
 import { normalizedHeaderFields, type HeaderField } from "../../../shared/headerFields";
+import { isHistoricalSubmissionId } from "./historicalIdentity";
 
 export const DASHBOARD_ORIGIN = "https://codearchive-dashboard-beta.netlify.app";
 export const DASHBOARD_ORIGINS = [
@@ -23,8 +24,11 @@ export type DashboardMessage =
   | { type: "GET_LOCAL_ARCHIVE"; capability: string; limit?: number }
   | { type: "GET_HISTORICAL_ARCHIVE"; capability: string; limit?: number }
   | { type: "GET_HISTORICAL_SUMMARY"; capability: string }
-  | { type: "GET_HISTORICAL_SUBMISSION_IDS"; capability: string; platform: "JUNGOL" }
-  | { type: "GET_HISTORICAL_BY_SUBMISSION_IDS"; capability: string; platform: "JUNGOL"; submissionIds: string[] }
+  | { type: "GET_HISTORICAL_METADATA"; capability: string }
+  | { type: "GET_HISTORICAL_SUBMISSION_IDS"; capability: string; platform: Platform }
+  | { type: "GET_HISTORICAL_BY_SUBMISSION_IDS"; capability: string; platform: Platform; submissionIds: string[] }
+  /** Opens the extension-owned local collection page. This deliberately exposes no scan/import command to the dashboard. */
+  | { type: "OPEN_HISTORY"; capability: string }
   | { type: "HISTORY_PREVIEW"; capability: string; platform: "SWEA" | "JUNGOL" | "PROGRAMMERS" }
   | { type: "HISTORY_SCAN_START" | "HISTORY_SCAN_STATUS"; capability: string; platform: "JUNGOL" }
   | { type: "HISTORY_IMPORT"; capability: string; platform: "JUNGOL"; submissionIds: string[] }
@@ -48,6 +52,7 @@ export type BridgeResponse =
   | { captures: Capture[]; totalCount: number; localOnly: true }
   | { summary: Record<Platform, CaptureSummary>; localOnly: true }
   | { submissionIds: string[]; localOnly: true }
+  | { records: Array<Pick<Capture, "captureId" | "platform" | "historicalSubmissionId" | "problemNumber" | "title" | "language" | "solvedAt">>; localOnly: true }
   | { reused: boolean }
   | { history: unknown }
   | { ok: true }
@@ -77,6 +82,7 @@ export interface DashboardBridgeOptions {
   onHistoryScanStart?: () => Promise<unknown>;
   onHistoryScanStatus?: () => Promise<unknown>;
   onHistoryImport?: (submissionIds: string[]) => Promise<unknown>;
+  onOpenHistory?: () => Promise<unknown>;
 }
 
 function exactDashboardSender(sender: DashboardSender): boolean {
@@ -112,7 +118,7 @@ function asObject(value: unknown): Record<string, unknown> | null {
 }
 
 function isMessageType(value: unknown): value is DashboardMessage["type"] {
-  return value === "CONNECT" || value === "PING" || value === "GET_STATUS" || value === "GET_PENDING" || value === "GET_LOCAL_ARCHIVE" || value === "GET_HISTORICAL_ARCHIVE" || value === "GET_HISTORICAL_SUMMARY" || value === "GET_HISTORICAL_SUBMISSION_IDS" || value === "GET_HISTORICAL_BY_SUBMISSION_IDS" || value === "HISTORY_PREVIEW" || value === "HISTORY_SCAN_START" || value === "HISTORY_SCAN_STATUS" || value === "HISTORY_IMPORT" || value === "REUSE_RELAY" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
+  return value === "CONNECT" || value === "PING" || value === "GET_STATUS" || value === "GET_PENDING" || value === "GET_LOCAL_ARCHIVE" || value === "GET_HISTORICAL_ARCHIVE" || value === "GET_HISTORICAL_SUMMARY" || value === "GET_HISTORICAL_METADATA" || value === "GET_HISTORICAL_SUBMISSION_IDS" || value === "GET_HISTORICAL_BY_SUBMISSION_IDS" || value === "OPEN_HISTORY" || value === "HISTORY_PREVIEW" || value === "HISTORY_SCAN_START" || value === "HISTORY_SCAN_STATUS" || value === "HISTORY_IMPORT" || value === "REUSE_RELAY" || value === "ACK" || value === "CONFIGURE_RELAY" || value === "DISCONNECT";
 }
 
 export class DashboardBridge {
@@ -126,6 +132,7 @@ export class DashboardBridge {
   private readonly onHistoryScanStart?: () => Promise<unknown>;
   private readonly onHistoryScanStatus?: () => Promise<unknown>;
   private readonly onHistoryImport?: (submissionIds: string[]) => Promise<unknown>;
+  private readonly onOpenHistory?: () => Promise<unknown>;
 
   constructor(private readonly store: CaptureStore, options: DashboardBridgeOptions = {}) {
     this.now = options.now ?? (() => Date.now());
@@ -137,6 +144,7 @@ export class DashboardBridge {
     this.onHistoryScanStart = options.onHistoryScanStart;
     this.onHistoryScanStatus = options.onHistoryScanStatus;
     this.onHistoryImport = options.onHistoryImport;
+    this.onOpenHistory = options.onOpenHistory;
   }
 
   async handleMessage(message: unknown, sender: DashboardSender): Promise<BridgeResponse> {
@@ -159,26 +167,25 @@ export class DashboardBridge {
 
     if (type === "PING") return { ok: true };
 
-    if (type === "HISTORY_PREVIEW") {
-      if ((object?.platform !== "SWEA" && object?.platform !== "JUNGOL" && object?.platform !== "PROGRAMMERS") || !this.onHistoryPreview) return { error: "BAD_REQUEST" };
-      try { return { history: await this.onHistoryPreview(object.platform) }; }
+    if (type === "OPEN_HISTORY") {
+      if (!this.onOpenHistory) return { error: "BAD_REQUEST" };
+      try { return { history: await this.onOpenHistory() }; }
       catch { return { error: "HISTORY_UNAVAILABLE" }; }
+    }
+
+    if (type === "HISTORY_PREVIEW") {
+      // Historical collection is extension-owned. Legacy dashboard callers
+      // receive an explicit unavailable response instead of attaching to a
+      // source-tab job that may be running independently of their document.
+      return { error: "HISTORY_UNAVAILABLE" };
     }
 
     if (type === "HISTORY_SCAN_START" || type === "HISTORY_SCAN_STATUS") {
-      if (object?.platform !== "JUNGOL") return { error: "BAD_REQUEST" };
-      const action = type === "HISTORY_SCAN_START" ? this.onHistoryScanStart : this.onHistoryScanStatus;
-      if (!action) return { error: "BAD_REQUEST" };
-      try { return { history: await action() }; }
-      catch { return { error: "HISTORY_UNAVAILABLE" }; }
+      return { error: "HISTORY_UNAVAILABLE" };
     }
 
     if (type === "HISTORY_IMPORT") {
-      const ids = object?.submissionIds;
-      if (object?.platform !== "JUNGOL" || !this.onHistoryImport || !Array.isArray(ids) || ids.length < 1 || ids.length > 10 ||
-          ids.some(id => typeof id !== "string" || !/^\d{1,40}$/.test(id)) || new Set(ids).size !== ids.length) return { error: "BAD_REQUEST" };
-      try { return { history: await this.onHistoryImport(ids as string[]) }; }
-      catch { return { error: "HISTORY_UNAVAILABLE" }; }
+      return { error: "HISTORY_UNAVAILABLE" };
     }
 
     if (type === "GET_STATUS") {
@@ -280,16 +287,30 @@ export class DashboardBridge {
       return { summary: await this.store.historicalSummary(), localOnly: true };
     }
 
+    if (type === "GET_HISTORICAL_METADATA") {
+      const records = [];
+      for (const platform of ["JUNGOL", "SWEA", "PROGRAMMERS"] as const) {
+        const ids = await this.store.listHistoricalSubmissionIds(platform);
+        const captures = await this.store.listHistoricalBySubmissionIds(platform, ids);
+        records.push(...captures.map(({ captureId, platform, historicalSubmissionId, problemNumber, title, language, solvedAt }) =>
+          ({ captureId, platform, historicalSubmissionId, problemNumber, title, language, solvedAt })));
+      }
+      // Metadata reads never issue ACK authority or expose code.
+      return { records, localOnly: true };
+    }
+
     if (type === "GET_HISTORICAL_SUBMISSION_IDS") {
-      if (object?.platform !== "JUNGOL") return { error: "BAD_REQUEST" };
-      return { submissionIds: await this.store.listHistoricalSubmissionIds("JUNGOL"), localOnly: true };
+      const platform = object?.platform;
+      if (platform !== "JUNGOL" && platform !== "SWEA" && platform !== "PROGRAMMERS") return { error: "BAD_REQUEST" };
+      return { submissionIds: await this.store.listHistoricalSubmissionIds(platform), localOnly: true };
     }
 
     if (type === "GET_HISTORICAL_BY_SUBMISSION_IDS") {
       const ids = object?.submissionIds;
-      if (object?.platform !== "JUNGOL" || !Array.isArray(ids) || ids.length < 1 || ids.length > MAX_PENDING_PAGE_SIZE ||
-          ids.some(id => typeof id !== "string" || !/^\d{1,40}$/.test(id)) || new Set(ids).size !== ids.length) return { error: "BAD_REQUEST" };
-      const captures = await this.store.listHistoricalBySubmissionIds("JUNGOL", ids as string[]);
+      const platform = object?.platform;
+      if ((platform !== "JUNGOL" && platform !== "SWEA" && platform !== "PROGRAMMERS") || !Array.isArray(ids) || ids.length < 1 || ids.length > MAX_PENDING_PAGE_SIZE ||
+          ids.some(id => !isHistoricalSubmissionId(platform, id)) || new Set(ids).size !== ids.length) return { error: "BAD_REQUEST" };
+      const captures = await this.store.listHistoricalBySubmissionIds(platform, ids as string[]);
       for (const capture of captures) session.issuedCaptureIds.add(capture.captureId);
       return { captures, totalCount: captures.length, localOnly: true };
     }

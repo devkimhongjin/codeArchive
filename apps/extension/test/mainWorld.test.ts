@@ -9,6 +9,7 @@ import {
   EDITOR_SYNC_ATTRIBUTE,
   installJungolJudgeObserver,
   installMainWorldSync,
+  syncProgrammersHistoryModel,
   syncEditorAtSubmitClick
 } from "../src/mainWorld";
 
@@ -110,6 +111,54 @@ test("MAIN-world listener is exact-submit scoped and has no page-wide command ch
   document.querySelector("#submit-code")!.dispatchEvent(click());
   assert.match(document.documentElement.getAttribute(EDITOR_SYNC_ATTRIBUTE) ?? "", /^synced:/);
   cleanup();
+});
+
+test("MAIN-world history observer waits for the document root and cleans up its fallback listener", () => {
+  let rootAvailable = false; let observedRoot: unknown = null; let disconnected = false;
+  const listeners = new Map<string, Set<EventListener>>();
+  const root = { setAttribute() {} };
+  class Observer {
+    constructor(_callback: MutationCallback) {}
+    observe(target: Node) { observedRoot = target; }
+    disconnect() { disconnected = true; }
+  }
+  const document = {
+    readyState: "loading",
+    get documentElement() { return rootAvailable ? root : null; },
+    defaultView: { MutationObserver: Observer },
+    addEventListener(type: string, callback: EventListener) { const callbacks = listeners.get(type) ?? new Set<EventListener>(); callbacks.add(callback); listeners.set(type, callbacks); },
+    removeEventListener(type: string, callback: EventListener) { listeners.get(type)?.delete(callback); }
+  } as unknown as Document;
+  const cleanup = installMainWorldSync(document, locationFor("https://school.programmers.co.kr/learn/courses/30/lessons/42842"));
+  assert.equal(observedRoot, null);
+  rootAvailable = true;
+  for (const callback of listeners.get("DOMContentLoaded") ?? []) callback(new Event("DOMContentLoaded"));
+  assert.equal(observedRoot, root);
+  cleanup();
+  assert.equal(disconnected, true);
+  assert.equal(listeners.get("DOMContentLoaded")?.size, 1, "only the browser-managed once listener remains in this minimal fake document");
+});
+
+test("MAIN-world Programmers history bridge reads only the requested selected-row Monaco model", () => {
+  const { document } = parseHTML(`<html><body><textarea id="code">CURRENT EDITOR</textarea>
+    <div class="submission-history-wrapper"><div class="SubmissionListstyle__ListRow"><div class="ListItemCodeWrapper">
+      <div class="monaco-editor" role="code" data-uri="inmemory://model/1">partial visible lines</div>
+    </div></div></div></body></html>`);
+  const root = document.documentElement;
+  root.dataset.codearchiveProgrammersHistoryRequest = "inmemory://model/1:17";
+  root.dataset.codearchiveProgrammersHistoryUri = "inmemory://model/1";
+  const window = { monaco: { editor: { getModels: () => [
+    { uri: { toString: () => "inmemory://model/2" }, getValue: () => "CURRENT MODEL" },
+    { uri: { toString: () => "inmemory://model/1" }, getValue: () => "FULL SELECTED HISTORY SOURCE" }
+  ] } } } as unknown as Window;
+  assert.equal(syncProgrammersHistoryModel(document, window), true);
+  const source = document.querySelector<HTMLTextAreaElement>("textarea[data-codearchive-programmers-history-source]")!;
+  assert.equal(source.value, "FULL SELECTED HISTORY SOURCE");
+  assert.equal(source.dataset.codearchiveProgrammersHistoryUri, "inmemory://model/1");
+  assert.equal(source.dataset.codearchiveProgrammersHistoryRequest, "inmemory://model/1:17");
+  assert.match(root.getAttribute("data-codearchive-programmers-history-response") ?? "", /^inmemory:\/\/model\/1:17:\d+$/);
+  root.dataset.codearchiveProgrammersHistoryRequest = "inmemory://model/1:stale";
+  assert.equal(syncProgrammersHistoryModel(document, window), false, "a stale or malformed request cannot reuse a prior source");
 });
 
 test("MAIN-world Programmers listener stays ready after a same-document lesson navigation", () => {

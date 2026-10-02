@@ -4,7 +4,7 @@
   "version": "0.2.1",
   "description": "Capture accepted algorithm solutions locally for CodeArchive.",
   "minimum_chrome_version": "120",
-  "permissions": ["downloads", "alarms", "storage"],
+  "permissions": ["downloads", "alarms", "storage", "scripting"],
   "host_permissions": [
     "https://swexpertacademy.com/*",
     "https://school.programmers.co.kr/*",

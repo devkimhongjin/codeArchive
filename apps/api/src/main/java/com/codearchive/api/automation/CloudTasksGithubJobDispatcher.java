@@ -42,13 +42,19 @@ final class CloudTasksGithubJobDispatcher implements GithubJobDispatcher {
 
     @Override
     public void dispatch(Long jobId) {
+        dispatch(jobId, 0);
+    }
+
+    @Override
+    public void dispatch(Long jobId, int deliveryGeneration) {
         if (jobId == null || jobId < 1) {
             throw new IllegalArgumentException("A durable GitHub job id is required");
         }
+        if (deliveryGeneration < 0) throw new IllegalArgumentException("Invalid delivery generation");
         GithubAutomationProperties.CloudTasks cloudTasks = properties.getCloudTasks();
         String queue = QueueName.of(cloudTasks.getProjectId(), cloudTasks.getLocation(), cloudTasks.getQueueName())
                 .toString();
-        String taskName = queue + "/tasks/github-job-" + jobId;
+        String taskName = queue + "/tasks/github-job-" + jobId + (deliveryGeneration == 0 ? "" : "-retry-" + deliveryGeneration);
         // The task contains only the opaque durable job id. Source, GitHub material,
         // settings, and identities remain in the database.
         String body = "{\"jobId\":" + jobId + "}";

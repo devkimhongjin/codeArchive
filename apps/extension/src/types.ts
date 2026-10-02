@@ -29,7 +29,7 @@ export interface Capture {
   syncedAt?: string;
   /** Imported from a verified earlier submission; never relayed or downloaded automatically. */
   historicalImport?: boolean;
-  /** Site submission identity retained for historical Jungol retry deduplication. */
+  /** Site submission identity retained for historical local deduplication. */
   historicalSubmissionId?: string;
 }
 

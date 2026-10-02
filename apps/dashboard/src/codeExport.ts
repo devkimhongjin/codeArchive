@@ -41,7 +41,7 @@ export function downloadFilename(solution: Solution, template: string, profile: 
 }
 
 /** Git paths are deliberately separate from download names and always relative. */
-export function gitPath(solution: Solution, template: string, profile: ExportProfile = {}): string | null {
+export function gitPath(solution: Pick<Solution, 'captureId' | 'platform' | 'problemNumber' | 'title' | 'language' | 'solvedAt' | 'observedAt'>, template: string, profile: ExportProfile = {}): string | null {
   const values: Record<string, string> = { platform: solution.platform, number: solution.problemNumber, title: solution.title, language: solution.language, name: profile.name?.trim() ?? '', nickname: profile.nickname?.trim() ?? '', id: profile.id == null ? '' : String(profile.id), time: gitPathTime(solution.solvedAt ?? solution.observedAt), capture_ID: solution.captureId }
   Object.keys(values).forEach(key => { values[key] = gitPathToken(values[key]) })
   const raw = (template || DEFAULT_EXPORT_SETTINGS.gitPathTemplate!).replace(/\{([^{}]+)\}/g, (_, token: string) => values[token] ?? '')
