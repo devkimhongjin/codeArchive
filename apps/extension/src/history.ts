@@ -10,7 +10,7 @@ type State = { status: string; candidates?: Candidate[]; truncated?: boolean; pr
 }; completed?: number; total?: number; saved?: number; duplicate?: number;
   startedAt?: number; endedAt?: number; lastProgressAt?: number; timingSample?: unknown;
   failureReason?: string; failurePage?: number; failedProblemNumber?: string;
-  skipped?: number; failedSubmissionIds?: string[];
+  skipped?: number; failedSubmissionIds?: string[]; verificationFailures?: Record<string, number>;
   problemCount?: number; submissionCount?: number; unsupportedProblemNumbers?: string[] };
 export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
   schedule?: (work: () => void, delay: number) => unknown; now?: () => number;
@@ -19,7 +19,7 @@ export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
 const platformInfo: Record<Platform, { href: string; linkLabel: string; description: string; guide: string }> = {
   JUNGOL: { href: "https://jungol.co.kr/", linkLabel: "정올 열기 ↗", description: "정올에서 제출 내역을 연 뒤 이 브라우저에 로컬로 저장할 수 있습니다.", guide: "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요." },
   SWEA: { href: "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do", linkLabel: "SWEA 해결 내역 열기 ↗", description: "SWEA에서 본인 제출 이력을 확인해 로컬에 저장할 수 있습니다.", guide: "My Page Code에서 제출한 Problem을 열어 주세요." },
-  PROGRAMMERS: { href: "https://school.programmers.co.kr/learn/challenges?order=recent&statuses=solved%2Csolved_with_unlock&page=1", linkLabel: "프로그래머스 해결 내역 열기 ↗", description: "프로그래머스에서 해결 이력을 확인해 로컬에 저장할 수 있습니다.", guide: "해결한 문제 목록을 열어 두고 후보 찾기를 눌러 주세요." }
+  PROGRAMMERS: { href: "https://school.programmers.co.kr/learn/challenges?order=recent&statuses=solved%2Csolved_with_unlock&page=1", linkLabel: "프로그래머스 해결 내역 열기 ↗", description: "프로그래머스에서 해결 이력을 확인해 로컬에 저장할 수 있습니다. 제출 이력에는 실행시간·메모리가 없어 해당 정보는 저장할 수 없으며, 가장 빠른 제출·최소 메모리 선택도 지원하지 않습니다.", guide: "해결한 문제 목록을 열어 두고 후보 찾기를 눌러 주세요. 문제 상세는 같은 사이트 창의 탭에서 열리고 처리 후 닫힙니다." }
 };
 
 export function mountHistory(doc: Document, services: HistoryServices) {
@@ -56,7 +56,10 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       const submissions = typeof state.submissionCount === "number" ? state.submissionCount : (state.saved ?? 0) + (state.duplicate ?? 0);
       const problems = typeof state.problemCount === "number" ? `문제 ${state.problemCount}건 · ` : "";
       const failures = state.skipped ? ` · 확인 실패 ${state.skipped}건${state.failedSubmissionIds?.length ? ` (제출 ${state.failedSubmissionIds.map(id => `#${id}`).join(", ")})` : ""}` : "";
-      return `${problems}제출 ${submissions}건 · 새로 저장 ${state.saved ?? 0}건 · 이미 저장됨 ${state.duplicate ?? 0}건${failures}`;
+      const reasons: Record<string, string> = { context: "문제 연결 확인 실패", source: "원본 코드 확인 실패", title: "문제 제목 확인 실패", length: "원본 코드 길이 불일치", metadata: "제출 정보 확인 실패" };
+      const details = Object.entries(state.verificationFailures ?? {}).filter(([reason, count]) => reasons[reason] && Number.isSafeInteger(count) && count > 0)
+        .map(([reason, count]) => `${reasons[reason]} ${count}건`).join(" · ");
+      return `${problems}제출 ${submissions}건 · 새로 저장 ${state.saved ?? 0}건 · 이미 저장됨 ${state.duplicate ?? 0}건${failures}${details ? ` · ${details}` : ""}`;
     };
     if (state.status === "DONE") return `로컬 저장 완료 · ${resultSummary()}${unsupportedNotice}`;
     if (state.status === "INTERRUPTED" && (state.completed ?? 0) > 0) return `수집이 중단되었습니다. 현재까지 ${resultSummary()}`;

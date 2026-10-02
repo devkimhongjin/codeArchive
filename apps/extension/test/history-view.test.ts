@@ -15,6 +15,16 @@ test("completed local collection reports rejected submissions without hiding suc
   assert.match(view.document.querySelector("#status")!.textContent!, /확인 실패 1건 \(제출 #13441823\)/);
   assert.equal(view.document.querySelector("#progress")!.textContent, "2/2건 처리했습니다. (100%)");
 });
+
+test("SWEA failure stages and Programmers unavailable performance are visible", async () => {
+  const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } :
+    { status: "DONE", completed: 2, total: 2, saved: 1, duplicate: 0, skipped: 1, verificationFailures: { length: 1 } });
+  await tick(); await tick();
+  assert.match(view.document.querySelector("#status")!.textContent!, /원본 코드 길이 불일치 1건/);
+  choose(view.document.querySelector<HTMLSelectElement>("#platform")!, "PROGRAMMERS");
+  assert.match(view.document.querySelector("#platform-description")!.textContent!, /실행시간·메모리가 없어/);
+  assert.match(view.document.querySelector("#platform-description")!.textContent!, /가장 빠른 제출·최소 메모리 선택도 지원하지 않습니다/);
+});
 function emit(element: Element, type: string) {
   const EventConstructor = element.ownerDocument.defaultView!.Event;
   element.dispatchEvent(new EventConstructor(type));
