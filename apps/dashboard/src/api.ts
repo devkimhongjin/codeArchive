@@ -120,8 +120,8 @@ export async function getSolutions(expectedGithubId: string): Promise<Solution[]
   return Array.isArray(payload) ? payload : payload.solutions ?? []
 }
 
-export async function getHistoricalSubmissionIds(expectedGithubId: string): Promise<string[]> {
-  return requestJson<string[]>('/api/solutions/historical-submission-ids?platform=JUNGOL', {
+export async function getHistoricalSubmissionIds(expectedGithubId: string, platform: Platform = 'JUNGOL'): Promise<string[]> {
+  return requestJson<string[]>(`/api/solutions/historical-submission-ids?platform=${platform}`, {
     headers: accountAssertionHeaders(expectedGithubId),
   })
 }
@@ -142,6 +142,14 @@ export async function requestHistoricalGithubCommits(expectedGithubId: string, r
 export async function getHistoricalGithubStatus(expectedGithubId: string): Promise<Record<string, 'NONE' | 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN'>> {
   return requestJson('/api/solutions/historical-github-status', { headers: accountAssertionHeaders(expectedGithubId) })
 }
+
+export const getHistoricalCommitCandidates = (githubId: string) => requestJson<import('./types').HistoricalCommitCandidate[]>(
+  '/api/solutions/historical-github-candidates', { headers: accountAssertionHeaders(githubId) })
+export const requestHistoricalCommitBatch = (githubId: string, request: {
+  captureIds: string[]; settingsVersion: number; installationId: number; owner: string; repository: string; branch: string
+}) => requestJson<Record<string, import('./types').HistoricalCommitState>>('/api/solutions/historical-github-batch', {
+  method: 'POST', headers: accountAssertionHeaders(githubId), body: JSON.stringify(request),
+})
 
 export function getCommunitySolutions(expectedGithubId: string, platform: Platform, problemNumber: string, languageKey: string, page: number): Promise<CommunityPage> {
   const query = new URLSearchParams({ platform, problemNumber, page: String(page), size: '20' })

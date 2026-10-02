@@ -63,6 +63,9 @@ export type BulkResponse = {
 }
 
 export type ExtensionCapability = string
+export type HistoricalRecord = Pick<Solution, 'captureId' | 'platform' | 'problemNumber' | 'title' | 'language' | 'solvedAt'> & { historicalSubmissionId: string }
+export type HistoricalCommitState = 'NONE' | 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN'
+export type HistoricalCommitCandidate = HistoricalRecord & { state: HistoricalCommitState }
 
 export type ExtensionCaptureResponse = {
   captures?: Capture[]
