@@ -12,6 +12,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -72,6 +73,19 @@ public class CommunityController {
         } catch (CommunityService.NotEligibleException ignored) {
             return ResponseEntity.status(403).body(new ApiError("Publish your solution to this problem first"));
         }
+    }
+
+    @PostMapping("/solutions/publish-all")
+    public ResponseEntity<?> publishAll(Authentication authentication,
+            @RequestHeader(value = GithubAccountAssertion.HEADER, required = false) String expected,
+            @RequestBody VisibilityRequest request) {
+        var checked = GithubAccountAssertion.require(authentication, expected, users);
+        if (!checked.accepted()) return checked.failure();
+        if (request == null || !"published".equals(request.visibility())) {
+            return ResponseEntity.badRequest().body(new ApiError("Explicit publication is required"));
+        }
+        if (!rateLimiter.allowWrite(checked.account().user().getId())) return tooManyRequests();
+        return ResponseEntity.ok(community.publishAll(checked.account().user().getId()));
     }
 
     @GetMapping("/solutions/{id}")

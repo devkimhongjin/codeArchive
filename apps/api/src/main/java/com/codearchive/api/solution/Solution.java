@@ -82,7 +82,7 @@ public class Solution {
     @Column(name = "historical_submission_id", length = 320)
     private String historicalSubmissionId;
 
-    /** Null is the default and means private, including every pre-community row. */
+    /** Null means private. Creation uses the owner's preference; retries preserve it. */
     @Column(name = "published_at")
     private Instant publishedAt;
 

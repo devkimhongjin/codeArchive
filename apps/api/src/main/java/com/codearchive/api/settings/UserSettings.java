@@ -32,6 +32,7 @@ public class UserSettings {
     @Column(name = "light_theme") private String lightTheme = "github-light";
     @Column(name = "dark_theme") private String darkTheme = "github-dark";
     @Column(name = "auto_sync_enabled") private boolean autoSyncEnabled;
+    @Column(name = "community_public_by_default", nullable = false) private boolean communityPublicByDefault = true;
     @Column(name = "github_auto_commit_enabled") private boolean githubAutoCommitEnabled;
     @Column(name = "github_installation_id") private Long githubInstallationId;
     @Column(name = "github_owner") private String githubOwner;
@@ -51,6 +52,7 @@ public class UserSettings {
     public String getGithubCommitMessageTemplate() { return githubCommitMessageTemplate; }
     public String getLightTheme() { return lightTheme; } public String getDarkTheme() { return darkTheme; }
     public boolean isAutoSyncEnabled() { return autoSyncEnabled; } public boolean isGithubAutoCommitEnabled() { return githubAutoCommitEnabled; }
+    public boolean isCommunityPublicByDefault() { return communityPublicByDefault; }
     public Long getGithubInstallationId() { return githubInstallationId; } public String getGithubOwner() { return githubOwner; } public String getGithubRepository() { return githubRepository; }
     public String getGithubBranch() { return githubBranch; } public String getGithubRootPath() { return githubRootPath; } public Instant getAutomationEnabledAt() { return automationEnabledAt; } public AppUser getUser() { return user; }
     public boolean githubTargetConfigured() { return githubInstallationId != null && nonBlank(githubOwner) && nonBlank(githubRepository) && nonBlank(githubBranch); }
@@ -69,6 +71,8 @@ public class UserSettings {
                 || !java.util.Objects.equals(githubBranch, r.githubBranch())
                 || !java.util.Objects.equals(githubRootPath, r.githubRootPath());
         displayName = r.name(); nickname = r.nickname(); copyHeader = r.copyHeader(); downloadHeader = r.downloadHeader(); githubHeader = r.githubHeader();
+        // Old dashboards omit this field; never reset an explicit private preference.
+        if (r.communityPublicByDefault() != null) communityPublicByDefault = r.communityPublicByDefault();
         if (r.copyHeaderFields() != null) copyHeaderFields = HeaderFields.encode(r.copyHeaderFields());
         if (r.downloadHeaderFields() != null) downloadHeaderFields = HeaderFields.encode(r.downloadHeaderFields());
         if (r.githubHeaderFields() != null) githubHeaderFields = HeaderFields.encode(r.githubHeaderFields());

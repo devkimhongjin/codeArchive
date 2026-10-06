@@ -93,6 +93,7 @@ export type AccountSettings = {
   lightTheme: LightTheme
   darkTheme: DarkTheme
   autoSyncEnabled: boolean
+  communityPublicByDefault?: boolean
   githubAutoCommitEnabled: boolean
   githubTargetConfigured: boolean
   githubStatus: 'AVAILABLE' | 'TARGET_MISSING' | string

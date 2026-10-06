@@ -33,7 +33,7 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
-    private static final int LATEST_MIGRATION = 20;
+    private static final int LATEST_MIGRATION = 21;
 
     @Test
     void freshSchemaMigratesTwiceAndPassesHibernateValidation() throws Exception {
@@ -85,6 +85,27 @@ class PostgreSqlMigrationTest {
         } finally {
             database.drop();
         }
+    }
+
+    @Test
+    void visibilityPreferenceUpgradePreservesExistingPrivateSolutionsAndProfile() throws Exception {
+        TestDatabase database = TestDatabase.create();
+        try {
+            database.flyway(MigrationVersion.fromVersion("2")).migrate();
+            long userId = database.insertGithubRows();
+            database.flyway(MigrationVersion.fromVersion("20")).migrate();
+            try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement(
+                    "INSERT INTO user_settings(user_id, version, display_name) VALUES (?, 4, 'Existing profile')")) {
+                statement.setLong(1, userId); statement.executeUpdate();
+            }
+            assertEquals(1, database.flyway().migrate().migrationsExecuted);
+            assertEquals(true, database.scalar("SELECT community_public_by_default FROM user_settings WHERE user_id = ?", userId));
+            assertEquals(4L, ((Number) database.scalar("SELECT version FROM user_settings WHERE user_id = ?", userId)).longValue());
+            assertEquals("Existing profile", database.scalar("SELECT display_name FROM user_settings WHERE user_id = ?", userId));
+            assertEquals(1L, ((Number) database.scalar("SELECT COUNT(*) FROM solutions WHERE user_id = ? AND published_at IS NULL", userId)).longValue());
+            assertEquals(0, database.flyway().migrate().migrationsExecuted);
+            validateWithHibernate(database);
+        } finally { database.drop(); }
     }
 
     @Test
@@ -470,6 +491,8 @@ class PostgreSqlMigrationTest {
             assertEquals("user_settings", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'user_settings'", schema));
             assertEquals("NO", nullable("user_settings", "github_commit_message_template"));
             assertEquals("NO", nullable("user_settings", "github_header"));
+            assertEquals("NO", nullable("user_settings", "community_public_by_default"));
+            assertEquals("true", scalar("SELECT column_default FROM information_schema.columns WHERE table_schema = ? AND table_name = 'user_settings' AND column_name = 'community_public_by_default'", schema));
             for (String column : new String[] {"copy_header_fields", "download_header_fields", "github_header_fields"}) {
                 assertEquals("NO", nullable("user_settings", column));
                 assertEquals("'identity,title,url,language,performance'::character varying", scalar(

@@ -6,6 +6,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Modifying;
+import java.time.Instant;
 import org.springframework.data.repository.query.Param;
 
 public interface SolutionRepository extends JpaRepository<Solution, Long> {
@@ -18,6 +20,15 @@ public interface SolutionRepository extends JpaRepository<Solution, Long> {
     List<Solution> findByUserIdOrderBySolvedAtDesc(Long userId);
 
     Optional<Solution> findByIdAndUserId(Long id, Long userId);
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update Solution s set s.publishedAt = :now where s.user.id = :ownerId and s.result = 'ACCEPTED' and s.publishedAt is null")
+    int publishAcceptedForOwner(@Param("ownerId") long ownerId, @Param("now") Instant now);
+
+    long countByUserIdAndResultAndPublishedAtIsNotNull(Long userId, String result);
+
+    @Query("select distinct s.platform, s.problemNumber from Solution s where s.user.id = :ownerId and s.result = 'ACCEPTED' and s.publishedAt is not null")
+    List<Object[]> findPublishedProblemsForOwner(@Param("ownerId") long ownerId);
 
     boolean existsByUserIdAndPlatformAndProblemNumberAndPublishedAtIsNotNull(
             Long userId, Platform platform, String problemNumber);

@@ -159,6 +159,7 @@ export function getCommunitySolutions(expectedGithubId: string, platform: Platfo
 
 export const getCommunityDetail = (expectedGithubId: string, id: number) => requestJson<CommunityDetail>(`/api/community/solutions/${id}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
 export const setCommunityVisibility = (expectedGithubId: string, id: number, visibility: 'private' | 'published') => requestJson<{ visibility: 'private' | 'published'; publishedAt: string | null }>(`/api/community/solutions/${id}/visibility`, { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ visibility }) })
+export const publishAllCommunitySolutions = (expectedGithubId: string) => requestJson<{ changedSubmissions: number; publishedProblems: number; publishedSubmissions: number }>('/api/community/solutions/publish-all', { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ visibility: 'published' }) })
 
 export async function bulkUpload(captures: Capture[], expectedGithubId: string): Promise<BulkResponse> {
   return requestJson<BulkResponse>('/api/solutions/bulk', {

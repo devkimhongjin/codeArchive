@@ -5,6 +5,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oauth2Login;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -45,6 +46,8 @@ class CommunityIntegrationTest {
     @Autowired com.codearchive.api.automation.GithubCommitJobRepository commitJobs;
     @Autowired CommunityRequestLimitRepository requestLimits;
     @Autowired CommunityRateLimiter rateLimiter;
+    @Autowired com.codearchive.api.solution.SolutionService captureService;
+    @Autowired com.fasterxml.jackson.databind.ObjectMapper mapper;
 
     @BeforeEach void clear() {
         commitJobs.deleteAll();
@@ -55,7 +58,7 @@ class CommunityIntegrationTest {
         users.deleteAll();
     }
 
-    @Test void solutionsArePrivateByDefaultAndOnlyOwnerCanPublishWithCsrf() throws Exception {
+    @Test void legacySolutionsStayPrivateAndOnlyOwnerCanPublishWithCsrf() throws Exception {
         AppUser alice = account("1001");
         Solution answer = solution(alice, Platform.SWEA, "1234", "JAVA", "class A {}");
         org.assertj.core.api.Assertions.assertThat(answer.getPublishedAt()).isNull();
@@ -200,6 +203,92 @@ class CommunityIntegrationTest {
     private AppUser account(String id) {
         return users.saveAndFlush(AppUser.fromGithub(id, "user" + id, "User " + id, null,
                 "https://avatars.githubusercontent.com/u/" + id));
+    }
+
+    @Test void newAndHistoricalCapturesUsePublicDefaultButLegacyRowsStayPrivate() throws Exception {
+        AppUser owner = account("6006");
+        Solution legacy = solution(owner, Platform.SWEA, "legacy", "Java", "legacy");
+        mvc.perform(get("/api/settings").with(login("6006")).header("X-CodeArchive-Github-Id", "6006"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.communityPublicByDefault", is(true)));
+        var live = captureService.upsert("6006", capture(false));
+        var historical = captureService.upsert("6006", capture(true));
+        org.assertj.core.api.Assertions.assertThat(live.isPublished()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(historical.isPublished()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(solutions.findById(legacy.getId()).orElseThrow().isPublished()).isFalse();
+    }
+
+    @Test void privatePreferenceIsAccountOwnedAndOmittedFieldAndRetriesPreservePrivacy() throws Exception {
+        account("6007"); account("6008");
+        var snapshot = setting("6007");
+        snapshot.put("communityPublicByDefault", false);
+        saveSetting("6007", snapshot).andExpect(status().isOk()).andExpect(jsonPath("$.communityPublicByDefault", is(false)));
+        var payload = capture(false);
+        var privateCapture = captureService.upsert("6007", payload);
+        org.assertj.core.api.Assertions.assertThat(privateCapture.isPublished()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(captureService.upsert("6008", capture(false)).isPublished()).isTrue();
+        var olderClient = setting("6007"); olderClient.remove("communityPublicByDefault");
+        saveSetting("6007", olderClient).andExpect(status().isOk()).andExpect(jsonPath("$.communityPublicByDefault", is(false)));
+        var publicPreference = setting("6007"); publicPreference.put("communityPublicByDefault", true);
+        saveSetting("6007", publicPreference).andExpect(status().isOk());
+        org.assertj.core.api.Assertions.assertThat(captureService.upsert("6007", payload).isPublished()).isFalse();
+        var publicPayload = capture(true);
+        var published = captureService.upsert("6007", publicPayload);
+        unpublish("6007", published);
+        org.assertj.core.api.Assertions.assertThat(captureService.upsert("6007", publicPayload).isPublished()).isFalse();
+    }
+
+    @Test void publishAllIsScopedAcceptedOnlyAndIdempotentWithProblemAndSubmissionCounts() throws Exception {
+        AppUser owner = account("7007"), other = account("7008");
+        Solution first = solution(owner, Platform.SWEA, "1234", "Java", "one");
+        solution(owner, Platform.SWEA, "1234", "C++", "two");
+        solution(owner, Platform.JUNGOL, "1234", "Java", "three");
+        Solution existing = solution(owner, Platform.SWEA, "5678", "Java", "old");
+        Instant originalTime = Instant.parse("2025-01-01T00:00:00Z"); existing.setPublished(true, originalTime); solutions.saveAndFlush(existing);
+        Solution excluded = solutions.saveAndFlush(new Solution(owner, UUID.randomUUID().toString(), Platform.SWEA, "failed", "Failed", "https://example.test/problem", "Java", "failed", "FAILED", originalTime, originalTime, null, null));
+        Solution otherPrivate = solution(other, Platform.SWEA, "1234", "Java", "other");
+        publishAll("7007").andExpect(status().isOk()).andExpect(jsonPath("$.changedSubmissions", is(3)))
+                .andExpect(jsonPath("$.publishedProblems", is(3))).andExpect(jsonPath("$.publishedSubmissions", is(4)));
+        Instant firstTime = solutions.findById(first.getId()).orElseThrow().getPublishedAt();
+        publishAll("7007").andExpect(status().isOk()).andExpect(jsonPath("$.changedSubmissions", is(0)));
+        org.assertj.core.api.Assertions.assertThat(solutions.findById(first.getId()).orElseThrow().getPublishedAt()).isEqualTo(firstTime);
+        org.assertj.core.api.Assertions.assertThat(solutions.findById(existing.getId()).orElseThrow().getPublishedAt()).isEqualTo(originalTime);
+        org.assertj.core.api.Assertions.assertThat(solutions.findById(excluded.getId()).orElseThrow().isPublished()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(solutions.findById(otherPrivate.getId()).orElseThrow().isPublished()).isFalse();
+    }
+
+    @Test void publishAllRequiresAuthenticationAccountAssertionCsrfAndExplicitAction() throws Exception {
+        AppUser owner = account("7010");
+        Solution answer = solution(owner, Platform.SWEA, "1234", "Java", "source");
+        mvc.perform(post("/api/community/solutions/publish-all").with(csrf().asHeader()).contentType(MediaType.APPLICATION_JSON).content("{\"visibility\":\"published\"}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/community/solutions/publish-all").with(login("7010")).header("X-CodeArchive-Github-Id", "7010").contentType(MediaType.APPLICATION_JSON).content("{\"visibility\":\"published\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/community/solutions/publish-all").with(login("7010")).with(csrf().asHeader()).header("X-CodeArchive-Github-Id", "7011").contentType(MediaType.APPLICATION_JSON).content("{\"visibility\":\"published\"}"))
+                .andExpect(status().isConflict());
+        mvc.perform(post("/api/community/solutions/publish-all").with(login("7010")).with(csrf().asHeader()).header("X-CodeArchive-Github-Id", "7010").contentType(MediaType.APPLICATION_JSON).content("{\"visibility\":\"private\"}"))
+                .andExpect(status().isBadRequest());
+        org.assertj.core.api.Assertions.assertThat(solutions.findById(answer.getId()).orElseThrow().isPublished()).isFalse();
+    }
+
+    private org.springframework.test.web.servlet.ResultActions publishAll(String id) throws Exception {
+        return mvc.perform(post("/api/community/solutions/publish-all").with(login(id)).with(csrf().asHeader())
+                .header("X-CodeArchive-Github-Id", id).contentType(MediaType.APPLICATION_JSON).content("{\"visibility\":\"published\"}"));
+    }
+    private com.fasterxml.jackson.databind.node.ObjectNode setting(String id) throws Exception {
+        return (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(mvc.perform(get("/api/settings").with(login(id)).header("X-CodeArchive-Github-Id", id)).andReturn().getResponse().getContentAsString());
+    }
+    private org.springframework.test.web.servlet.ResultActions saveSetting(String id, com.fasterxml.jackson.databind.node.ObjectNode value) throws Exception {
+        return mvc.perform(put("/api/settings").with(login(id)).with(csrf().asHeader()).header("X-CodeArchive-Github-Id", id)
+                .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(value)));
+    }
+    private com.codearchive.api.solution.CapturePayload capture(boolean historical) {
+        var payload = new com.codearchive.api.solution.CapturePayload();
+        payload.setCaptureId(UUID.randomUUID().toString()); payload.setPlatform("SWEA"); payload.setProblemNumber("1234");
+        payload.setTitle("Synthetic"); payload.setProblemUrl("https://example.test/problem/1234"); payload.setLanguage("Java");
+        payload.setSourceCode("class Synthetic {}"); payload.setResult("ACCEPTED");
+        payload.setObservedAt("2026-01-01T00:00:00Z"); payload.setSolvedAt("2026-01-01T00:00:00Z");
+        if (historical) { payload.setHistoricalImport(true); payload.setHistoricalSubmissionId("AbCd1234"); }
+        return payload;
     }
 
     private Solution solution(AppUser owner, Platform platform, String number, String language, String source) {

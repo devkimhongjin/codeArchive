@@ -2,6 +2,7 @@ package com.codearchive.api.solution;
 
 import com.codearchive.api.auth.AppUser;
 import com.codearchive.api.auth.UserRepository;
+import com.codearchive.api.settings.UserSettingsRepository;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Instant;
@@ -19,10 +20,12 @@ public class SolutionService {
 
     private final UserRepository userRepository;
     private final SolutionRepository solutionRepository;
+    private final UserSettingsRepository settingsRepository;
 
-    public SolutionService(UserRepository userRepository, SolutionRepository solutionRepository) {
+    public SolutionService(UserRepository userRepository, SolutionRepository solutionRepository, UserSettingsRepository settingsRepository) {
         this.userRepository = userRepository;
         this.solutionRepository = solutionRepository;
+        this.settingsRepository = settingsRepository;
     }
 
     @Transactional(noRollbackFor = CaptureValidationException.class)
@@ -69,6 +72,9 @@ public class SolutionService {
         solution.setHistoricalImport(capture.historicalImport());
         solution.setHistoricalSubmissionId(capture.historicalSubmissionId());
         solution.setMemoryMeasurement(capture.memoryValue(), capture.memoryUnit());
+        boolean publish = settingsRepository.findByUserId(user.getId())
+                .map(com.codearchive.api.settings.UserSettings::isCommunityPublicByDefault).orElse(true);
+        solution.setPublished(publish, Instant.now());
         return solutionRepository.saveAndFlush(solution);
     }
 
