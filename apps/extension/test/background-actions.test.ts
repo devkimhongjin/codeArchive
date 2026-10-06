@@ -83,9 +83,9 @@ test("automatic download applies only its saved header fields", () => {
     downloadHeader: true, downloadHeaderFields: ["solvedAt"], downloadFilenameTemplate: "{time}_{capture_ID}"
   });
   assert.ok(prepared);
-  assert.equal(prepared.filename, "260918000000_11111111-1111-4111-8111-111111111111.js");
+  assert.equal(prepared.filename, "260918090000_11111111-1111-4111-8111-111111111111.js");
   const source = Buffer.from(prepared.url.split(",")[1]!, "base64").toString("utf8");
-  assert.match(source, /^\/\/ Solved At: 2026-09-18 00:00:00 UTC\n\nconst answer/);
+  assert.match(source, /^\/\/ Solved At: 2026-09-18 09:00:00 KST\n\nconst answer/);
   assert.doesNotMatch(source, /Local first|Language:/);
 });
 

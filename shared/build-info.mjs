@@ -15,6 +15,13 @@ function safeId(value) {
   return typeof value === "string" && /^[A-Za-z0-9._-]{1,64}$/.test(value) ? value : "";
 }
 
+/** Calendar dates displayed in build/release metadata use Korea time as well. */
+export function kstCalendarDate(instant) {
+  const date = new Date(instant);
+  if (!instant || Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
+
 /** Resolve public, non-sensitive build identity for Vite and extension builds. */
 export function resolveBuildInfo({ env = process.env, cwd = process.cwd() } = {}) {
   if (typeof release.version !== "string" || !/^\d+\.\d+\.\d+$/.test(release.version)) {
@@ -30,7 +37,7 @@ export function resolveBuildInfo({ env = process.env, cwd = process.cwd() } = {}
   const explicitDate = typeof env.CODEARCHIVE_BUILD_DATE === "string" && /^\d{4}-\d{2}-\d{2}$/.test(env.CODEARCHIVE_BUILD_DATE)
     ? env.CODEARCHIVE_BUILD_DATE
     : "";
-  const commitDate = releaseBuild && revision ? gitValue(["show", "-s", "--format=%cs", revision], cwd) : "";
+  const commitDate = releaseBuild && revision ? kstCalendarDate(gitValue(["show", "-s", "--format=%cI", revision], cwd)) : "";
   const updatedDate = releaseBuild ? (explicitDate || (/^\d{4}-\d{2}-\d{2}$/.test(commitDate) ? commitDate : "unknown")) : "dev";
   const releaseId = shortRevision === "source-unknown"
     ? (safeId(env.DEPLOY_ID) || safeId(env.BUILD_ID) || "release").slice(0, 12)

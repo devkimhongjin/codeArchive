@@ -24,12 +24,16 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class GithubAppProviderTest {
+  private final Map<String,String> contentBodies=new HashMap<>();
+  private final Map<String,Integer> contentCodes=new HashMap<>();
   private HttpServer server; private final List<Request> requests = new ArrayList<>();
   private int finalStatus = 200; private int installationListStatus = 200; private String installationListBody = "[]"; private boolean existing; private String existingBody = "{}"; private boolean versionedExisting; private String versionedExistingBody = "{}"; private boolean transientRef; private boolean dropFinal; private boolean movedBeforePatch; private boolean timeoutToken; private boolean timeoutBlob; private int refRequests; private boolean emptyRepo; private boolean emptyRepoHasBranch; private int firstContentStatus=201;
 
@@ -117,8 +121,8 @@ class GithubAppProviderTest {
     selected.apply(new SettingsRequest(0,"n",null,false,false,true,"{number}","{platform}/{number}-{title}","Add {time} {capture_ID}","github-light","github-dark",true,true,44L,"owner","repo","main",null,
         List.of("identity"),List.of("language"),List.of("title","solvedAt")));
     assertThat(provider().createOnly(selected,solution()).outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
-    assertThat(blobSource()).isEqualTo("// Problem: Title\n// Solved At: 2026-09-18 05:21:03 UTC\n\nclass Solution {}");
-    assertThat(requests.get(6).body()).contains("\"message\":\"Add 260918052103 11111111-1111-4111-8111-111111111111\"");
+    assertThat(blobSource()).isEqualTo("// Problem: Title\n// Solved At: 2026-09-18 14:21:03 KST\n\nclass Solution {}");
+    assertThat(requests.get(6).body()).contains("\"message\":\"Add 260918142103 11111111-1111-4111-8111-111111111111\"");
   }
 
   @Test void githubProblemHeaderPreservesPythonShebangAndIsUsedForIdempotency() throws Exception {
@@ -142,11 +146,11 @@ class GithubAppProviderTest {
     GithubProvider.Result result=provider().createOnly(settings(),solution());
     assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
     assertThat(requests).extracting(Request::method,Request::path).contains(
-      org.assertj.core.groups.Tuple.tuple("GET","/repos/owner/repo/contents/SWEA/123-Title_20260918-052103456_11111111.java"),
+      org.assertj.core.groups.Tuple.tuple("GET","/repos/owner/repo/contents/SWEA/123-Title_20260918-142103456_11111111.java"),
       org.assertj.core.groups.Tuple.tuple("POST","/repos/owner/repo/git/commits"),
       org.assertj.core.groups.Tuple.tuple("PATCH","/repos/owner/repo/git/refs/heads/main"));
     assertThat(requests).filteredOn(request->request.path().endsWith("/git/trees")).singleElement().extracting(Request::body)
-      .asString().contains("\"path\":\"SWEA/123-Title_20260918-052103456_11111111.java\"");
+      .asString().contains("\"path\":\"SWEA/123-Title_20260918-142103456_11111111.java\"");
     assertThat(requests.get(requests.size()-1).body()).contains("\"force\":false");
   }
 
@@ -179,13 +183,71 @@ class GithubAppProviderTest {
 
     assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
     assertThat(requests).filteredOn(request->request.path().endsWith("/git/trees")).singleElement().extracting(Request::body)
-      .asString().contains("\"path\":\"solutions/Python3/123_20260918-052103456_22222222.py\"");
+      .asString().contains("\"path\":\"solutions/Python3/123_20260918-142103456_22222222.py\"");
   }
 
   @Test void rendersTimeAndCaptureIdPathTokens() throws Exception {
     GithubProvider.Result result=provider().createOnly(settingsWithPath("{platform}/{number}_{title}/{time}_{capture_ID}"),solution());
     assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
-    assertThat(requests.get(3).path()).isEqualTo("/repos/owner/repo/contents/SWEA/123_Title/260918052103_11111111-1111-4111-8111-111111111111.java");
+    assertThat(requests.get(3).path()).isEqualTo("/repos/owner/repo/contents/SWEA/123_Title/260918142103_11111111-1111-4111-8111-111111111111.java");
+  }
+
+  @Test void legacyUtcTimePathIsReadOnlyAndDoesNotDuplicateTheSubmission() throws Exception {
+    String legacy="/repos/owner/repo/contents/SWEA/260918052103.java";
+    contentCodes.put(legacy,200);contentBodies.put(legacy,fileBody("class Solution {}"));
+    assertThat(provider().createOnly(settingsWithPath("{platform}/{time}"),solution()).outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(requests).extracting(Request::method).doesNotContain("PATCH","PUT");
+    assertThat(requests).filteredOn(r->r.path().contains("/contents/")).allSatisfy(r->assertThat(r.query()).isEqualTo("ref=head-sha"));
+    assertThat(requests).extracting(Request::path).noneMatch(p->p.endsWith("/git/blobs")||p.endsWith("/git/trees")||p.endsWith("/git/commits"));
+  }
+
+  @Test void legacyUtcHeaderAtTheSamePathIsAnExactIdempotentMatch() throws Exception {
+    existing=true;existingBody=fileBody("// Problem: Title\n// Solved At: 2026-09-18 05:21:03 UTC\n\nclass Solution {}");
+    assertThat(provider().createOnly(timeHeaderSettings("{platform}/{number}-{title}"),solution()).outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(requests).hasSize(4);
+  }
+
+  @Test void legacyUtcCollisionSuffixDoesNotCreateAnotherVersion() throws Exception {
+    existing=true;existingBody=fileBody("class OldSolution {}");
+    String legacy="/repos/owner/repo/contents/SWEA/123-Title_20260918-052103456_11111111.java";
+    contentCodes.put(legacy,200);contentBodies.put(legacy,fileBody("class Solution {}"));
+    assertThat(provider().createOnly(settings(),solution()).outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(requests).extracting(Request::path).noneMatch(p->p.endsWith("/git/blobs")||p.endsWith("/git/trees")||p.endsWith("/git/commits"));
+  }
+
+  @Test void legacyUtcPathSuffixAndHeaderAreCheckedTogether() throws Exception {
+    String base="/repos/owner/repo/contents/SWEA/260918052103.java";
+    contentCodes.put(base,200);contentBodies.put(base,fileBody("class OldSolution {}"));
+    String versioned="/repos/owner/repo/contents/SWEA/260918052103_20260918-052103456_11111111.java";
+    contentCodes.put(versioned,200);contentBodies.put(versioned,fileBody("// Problem: Title\n// Solved At: 2026-09-18 05:21:03 UTC\n\nclass Solution {}"));
+    assertThat(provider().createOnly(timeHeaderSettings("{platform}/{time}"),solution()).outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(requests).extracting(Request::path).noneMatch(p->p.endsWith("/git/blobs")||p.endsWith("/git/trees")||p.endsWith("/git/commits"));
+  }
+
+  @Test void failedLegacyLookupStopsBeforeWritingAndDifferentSourceIsNotAFalseMatch() throws Exception {
+    String legacy="/repos/owner/repo/contents/SWEA/260918052103.java";
+    contentCodes.put(legacy,503);
+    assertThat(provider().createOnly(settingsWithPath("{platform}/{time}"),solution()).outcome()).isEqualTo(GithubProvider.Outcome.RETRYABLE);
+    assertThat(requests).extracting(Request::path).noneMatch(p->p.endsWith("/git/blobs"));
+    requests.clear();refRequests=0;contentCodes.put(legacy,200);contentBodies.put(legacy,fileBody("class Different {}"));
+    assertThat(provider().createOnly(settingsWithPath("{platform}/{time}"),solution()).outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(requests).filteredOn(r->r.path().endsWith("/git/trees")).singleElement().extracting(Request::body).asString().contains("SWEA/260918142103.java");
+    assertThat(requests).filteredOn(r->r.method().equals("PATCH")).singleElement().extracting(Request::body).asString().contains("\"force\":false");
+  }
+
+  @Test void koreaMidnightRolloverIsSharedByHeaderPathAndCommitMessage() throws Exception {
+    Solution boundary=new Solution(AppUser.fromGithub("1","owner","Owner",null),"11111111-1111-4111-8111-111111111111",Platform.SWEA,"123","Title","https://example.test/123","Java","class Solution {}","ACCEPTED",Instant.parse("2025-12-31T15:00:00Z"),Instant.parse("2025-12-31T15:00:00Z"),null,null);
+    assertThat(provider().createOnly(timeHeaderSettings("{platform}/{time}"),boundary).outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(blobSource()).contains("Solved At: 2026-01-01 00:00:00 KST");
+    assertThat(requests).filteredOn(r->r.path().endsWith("/git/trees")).singleElement().extracting(Request::body).asString().contains("SWEA/260101000000.java");
+    assertThat(requests).filteredOn(r->r.path().endsWith("/git/commits")).singleElement().extracting(Request::body).asString().contains("Add 260101000000");
+    assertThat(boundary.getSolvedAt()).isEqualTo(Instant.parse("2025-12-31T15:00:00Z"));
+  }
+
+  private UserSettings timeHeaderSettings(String path){
+    UserSettings value=new UserSettings(AppUser.fromGithub("1","owner","Owner",null));
+    value.apply(new SettingsRequest(0,"n",null,false,false,true,"{number}",path,"Add {time}","github-light","github-dark",true,true,44L,"owner","repo","main",null,List.of("identity"),List.of("language"),List.of("title","solvedAt")));
+    return value;
   }
 
   @Test void existingPathWithIdenticalContentIsAnIdempotentSuccess() throws Exception {
@@ -319,7 +381,7 @@ class GithubAppProviderTest {
   private static byte[] tagged(int tag,byte[] body) { byte[] length=length(body.length); byte[] result=new byte[1+length.length+body.length]; result[0]=(byte)tag;System.arraycopy(length,0,result,1,length.length);System.arraycopy(body,0,result,1+length.length,body.length);return result; }
   private static byte[] length(int value) { if(value<128)return new byte[]{(byte)value}; int count=0;for(int n=value;n>0;n>>>=8)count++;byte[] result=new byte[count+1];result[0]=(byte)(0x80|count);for(int i=count;i>0;i--){result[i]=(byte)value;value>>>=8;}return result; }
   private static byte[] join(byte[]... values) { int size=0;for(byte[] value:values)size+=value.length;byte[] result=new byte[size];int offset=0;for(byte[] value:values){System.arraycopy(value,0,result,offset,value.length);offset+=value.length;}return result; }
-  private void handle(HttpExchange x) throws IOException { String body=new String(x.getRequestBody().readAllBytes(),StandardCharsets.UTF_8); requests.add(new Request(x.getRequestMethod(),x.getRequestURI().getPath(),x.getRequestURI().getRawPath(),x.getRequestURI().getRawQuery(),x.getRequestHeaders().getFirst("Authorization"),body)); String path=x.getRequestURI().getPath(); if(emptyRepo){handleEmptyRepository(x,path);return;} if(dropFinal&&path.contains("/git/refs/")){x.close();return;} if(path.equals("/app/installations"))reply(x,installationListStatus,installationListBody); else if(path.endsWith("/access_tokens")){pauseIf(timeoutToken);reply(x,201,"{\"token\":\"installation-token\"}");} else if(path.contains("/git/ref/")){refRequests++;reply(x,transientRef?503:200,"{\"object\":{\"sha\":\""+(movedBeforePatch&&refRequests>1?"moved-head":"head-sha")+"\"}}");} else if(path.contains("/git/commits/head-sha"))reply(x,200,"{\"tree\":{\"sha\":\"tree-sha\"}}"); else if(path.contains("/contents/")){boolean versioned=path.matches(".*_\\d{8}-\\d{9}_[A-Za-z0-9]{8}\\.[A-Za-z0-9]+$");reply(x,versioned?(versionedExisting?200:404):(existing?200:404),versioned?(versionedExisting?versionedExistingBody:"{}"): (existing?existingBody:"{}"));} else if(path.endsWith("/git/blobs")){pauseIf(timeoutBlob);reply(x,201,"{\"sha\":\"blob-sha\"}");} else if(path.endsWith("/git/trees"))reply(x,201,"{\"sha\":\"new-tree\"}"); else if(path.endsWith("/git/commits"))reply(x,201,"{\"sha\":\"new-commit\"}"); else if(path.contains("/git/refs/"))reply(x,finalStatus,"{}"); else reply(x,500,"{}"); }
+  private void handle(HttpExchange x) throws IOException { String body=new String(x.getRequestBody().readAllBytes(),StandardCharsets.UTF_8); requests.add(new Request(x.getRequestMethod(),x.getRequestURI().getPath(),x.getRequestURI().getRawPath(),x.getRequestURI().getRawQuery(),x.getRequestHeaders().getFirst("Authorization"),body)); String path=x.getRequestURI().getPath(); if(emptyRepo){handleEmptyRepository(x,path);return;} if(dropFinal&&path.contains("/git/refs/")){x.close();return;} if(path.equals("/app/installations"))reply(x,installationListStatus,installationListBody); else if(path.endsWith("/access_tokens")){pauseIf(timeoutToken);reply(x,201,"{\"token\":\"installation-token\"}");} else if(path.contains("/git/ref/")){refRequests++;reply(x,transientRef?503:200,"{\"object\":{\"sha\":\""+(movedBeforePatch&&refRequests>1?"moved-head":"head-sha")+"\"}}");} else if(path.contains("/git/commits/head-sha"))reply(x,200,"{\"tree\":{\"sha\":\"tree-sha\"}}"); else if(contentCodes.containsKey(path))reply(x,contentCodes.get(path),contentBodies.getOrDefault(path,"{}")); else if(path.contains("/contents/")){boolean versioned=path.matches(".*_\\d{8}-\\d{9}_[A-Za-z0-9]{8}\\.[A-Za-z0-9]+$");reply(x,versioned?(versionedExisting?200:404):(existing?200:404),versioned?(versionedExisting?versionedExistingBody:"{}"): (existing?existingBody:"{}"));} else if(path.endsWith("/git/blobs")){pauseIf(timeoutBlob);reply(x,201,"{\"sha\":\"blob-sha\"}");} else if(path.endsWith("/git/trees"))reply(x,201,"{\"sha\":\"new-tree\"}"); else if(path.endsWith("/git/commits"))reply(x,201,"{\"sha\":\"new-commit\"}"); else if(path.contains("/git/refs/"))reply(x,finalStatus,"{}"); else reply(x,500,"{}"); }
   private void handleEmptyRepository(HttpExchange x,String path)throws IOException{
     if(path.equals("/app/installations"))reply(x,200,"[{\"id\":44,\"account\":{\"id\":1,\"login\":\"owner\",\"type\":\"User\"},\"suspended_at\":null}]");
     else if(path.equals("/app/installations/44/access_tokens"))reply(x,201,"{\"token\":\"installation-token\"}");

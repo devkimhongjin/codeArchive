@@ -5,9 +5,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
 
 /** Server-only GitHub App write path. Every write is based on a newly read branch head and uses a non-force ref update. */
 @Component public class GithubAppProvider implements GithubProvider {
- private static final DateTimeFormatter VERSION_TIMESTAMP=DateTimeFormatter.ofPattern("yyyyMMdd-HHmmssSSS").withZone(ZoneOffset.UTC);
- private static final DateTimeFormatter PATH_TIME=DateTimeFormatter.ofPattern("yyMMddHHmmss").withZone(ZoneOffset.UTC);
- private static final DateTimeFormatter HEADER_TIME=DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC);
+ private static final ZoneId DISPLAY_ZONE=ZoneId.of("Asia/Seoul");
+ private static final DateTimeFormatter VERSION_TIMESTAMP=DateTimeFormatter.ofPattern("yyyyMMdd-HHmmssSSS").withZone(DISPLAY_ZONE);
+ private static final DateTimeFormatter PATH_TIME=DateTimeFormatter.ofPattern("yyMMddHHmmss").withZone(DISPLAY_ZONE);
+ private static final DateTimeFormatter HEADER_TIME=DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(DISPLAY_ZONE);
  private static final Duration OPERATION_PREVIEW_TTL=Duration.ofMinutes(5);
  private static final int MAX_OPERATION_FILES=100,MAX_OPERATION_DEPTH=32,MAX_OPERATION_TREE_REQUESTS=256,MAX_PREVIEW_TOKEN_LENGTH=4096;
  private static final int MAX_FILE_PREVIEW_BYTES=65536;
@@ -404,7 +405,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
  private static void checkPage(int p){if(p<1||p>100)throw new IllegalArgumentException("page");} private static boolean safe(String x){return x!=null&&x.matches("[A-Za-z0-9_.-]{1,100}");} private static boolean safePathSegment(String x){return safe(x)&&!x.equals(".")&&!x.equalsIgnoreCase(".git")&&!x.contains("..");} private static boolean safeGithubId(String x){return x!=null&&x.matches("[0-9]{1,20}");} private static boolean sameGithubId(String left,String right){try{return safeGithubId(left)&&safeGithubId(right)&&new BigInteger(left).equals(new BigInteger(right));}catch(NumberFormatException e){return false;}} private static boolean safeBranch(String x){return x!=null&&x.length()<=255&&!x.isBlank()&&!x.startsWith("-")&&!x.contains("..")&&!x.contains("@{")&&!x.chars().anyMatch(c->Character.isWhitespace(c)||c<32||"~^:?*[\\\\".indexOf(c)>=0);} private static boolean safePath(String x){if(x==null||x.length()>1024||x.startsWith("/")||x.contains("\\\\"))return false;return x.isBlank()||Arrays.stream(x.split("/",-1)).allMatch(GithubAppProvider::safePathSegment);}
  @Override public Result createOnly(UserSettings s,Solution solution,FinalWriteGuard finalWriteGuard){
   if(appId.isBlank()||key.isBlank()||s.getGithubInstallationId()==null)return fallback.createOnly(s,solution);
-  final String path,source; try { path=path(s,solution);source=source(s,solution); } catch (IllegalArgumentException e) { return Result.failed("Unsafe Git path"); }
+  final String path,source,legacyPath,legacySource; try { path=path(s,solution);source=source(s,solution);legacyPath=path(s,solution,ZoneOffset.UTC);legacySource=source(s,solution,ZoneOffset.UTC); } catch (IllegalArgumentException e) { return Result.failed("Unsafe Git path"); }
   boolean possibleWrite=false;
   try {
    String token=installationToken(s.getGithubInstallationId()); String repo=repo(s);
@@ -419,11 +420,27 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
    // freshly observed target head, so create/update remains branch-correct.
    Response exists=send("GET",repo+"/contents/"+encodedPath(path)+"?ref="+segment(head),token,null);
    if(exists.code==200){
-    ExistingFileState existing=existingFileState(exists,source);if(existing==ExistingFileState.IDENTICAL)return Result.succeeded();if(existing==ExistingFileState.CONFLICT)return Result.failed("Git path is not an updatable file");
+    ExistingFileState existing=compatibleFileState(exists,source,legacySource);if(existing==ExistingFileState.IDENTICAL)return Result.succeeded();if(existing==ExistingFileState.CONFLICT)return Result.failed("Git path is not an updatable file");
     targetPath=versionedPath(path,solution);
     Response versioned=send("GET",repo+"/contents/"+encodedPath(targetPath)+"?ref="+segment(head),token,null);
-    if(versioned.code==200){ExistingFileState state=existingFileState(versioned,source);if(state==ExistingFileState.IDENTICAL)return Result.succeeded();return Result.failed("Versioned Git path already exists");}else if(versioned.code!=404)return classify(versioned,false);
+    if(versioned.code==200){ExistingFileState state=compatibleFileState(versioned,source,legacySource);if(state==ExistingFileState.IDENTICAL)return Result.succeeded();return Result.failed("Versioned Git path already exists");}else if(versioned.code!=404)return classify(versioned,false);
    }else if(exists.code!=404)return classify(exists,false);
+   // A timezone presentation change must not create a second copy of an old
+   // submission. Compare exact old/new content at the same pinned target head;
+   // these legacy paths are read-only and are never rewritten or renamed.
+   if(!legacyPath.equals(path)||!targetPath.equals(path)){
+    Set<String> previousPaths=new LinkedHashSet<>();
+    previousPaths.add(legacyPath);previousPaths.add(versionedPath(legacyPath,solution,ZoneOffset.UTC));
+    previousPaths.remove(path);previousPaths.remove(targetPath);
+    for(String previousPath:previousPaths){
+     Response previous=send("GET",repo+"/contents/"+encodedPath(previousPath)+"?ref="+segment(head),token,null);
+     if(previous.code==200){
+      ExistingFileState state=compatibleFileState(previous,source,legacySource);
+      if(state==ExistingFileState.IDENTICAL)return Result.succeeded();
+      if(state==ExistingFileState.CONFLICT)return Result.failed("Legacy Git path could not be verified");
+     }else if(previous.code!=404)return classify(previous,false);
+    }
+   }
    possibleWrite=true;
    Response blob=send("POST",repo+"/git/blobs",token,json.writeValueAsString(Map.of("content",Base64.getEncoder().encodeToString(source.getBytes(StandardCharsets.UTF_8)),"encoding","base64"))); if(blob.code!=201)return Result.unknown("Blob creation was not confirmed");
    String blobSha=json.readTree(blob.body).path("sha").asText();
@@ -566,14 +583,19 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
    return MessageDigest.isEqual(remote,local)?ExistingFileState.IDENTICAL:ExistingFileState.DIFFERENT;
   } catch(Exception ignored){return ExistingFileState.CONFLICT;}
  }
- private String source(UserSettings settings,Solution solution){
+ private ExistingFileState compatibleFileState(Response response,String source,String legacySource){
+  ExistingFileState state=existingFileState(response,source);
+  return state==ExistingFileState.DIFFERENT&&!source.equals(legacySource)&&existingFileState(response,legacySource)==ExistingFileState.IDENTICAL?ExistingFileState.IDENTICAL:state;
+ }
+ private String source(UserSettings settings,Solution solution){return source(settings,solution,DISPLAY_ZONE);}
+ private String source(UserSettings settings,Solution solution,ZoneId zone){
   String source=solution.getSourceCode();if(!settings.isGithubHeader())return source;
   String ext=extension(solution.getLanguage()),prefix=List.of("py","rb").contains(ext)?"#":"sql".equals(ext)?"--":"txt".equals(ext)?"":"//";if(prefix.isBlank())return source;
   Set<String> fields=new HashSet<>(settings.getGithubHeaderFields());List<String> lines=new ArrayList<>();
   if(fields.contains("identity")&&fields.contains("title"))lines.add(solution.getPlatform().name()+" #"+solution.getProblemNumber()+" · "+solution.getTitle());
   else{if(fields.contains("identity"))lines.add(solution.getPlatform().name()+" #"+solution.getProblemNumber());if(fields.contains("title"))lines.add("Problem: "+solution.getTitle());}
   if(fields.contains("url")&&solution.getProblemUrl()!=null&&!solution.getProblemUrl().isBlank())lines.add(solution.getProblemUrl());
-  if(fields.contains("solvedAt")){Instant solved=solution.getSolvedAt()!=null?solution.getSolvedAt():solution.getObservedAt();if(solved!=null)lines.add("Solved At: "+HEADER_TIME.format(solved)+" UTC");}
+  if(fields.contains("solvedAt")){Instant solved=solution.getSolvedAt()!=null?solution.getSolvedAt():solution.getObservedAt();if(solved!=null)lines.add("Solved At: "+HEADER_TIME.withZone(zone).format(solved)+(zone.equals(ZoneOffset.UTC)?" UTC":" KST"));}
   if(fields.contains("language")&&solution.getLanguage()!=null&&!solution.getLanguage().isBlank())lines.add("Language: "+solution.getLanguage());
   if(fields.contains("performance")){
    if(solution.getExecutionTime()!=null)lines.add("Execution Time: "+decimal(solution.getExecutionTime())+" ms");
@@ -588,17 +610,19 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
  private static String metadataLine(String value,String extension){String line=value==null?"":value.replaceAll("[\\r\\n\\u2028\\u2029]"," ");return "java".equals(extension)?line.replace('\\','/'):line;}
  private static String segment(String value){if(value==null||value.isBlank())throw new IllegalArgumentException("blank path component");return URLEncoder.encode(value,StandardCharsets.UTF_8).replace("+","%20");}
  private static String encodedPath(String path){return Arrays.stream(path.split("/",-1)).map(GithubAppProvider::segment).collect(java.util.stream.Collectors.joining("/"));}
- private String path(UserSettings s,Solution x){
+ private String path(UserSettings s,Solution x){return path(s,x,DISPLAY_ZONE);}
+ private String path(UserSettings s,Solution x,ZoneId zone){
   Instant solvedAt=x.getSolvedAt()!=null?x.getSolvedAt():x.getObservedAt();
-  Map<String,String> v=new HashMap<>(); v.put("platform",x.getPlatform().name());v.put("number",x.getProblemNumber());v.put("title",clean(x.getTitle()));v.put("language",clean(x.getLanguage()));v.put("name",clean(s.getDisplayName()));v.put("nickname",clean(s.getNickname()));v.put("id",s.getUser()!=null&&s.getUser().getId()!=null?String.valueOf(s.getUser().getId()):"");v.put("time",PATH_TIME.format(solvedAt==null?Instant.EPOCH:solvedAt));v.put("capture_ID",x.getCaptureId()==null?"":clean(x.getCaptureId()));
+  Map<String,String> v=new HashMap<>(); v.put("platform",x.getPlatform().name());v.put("number",x.getProblemNumber());v.put("title",clean(x.getTitle()));v.put("language",clean(x.getLanguage()));v.put("name",clean(s.getDisplayName()));v.put("nickname",clean(s.getNickname()));v.put("id",s.getUser()!=null&&s.getUser().getId()!=null?String.valueOf(s.getUser().getId()):"");v.put("time",PATH_TIME.withZone(zone).format(solvedAt==null?Instant.EPOCH:solvedAt));v.put("capture_ID",x.getCaptureId()==null?"":clean(x.getCaptureId()));
   String p=render(s.getGitPathTemplate(),v);
   String root=s.getGithubRootPath();if(root!=null&&!root.isBlank())p=root.replaceAll("^/+|/+$","")+"/"+p;
   if(p.isBlank()||p.startsWith("/")||p.startsWith("\\\\")||p.matches("^[A-Za-z]:.*")||p.contains("..")||p.chars().anyMatch(c->c<32||c==127))throw new IllegalArgumentException("unsafe");
   p=Arrays.stream(p.split("/",-1)).map(this::clean).filter(x1->!x1.isBlank()).collect(java.util.stream.Collectors.joining("/"));if(p.isBlank())throw new IllegalArgumentException("empty");
   String ext=extension(x.getLanguage());p=p.replaceFirst("(?i)\\.(java|kt|py|js|ts|c|cpp|cs|go|rs|rb|swift|scala|sql|txt)$","");return p+"."+ext;
  }
- private String versionedPath(String path,Solution solution){
-  Instant solvedAt=solution.getSolvedAt()!=null?solution.getSolvedAt():solution.getObservedAt();String timestamp=VERSION_TIMESTAMP.format(solvedAt==null?Instant.EPOCH:solvedAt);
+ private String versionedPath(String path,Solution solution){return versionedPath(path,solution,DISPLAY_ZONE);}
+ private String versionedPath(String path,Solution solution,ZoneId zone){
+  Instant solvedAt=solution.getSolvedAt()!=null?solution.getSolvedAt():solution.getObservedAt();String timestamp=VERSION_TIMESTAMP.withZone(zone).format(solvedAt==null?Instant.EPOCH:solvedAt);
   String capture=solution.getCaptureId()==null?"unknown":solution.getCaptureId().replaceAll("[^A-Za-z0-9]","");if(capture.length()>8)capture=capture.substring(0,8);if(capture.isBlank())capture="unknown";
   int slash=path.lastIndexOf('/'),dot=path.lastIndexOf('.');if(dot<=slash)dot=path.length();return path.substring(0,dot)+"_"+timestamp+"_"+capture+path.substring(dot);
  }

@@ -83,7 +83,7 @@ const plugin = {
               compatibility: { minimumDashboardVersion: '0.2.2', minimumApiVersion: '0.2.2', dashboardMinimumExtensionVersion: '0.2.3' },
               artifact: { name: 'codearchive-extension.zip', sha256: 'b'.repeat(64) }, releasePageUrl: 'https://github.com/devkimhongjin/codeArchive/releases/tag/'+tag,
               downloadUrl: 'https://github.com/devkimhongjin/codeArchive/releases/download/'+tag+'/codearchive-extension.zip', checksumUrl: 'https://github.com/devkimhongjin/codeArchive/releases/download/'+tag+'/codearchive-extension.zip.sha256' };
-            mountPopup(document, { load: async () => ({ pendingCount: 3, settings: {}, recentCaptures: [] }), copy: async () => {},
+            mountPopup(document, { load: async () => ({ pendingCount: 3, settings: {}, recentCaptures: ${JSON.stringify([{ ...captures[0], observedAt: '2025-12-31T15:00:00.000Z', syncState: 'PENDING' }])} }), copy: async () => {},
               loadExtensionUpdate: async () => { await new Promise(resolve => setTimeout(resolve, 1500)); return { installedVersion: '0.2.2', checkedAt: Date.now(), status: checks++ ? 'unavailable' : 'checked', available: true, release }; }
             });
           </script>`).replace('<body>', '<body><div style="background:#ffe7a0;padding:8px">업데이트 안내 브라우저 검증 · 합성 릴리스</div>'))

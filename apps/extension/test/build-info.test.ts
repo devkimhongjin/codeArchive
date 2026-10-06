@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { resolveBuildInfo } from "../../../shared/build-info.mjs";
+import { kstCalendarDate, resolveBuildInfo } from "../../../shared/build-info.mjs";
 import { buildLabel, updatedLabel } from "../../../shared/buildMetadata";
 
 const readJson = (url: URL) => JSON.parse(readFileSync(url, "utf8").replace(/^\uFEFF/, ""));
@@ -39,4 +39,11 @@ test("local metadata is explicitly dev while release metadata uses injected sour
 test("source fallback labels never render a blank production-looking value", () => {
   assert.equal(buildLabel(), "vdev · dev+source-unknown");
   assert.equal(updatedLabel(), "Updated dev");
+});
+
+test("build and release dates use the Korean day at UTC year/month boundaries", () => {
+  assert.equal(kstCalendarDate("2025-12-31T15:00:00Z"), "2026-01-01");
+  assert.equal(kstCalendarDate("2026-01-31T16:05:06-00:00"), "2026-02-01");
+  assert.equal(kstCalendarDate("2026-01-01T00:00:00+09:00"), "2026-01-01");
+  assert.equal(kstCalendarDate("invalid"), "");
 });

@@ -10,3 +10,4 @@ export function resolveBuildInfo(options?: {
 }): ResolvedBuildInfo;
 
 export function buildDefines(info: ResolvedBuildInfo): Record<string, string>;
+export function kstCalendarDate(instant: string): string;

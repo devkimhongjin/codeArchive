@@ -1,16 +1,8 @@
 import type { Capture } from "./types";
+import { formatKstDateTime } from "../../../shared/timePresentation";
 
 export function formatSolutionTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "정보 없음";
-  return new Intl.DateTimeFormat("ko-KR", {
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false
-  }).format(date);
+  return formatKstDateTime(value);
 }
 
 export function formatExecutionTime(value: number | undefined): string {

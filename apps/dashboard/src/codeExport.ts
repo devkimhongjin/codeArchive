@@ -1,5 +1,6 @@
 import type { Solution } from './types'
 import { describeLanguage } from '../../../shared/language'
+import { formatKstTimeToken } from '../../../shared/timePresentation'
 import { codeWithHeader, DEFAULT_HEADER_FIELDS, normalizedHeaderFields, type HeaderField } from '../../../shared/headerFields'
 
 export type ExportSettings = { copyHeader: boolean; downloadHeader: boolean; copyHeaderFields?: HeaderField[]; downloadHeaderFields?: HeaderField[]; filenameTemplate: string; gitPathTemplate?: string }
@@ -61,10 +62,7 @@ export function hasGitSubmissionIdentityToken(template: string): boolean {
 }
 
 function gitPathTime(value?: string): string {
-  const date = value ? new Date(value) : null
-  if (!date || Number.isNaN(date.getTime())) return 'unknown-time'
-  const iso = date.toISOString()
-  return `${iso.slice(2, 10).replace(/-/g, '')}${iso.slice(11, 19).replace(/:/g, '')}`
+  return formatKstTimeToken(value)
 }
 
 export function githubCommitMessage(solution: Solution, template: string, profile: ExportProfile = {}): string {

@@ -1,4 +1,5 @@
 import { describeLanguage } from './language'
+import { formatKstTimestamp } from './timePresentation'
 
 export const HEADER_FIELDS = ['identity', 'title', 'solvedAt', 'language', 'performance', 'url'] as const
 export type HeaderField = typeof HEADER_FIELDS[number]
@@ -53,8 +54,8 @@ export function headerLines(source: HeaderSource, fields: readonly HeaderField[]
   }
   if (selected.has('url') && source.problemUrl) lines.push(source.problemUrl)
   if (selected.has('solvedAt')) {
-    const date = new Date(source.solvedAt || source.observedAt || '')
-    if (!Number.isNaN(date.getTime())) lines.push(`Solved At: ${date.toISOString().slice(0, 19).replace('T', ' ')} UTC`)
+    const timestamp = formatKstTimestamp(source.solvedAt || source.observedAt)
+    if (timestamp) lines.push(`Solved At: ${timestamp} KST`)
   }
   if (selected.has('language') && source.language) lines.push(`Language: ${source.language}`)
   if (selected.has('performance')) {
