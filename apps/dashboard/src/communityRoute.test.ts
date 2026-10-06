@@ -18,6 +18,8 @@ it('rejects malformed route values and removes private community context on othe
   expect(urlForView('github', route, new URL('https://example.test/?view=community&platform=SWEA&problemNumber=123&solution=42'))).toBe('/?view=github')
   expect(readView('?view=github')).toBe('github')
   expect(readView('?view=settings')).toBe('settings')
+  expect(readView('?view=history')).toBe('history')
+  expect(urlForView('history', route, new URL('https://example.test/?view=community&platform=SWEA&problemNumber=123'))).toBe('/?view=history')
   expect(readView('?view=unsupported')).toBe('solutions')
 })
 

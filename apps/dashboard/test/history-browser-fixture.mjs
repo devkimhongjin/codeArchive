@@ -26,6 +26,10 @@ const capture = (index, platform) => ({
   problemUrl: 'https://example.test/problem',
 })
 const captures = [...Array.from({ length: 54 }, (_, i) => capture(i + 1, 'JUNGOL')), capture(501, 'SWEA'), capture(502, 'SWEA'), capture(601, 'PROGRAMMERS'), capture(602, 'PROGRAMMERS')]
+const archiveFixtures = process.env.CODEARCHIVE_BROWSER_PAGINATION === 'true'
+  ? [...Array.from({ length: 45 }, (_, i) => ({ ...capture(7001 + i, i % 2 ? 'SWEA' : 'PROGRAMMERS'), historicalImport: false, historicalSubmissionId: undefined })),
+    { ...captures[0], captureId: '00000000-0000-4000-9000-000000000001', historicalImport: false, historicalSubmissionId: undefined }]
+  : []
 const metadata = ({ sourceCode, result, problemUrl, languageKey, historicalImport, ...record }) => record
 const stored = new Map([captures[0], captures[54], captures[56]].map(record => [record.captureId, record]))
 const states = new Map([[captures[0].captureId, 'SUCCEEDED'], [captures[54].captureId, 'FAILED'], [captures[56].captureId, 'UNKNOWN']])
@@ -91,7 +95,7 @@ const plugin = {
       if (url.pathname === '/api/auth/providers') return json({ github: { enabled: true, loginUrl: '/api/oauth2/authorization/github' } })
       if (req.method !== 'GET' && req.headers['x-xsrf-token'] !== 'synthetic-csrf') return json({ message: 'Fixture CSRF missing' }, 403)
       if (url.pathname === '/api/settings') return json(settings)
-      if (url.pathname === '/api/solutions') return json([...stored.values()])
+      if (url.pathname === '/api/solutions') return json([...stored.values(), ...archiveFixtures])
       if (url.pathname === '/api/solutions/historical-submission-ids') return json([...stored.values()].filter(record => record.platform === url.searchParams.get('platform')).map(record => record.historicalSubmissionId))
       if (url.pathname === '/api/solutions/historical-github-candidates') return json([...stored.values()].map(record => ({ ...metadata(record), state: states.get(record.captureId) ?? 'NONE' })))
       if (url.pathname === '/api/solutions/bulk') {
