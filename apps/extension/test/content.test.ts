@@ -62,6 +62,39 @@ test("a submit click reports collecting immediately and clears a failed attempt"
   }
 });
 
+test("Jungol compact result stores the submitted snapshot once and acknowledges local persistence", async () => {
+  const { document } = parseHTML('<html><body><h1><span class="name">합성 문제</span></h1><button id="submit">제출</button><textarea data-codearchive-jungol-source data-codearchive-jungol-problem="5187" data-codearchive-jungol-language="Java 15"></textarea></body></html>');
+  const previousElement = globalThis.Element;
+  const previousObserver = globalThis.MutationObserver;
+  Object.assign(globalThis, { Element: document.defaultView!.Element, MutationObserver: document.defaultView!.MutationObserver });
+  const source = document.querySelector('textarea') as HTMLTextAreaElement;
+  source.value = 'class Synthetic {}';
+  document.documentElement.setAttribute('data-codearchive-editor-sync', `synced:${Date.now()}`);
+  const adapter = createAdapter(document, locationFor('https://jungol.co.kr/problem/5187?cursor=synthetic'))!;
+  const messages: Array<{ type: string; capture?: Record<string, unknown> }> = [];
+  try {
+    startCapture(adapter, document, async message => { messages.push(message as typeof messages[number]); return { ok: true }; });
+    (document.querySelector('#submit') as HTMLButtonElement).click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(document.documentElement.getAttribute('data-codearchive-capture-stage'), 'waiting-result');
+    document.body.insertAdjacentHTML('beforeend', '<div role="dialog" aria-modal="true" aria-label="정답이에요!" aria-describedby="dialog-desc-2" data-dialog-id="2"><div id="dialog-desc-2">정답 100점 288ms 47,908MB 다음 문제도 풀어볼까요? 다음 문제 지하철 #2097</div><button aria-label="닫기"></button></div>');
+    await new Promise(resolve => setImmediate(resolve));
+    const stores = messages.filter(message => message.type === 'STORE_CAPTURE');
+    assert.equal(stores.length, 1);
+    assert.equal(stores[0]?.capture?.sourceCode, 'class Synthetic {}');
+    assert.equal(stores[0]?.capture?.problemNumber, '5187');
+    assert.equal(stores[0]?.capture?.language, 'Java');
+    assert.equal(stores[0]?.capture?.memoryValue, 47908);
+    assert.equal(document.documentElement.getAttribute('data-codearchive-capture-stage'), 'store-acknowledged');
+    document.querySelector('[role="dialog"]')!.classList.add('result-ready');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(messages.filter(message => message.type === 'STORE_CAPTURE').length, 1);
+    await new Promise(resolve => setTimeout(resolve, 350));
+  } finally {
+    Object.assign(globalThis, { Element: previousElement, MutationObserver: previousObserver });
+  }
+});
+
 test("content capture retries transient worker failures and preserves the same payload", async () => {
   const delays: number[] = [];
   const messages: unknown[] = [];

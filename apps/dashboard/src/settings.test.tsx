@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import App from './App'
 import { ApiError } from './api'
@@ -556,8 +556,14 @@ it('keeps the latest queued theme locally durable after a failed earlier save an
   mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([solution]); mocks.settings.mockResolvedValue({ ...settings, autoSyncEnabled: false, githubAutoCommitEnabled: false }); mocks.save.mockReturnValueOnce(first.promise).mockResolvedValueOnce(recovered)
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT' ? Promise.resolve({ capability: 'failed-theme-capability' }) : Promise.resolve({ ok: true }))
   render(<App />); await screen.findAllByText('실패 테마')
+  // The solution list can resolve before account settings. This test exercises
+  // a failed save after loading, rather than racing that initial response.
+  fireEvent.click(screen.getByRole('button', { name: '설정' }))
+  await screen.findByDisplayValue('홍길동')
+  fireEvent.click(screen.getByRole('button', { name: /^전체 풀이/ }))
   fireEvent.change(screen.getByLabelText('코드 보기 테마'), { target: { value: 'solarized-light' } }); fireEvent.change(screen.getByLabelText('코드 보기 테마'), { target: { value: 'one-dark-pro' } })
-  await waitFor(() => expect(mocks.save).toHaveBeenCalledOnce()); first.resolve(Promise.reject(new Error('unreachable')) as never)
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledOnce())
+  await act(async () => { first.reject(new Error('unreachable')) })
   await waitFor(() => expect(JSON.parse(localStorage.getItem('codearchive-local-code-themes') ?? '{}')).toEqual(expect.objectContaining({ lightTheme: 'solarized-light', darkTheme: 'one-dark-pro' })))
   expect(bridgeMessages('CONFIGURE_RELAY').some(([, message]) => (message as { lightTheme?: string; darkTheme?: string }).lightTheme === 'solarized-light' && (message as { darkTheme?: string }).darkTheme === 'one-dark-pro')).toBe(false)
   fireEvent.change(screen.getByLabelText('코드 보기 테마'), { target: { value: 'one-light' } })

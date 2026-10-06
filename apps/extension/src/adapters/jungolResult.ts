@@ -17,18 +17,34 @@ function closeButtons(element: Element): HTMLButtonElement[] {
 
 /** Read only Jungol's visible, complete 100-point submission result dialog. */
 export function jungolAcceptedResult(document: Document): JungolAcceptedResult | null {
-  const titles = [...document.querySelectorAll<HTMLElement>('h2[id^="dialog-title-"]')]
-    .filter(title => normalizeText(title.textContent) === "정답이에요!" && isVisible(title));
-  if (titles.length !== 1) return null;
-  const title = titles[0]!;
-  const suffix = title.id.slice("dialog-title-".length);
-  if (!/^\d+$/.test(suffix)) return null;
+  const dialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]')]
+    .filter(dialog => isVisible(dialog) && (
+      normalizeText(dialog.getAttribute("aria-label")) === "정답이에요!" ||
+      [...dialog.querySelectorAll('h2[id^="dialog-title-"]')].some(title =>
+        normalizeText(title.textContent) === "정답이에요!" && isVisible(title))
+    ));
+  if (dialogs.length !== 1) return null;
+  const dialog = dialogs[0]!;
+  const labelledby = dialog.getAttribute("aria-labelledby");
+  const label = normalizeText(dialog.getAttribute("aria-label"));
+  let suffix: string | null;
+  if (labelledby !== null) {
+    const title = document.getElementById(labelledby);
+    if (!title || title.tagName !== "H2" || !title.id.startsWith("dialog-title-") ||
+        !dialog.contains(title) || !isVisible(title) || normalizeText(title.textContent) !== "정답이에요!" ||
+        (label && label !== "정답이에요!")) return null;
+    suffix = title.id.slice("dialog-title-".length);
+  } else {
+    // Jungol's compact result sheet omits the heading and names the modal
+    // directly. Its dialog ID still binds the exact result description.
+    if (label !== "정답이에요!" || dialog.querySelector('[id^="dialog-title-"]')) return null;
+    suffix = dialog.getAttribute("data-dialog-id");
+  }
+  if (!suffix || !/^\d+$/.test(suffix)) return null;
   const description = document.getElementById(`dialog-desc-${suffix}`);
   if (!description) return null;
 
-  const dialog = title.closest('[role="dialog"][aria-modal="true"]');
-  if (!dialog || dialog.getAttribute("aria-labelledby") !== title.id ||
-      dialog.getAttribute("aria-describedby") !== description.id || !dialog.contains(description) ||
+  if (dialog.getAttribute("aria-describedby") !== description.id || !dialog.contains(description) ||
       !isVisible(dialog) || !isVisible(description) || !closeButtons(dialog).some(isVisible)) return null;
 
   const signature = normalizeText(description.textContent);

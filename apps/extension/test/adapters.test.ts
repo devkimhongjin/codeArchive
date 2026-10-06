@@ -119,6 +119,24 @@ test("Jungol result requires one visible complete success dialog", () => {
   assert.equal(jungolAcceptedResult(document), null, "hidden history is not a fresh result");
 });
 
+test("Jungol accepts the observed compact result sheet and rejects uncertain identities", () => {
+  const sheet = '<div role="dialog" aria-modal="true" aria-label="정답이에요!" aria-describedby="dialog-desc-2" data-dialog-id="2"><button aria-label="닫기"></button><div id="dialog-desc-2">정답 100점 288ms 47,908MB 다음 문제도 풀어볼까요? 다음 문제 지하철 #2097</div><footer><button>닫기</button><button>다음 문제</button></footer></div>';
+  const { document } = parseHTML(`<html><body>${sheet}</body></html>`);
+  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 288, memoryValue: 47908, memoryUnit: "MB", memoryUsage: 47908 });
+  const dialog = document.querySelector('[role="dialog"]')!;
+  for (const [name, value] of [["aria-label", "오답이에요!"], ["aria-describedby", "dialog-desc-3"], ["data-dialog-id", "3"], ["data-dialog-id", ""], ["aria-modal", "false"], ["aria-labelledby", "missing-title"]]) {
+    const original = dialog.getAttribute(name!);
+    dialog.setAttribute(name!, value!);
+    assert.equal(jungolAcceptedResult(document), null, `${name}=${value}`);
+    if (original === null) dialog.removeAttribute(name!); else dialog.setAttribute(name!, original);
+  }
+  dialog.setAttribute("hidden", "");
+  assert.equal(jungolAcceptedResult(document), null);
+  dialog.removeAttribute("hidden");
+  document.body.insertAdjacentHTML("beforeend", sheet.replaceAll("dialog-desc-2", "dialog-desc-3").replace('data-dialog-id="2"', 'data-dialog-id="3"'));
+  assert.equal(jungolAcceptedResult(document), null, "two visible success sheets are ambiguous");
+});
+
 test("Jungol rejects a pre-existing result and a second judge request", () => {
   const { document } = parseHTML('<html><body><h1><span>계단 오르기</span></h1><div class="result-dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title-0" aria-describedby="dialog-desc-0"><h2 id="dialog-title-0">정답이에요!</h2><div id="dialog-desc-0">정답 100점 474ms 34,544MB</div><button>닫기</button></div><textarea data-codearchive-jungol-source data-codearchive-jungol-problem="1520" data-codearchive-jungol-language="Java 8"></textarea></body></html>');
   const source = document.querySelector("textarea") as HTMLTextAreaElement;

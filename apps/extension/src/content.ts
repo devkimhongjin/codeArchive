@@ -411,7 +411,7 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
   let activeAttemptId: string | null = null;
 
   function markCaptureStage(stage: string, attemptId: string | null = activeAttemptId): void {
-    if (adapter.platform !== "PROGRAMMERS" || (attemptId && attemptId !== activeAttemptId)) return;
+    if ((adapter.platform !== "PROGRAMMERS" && adapter.platform !== "JUNGOL") || (attemptId && attemptId !== activeAttemptId)) return;
     // A non-sensitive, page-local diagnostic for the next real submission.
     // Never include source, identity, capture IDs, or runtime error messages.
     document.documentElement?.setAttribute("data-codearchive-capture-stage", stage);
@@ -557,7 +557,7 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
           // source textarea at this click boundary.
           adapter.beginSubmissionAttempt(new Date());
           activeAttemptId = crypto.randomUUID();
-          if (adapter.platform === "PROGRAMMERS") {
+          if (adapter.platform === "PROGRAMMERS" || adapter.platform === "JUNGOL") {
             const snapshot = adapter.getSubmissionSnapshot?.();
             markCaptureStage(!snapshot?.problem || !snapshot.editor ? "snapshot-missing" : "waiting-result");
           }
