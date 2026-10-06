@@ -134,9 +134,8 @@ public class SolutionService {
         String memoryUnit = normalizeMemoryUnit(payload.getMemoryUnit(), payload.getMemoryValue());
         String historicalSubmissionId = payload.getHistoricalSubmissionId();
         if (historicalSubmissionId != null &&
-                (!Boolean.TRUE.equals(payload.getHistoricalImport()) || platform != Platform.JUNGOL ||
-                 !historicalSubmissionId.matches("[0-9]{1,40}"))) {
-            throw new CaptureValidationException("historicalSubmissionId requires a Jungol historical import");
+                (!Boolean.TRUE.equals(payload.getHistoricalImport()) || !validHistoricalIdentity(platform, historicalSubmissionId, problemNumber, solvedAt, languageKey))) {
+            throw new CaptureValidationException("Invalid historical submission identity for platform");
         }
 
         return new NormalizedCapture(captureId, platform, problemNumber, title, problemUrl, language, languageKey, sourceCode,
@@ -153,6 +152,20 @@ public class SolutionService {
             throw new CaptureValidationException(field + " is too long");
         }
         return normalized;
+    }
+
+    private boolean validHistoricalIdentity(Platform platform, String id, String problemNumber, Instant solvedAt, String languageKey) {
+        if (id.length() > 320) return false;
+        return switch (platform) {
+            case JUNGOL -> id.matches("[0-9]{1,40}");
+            case SWEA -> id.matches("[A-Za-z0-9_-]{8,160}");
+            case PROGRAMMERS -> {
+                var match = java.util.regex.Pattern.compile("pg:[A-Za-z0-9_-]{1,100}:([0-9]{1,40}):([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}[+-][0-9]{2}:[0-9]{2}):([a-z0-9+.#-]{1,100})").matcher(id);
+                if (!match.matches() || !problemNumber.equals(match.group(1)) || !languageKey.equals(match.group(3))) yield false;
+                try { yield OffsetDateTime.parse(match.group(2)).toInstant().equals(solvedAt); }
+                catch (DateTimeParseException exception) { yield false; }
+            }
+        };
     }
 
     private String requiredPreservingWhitespace(String value, String field, int maxLength) {

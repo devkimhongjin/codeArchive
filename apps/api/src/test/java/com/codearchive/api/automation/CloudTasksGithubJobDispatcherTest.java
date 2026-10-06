@@ -42,4 +42,15 @@ class CloudTasksGithubJobDispatcherTest {
         cloudTasks.setOidcAudience("https://worker.example.test");
         return properties;
     }
+
+    @Test
+    void explicitRetryUsesNewDurableGenerationButTheSameOpaquePayload() {
+        CloudTasksClient client = mock(CloudTasksClient.class);
+        var dispatcher = new CloudTasksGithubJobDispatcher(client, configuredProperties());
+        dispatcher.dispatch(42L, 1);
+        ArgumentCaptor<CreateTaskRequest> request = ArgumentCaptor.forClass(CreateTaskRequest.class);
+        verify(client).createTask(request.capture());
+        assertThat(request.getValue().getTask().getName()).endsWith("/tasks/github-job-42-retry-1");
+        assertThat(request.getValue().getTask().getHttpRequest().getBody().toStringUtf8()).isEqualTo("{\"jobId\":42}");
+    }
 }

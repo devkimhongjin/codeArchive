@@ -69,8 +69,11 @@ public class SolutionController {
         if (identity.isEmpty()) return ResponseEntity.status(401).body(new ApiError("Authentication is required"));
         ResponseEntity<?> assertionFailure = validateAccountAssertion(identity.get().githubId(), accountAssertion);
         if (assertionFailure != null) return assertionFailure;
-        if (!"JUNGOL".equals(platform)) return ResponseEntity.badRequest().body(new ApiError("Unsupported platform"));
-        return ResponseEntity.ok(solutionService.historicalSubmissionIdsForUser(identity.get().githubId(), Platform.JUNGOL));
+        try {
+            return ResponseEntity.ok(solutionService.historicalSubmissionIdsForUser(identity.get().githubId(), Platform.valueOf(platform)));
+        } catch (IllegalArgumentException exception) {
+            return ResponseEntity.badRequest().body(new ApiError("Unsupported platform"));
+        }
     }
 
     @GetMapping("/historical-github-status")
@@ -179,6 +182,58 @@ public class SolutionController {
                     body.path("owner").asText(), body.path("repository").asText(), body.path("branch").asText()));
         } catch (CaptureValidationException exception) {
             return ResponseEntity.status(409).body(new ApiError(exception.getMessage()));
+        }
+    }
+
+    @GetMapping("/historical-github-candidates")
+    public ResponseEntity<?> historicalGithubCandidates(Authentication authentication,
+            @RequestHeader(value = "X-CodeArchive-Account", required = false) String assertion) {
+        Optional<GithubIdentity> identity = GithubAuthentication.identity(authentication);
+        if (identity.isEmpty()) return ResponseEntity.status(401).body(new ApiError("Authentication is required"));
+        ResponseEntity<?> failure = validateAccountAssertion(identity.get().githubId(), assertion);
+        if (failure != null) return failure;
+        List<Solution> historical = solutionService.listForUser(identity.get().githubId()).stream()
+                .filter(solution -> solution.isHistoricalImport() && solution.getHistoricalSubmissionId() != null).toList();
+        if (historical.isEmpty()) return ResponseEntity.ok(List.of());
+        var states = automation.statuses(historical.get(0).getUser(), historical.stream().map(Solution::getCaptureId).toList());
+        return ResponseEntity.ok(historical.stream().map(solution -> HistoricalCommitCandidate.from(solution,
+                states.containsKey(solution.getCaptureId()) ? states.get(solution.getCaptureId()).name() : "NONE")).toList());
+    }
+
+    @PostMapping("/historical-github-batch")
+    public ResponseEntity<?> historicalGithubBatch(@RequestBody JsonNode body, Authentication authentication,
+            @RequestHeader(value = "X-CodeArchive-Account", required = false) String assertion) {
+        Optional<GithubIdentity> identity = GithubAuthentication.identity(authentication);
+        if (identity.isEmpty()) return ResponseEntity.status(401).body(new ApiError("Authentication is required"));
+        ResponseEntity<?> failure = validateAccountAssertion(identity.get().githubId(), assertion);
+        if (failure != null) return failure;
+        if (body == null || !body.isObject() || !body.path("captureIds").isArray() ||
+                body.path("captureIds").size() < 1 || body.path("captureIds").size() > 50 ||
+                !body.path("settingsVersion").isIntegralNumber() || !body.path("installationId").isIntegralNumber() ||
+                !body.path("owner").isTextual() || !body.path("repository").isTextual() || !body.path("branch").isTextual())
+            return ResponseEntity.badRequest().body(new ApiError("Invalid manual commit request"));
+        List<String> ids = new ArrayList<>();
+        for (JsonNode id : body.path("captureIds")) {
+            if (!id.isTextual() || !id.asText().matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
+                return ResponseEntity.badRequest().body(new ApiError("Invalid capture ID"));
+            ids.add(id.asText());
+        }
+        if (new LinkedHashSet<>(ids).size() != ids.size())
+            return ResponseEntity.badRequest().body(new ApiError("Duplicate capture ID"));
+        List<Solution> owned = solutionService.listForUser(identity.get().githubId());
+        List<Solution> selected = new ArrayList<>();
+        for (String id : ids) {
+            Optional<Solution> match = owned.stream().filter(solution -> solution.isHistoricalImport() &&
+                    solution.getHistoricalSubmissionId() != null && id.equals(solution.getCaptureId())).findFirst();
+            if (match.isEmpty()) return ResponseEntity.status(409).body(new ApiError("Historical capture is not synced"));
+            selected.add(match.get());
+        }
+        try {
+            return ResponseEntity.ok(automation.requestManualHistoricalByCapture(selected,
+                    body.path("settingsVersion").asLong(), body.path("installationId").asLong(),
+                    body.path("owner").asText(), body.path("repository").asText(), body.path("branch").asText()));
+        } catch (CaptureValidationException | DataIntegrityViolationException exception) {
+            return ResponseEntity.status(409).body(new ApiError("GitHub request conflicts with current settings or job state; refresh and retry"));
         }
     }
 

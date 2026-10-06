@@ -39,6 +39,7 @@ import { EXTENSION_RELEASE, fetchLatestExtensionRelease, isVersionAtLeast, type 
 import { formatExecutionTime, formatMemory } from './performancePresentation'
 import { CommunityView } from './CommunityView'
 import { HistoricalImportView } from './HistoricalImportView'
+import { HistoricalGithubCommitView } from './HistoricalGithubCommitView'
 import { readCommunityRoute, readView, urlForView, type CommunityRoute } from './communityRoute'
 import { CODE_THEME_MODE_KEY, isLightTheme, type CodeTheme, type CodeThemeMode } from '../../../shared/codeThemes'
 
@@ -277,7 +278,9 @@ export default function App() {
   const [bridgeCapability, setBridgeCapability] = useState<string | null>(null)
   const [extensionVersion, setExtensionVersion] = useState<string | null>(null)
   const [historySupported, setHistorySupported] = useState(false)
-  const [historyActivity, setHistoryActivity] = useState<string | null>(null)
+  const [showHistoricalSync, setShowHistoricalSync] = useState(false)
+  const [historicalOpened, setHistoricalOpened] = useState(false)
+  const [historicalRevision, setHistoricalRevision] = useState(0)
   const [pendingCount, setPendingCount] = useState<number | null>(null)
   const [pendingCountState, setPendingCountState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [lastSyncState, setLastSyncState] = useState<'idle' | 'success' | 'partial' | 'failed'>('idle')
@@ -564,7 +567,7 @@ export default function App() {
   useEffect(() => {
     const restoreRoute = (event: PopStateEvent) => {
       const savedView = event.state?.codeArchiveView
-      setView(savedView === 'guide' || savedView === 'history' || savedView === 'settings' || savedView === 'github' ? savedView : readView())
+      setView(savedView === 'guide' || savedView === 'settings' || savedView === 'github' ? savedView : readView())
       setCommunityRoute(readCommunityRoute())
     }
     window.addEventListener('popstate', restoreRoute)
@@ -1238,9 +1241,6 @@ export default function App() {
             <button className={view === 'solutions' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('solutions')}>
               전체 풀이 <span className="nav-count">{solutions.length}</span>
             </button>
-            <button className={view === 'history' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('history')}>
-              과거 풀이 가져오기 {historyActivity && <span className="nav-count" aria-live="polite">{historyActivity}</span>}
-            </button>
             <button className={view === 'community' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('community')}>
               커뮤니티
             </button>
@@ -1305,7 +1305,7 @@ export default function App() {
           <section className="load-error" role="alert"><Icon name="close" size={17} /><span>{loadError}</span><button onClick={() => setLoadError(null)} aria-label="오류 닫기"><Icon name="close" size={15} /></button></section>
         )}
 
-        {view === 'solutions' && (
+        {view === 'solutions' && <>
           <SolutionsView
             solutions={solutions}
             filteredSolutions={filteredSolutions}
@@ -1333,25 +1333,26 @@ export default function App() {
             codeThemeMode={codeThemeMode}
             onCodeThemeChange={(theme) => chooseCodeTheme(theme, true)}
           />
-        )}
-        <div hidden={view !== 'history'}><HistoricalImportView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} user={user} mode={mode} onActivityChange={setHistoryActivity} onImported={() => {
-          if (modeRef.current === 'live' && userRef.current) {
-            void refreshSolutions(accountGeneration.current, userRef.current.githubId).catch(() => undefined)
-            return
-          }
-          const capability = bridgeCapabilityRef.current
-          if (!capability || modeRef.current !== 'local') return
-          const generation = accountGeneration.current
-          const connectedExtensionId = currentExtensionId.current
-          void requestBridge(currentExtensionId.current, { type: 'GET_LOCAL_ARCHIVE', capability, limit: 50 })
-            .then((response: { captures?: unknown; localOnly?: unknown }) => {
-              if (generation !== accountGeneration.current || capability !== bridgeCapabilityRef.current ||
-                  connectedExtensionId !== currentExtensionId.current || modeRef.current !== 'local' ||
-                  response.localOnly !== true || !Array.isArray(response.captures)) return
-              const local = response.captures.map(normalizeSolution)
-              setSolutions(local)
-            }).catch(() => undefined)
-        }} /></div>
+        </>}
+          <section hidden={view !== 'solutions'} className="historical-import historical-entry" aria-label="과거 풀이 관리"><div className="historical-import-actions"><button type="button" onClick={() => { setHistoricalOpened(true); setShowHistoricalSync(open => !open) }}>{showHistoricalSync ? '과거 풀이 관리 닫기' : '과거 풀이 일괄 동기화 / GitHub 커밋'}</button></div>
+          {historicalOpened && <div hidden={!showHistoricalSync}><HistoricalImportView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} user={user} mode={mode} onImported={() => {
+            setHistoricalRevision(value => value + 1)
+            if (modeRef.current === 'live' && userRef.current) {
+              void refreshSolutions(accountGeneration.current, userRef.current.githubId).catch(() => undefined)
+              return
+            }
+            const capability = bridgeCapabilityRef.current
+            if (!capability || modeRef.current !== 'local') return
+            const generation = accountGeneration.current
+            const connectedExtensionId = currentExtensionId.current
+            void requestBridge(currentExtensionId.current, { type: 'GET_LOCAL_ARCHIVE', capability, limit: 50 })
+              .then((response: { captures?: unknown; localOnly?: unknown }) => {
+                if (generation !== accountGeneration.current || capability !== bridgeCapabilityRef.current ||
+                    connectedExtensionId !== currentExtensionId.current || modeRef.current !== 'local' ||
+                    response.localOnly !== true || !Array.isArray(response.captures)) return
+                setSolutions(response.captures.map(normalizeSolution))
+              }).catch(() => undefined)
+          }} /><HistoricalGithubCommitView user={user} mode={mode} revision={historicalRevision} /></div>}</section>
         {view === 'community' && <CommunityView
           user={user}
           mode={mode}
@@ -1550,7 +1551,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
           {group && group.submissions.length > 1 && <label className="submission-picker">제출 기록<select aria-label="제출 기록" value={solution.captureId} onChange={(event) => onSelectSubmission(event.target.value)}>{group.submissions.map((submission, index) => <option key={submission.captureId} value={submission.captureId}>{index + 1}. {formatObservedTime(submission.solvedAt ?? submission.observedAt)} · {canonicalLanguageDisplayName(submission.language)}</option>)}</select></label>}
           <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
           <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} activeMode={codeThemeMode} />
-          <div className="detail-note"><Icon name="spark" size={14} /><span>{solution.historicalImport ? mode === 'live' ? '과거 풀이를 명시적으로 서버에 동기화한 기록입니다. 자동 GitHub 커밋은 실행되지 않습니다.' : '과거 풀이를 이 브라우저에 보관한 기록입니다. 서버 동기화와 GitHub 커밋은 가져오기 화면에서 선택할 수 있습니다.' : mode === 'local' ? '이 브라우저의 로컬 기록입니다. 로그인 후 명시적으로 동기화할 수 있습니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
+          <div className="detail-note"><Icon name="spark" size={14} /><span>{solution.historicalImport ? mode === 'live' ? '과거 풀이를 명시적으로 서버에 동기화한 기록입니다. 자동 GitHub 커밋은 실행되지 않습니다.' : '이 브라우저에 보관한 과거 풀이입니다. 전체 풀이의 과거 풀이 관리에서 서버 동기화와 GitHub 커밋을 요청할 수 있습니다.' : mode === 'local' ? '이 브라우저의 로컬 기록입니다. 로그인 후 명시적으로 동기화할 수 있습니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
         </>
       )}
     </section>

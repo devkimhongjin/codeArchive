@@ -22,7 +22,7 @@ test("release version is shared by packages and the extension manifest", () => {
 
 test("local metadata is explicitly dev while release metadata uses injected source identity", () => {
   const local = resolveBuildInfo({ env: {}, cwd: fileURLToPath(new URL("../../..", import.meta.url)) });
-  assert.equal(local.version, "0.2.1");
+  assert.equal(local.version, readJson(new URL("../../../release.json", import.meta.url)).version);
   assert.match(local.buildId, /^dev\+/);
   assert.equal(local.updatedDate, "dev");
 
@@ -33,7 +33,7 @@ test("local metadata is explicitly dev while release metadata uses injected sour
       CODEARCHIVE_BUILD_DATE: "2026-09-18"
     }
   });
-  assert.deepEqual(release, { version: "0.2.1", buildId: "abcdef0", updatedDate: "2026-09-18" });
+  assert.deepEqual(release, { version: readJson(new URL("../../../release.json", import.meta.url)).version, buildId: "abcdef0", updatedDate: "2026-09-18" });
 });
 
 test("source fallback labels never render a blank production-looking value", () => {

@@ -79,7 +79,7 @@ public class Solution {
     @Column(name = "historical_import", nullable = false)
     private boolean historicalImport;
 
-    @Column(name = "historical_submission_id", length = 40)
+    @Column(name = "historical_submission_id", length = 320)
     private String historicalSubmissionId;
 
     /** Null is the default and means private, including every pre-community row. */

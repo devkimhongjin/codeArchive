@@ -1,11 +1,13 @@
 import { canonicalLanguageDisplayName, canonicalLanguageKey } from "../../../shared/language";
 import { createCapture } from "./capture";
 import { CAPTURE_RESULT, type Capture } from "./types";
+import type { HistoricalImportFailureReason } from "./historicalTaskController";
 
 const JUNGOL_ORIGIN = "https://jungol.co.kr";
 const MAX_IMPORT_BATCH = 10;
 const ACCOUNT_HISTORY_PATH = /^\/account\/(\d{1,40})\/submission$/;
-type ObservedScan = { url: string; clicks: number; minRows: number; knownSubmissionIds: Set<string>;
+type ObservedScan = { url: string; table: Element | null; clicks: number; minRows: number; knownSubmissionIds: Set<string>;
+  groupsExpanded: number; lastProgressAt: number; lastProgressSignature?: string;
   pendingPageIds?: Set<string>; pendingGroups: Map<string, { beforeChildren: Set<string>; additional: number }> };
 const observedPagination = new WeakMap<Document, ObservedScan>();
 
@@ -126,10 +128,18 @@ export type JungolHistoryPreview =
 
 export type JungolHistoryScanProgress = {
   phase: "pages" | "groups";
+  /** The operation currently being observed; it does not imply a row increment. */
+  stage: "reading-pages" | "waiting-pages" | "expanding-groups" | "waiting-groups";
   rows: number;
   pagesLoaded: number;
   groupsExpanded: number;
   groupsTotal: number;
+  /** False while late group controls can still be discovered. */
+  groupsTotalKnown: boolean;
+  /** Timestamp of the last actual DOM progress, distinct from a wait report. */
+  lastProgressAt: number;
+  /** The source document's observed visibility, without inferring browser scheduling. */
+  sourceVisibility: "visible" | "hidden" | "prerender" | "unknown";
 };
 
 /** A listing is only a candidate source. It never supplies source code or an exact submission time. */
@@ -205,21 +215,39 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
   let finishedPageWithoutMore = false;
   let lastRowCount = document.querySelectorAll('table tr').length;
   let idlePageChecks = 0;
-  let groupsExpanded = 0;
   let groupsTotal = 0;
+  const table = document.querySelector("table");
   const priorPagination = observedPagination.get(document);
   const currentIds = allSubmissionIds(document, location);
-  const sameListing = priorPagination?.url === startingUrl && lastRowCount >= priorPagination.minRows &&
-    [...priorPagination.knownSubmissionIds].every(id => currentIds.has(id));
+  const sameListing = priorPagination?.url === startingUrl && priorPagination.table === table &&
+    lastRowCount >= priorPagination.minRows && [...priorPagination.knownSubmissionIds].every(id => currentIds.has(id));
   const observed: ObservedScan = sameListing
-    ? priorPagination : { url: startingUrl, clicks: 0, minRows: lastRowCount,
-      knownSubmissionIds: currentIds, pendingGroups: new Map() };
+    ? priorPagination : { url: startingUrl, table, clicks: 0, minRows: lastRowCount,
+      knownSubmissionIds: currentIds, groupsExpanded: 0, lastProgressAt: Date.now(), pendingGroups: new Map() };
   observedPagination.set(document, observed);
   let paginationClicks = observed.clicks;
-  const report = (phase: JungolHistoryScanProgress["phase"]) => onProgress({ phase,
-    rows: document.querySelectorAll('table tr').length, pagesLoaded: paginationClicks,
-    groupsExpanded, groupsTotal });
-  report("pages");
+  sawMoreButton = paginationClicks > 0;
+  finishedPageWithoutMore = sawMoreButton && !moreButton();
+  let groupsExpanded = observed.groupsExpanded;
+  let lastProgressAt = observed.lastProgressAt;
+  const sourceVisibility = (): JungolHistoryScanProgress["sourceVisibility"] => {
+    const visibility = document.visibilityState;
+    return visibility === "visible" || visibility === "hidden" || visibility === "prerender" ? visibility : "unknown";
+  };
+  const report = (phase: JungolHistoryScanProgress["phase"], stage: JungolHistoryScanProgress["stage"], _changed = false) => {
+    // Stage changes and continuation passes are not progress. Only observed
+    // rows, loaded pages, or expanded groups advance the real-progress clock.
+    const rows = document.querySelectorAll('table tr').length;
+    const signature = `${rows}:${paginationClicks}:${groupsExpanded}`;
+    if (signature !== observed.lastProgressSignature) {
+      lastProgressAt = Date.now();
+      observed.lastProgressAt = lastProgressAt;
+      observed.lastProgressSignature = signature;
+    }
+    onProgress({ phase, stage, rows, pagesLoaded: paginationClicks,
+      groupsExpanded, groupsTotal, groupsTotalKnown: false, lastProgressAt, sourceVisibility: sourceVisibility() });
+  };
+  report("pages", "reading-pages", true);
   const pageLoaded = () => {
     const previous = observed.pendingPageIds;
     if (!previous?.size || moreButton()?.disabled) return null;
@@ -229,7 +257,10 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
   };
   if (observed.pendingPageIds) {
     let loaded: true | null = null;
-    for (let wait = 0; wait < 4 && !loaded; wait++) loaded = await waitFor(document, pageLoaded, stepWaitMs);
+    for (let wait = 0; wait < 4 && !loaded; wait++) {
+      report("pages", "waiting-pages");
+      loaded = await waitFor(document, pageLoaded, stepWaitMs);
+    }
     if (!isCurrent()) return cancelled();
     if (loaded && location.href === startingUrl) {
       observed.pendingPageIds = undefined;
@@ -240,7 +271,7 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
       lastRowCount = observed.minRows;
       sawMoreButton = true;
       finishedPageWithoutMore = !moreButton();
-      report("pages");
+      report("pages", "reading-pages", true);
     } else { incomplete = true; unresolvedPage = true; }
   }
   for (let count = 0; count < 1_000 && !incomplete; count++) {
@@ -249,16 +280,17 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
     if (!more) {
       // The first page and its pagination control are rendered asynchronously.
       // A momentarily missing button does not mean the final page was reached.
+      report("pages", "waiting-pages");
       const changed = await waitFor(document, () => {
         const rowCount = document.querySelectorAll('table tr').length;
         return moreButton() || rowCount !== lastRowCount ? true : null;
-      }, stepWaitMs);
+      }, sawMoreButton && finishedPageWithoutMore ? Math.min(stepWaitMs, 2_000) : stepWaitMs);
       if (!isCurrent()) return cancelled();
       if (location.href !== startingUrl) { incomplete = true; break; }
       if (changed) {
         idlePageChecks = 0;
         lastRowCount = document.querySelectorAll('table tr').length;
-        report("pages");
+        report("pages", "reading-pages", true);
         continue;
       }
       // Neither a footer/version nor fewer than 30 represented submissions
@@ -272,13 +304,15 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
         incomplete = true;
       } else if (++idlePageChecks < Math.min(maxIdlePageChecks, 4)) {
         // After a loaded page the next cursor can mount later than the rows.
-        // Require several quiet windows before treating its absence as final.
+        // Require several short quiet windows after a confirmed page response;
+        // keep the full wait budget for initial and in-flight requests.
         continue;
       }
       break;
     }
     sawMoreButton = true;
     if (more.disabled) {
+      report("pages", "waiting-pages");
       const ready = await waitFor(document, () => moreButton() && !moreButton()?.disabled ? true : null,
         stepWaitMs);
       if (!isCurrent()) return cancelled();
@@ -290,7 +324,10 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
     if (!isCurrent()) return cancelled();
     more.click();
     let loaded: true | null = null;
-    for (let wait = 0; wait < 4 && !loaded; wait++) loaded = await waitFor(document, pageLoaded, stepWaitMs);
+    for (let wait = 0; wait < 4 && !loaded; wait++) {
+      report("pages", "waiting-pages");
+      loaded = await waitFor(document, pageLoaded, stepWaitMs);
+    }
     if (!isCurrent()) return cancelled();
     if (!loaded || location.href !== startingUrl) { incomplete = true; unresolvedPage = true; break; }
     observed.pendingPageIds = undefined;
@@ -301,11 +338,11 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
     observed.minRows = lastRowCount;
     observed.knownSubmissionIds = allSubmissionIds(document, location);
     finishedPageWithoutMore = !moreButton();
-    report("pages");
+    report("pages", "reading-pages", true);
   }
   if (moreButton()) incomplete = true;
   groupsTotal = document.querySelectorAll('button.sl-group-toggle[aria-expanded="false"]').length;
-  report("groups");
+  report("groups", "expanding-groups", true);
   let unresolvedGroup = false;
   for (const [id, pending] of observed.pendingGroups) {
     if (!isCurrent()) return cancelled();
@@ -316,13 +353,17 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
         [...groupChildIds(document, location, id)].filter(childId => !pending.beforeChildren.has(childId)).length >= pending.additional ? true : null;
     };
     let expanded: true | null = null;
-    for (let wait = 0; wait < 4 && !expanded; wait++) expanded = await waitFor(document, expandedNow, stepWaitMs);
+    for (let wait = 0; wait < 4 && !expanded; wait++) {
+      report("groups", "waiting-groups");
+      expanded = await waitFor(document, expandedNow, stepWaitMs);
+    }
     if (!isCurrent()) return cancelled();
     if (!expanded || location.href !== startingUrl) { incomplete = true; unresolvedGroup = true; break; }
     observed.pendingGroups.delete(id);
     attempted.add(id);
     groupsExpanded += 1;
-    report("groups");
+    observed.groupsExpanded = groupsExpanded;
+    report("groups", "expanding-groups", true);
   }
   let waitedForLateRows = false;
   for (let count = 0; count < 3_000 && !unresolvedGroup && !unresolvedPage; count++) {
@@ -333,6 +374,7 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
       if (waitedForLateRows) break;
       waitedForLateRows = true;
       const rowCount = document.querySelectorAll('table tr').length;
+      report("groups", "waiting-groups");
       const late = await waitFor(document, () =>
         document.querySelector('button.sl-group-toggle[aria-expanded="false"]') ||
         moreButton() || document.querySelectorAll('table tr').length !== rowCount ? true : null,
@@ -362,14 +404,18 @@ export async function loadJungolHistoryPreview(document: Document, location: Loc
         groupChildIds(document, location, id).size >= additional ? true : null;
     };
     let expanded: true | null = null;
-    for (let wait = 0; wait < 4 && !expanded; wait++) expanded = await waitFor(document, expandedNow, stepWaitMs);
+    for (let wait = 0; wait < 4 && !expanded; wait++) {
+      report("groups", "waiting-groups");
+      expanded = await waitFor(document, expandedNow, stepWaitMs);
+    }
     if (!isCurrent()) return cancelled();
     if (location.href !== startingUrl) { incomplete = true; break; }
     if (!expanded) { incomplete = true; break; }
     observed.pendingGroups.delete(id);
     attempted.add(id);
     groupsExpanded += 1;
-    report("groups");
+    observed.groupsExpanded = groupsExpanded;
+    report("groups", "expanding-groups", true);
     waitedForLateRows = false;
   }
   if (!isCurrent()) return cancelled();
@@ -410,10 +456,16 @@ export function verifyJungolHistoryDetail(document: Document, location: Location
     ?.querySelector('.paper .content')?.textContent?.trim() ?? "";
   const code = dialog?.querySelector<HTMLElement>('code.hljs')?.textContent ?? "";
   const ownerLink = dialog?.querySelector<HTMLAnchorElement>('a[href^="/account/"]');
+  // The current account-profile table reports JavaScript string length despite
+  // its B suffix; the legacy filtered listing reports UTF-8 bytes. Keep the
+  // route-specific metric exact rather than accepting either representation.
+  const reportedCodeLength = profileId ? code.length : new TextEncoder().encode(code).length;
+  const problemText = problem?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+  const problemMatch = problemText.match(/^(.*?)\s*#(\d{1,40})$/);
   if (!account || owner !== account || (profileId && ownerLink?.getAttribute("href") !== `/account/${profileId}`) || !problem ||
-      !problem.textContent?.includes(candidate.title) || !problem.textContent?.includes(`#${candidate.problemNumber}`) ||
+      problemMatch?.[1]?.trim() !== candidate.title || problemMatch?.[2] !== candidate.problemNumber ||
       detailId !== `#${candidate.submissionId}` || score !== "100점" || status !== "정답" ||
-      !code.trim() || new TextEncoder().encode(code).length !== candidate.codeByteLength) return null;
+      !code.trim() || reportedCodeLength !== candidate.codeByteLength) return null;
   const date = timeText.match(/^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.\s*(오전|오후)\s*(\d{1,2}):(\d{2}):(\d{2})$/);
   if (!date) return null;
   const [, year, month, day, period, hour, minute, second] = date;
@@ -446,7 +498,7 @@ export function historicalJungolCapture(verified: JungolHistoryVerified): Captur
   });
 }
 
-type StoreHistorical = (capture: Capture) => Promise<{ ok?: boolean; created?: boolean }>;
+type StoreHistorical = (capture: Capture) => Promise<{ ok?: boolean; created?: boolean; error?: string }>;
 
 function waitFor<T>(document: Document, read: () => T | null, timeoutMs = 8_000): Promise<T | null> {
   const found = read();
@@ -464,7 +516,8 @@ function waitFor<T>(document: Document, read: () => T | null, timeoutMs = 8_000)
 /** User-initiated, bounded local import. No relay, auto-download, or GitHub job is started here. */
 export async function importVisibleJungolHistory(document: Document, location: Location,
   candidates: JungolHistoryCandidate[], store: StoreHistorical,
-  onProgress: (completed: number, total: number) => void = () => undefined): Promise<{ saved: number; duplicate: number; skipped: number }> {
+  onProgress: (completed: number, total: number) => void = () => undefined,
+  onFailure: (reason: HistoricalImportFailureReason) => void = () => undefined): Promise<{ saved: number; duplicate: number; skipped: number }> {
   const selected = candidates.slice(0, MAX_IMPORT_BATCH);
   let saved = 0, duplicate = 0, skipped = 0;
   const originalUrl = new URL(location.href);
@@ -478,12 +531,13 @@ export async function importVisibleJungolHistory(document: Document, location: L
           item.codeByteLength === candidate.codeByteLength &&
           item.executionTime === candidate.executionTime && item.memoryValue === candidate.memoryValue)) {
       skipped += selected.length - index;
+      onFailure("LIST_CHANGED");
       break;
     }
     const row = [...document.querySelectorAll<HTMLTableRowElement>('table tr')]
       .find(item => rowSubmissionIdentity(item, location)?.submissionId === candidate.submissionId);
     const link = row?.querySelector<HTMLAnchorElement>('td[data-col="언어"] a[href]');
-    if (!link || new URL(link.getAttribute("href") ?? "", location.href).href !== candidate.detailUrl) { skipped++; onProgress(index + 1, selected.length); continue; }
+    if (!link || new URL(link.getAttribute("href") ?? "", location.href).href !== candidate.detailUrl) { skipped++; onFailure("LIST_CHANGED"); onProgress(index + 1, selected.length); continue; }
     link.click();
     const dialog = await waitFor(document, () =>
       (new URL(location.href).pathname.match(ACCOUNT_HISTORY_PATH) ||
@@ -492,9 +546,20 @@ export async function importVisibleJungolHistory(document: Document, location: L
         ? document.querySelector<HTMLElement>('[role="dialog"][aria-label="제출 상세"] code.hljs')?.closest<HTMLElement>('[role="dialog"]') ?? null
         : null);
     if (dialog) {
-      const timeTrigger = dialog.querySelector<HTMLElement>('.sd-meta-item .time')?.closest<HTMLElement>('[role="button"]');
+      // The site renders the ID/code shell before hydrating its metadata.
+      // Wait for this exact dialog's time control; an early optional click
+      // permanently misses the timestamp popover when the control arrives later.
+      const timeTrigger = await waitFor(document, () => {
+        const currentUrl = new URL(location.href);
+        if (currentUrl.origin !== originalUrl.origin || currentUrl.pathname !== originalUrl.pathname ||
+            currentUrl.searchParams.get("account") !== originalUrl.searchParams.get("account") ||
+            !dialog.isConnected || document.querySelector('[role="dialog"][aria-label="제출 상세"]') !== dialog ||
+            dialog.querySelector('.sd-id')?.textContent?.trim() !== `#${candidate.submissionId}` ||
+            !dialog.querySelector('code.hljs')?.textContent?.trim()) return null;
+        return dialog.querySelector<HTMLElement>('.sd-meta-item .time')?.closest<HTMLElement>('[role="button"]') ?? null;
+      });
       if (timeTrigger?.getAttribute("aria-expanded") !== "true") timeTrigger?.click();
-      const verified = await waitFor(document, () => verifyJungolHistoryDetail(document, location, candidate));
+      const verified = timeTrigger ? await waitFor(document, () => verifyJungolHistoryDetail(document, location, candidate)) : null;
       const capture = verified && historicalJungolCapture(verified);
       const stillOwnSubmission = previewJungolHistory(document, location);
       if (capture && stillOwnSubmission.status === "READY" &&
@@ -505,9 +570,9 @@ export async function importVisibleJungolHistory(document: Document, location: L
           const response = await store(capture);
           if (response.ok && response.created) saved++;
           else if (response.ok) duplicate++;
-          else skipped++;
-        } catch { skipped++; }
-      } else skipped++;
+          else { skipped++; onFailure(response.error === "STORAGE_ERROR" ? "STORE_FAILED" : "STORE_REJECTED"); }
+        } catch { skipped++; onFailure("STORE_FAILED"); }
+      } else { skipped++; onFailure("DETAIL_UNVERIFIED"); }
       // Jungol's open time popover consumes the first outside click. Dismiss
       // it explicitly, then retry Close once if the dialog remains open.
       if (timeTrigger?.getAttribute("aria-expanded") === "true") timeTrigger.click();
@@ -521,7 +586,7 @@ export async function importVisibleJungolHistory(document: Document, location: L
         closed = await waitFor(document, isClosed, 2_000);
       }
       if (!closed) { skipped += selected.length - index - 1; break; }
-    } else skipped++;
+    } else { skipped++; onFailure("DETAIL_NOT_FOUND"); }
     onProgress(index + 1, selected.length);
   }
   return { saved, duplicate, skipped };

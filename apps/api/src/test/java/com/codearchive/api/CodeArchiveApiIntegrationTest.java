@@ -98,6 +98,9 @@ class CodeArchiveApiIntegrationTest {
     ObjectMapper objectMapper;
 
     @Autowired
+    org.springframework.transaction.PlatformTransactionManager transactionManager;
+
+    @Autowired
     CookieSerializer cookieSerializer;
 
     @BeforeEach
@@ -448,6 +451,111 @@ class CodeArchiveApiIntegrationTest {
                         .content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("captures cannot contain more than 50 items")));
+    }
+
+    @Test
+    void multiPlatformHistoricalSyncAndManualBatchAreOwnedAndIdempotent() throws Exception {
+        AppUser owner = githubAccountService.upsert(principal("307", "batch-owner", "Batch", null));
+        githubAccountService.upsert(principal("308", "other-owner", "Other", null));
+        var settings = historicalTarget(owner, "batch-owner");
+        String[] platforms = {"SWEA", "PROGRAMMERS", "JUNGOL"};
+        String[] identities = {"AaCkP4oKpD3HBISr", "pg:batch:123:2026-01-01T00:00:00.000+09:00:java", "123"};
+        var captureIds = objectMapper.createArrayNode();
+        for (int i = 0; i < platforms.length; i++) {
+            String captureId = UUID.randomUUID().toString(); captureIds.add(captureId);
+            var payload = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(capture(captureId, "private source " + i));
+            payload.put("platform", platforms[i]); payload.put("historicalImport", true); payload.put("historicalSubmissionId", identities[i]);
+            if (platforms[i].equals("PROGRAMMERS")) { payload.put("problemNumber", "123"); payload.put("solvedAt", "2025-12-31T15:00:00.000Z"); }
+            String upload = objectMapper.createObjectNode().set("captures", objectMapper.createArrayNode().add(payload)).toString();
+            for (int retry = 0; retry < 2; retry++) {
+                mockMvc.perform(post("/api/solutions/bulk").with(csrf().asHeader()).with(githubLogin("307", "batch-owner", "Batch", null))
+                    .header("X-CodeArchive-Account", "307").contentType("application/json").content(upload))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.acceptedCaptureIds[0]", is(captureId)));
+            }
+            mockMvc.perform(get("/api/solutions/historical-submission-ids").param("platform", platforms[i])
+                    .with(githubLogin("307", "batch-owner", "Batch", null)))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$[0]", is(identities[i])));
+        }
+        org.assertj.core.api.Assertions.assertThat(githubCommitJobRepository.count()).isZero();
+        org.assertj.core.api.Assertions.assertThat(solutionRepository.findByUserIdOrderBySolvedAtDesc(owner.getId())).hasSize(3);
+        mockMvc.perform(get("/api/solutions/historical-github-candidates").with(githubLogin("307", "batch-owner", "Batch", null)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(3)))
+                .andExpect(jsonPath("$[0].state", is("NONE"))).andExpect(jsonPath("$[0].sourceCode").doesNotExist());
+        var request = objectMapper.createObjectNode().put("settingsVersion", settings.getVersion()).put("installationId", 77)
+                .put("owner", "batch-owner").put("repository", "archive").put("branch", "main");
+        request.set("captureIds", captureIds);
+        for (int retry = 0; retry < 2; retry++) {
+            mockMvc.perform(post("/api/solutions/historical-github-batch").with(csrf().asHeader())
+                    .with(githubLogin("307", "batch-owner", "Batch", null)).header("X-CodeArchive-Account", "307")
+                    .contentType("application/json").content(request.toString()))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$['" + captureIds.get(0).asText() + "']", is("PENDING")));
+        }
+        org.assertj.core.api.Assertions.assertThat(githubCommitJobRepository.count()).isEqualTo(3);
+        mockMvc.perform(post("/api/solutions/historical-github-batch").with(csrf().asHeader())
+                .with(githubLogin("308", "other-owner", "Other", null)).header("X-CodeArchive-Account", "307")
+                .contentType("application/json").content(request.toString())).andExpect(status().isConflict());
+        mockMvc.perform(post("/api/solutions/historical-github-batch").with(csrf().asHeader())
+                .with(githubLogin("308", "other-owner", "Other", null)).header("X-CodeArchive-Account", "308")
+                .contentType("application/json").content(request.toString())).andExpect(status().isConflict());
+        mockMvc.perform(get("/api/solutions/historical-github-candidates")).andExpect(status().isUnauthorized());
+        request.put("settingsVersion", settings.getVersion() + 1);
+        mockMvc.perform(post("/api/solutions/historical-github-batch").with(csrf().asHeader())
+                .with(githubLogin("307", "batch-owner", "Batch", null)).contentType("application/json").content(request.toString()))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void explicitHistoricalRetryKeepsUnknownAndSucceededJobsTerminal() throws Exception {
+        AppUser owner = githubAccountService.upsert(principal("309", "retry-owner", "Retry", null));
+        var settings = historicalTarget(owner, "retry-owner");
+        var ids = objectMapper.createArrayNode();
+        var states = new com.codearchive.api.automation.CommitJobState[] { com.codearchive.api.automation.CommitJobState.FAILED,
+                com.codearchive.api.automation.CommitJobState.UNKNOWN, com.codearchive.api.automation.CommitJobState.SUCCEEDED };
+        for (int i = 0; i < states.length; i++) {
+            String id = UUID.randomUUID().toString(); ids.add(id);
+            var payload = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(capture(id, "private source " + i));
+            payload.put("platform", "SWEA"); payload.put("historicalImport", true); payload.put("historicalSubmissionId", "AaSubmit" + i);
+            mockMvc.perform(post("/api/solutions/bulk").with(csrf().asHeader()).with(githubLogin("309", "retry-owner", "Retry", null))
+                    .contentType("application/json").content(objectMapper.createObjectNode().set("captures", objectMapper.createArrayNode().add(payload)).toString()))
+                    .andExpect(status().isOk());
+            var job = new com.codearchive.api.automation.GithubCommitJob(owner, id, settings.getVersion(), com.codearchive.api.automation.CommitJobOrigin.HISTORICAL_MANUAL);
+            job.start(); job.terminal(states[i]); githubCommitJobRepository.saveAndFlush(job);
+        }
+        var request = objectMapper.createObjectNode().put("settingsVersion", settings.getVersion()).put("installationId", 77)
+                .put("owner", "retry-owner").put("repository", "archive").put("branch", "main"); request.set("captureIds", ids);
+        mockMvc.perform(post("/api/solutions/historical-github-batch").with(csrf().asHeader())
+                .with(githubLogin("309", "retry-owner", "Retry", null)).contentType("application/json").content(request.toString()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$['" + ids.get(0).asText() + "']", is("PENDING")))
+                .andExpect(jsonPath("$['" + ids.get(1).asText() + "']", is("UNKNOWN")))
+                .andExpect(jsonPath("$['" + ids.get(2).asText() + "']", is("SUCCEEDED")));
+        org.assertj.core.api.Assertions.assertThat(githubCommitJobRepository.findByUserIdAndCaptureId(owner.getId(), ids.get(0).asText()).orElseThrow().getAttempts()).isZero();
+        org.assertj.core.api.Assertions.assertThat(githubCommitJobRepository.findByUserIdAndCaptureId(owner.getId(), ids.get(0).asText()).orElseThrow().getDeliveryGeneration()).isEqualTo(1);
+        mockMvc.perform(post("/api/solutions/historical-github-batch").with(csrf().asHeader())
+                .with(githubLogin("309", "retry-owner", "Retry", null)).contentType("application/json").content(request.toString()))
+                .andExpect(status().isOk());
+        org.assertj.core.api.Assertions.assertThat(githubCommitJobRepository.findByUserIdAndCaptureId(owner.getId(), ids.get(0).asText()).orElseThrow().getDeliveryGeneration()).isEqualTo(1);
+    }
+
+    @Test
+    void bulkSyncRejectsMismatchedHistoricalIdentityWithoutPersisting() throws Exception {
+        AppUser owner = githubAccountService.upsert(principal("310", "invalid-owner", "Invalid", null));
+        var payload = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(capture(UUID.randomUUID().toString(), "private source"));
+        payload.put("platform", "SWEA"); payload.put("historicalImport", true);
+        payload.put("historicalSubmissionId", "pg:other:123:2026-01-01T00:00:00.000+09:00:java");
+        mockMvc.perform(post("/api/solutions/bulk").with(csrf().asHeader()).with(githubLogin("310", "invalid-owner", "Invalid", null))
+                .contentType("application/json").content(objectMapper.createObjectNode().set("captures", objectMapper.createArrayNode().add(payload)).toString()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.failures", hasSize(1)));
+        org.assertj.core.api.Assertions.assertThat(solutionRepository.findByUserIdOrderBySolvedAtDesc(owner.getId())).isEmpty();
+    }
+
+    private com.codearchive.api.settings.UserSettings historicalTarget(AppUser owner, String login) {
+        return new org.springframework.transaction.support.TransactionTemplate(transactionManager).execute(transaction -> {
+            var settings = new com.codearchive.api.settings.UserSettings(userRepository.findById(owner.getId()).orElseThrow());
+            settings.apply(new com.codearchive.api.settings.SettingsRequest(0, login, null, false, false, false,
+                    "{platform}-{number}", "{platform}/{number}/{capture_ID}", "Add {platform} {number}",
+                    "github-light", "github-dark", false, false, 77L, login, "archive", "main", null));
+            return userSettingsRepository.saveAndFlush(settings);
+        });
     }
 
     @Test

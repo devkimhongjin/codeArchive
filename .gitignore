@@ -4,6 +4,8 @@ node_modules/
 # Build
 dist/
 coverage/
+apps/extension/build.local.json
+output/extension-build-backups/
 
 # Environment
 .env

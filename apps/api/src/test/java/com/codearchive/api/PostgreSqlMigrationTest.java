@@ -33,7 +33,7 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
-    private static final int LATEST_MIGRATION = 18;
+    private static final int LATEST_MIGRATION = 20;
 
     @Test
     void freshSchemaMigratesTwiceAndPassesHibernateValidation() throws Exception {
@@ -481,6 +481,8 @@ class PostgreSqlMigrationTest {
             assertEquals("relay_grants", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'relay_grants'", schema));
             assertEquals("github_commit_jobs", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'github_commit_jobs'", schema));
             assertEquals("YES", nullable("solutions", "historical_submission_id"));
+            assertEquals(320, ((Number) scalar("SELECT character_maximum_length FROM information_schema.columns WHERE table_schema = ? AND table_name = 'solutions' AND column_name = 'historical_submission_id'", schema)).intValue());
+            assertEquals("NO", nullable("github_commit_jobs", "delivery_generation"));
             assertEquals("NO", nullable("github_commit_jobs", "origin"));
             assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = ? AND indexname = 'uk_solution_user_historical_submission'", schema)).longValue());
             assertEquals("community_request_limits", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'community_request_limits'", schema));
