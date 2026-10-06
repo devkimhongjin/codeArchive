@@ -43,6 +43,8 @@ import { HistoricalGithubCommitView } from './HistoricalGithubCommitView'
 import { readCommunityRoute, readView, urlForView, type CommunityRoute } from './communityRoute'
 import { CODE_THEME_MODE_KEY, isLightTheme, type CodeTheme, type CodeThemeMode } from '../../../shared/codeThemes'
 
+const ARCHIVE_PAGE_SIZE = 20
+
 type IconName =
   | 'book'
   | 'check'
@@ -261,6 +263,7 @@ export default function App() {
   const [platformFilter, setPlatformFilter] = useState<'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'>('ALL')
   const [languageFilter, setLanguageFilter] = useState('ALL')
   const [solutionSort, setSolutionSort] = useState<SolutionSort>('latest')
+  const [solutionPage, setSolutionPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
@@ -278,8 +281,8 @@ export default function App() {
   const [bridgeCapability, setBridgeCapability] = useState<string | null>(null)
   const [extensionVersion, setExtensionVersion] = useState<string | null>(null)
   const [historySupported, setHistorySupported] = useState(false)
-  const [showHistoricalSync, setShowHistoricalSync] = useState(false)
-  const [historicalOpened, setHistoricalOpened] = useState(false)
+  const [historicalAction, setHistoricalAction] = useState<'sync' | 'commit'>('sync')
+  const [historicalOpened, setHistoricalOpened] = useState(() => readView() === 'history')
   const [historicalRevision, setHistoricalRevision] = useState(0)
   const [pendingCount, setPendingCount] = useState<number | null>(null)
   const [pendingCountState, setPendingCountState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -543,12 +546,21 @@ export default function App() {
   }, [languageFilter, platformFilter, query, solutionSort, solutions])
 
   const solutionGroups = useMemo(() => groupSolutions(filteredSolutions), [filteredSolutions])
+  const solutionPageCount = Math.max(1, Math.ceil(solutionGroups.length / ARCHIVE_PAGE_SIZE))
+  const currentSolutionPage = Math.min(solutionPage, solutionPageCount)
+  const pagedSolutionGroups = useMemo(() => solutionGroups.slice((currentSolutionPage - 1) * ARCHIVE_PAGE_SIZE, currentSolutionPage * ARCHIVE_PAGE_SIZE), [solutionGroups, currentSolutionPage])
+
+  useEffect(() => { setSolutionPage(1) }, [user?.githubId, mode])
+  useEffect(() => {
+    if (solutionPage !== currentSolutionPage) setSolutionPage(currentSolutionPage)
+  }, [solutionPage, currentSolutionPage])
+  useEffect(() => { if (view === 'history') setHistoricalOpened(true) }, [view])
 
   useEffect(() => {
-    if (!filteredSolutions.some((solution) => solution.captureId === selectedId)) {
-      setSelectedId(solutionGroups[0]?.submissions[0]?.captureId ?? '')
+    if (!pagedSolutionGroups.some(group => group.submissions.some(solution => solution.captureId === selectedId))) {
+      setSelectedId(pagedSolutionGroups[0]?.submissions[0]?.captureId ?? '')
     }
-  }, [filteredSolutions, selectedId, solutionGroups])
+  }, [selectedId, pagedSolutionGroups])
 
   const selectedGroup = solutionGroups.find((group) => group.submissions.some((solution) => solution.captureId === selectedId)) ?? solutionGroups[0] ?? null
   const selectedSolution = selectedGroup?.submissions.find((solution) => solution.captureId === selectedId) ?? selectedGroup?.submissions[0] ?? null
@@ -578,6 +590,9 @@ export default function App() {
     setQuery('')
     setPlatformFilter('ALL')
     setLanguageFilter('ALL')
+    const groups = groupSolutions(filterAndSortSolutions(solutions, { query: '', platform: 'ALL', languageKey: 'ALL', sort: solutionSort }))
+    const groupIndex = groups.findIndex(group => group.platform === platform && group.problemNumber === problemNumber)
+    setSolutionPage(groupIndex < 0 ? 1 : Math.floor(groupIndex / ARCHIVE_PAGE_SIZE) + 1)
     if (own) setSelectedId(own.captureId)
     changeView('solutions')
   }
@@ -1241,6 +1256,9 @@ export default function App() {
             <button className={view === 'solutions' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('solutions')}>
               전체 풀이 <span className="nav-count">{solutions.length}</span>
             </button>
+            <button className={view === 'history' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('history')}>
+              과거 풀이 관리
+            </button>
             <button className={view === 'community' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('community')}>
               커뮤니티
             </button>
@@ -1309,7 +1327,11 @@ export default function App() {
           <SolutionsView
             solutions={solutions}
             filteredSolutions={filteredSolutions}
-            solutionGroups={solutionGroups}
+            solutionGroups={pagedSolutionGroups}
+            problemCount={solutionGroups.length}
+            page={currentSolutionPage}
+            pageCount={solutionPageCount}
+            onPageChange={setSolutionPage}
             selectedSolution={selectedSolution}
             selectedGroup={selectedGroup}
             selectedId={selectedId}
@@ -1320,10 +1342,10 @@ export default function App() {
             solutionSort={solutionSort}
             loading={loading}
             mode={mode}
-            setQuery={setQuery}
-            setPlatformFilter={setPlatformFilter}
-            setLanguageFilter={setLanguageFilter}
-            setSolutionSort={setSolutionSort}
+            setQuery={value => { setQuery(value); setSolutionPage(1) }}
+            setPlatformFilter={value => { setPlatformFilter(value); setSolutionPage(1) }}
+            setLanguageFilter={value => { setLanguageFilter(value); setSolutionPage(1) }}
+            setSolutionSort={value => { setSolutionSort(value); setSolutionPage(1) }}
             setSelectedId={setSelectedId}
             onCopy={copyCode}
             onDownload={downloadCode}
@@ -1334,8 +1356,22 @@ export default function App() {
             onCodeThemeChange={(theme) => chooseCodeTheme(theme, true)}
           />
         </>}
-          <section hidden={view !== 'solutions'} className="historical-import historical-entry" aria-label="과거 풀이 관리"><div className="historical-import-actions"><button type="button" onClick={() => { setHistoricalOpened(true); setShowHistoricalSync(open => !open) }}>{showHistoricalSync ? '과거 풀이 관리 닫기' : '과거 풀이 일괄 동기화 / GitHub 커밋'}</button></div>
-          {historicalOpened && <div hidden={!showHistoricalSync}><HistoricalImportView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} user={user} mode={mode} onImported={() => {
+        <section hidden={view !== 'history'} className="history-management" aria-label="과거 풀이 관리">
+          <div className="page-heading">
+            <h1>과거 풀이 관리</h1>
+            <p>확장 프로그램에서 수집한 풀이는 이 브라우저에 보관됩니다. 서버와 GitHub에 저장하려면 아래 작업을 직접 실행해 주세요.</p>
+          </div>
+          <div className="history-storage-guide">
+            <h2>저장 안내</h2>
+            <p><strong>일괄 동기화</strong>는 선택한 로컬 풀이를 대시보드 서버에 저장합니다. <strong>일괄 GitHub 커밋</strong>은 서버에 저장한 풀이를 연결된 저장소에 커밋합니다.</p>
+            <p>사이트별로 동기화를 마친 뒤 모아서 커밋할 수 있습니다. 로그인 후 실행할 수 있으며, 로컬 기록은 그대로 유지됩니다.</p>
+          </div>
+          <div className="history-work-actions" role="group" aria-label="과거 풀이 작업">
+            <button type="button" className={historicalAction === 'sync' ? 'history-work-button active' : 'history-work-button'} aria-pressed={historicalAction === 'sync'} onClick={() => setHistoricalAction('sync')}><Icon name="sync" size={17} /> 일괄 동기화</button>
+            <button type="button" className={historicalAction === 'commit' ? 'history-work-button active' : 'history-work-button'} aria-pressed={historicalAction === 'commit'} onClick={() => setHistoricalAction('commit')}><Icon name="github" size={17} /> 일괄 GitHub 커밋</button>
+          </div>
+          {historicalOpened && <>
+          <div hidden={historicalAction !== 'sync'}><HistoricalImportView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} user={user} mode={mode} onImported={() => {
             setHistoricalRevision(value => value + 1)
             if (modeRef.current === 'live' && userRef.current) {
               void refreshSolutions(accountGeneration.current, userRef.current.githubId).catch(() => undefined)
@@ -1352,7 +1388,10 @@ export default function App() {
                     response.localOnly !== true || !Array.isArray(response.captures)) return
                 setSolutions(response.captures.map(normalizeSolution))
               }).catch(() => undefined)
-          }} /><HistoricalGithubCommitView user={user} mode={mode} revision={historicalRevision} /></div>}</section>
+          }} /></div>
+          <div hidden={historicalAction !== 'commit'}><HistoricalGithubCommitView user={user} mode={mode} revision={historicalRevision} /></div>
+          </>}
+        </section>
         {view === 'community' && <CommunityView
           user={user}
           mode={mode}
@@ -1411,6 +1450,10 @@ function SolutionsView({
   solutions,
   filteredSolutions,
   solutionGroups,
+  problemCount,
+  page,
+  pageCount,
+  onPageChange,
   selectedSolution,
   selectedGroup,
   selectedId,
@@ -1437,6 +1480,10 @@ function SolutionsView({
   solutions: Solution[]
   filteredSolutions: Solution[]
   solutionGroups: SolutionGroup[]
+  problemCount: number
+  page: number
+  pageCount: number
+  onPageChange: (page: number) => void
   selectedSolution: Solution | null
   selectedGroup: SolutionGroup | null
   selectedId: string
@@ -1460,6 +1507,10 @@ function SolutionsView({
   codeThemeMode: CodeThemeMode
   onCodeThemeChange: (theme: CodeTheme) => void
 }) {
+  const listRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = 0
+  }, [page, query, platformFilter, languageFilter, solutionSort])
   return (
     <section className="solutions-layout" aria-label="풀이 아카이브">
       <div className="solutions-heading">
@@ -1494,17 +1545,25 @@ function SolutionsView({
       <div className="content-grid">
         <section className="solution-list-panel" aria-label="풀이 목록">
           <div className="panel-heading">
-            <div><span className="panel-title">풀이 목록</span><span className="panel-count">{filteredSolutions.length}</span></div>
+            <div><span className="panel-title">풀이 목록</span><span className="panel-count">문제 {problemCount}건</span></div>
             <label className="panel-sort">정렬 <select aria-label="풀이 정렬" value={solutionSort} onChange={(event) => setSolutionSort(event.target.value as SolutionSort)}><option value="latest">최신 저장순</option><option value="oldest">오래된 저장순</option><option value="problem">문제 번호순</option><option value="title">문제 제목순</option></select></label>
           </div>
-          <div className="solution-list">
+          <nav className="archive-pagination" aria-label="풀이 페이지">
+            <span className="archive-page-range">{problemCount ? `${(page - 1) * ARCHIVE_PAGE_SIZE + 1}–${Math.min(page * ARCHIVE_PAGE_SIZE, problemCount)}` : '0'} / {problemCount}문제</span>
+            <div>
+              <button type="button" aria-label="풀이 이전 페이지" disabled={loading || page <= 1} onClick={() => onPageChange(page - 1)}>이전</button>
+              <select aria-label="풀이 목록 페이지" value={page} disabled={loading || !problemCount} onChange={event => onPageChange(Number(event.target.value))}>{Array.from({ length: pageCount }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1} / {pageCount}</option>)}</select>
+              <button type="button" aria-label="풀이 다음 페이지" disabled={loading || page >= pageCount} onClick={() => onPageChange(page + 1)}>다음</button>
+            </div>
+          </nav>
+          <div className="solution-list" ref={listRef}>
             {loading && <ListSkeleton />}
             {!loading && solutionGroups.length === 0 && <EmptyList mode={mode} />}
             {!loading && solutionGroups.map((group) => (
               <SolutionGroupRow key={group.key} group={group} selected={group.key === selectedGroup?.key} onSelect={() => setSelectedId(group.submissions[0]!.captureId)} onOtherSolutions={() => onOtherSolutions(group.platform, group.problemNumber)} />
             ))}
           </div>
-          <div className="list-footer"><span><span className="status-dot" /> {mode === 'local' ? '로컬 기록 · 업로드 전' : '서버와 연결됨'}</span><span>{filteredSolutions.length} / {solutions.length}</span></div>
+          <div className="list-footer"><span><span className="status-dot" /> {mode === 'local' ? '로컬 기록 · 업로드 전' : '서버와 연결됨'}</span><span>제출 {filteredSolutions.length} / {solutions.length}건</span></div>
         </section>
         <SolutionDetail solution={selectedSolution} group={selectedGroup} onSelectSubmission={setSelectedId} mode={mode} onCopy={onCopy} onDownload={onDownload} lightTheme={lightTheme} darkTheme={darkTheme} codeThemeMode={codeThemeMode} onOtherSolutions={onOtherSolutions} />
       </div>
@@ -1551,7 +1610,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
           {group && group.submissions.length > 1 && <label className="submission-picker">제출 기록<select aria-label="제출 기록" value={solution.captureId} onChange={(event) => onSelectSubmission(event.target.value)}>{group.submissions.map((submission, index) => <option key={submission.captureId} value={submission.captureId}>{index + 1}. {formatObservedTime(submission.solvedAt ?? submission.observedAt)} · {canonicalLanguageDisplayName(submission.language)}</option>)}</select></label>}
           <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
           <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} activeMode={codeThemeMode} />
-          <div className="detail-note"><Icon name="spark" size={14} /><span>{solution.historicalImport ? mode === 'live' ? '과거 풀이를 명시적으로 서버에 동기화한 기록입니다. 자동 GitHub 커밋은 실행되지 않습니다.' : '이 브라우저에 보관한 과거 풀이입니다. 전체 풀이의 과거 풀이 관리에서 서버 동기화와 GitHub 커밋을 요청할 수 있습니다.' : mode === 'local' ? '이 브라우저의 로컬 기록입니다. 로그인 후 명시적으로 동기화할 수 있습니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
+          <div className="detail-note"><Icon name="spark" size={14} /><span>{solution.historicalImport ? mode === 'live' ? '과거 풀이를 명시적으로 서버에 동기화한 기록입니다. 자동 GitHub 커밋은 실행되지 않습니다.' : '이 브라우저에 보관한 과거 풀이입니다. 과거 풀이 관리 탭에서 서버 동기화와 GitHub 커밋을 요청할 수 있습니다.' : mode === 'local' ? '이 브라우저의 로컬 기록입니다. 로그인 후 명시적으로 동기화할 수 있습니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
         </>
       )}
     </section>

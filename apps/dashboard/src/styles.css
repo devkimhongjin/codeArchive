@@ -109,7 +109,14 @@ h1, h2, p { margin-top: 0; }
 .panel-sort select { border: 0; background: transparent; color: #777286; font-size: 10px; outline: 0; }
 .submission-picker { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin: -2px 0 10px; color: #8b8798; font-size: 10px; }
 .submission-picker select { max-width: 260px; height: 32px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 11px; }
-.solution-list { flex: 1; }
+.solution-list { flex: 1; min-height: 0; max-height: 640px; overflow: auto; overscroll-behavior: contain; }
+.archive-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.archive-page-range { color: var(--ink); font-size: 11px; font-variant-numeric: tabular-nums; }
+.archive-pagination > div { display: flex; align-items: center; gap: 4px; }
+.archive-pagination button, .archive-pagination select { min-height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--purple-ink); font-size: 11px; }
+.archive-pagination button:hover:not(:disabled) { background: var(--purple-soft); }
+.archive-pagination button:disabled { color: #777286; cursor: not-allowed; }
+.archive-pagination select:focus-visible, .archive-pagination button:focus-visible, .history-work-button:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
 .solution-group-entry { position: relative; }
 .solution-group-entry .solution-row { padding-right: 112px; }
 .solution-group-community { position: absolute; right: 15px; top: 50%; transform: translateY(-50%); padding: 7px 9px; color: var(--purple-ink); background: var(--purple-soft); border-radius: 6px; font-size: 10px; font-weight: 700; }
@@ -302,6 +309,17 @@ h1, h2, p { margin-top: 0; }
 @media (max-width: 700px) { .github-repository-browser { padding: 13px; } .github-browser-layout { grid-template-columns: 1fr; } .github-browser-list { max-height: 270px; border-right: 0; border-bottom: 1px solid var(--line); } }
 @media (max-width: 700px) { .github-browser-edit-preview > div { grid-template-columns: 1fr; } }
 .historical-import { max-width: 960px; margin: 0 auto; padding: 24px; background: #fff; border: 1px solid var(--line); border-radius: 10px; }
+.history-management { max-width: 960px; margin: 0 auto; }
+.history-management .page-heading > p { max-width: 70ch; color: #615b73; line-height: 1.7; }
+.history-storage-guide { margin: 24px 0 16px; padding: 20px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.history-storage-guide h2 { margin: 0 0 8px; font-size: 16px; color: var(--ink); }
+.history-storage-guide p { max-width: 75ch; margin: 6px 0 0; font-size: 13px; line-height: 1.7; color: #615b73; }
+.history-work-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0 24px; }
+.history-work-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 16px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); color: var(--purple-ink); font-size: 13px; font-weight: 700; }
+.history-work-button:hover { background: var(--purple-soft); }
+.history-work-button.active { border-color: var(--purple); background: var(--purple); color: #fff; }
+@media (min-width: 801px) and (max-width: 1100px) { .account-identity, .brand-updated { display: none; } .topbar-inner { gap: 20px; } .main-nav { gap: 16px; } }
+@media (max-width: 800px) { .history-management .historical-import { padding: 16px; } .history-work-actions { gap: 8px; } .history-work-button { flex: 1; padding-inline: 12px; } }
 .historical-import-heading h1 { margin: 5px 0 8px; font-size: 27px; }
 .historical-import-heading p:last-child, .historical-import-note { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .historical-import-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 22px 0 12px; }
