@@ -1,5 +1,6 @@
 import { DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, type Capture } from "./types";
 import { describeLanguage } from "../../../shared/language";
+import { formatKstTimeToken } from "../../../shared/timePresentation";
 import { codeWithHeader, DEFAULT_HEADER_FIELDS, type HeaderField } from "../../../shared/headerFields";
 export function sourceFileExtension(language: string): string {
   return describeLanguage(language).extension;
@@ -17,8 +18,5 @@ export function exportCode(capture: Capture, header: boolean, fields: readonly H
 }
 
 function formatTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "unknown-time";
-  const iso = date.toISOString();
-  return `${iso.slice(2, 10).replace(/-/g, "")}${iso.slice(11, 19).replace(/:/g, "")}`;
+  return formatKstTimeToken(value);
 }

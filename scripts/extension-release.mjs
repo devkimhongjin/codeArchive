@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { kstCalendarDate } from "../shared/build-info.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const release = readJson(resolve(root, "release.json"));
@@ -56,7 +57,7 @@ function metadata(archivePath, outputPath) {
   const archive = readFileSync(archivePath);
   const sha256 = createHash("sha256").update(archive).digest("hex");
   const commit = process.env.CODEARCHIVE_BUILD_SHA || process.env.GITHUB_SHA || gitValue(["rev-parse", "HEAD"]);
-  const releasedAt = process.env.CODEARCHIVE_BUILD_DATE || (commit && gitValue(["show", "-s", "--format=%cs", commit]));
+  const releasedAt = process.env.CODEARCHIVE_BUILD_DATE || (commit && kstCalendarDate(gitValue(["show", "-s", "--format=%cI", commit])));
   if (!/^[a-fA-F0-9]{40}$/.test(commit)) fail("a full source commit SHA is required");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(releasedAt)) fail("a source commit date is required");
   const payload = {

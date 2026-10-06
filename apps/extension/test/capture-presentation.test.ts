@@ -21,7 +21,9 @@ test("performance presentation truncates only the final display value", () => {
   assert.equal(formatCaptureMemory({ memoryValue: -1, memoryUnit: "MB" }), "정보 없음");
 });
 
-test("solution time includes date and local clock while rejecting invalid legacy values", () => {
-  assert.match(formatSolutionTime("2026-09-18T02:21:00.000Z"), /2026/);
+test("solution time always shows Korea time while rejecting invalid legacy values", () => {
+  assert.equal(formatSolutionTime("2026-09-18T02:21:00.000Z"), "2026-09-18 11:21 KST");
+  assert.equal(formatSolutionTime("2025-12-31T15:00:00Z"), "2026-01-01 00:00 KST");
+  assert.equal(formatSolutionTime("2026-01-01T00:00:00+09:00"), "2026-01-01 00:00 KST");
   assert.equal(formatSolutionTime("invalid"), "정보 없음");
 });

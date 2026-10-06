@@ -40,6 +40,7 @@ import { formatExecutionTime, formatMemory } from './performancePresentation'
 import { CommunityView } from './CommunityView'
 import { HistoricalImportView } from './HistoricalImportView'
 import { HistoricalGithubCommitView } from './HistoricalGithubCommitView'
+import { formatKstDate, formatKstDateTime } from '../../../shared/timePresentation'
 import { readCommunityRoute, readView, urlForView, type CommunityRoute } from './communityRoute'
 import { CODE_THEME_MODE_KEY, isLightTheme, type CodeTheme, type CodeThemeMode } from '../../../shared/codeThemes'
 
@@ -144,17 +145,11 @@ function normalizeSolution(value: unknown, index = 0): Solution {
 }
 
 function formatDate(value?: string) {
-  if (!value) return '기록 없음'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('ko-KR', { month: 'short', day: 'numeric' }).format(date)
+  return formatKstDate(value, '기록 없음', true)
 }
 
 function formatObservedTime(value?: string) {
-  if (!value) return '기록 없음'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(date)
+  return formatKstDateTime(value, '기록 없음')
 }
 
 
