@@ -29,6 +29,8 @@ function validate() {
   if (manifest.version !== version) fail("manifest version must match release.version");
   if (extensionPackage.version !== version) fail("extension package version must match release.version");
   if (dashboardPackage.version !== version) fail("dashboard package version must match release.version");
+  const notes = readFileSync(resolve(root, `docs/releases/extension-v${version}.md`), "utf8").trim();
+  if (!notes.startsWith(`# CodeArchive Extension v${version}`) || notes.length < 100) fail("version-specific release notes are required");
   if (manifest.minimum_chrome_version !== release.extension?.minimumChromeVersion) fail("minimum Chrome version must match manifest");
   if (typeof release.extension?.id !== "string" || !/^[a-p]{32}$/.test(release.extension.id)) fail("extension id is invalid");
   const compatibility = release.extension?.compatibility;

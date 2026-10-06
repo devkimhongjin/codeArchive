@@ -75,7 +75,8 @@ jobs:
             target_args=(--target "$GITHUB_SHA")
           fi
           {
-            printf 'CodeArchive beta extension v%s.\n\n' "$VERSION"
+            cat "docs/releases/extension-v${VERSION}.md"
+            printf '\n\n'
             printf '<!-- codearchive-extension-metadata\n'
             cat release/codearchive-extension-metadata.json
             printf '%s\n' '-->'
