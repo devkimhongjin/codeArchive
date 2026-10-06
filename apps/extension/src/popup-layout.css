@@ -2,6 +2,10 @@
   margin-top: 12px;
 }
 
+.extension-update p { margin: 8px 0; font-size: 11px; color: #7e738f; line-height: 1.6; }
+.extension-update a { color: #5844c5; font-size: 12px; font-weight: 650; }
+.extension-update button { border: 1px solid #e2dcf0; border-radius: 6px; background: white; color: #5844c5; padding: 4px 8px; font-size: 11px; }
+
 .history-entry p {
   margin: 8px 0 0;
   color: #7e738f;

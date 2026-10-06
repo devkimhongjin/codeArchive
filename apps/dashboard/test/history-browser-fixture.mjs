@@ -3,8 +3,12 @@
 // are loaded, and no requests are proxied to a deployed service.
 import { createServer } from 'vite'
 import { fileURLToPath } from 'node:url'
+import { readFile } from 'node:fs/promises'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
+const currentVersion = JSON.parse(await readFile(new URL('../../../release.json', import.meta.url), 'utf8')).version
+const extensionRoot = fileURLToPath(new URL('../../extension/', import.meta.url)).replaceAll('\\', '/')
+const popupHtml = await readFile(new URL('../../extension/src/popup.html', import.meta.url), 'utf8')
 const user = { id: 9001, githubId: 'fixture-account', githubLogin: 'browser-fixture' }
 const settings = {
   version: 7, name: null, nickname: 'browser-fixture', copyHeader: false, downloadHeader: false, githubHeader: false,
@@ -32,7 +36,7 @@ const captures = ${JSON.stringify(captures)};
 export const fixtureRuntime = { sendMessage: (_id, message, callback) => {
   let result;
   switch (message.type) {
-    case 'CONNECT': result = { capability: 'synthetic-capability', version: '0.2.1', features: ['history-v1'] }; break;
+    case 'CONNECT': result = { capability: 'synthetic-capability', version: ${JSON.stringify(currentVersion)}, features: ['history-v1'] }; break;
     case 'GET_STATUS': result = { pendingCount: 0 }; break;
     case 'GET_PENDING': result = { captures: [] }; break;
     case 'GET_ALL': result = { captures }; break;
@@ -64,6 +68,22 @@ const plugin = {
       const chunks = []; for await (const chunk of req) chunks.push(chunk)
       const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : null
       const json = (value, status = 200) => { res.statusCode = status; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(value)) }
+      if (url.pathname === '/__fixture/popup') {
+        res.setHeader('Content-Type', 'text/html')
+        return res.end(popupHtml.replace('href="popup.css"', `href="/@fs/${extensionRoot}src/popup.css"`)
+          .replace('href="popup-layout.css"', `href="/@fs/${extensionRoot}src/popup-layout.css"`)
+          .replace('<script src="popup.js"></script>', `<script type="module">
+            import { mountPopup } from '/@fs/${extensionRoot}src/popupView.ts';
+            const tag = 'extension-v0.2.3'; let checks = 0;
+            const release = { schemaVersion: 1, version: '0.2.3', releasedAt: '2026-10-06', commit: 'a'.repeat(40), extensionId: 'oohlcmihldmfninmdcmanddfmhoonmdl', minimumChromeVersion: '120',
+              compatibility: { minimumDashboardVersion: '0.2.2', minimumApiVersion: '0.2.2', dashboardMinimumExtensionVersion: '0.2.3' },
+              artifact: { name: 'codearchive-extension.zip', sha256: 'b'.repeat(64) }, releasePageUrl: 'https://github.com/devkimhongjin/codeArchive/releases/tag/'+tag,
+              downloadUrl: 'https://github.com/devkimhongjin/codeArchive/releases/download/'+tag+'/codearchive-extension.zip', checksumUrl: 'https://github.com/devkimhongjin/codeArchive/releases/download/'+tag+'/codearchive-extension.zip.sha256' };
+            mountPopup(document, { load: async () => ({ pendingCount: 3, settings: {}, recentCaptures: [] }), copy: async () => {},
+              loadExtensionUpdate: async () => { await new Promise(resolve => setTimeout(resolve, 1500)); return { installedVersion: '0.2.2', checkedAt: Date.now(), status: checks++ ? 'unavailable' : 'checked', available: true, release }; }
+            });
+          </script>`).replace('<body>', '<body><div style="background:#ffe7a0;padding:8px">업데이트 안내 브라우저 검증 · 합성 릴리스</div>'))
+      }
       if (url.pathname === '/__fixture/summary') return json({ uploadBatches: uploads, commitBatches: commits, acknowledged: acknowledgements, serverCount: stored.size, states: Object.fromEntries(states) })
       if (url.pathname === '/__fixture/ack') { acknowledgements.push(...body); return json({ ok: true }) }
       if (url.pathname === '/api/auth/csrf') return json({ headerName: 'X-XSRF-TOKEN', token: 'synthetic-csrf' })
@@ -98,6 +118,8 @@ const plugin = {
     })
   },
 }
-const server = await createServer({ root, plugins: [plugin], server: { host: '127.0.0.1', port: 5178, strictPort: true, proxy: {} } })
+const server = await createServer({ root, plugins: [plugin], server: { host: '127.0.0.1', port: 5178, strictPort: true, proxy: {},
+  fs: { allow: [root, extensionRoot, fileURLToPath(new URL('../../../shared/', import.meta.url))] },
+} })
 await server.listen()
 console.log('Synthetic history browser verification: http://127.0.0.1:5178')

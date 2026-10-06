@@ -17,6 +17,7 @@ test('public manifest key pins the same ID used by the dashboard', () => {
     'https://swexpertacademy.com/*',
     'https://school.programmers.co.kr/*',
     'https://jungol.co.kr/*',
+    'https://api.github.com/*',
     'https://codearchive-dashboard-beta.netlify.app/*',
     'http://localhost:5173/*'
   ]);

@@ -13,8 +13,8 @@ test("historical store accepts an owned SPA import and rejects unbound or moved 
   let listener: ((message: unknown, sender: unknown, reply: (value: unknown) => void) => boolean) | undefined;
   let duringStart: (() => void) | undefined;
   const fakeChrome = {
-    runtime: { id, onMessage: { addListener(callback: typeof listener) { listener = callback; } }, onMessageExternal: { addListener() {} } },
-    alarms: { create() {}, onAlarm: { addListener() {} } },
+    runtime: { id, getManifest: () => ({ version: "0.2.2" }), onMessage: { addListener(callback: typeof listener) { listener = callback; } }, onMessageExternal: { addListener() {} } },
+    alarms: { get: async () => ({ name: "codearchive-extension-update" }), create() {}, onAlarm: { addListener() {} } },
     storage: { session: {
       get: async (key: string) => ({ [key]: session[key] }),
       set: async (value: Record<string, unknown>) => { Object.assign(session, value); },

@@ -40,11 +40,11 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
       }
     },
     runtime: {
-      id: extensionId,
+      id: extensionId, getManifest: () => ({ version: "0.2.2" }),
       onMessage: { addListener(callback: Listener) { listener = callback; } },
       onMessageExternal: { addListener() {} }
     },
-    alarms: { create() {}, onAlarm: { addListener() {} } },
+    alarms: { get: async () => ({ name: "codearchive-extension-update" }), create() {}, onAlarm: { addListener() {} } },
     storage: { session: {
       get: async (key: string) => ({ [key]: session[key] }),
       set: async (value: Record<string, unknown>) => { Object.assign(session, value); },
@@ -75,8 +75,8 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
   };
   const previous = { chrome: globalThis.chrome, indexedDB: globalThis.indexedDB, IDBKeyRange: globalThis.IDBKeyRange };
   Object.assign(globalThis, { chrome: fakeChrome, indexedDB, IDBKeyRange });
-  const sender = { id: extensionId, frameId: 0, tab: { id: sourceTabId }, url: sourceUrl };
-  const historySender = { id: extensionId, frameId: 0, url: `chrome-extension://${extensionId}/history.html` };
+  const sender = { id: extensionId, getManifest: () => ({ version: "0.2.2" }), frameId: 0, tab: { id: sourceTabId }, url: sourceUrl };
+  const historySender = { id: extensionId, getManifest: () => ({ version: "0.2.2" }), frameId: 0, url: `chrome-extension://${extensionId}/history.html` };
   const request = (message: unknown, from: unknown = sender) => new Promise<unknown>(resolve => {
     assert.equal(listener!(message, from, resolve), true);
   });

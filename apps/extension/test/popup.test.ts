@@ -3,8 +3,31 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { parseHTML } from 'linkedom';
 import { mountPopup } from '../src/popupView';
+import { EXTENSION_RELEASE, type ExtensionReleaseInfo } from '../../../shared/extensionRelease';
 const html = readFileSync(new URL('../src/popup.html', import.meta.url), 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('release lookup never blocks local records and only creates pinned update links', async () => {
+  const { document } = parseHTML(html);
+  let resolve!: (value: import('../src/extensionUpdates').ExtensionUpdateState) => void;
+  const tag = 'extension-v0.2.3';
+  const release: ExtensionReleaseInfo = { schemaVersion: 1, version: '0.2.3', releasedAt: '2026-10-06', commit: 'a'.repeat(40),
+    extensionId: EXTENSION_RELEASE.id, minimumChromeVersion: '120', compatibility: { minimumDashboardVersion: '0.2.2', minimumApiVersion: '0.2.2', dashboardMinimumExtensionVersion: '0.2.3' },
+    artifact: { name: 'codearchive-extension.zip', sha256: 'b'.repeat(64) }, releasePageUrl: `https://github.com/devkimhongjin/codeArchive/releases/tag/${tag}`,
+    downloadUrl: `https://github.com/devkimhongjin/codeArchive/releases/download/${tag}/codearchive-extension.zip`, checksumUrl: `https://github.com/devkimhongjin/codeArchive/releases/download/${tag}/codearchive-extension.zip.sha256` };
+  let first = true;
+  mountPopup(document, { copy: async () => {}, load: async () => ({ pendingCount: 3, settings: {}, recentCaptures: [] }),
+    loadExtensionUpdate: async () => { if (first) { first = false; return new Promise(done => { resolve = done }) }
+      return { installedVersion: '0.2.2', checkedAt: 1, status: 'unavailable', available: true, release: { ...release, releasePageUrl: 'https://example.test/untrusted' } }; }
+  });
+  await settle(); assert.equal(document.querySelector('#pending-count')!.textContent, '3');
+  resolve({ installedVersion: '0.2.2', checkedAt: 1, status: 'checked', available: true, release }); await settle();
+  assert.match(document.querySelector('#extension-update-status')!.textContent!, /새 버전 v0.2.3/);
+  assert.equal(document.querySelector('#extension-update-link')!.getAttribute('href'), release.releasePageUrl);
+  (document.querySelector('#extension-update-check') as HTMLButtonElement).click(); await settle();
+  assert.match(document.querySelector('#extension-update-status')!.textContent!, /확인하지 못했습니다/);
+  assert.equal(document.querySelector('#extension-update-link')!.getAttribute('href'), EXTENSION_RELEASE.releaseHistoryUrl);
+});
 test('popup shows an immediate non-actionable submission row, then removes it on failure', async () => {
   const { document } = parseHTML(html);
   const startedAt = Date.now();

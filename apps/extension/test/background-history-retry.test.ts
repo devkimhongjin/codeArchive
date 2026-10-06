@@ -9,13 +9,13 @@ test("production history handler retries after entering submissions and reconnec
   let receiver = false, injections = 0, sends = 0;
   let listener: ((message: unknown, sender: unknown, reply: (value: unknown) => void) => boolean) | undefined;
   const fakeChrome = {
-    runtime: { id, onMessage: { addListener(callback: typeof listener) { listener = callback; } }, onMessageExternal: { addListener() {} } },
+    runtime: { id, getManifest: () => ({ version: "0.2.2" }), onMessage: { addListener(callback: typeof listener) { listener = callback; } }, onMessageExternal: { addListener() {} } },
     storage: { session: {
       get: async (key: string) => ({ [key]: stored[key] }),
       set: async (value: Record<string, unknown>) => { Object.assign(stored, value); },
       remove: async (key: string) => { delete stored[key]; }
     } },
-    alarms: { create() {}, onAlarm: { addListener() {} } },
+    alarms: { get: async () => ({ name: "codearchive-extension-update" }), create() {}, onAlarm: { addListener() {} } },
     tabs: {
       query: async () => [source],
       get: async (tabId: number) => { assert.equal(tabId, source.id); return source; },
