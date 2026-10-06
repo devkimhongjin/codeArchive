@@ -36,3 +36,9 @@
 .community-detail { display: grid; gap: 12px; }
 .community-detail h3 { margin: 0; font-size: 16px; }
 @media (max-width: 680px) { .community-page { width: min(100% - 28px, 1240px); padding-top: 24px; } .community-search > button { width: 100%; } .community-problem-heading, .community-results-heading { align-items: stretch; flex-direction: column; } .community-results-heading > div { justify-content: space-between; } }
+.community-settings { margin-bottom: 20px; }
+.community-settings h2 { font-size: 18px; }
+.community-settings h3 { margin: 24px 0 8px; font-size: 14px; }
+.community-settings p { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.community-settings .setting-field { display: grid; gap: 8px; max-width: 320px; }
+.community-settings select { width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--surface); font: inherit; }

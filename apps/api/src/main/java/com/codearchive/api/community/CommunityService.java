@@ -53,6 +53,13 @@ public class CommunityService {
         return new SharedPage(items, page, size, result.getTotalElements(), result.hasNext());
     }
 
+    @Transactional
+    public BulkVisibilityResponse publishAll(long ownerId) {
+        int changed = solutions.publishAcceptedForOwner(ownerId, Instant.now());
+        return new BulkVisibilityResponse(changed, solutions.findPublishedProblemsForOwner(ownerId).size(),
+                solutions.countByUserIdAndResultAndPublishedAtIsNotNull(ownerId, "ACCEPTED"));
+    }
+
     @Transactional(readOnly = true)
     public SharedSolution detail(long viewerId, long solutionId) {
         return solutions.findSharedDetail(viewerId, solutionId)
@@ -85,6 +92,7 @@ public class CommunityService {
     public static final class NotEligibleException extends RuntimeException {}
     public static final class InvalidSolutionException extends RuntimeException {}
     public record VisibilityResponse(String visibility, Instant publishedAt) {}
+    public record BulkVisibilityResponse(int changedSubmissions, int publishedProblems, long publishedSubmissions) {}
     public record PublicAuthor(String name, String nickname, String avatarUrl) {}
     public record SharedSummary(Long id, Platform platform, String problemNumber, String title,
                                 String language, String languageKey, Instant solvedAt,

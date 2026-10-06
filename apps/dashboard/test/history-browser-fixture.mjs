@@ -14,7 +14,7 @@ const settings = {
   version: 7, name: null, nickname: 'browser-fixture', copyHeader: false, downloadHeader: false, githubHeader: false,
   downloadFilenameTemplate: '{platform}-{number}-{title}', gitPathTemplate: '{platform}/{number}/{capture_ID}',
   githubCommitMessageTemplate: '{platform} {number}', lightTheme: 'github-light', darkTheme: 'github-dark',
-  autoSyncEnabled: false, githubAutoCommitEnabled: false, githubTargetConfigured: true, githubStatus: 'AVAILABLE',
+  autoSyncEnabled: false, communityPublicByDefault: true, githubAutoCommitEnabled: false, githubTargetConfigured: true, githubStatus: 'AVAILABLE',
   githubInstallationId: 9001, githubOwner: 'fixture-owner', githubRepository: 'fixture-archive',
   githubBranch: 'fixture-branch', githubRootPath: 'solutions',
 }
@@ -94,7 +94,21 @@ const plugin = {
       if (url.pathname === '/api/auth/me') return json(user)
       if (url.pathname === '/api/auth/providers') return json({ github: { enabled: true, loginUrl: '/api/oauth2/authorization/github' } })
       if (req.method !== 'GET' && req.headers['x-xsrf-token'] !== 'synthetic-csrf') return json({ message: 'Fixture CSRF missing' }, 403)
-      if (url.pathname === '/api/settings') return json(settings)
+      if (url.pathname === '/api/settings') {
+        if (req.method === 'PUT') {
+          if (req.headers['x-codearchive-github-id'] !== user.githubId || body.version !== settings.version) return json({ message: 'Fixture account/version mismatch' }, 409)
+          Object.assign(settings, body, { version: settings.version + 1 })
+        }
+        return json(settings)
+      }
+      if (url.pathname === '/api/community/solutions/publish-all') {
+        if (req.method !== 'POST' || req.headers['x-codearchive-github-id'] !== user.githubId || body.visibility !== 'published') return json({ message: 'Fixture explicit publication required' }, 400)
+        const rows = [...stored.values(), ...archiveFixtures]
+        const changed = rows.filter(record => record.result === 'ACCEPTED' && record.visibility !== 'published')
+        changed.forEach(record => { record.visibility = 'published'; record.publishedAt = new Date().toISOString() })
+        const published = rows.filter(record => record.result === 'ACCEPTED' && record.visibility === 'published')
+        return json({ changedSubmissions: changed.length, publishedProblems: new Set(published.map(record => `${record.platform}:${record.problemNumber}`)).size, publishedSubmissions: published.length })
+      }
       if (url.pathname === '/api/solutions') return json([...stored.values(), ...archiveFixtures])
       if (url.pathname === '/api/solutions/historical-submission-ids') return json([...stored.values()].filter(record => record.platform === url.searchParams.get('platform')).map(record => record.historicalSubmissionId))
       if (url.pathname === '/api/solutions/historical-github-candidates') return json([...stored.values()].map(record => ({ ...metadata(record), state: states.get(record.captureId) ?? 'NONE' })))
