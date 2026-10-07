@@ -45,7 +45,10 @@
       "deleteAppDataOnUninstall": false,
       "installerIcon": "src/icon.ico",
       "uninstallerIcon": "src/icon.ico",
-      "installerHeaderIcon": "src/icon.ico"
+      "installerHeaderIcon": "src/icon.ico",
+      "include": "src/installer.nsh",
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": false
     },
     "protocols": [
       {
