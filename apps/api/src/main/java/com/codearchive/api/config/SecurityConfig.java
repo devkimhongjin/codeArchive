@@ -113,7 +113,8 @@ public class SecurityConfig {
                         .csrfTokenRepository(csrfTokenRepository)
                         .csrfTokenRequestHandler(csrfRequestHandler)
                         // Relay is bearer-authenticated and deliberately has no browser session.
-                        .ignoringRequestMatchers("/api/relay/captures", "/api/relay/grants/self"));
+                        .ignoringRequestMatchers("/api/relay/captures", "/api/relay/grants/self",
+                                "/api/desktop-auth/requests", "/api/desktop-auth/exchange"));
         if (automationProperties.getWorker().isHttpEnabled()) {
             // The condition also controls controller registration. This private Cloud Run
             // worker is authenticated by IAM/OIDC rather than browser cookies or CSRF.
@@ -140,6 +141,9 @@ public class SecurityConfig {
                         // state and installation ownership still require authentication.
                         .requestMatchers(HttpMethod.GET, "/api/github/installations/callback").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login").permitAll()
+                        // Native handoff uses a short-lived S256 proof; approval stays session/CSRF protected.
+                        .requestMatchers(HttpMethod.POST, "/api/desktop-auth/requests", "/api/desktop-auth/exchange").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/desktop-auth/authorize", "/api/desktop-auth/failed", "/api/desktop-auth/install").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/relay/captures").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/relay/github-commit-status").permitAll()
                         .requestMatchers(HttpMethod.DELETE, "/api/relay/grants/self").permitAll()
