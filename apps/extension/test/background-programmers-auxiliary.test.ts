@@ -44,7 +44,7 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
       onMessage: { addListener(callback: Listener) { listener = callback; } },
       onMessageExternal: { addListener() {} }
     },
-    alarms: { get: async () => ({ name: "codearchive-extension-update" }), create() {}, onAlarm: { addListener() {} } },
+    alarms: { clear: async () => true, get: async () => ({ name: "codearchive-extension-update" }), create() {}, onAlarm: { addListener() {} } },
     storage: { session: {
       get: async (key: string) => ({ [key]: session[key] }),
       set: async (value: Record<string, unknown>) => { Object.assign(session, value); },

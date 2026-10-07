@@ -1,5 +1,4 @@
 import { isCaptureRecord, isUuid } from "./capture";
-import { createExtensionUpdateChecker, EXTENSION_UPDATE_KEY } from './extensionUpdates';
 import { DashboardBridge } from "./bridge";
 import { DesktopConnection } from './desktopConnection';
 import { IndexedDbCaptureStore } from "./storage";
@@ -211,17 +210,8 @@ function requestPostCaptureWork(capture: Parameters<typeof store.putCapture>[0])
   requestRelayDrain();
   void autoDownloadCapture(capture).catch(() => undefined);
 }
-const checkExtensionUpdate = createExtensionUpdateChecker(chrome.runtime.getManifest().version, {
-  get: async () => (await chrome.storage.local.get(EXTENSION_UPDATE_KEY))[EXTENSION_UPDATE_KEY],
-  set: async state => { await chrome.storage.local.set({ [EXTENSION_UPDATE_KEY]: state }); }
-});
-// Preserve the existing schedule across service-worker restarts.
-void chrome.alarms.get('codearchive-extension-update').then(existing => {
-  if (!existing) chrome.alarms.create('codearchive-extension-update', { periodInMinutes: 1440 });
-}).catch(() => undefined);
-chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "codearchive-extension-update") void checkExtensionUpdate().catch(() => undefined); });
-chrome.runtime.onStartup?.addListener(() => { void checkExtensionUpdate().catch(() => undefined); });
-chrome.runtime.onInstalled?.addListener(() => { void checkExtensionUpdate().catch(() => undefined); });
+// PC app releases now carry the extension bundle. Remove the legacy lookup alarm.
+void chrome.alarms.clear('codearchive-extension-update');
 chrome.alarms.create("codearchive-relay-drain", { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "codearchive-relay-drain") requestRelayDrain(); });
 requestRelayDrain();
@@ -231,7 +221,6 @@ type InternalMessage =
   | { type: "STORE_HISTORICAL_CAPTURE"; capture: unknown }
   | { type: "SET_SUBMISSION_PROGRESS"; attemptId: unknown; platform?: unknown; problemNumber?: unknown; title?: unknown; phase: unknown }
   | { type: "GET_POPUP_STATE" }
-  | { type: "CHECK_EXTENSION_UPDATE"; force?: boolean }
   | { type: "RETRY_RELAY" }
   | { type: "GET_GITHUB_COMMIT_STATUSES"; captureIds: unknown }
   | { type: "COPY_RECENT_CAPTURE"; captureId: string }
@@ -554,12 +543,6 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     void Promise.all([loadPopupLocalState(store), chrome.storage.session.get(SUBMISSION_PROGRESS_KEY).catch(() => ({} as Record<string, unknown>))])
       .then(([state, progress]) => sendResponse({ ...state, submissionProgress: activeSubmissionProgress(progress[SUBMISSION_PROGRESS_KEY]) }))
       .catch(() => sendResponse({ pendingCount: 0, settings: null, recentCaptures: [], error: "STORAGE_ERROR" }));
-    return true;
-  }
-
-  if (object.type === 'CHECK_EXTENSION_UPDATE') {
-    if (!isPopupSender(sender)) { sendResponse({ error: 'UNAUTHORIZED' }); return false; }
-    void checkExtensionUpdate(object.force === true).then(sendResponse).catch(() => sendResponse({ error: 'UPDATE_CHECK_FAILED' }));
     return true;
   }
 
