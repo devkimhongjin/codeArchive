@@ -26,15 +26,15 @@ PC 앱은 `127.0.0.1:18791`에만 바인딩합니다. `/pair` 및 `/bridge`는 �
 
 확장 서비스 워커는 별도 PC 세션 identity에 기존 DashboardBridge 계약을 적용합니다. 웹 세션과 capability를 공유하지 않으며 읽기만으로 ACK 권한이 생기지 않습니다. 기존 서버 업로드 성공 후 ACK·계정 검증·설정 버전 계약을 재사용합니다.
 
-Electron renderer에는 Node.js 권한이 없습니다. sandbox, contextIsolation, CSP 및 main-frame IPC 검증을 적용합니다. API 요청은 기존 운영 로그인/API Origin의 `/api/` 경로와 허용 헤더만 접근합니다. 앱의 로그인 버튼을 누르면 기본 웹브라우저에 PC 앱 전용 로그인 페이지가 열립니다. 이 페이지에서 GitHub로 로그인을 선택하면 GitHub·Google 인증 후 바로 로그인 완료 및 앱 열기 화면으로 돌아옵니다. 인증 후 별도의 앱 승인 버튼은 없습니다. 브라우저의 앱 열기 확인을 수락하거나 완료 페이지의 CodeArchive 앱 열기를 누르면 실행 중인 앱이 표시됩니다. 앱 전용 persistent 세션은 원래 앱이 일회용 증명을 교환해 생성합니다. 브라우저와 앱의 세션은 별도이므로 Chrome을 닫아도 앱 로그인은 유지됩니다. Chrome 계정 쿠키나 프로필은 읽지 않습니다. 기존 OAuth callback과 Netlify API 프록시 주소는 유지합니다. GitHub App 설치도 웹브라우저에서 같은 계정을 확인하고 새 브라우저 세션에 설치 state를 발급하며, 설치 후 앱에서 연결 버튼을 다시 눌러 목록을 확인합니다. 이 브랜치는 Netlify를 배포하지 않습니다.
+Electron renderer에는 Node.js 권한이 없습니다. sandbox, contextIsolation, CSP 및 main-frame IPC 검증을 적용합니다. API 요청은 기존 운영 로그인/API Origin의 `/api/` 경로와 허용 헤더만 접근합니다. 앱의 로그인 버튼을 누르면 서버 응답을 기다리지 않고 기본 웹브라우저를 열며, GitHub 인증 화면으로 바로 이동합니다. 중간 웹 로그인 버튼 없이 인증 완료 후 앱으로 돌아갑니다. 브라우저가 표시하는 앱 열기 확인은 수락해야 하며, 자동 이동이 차단되면 완료 화면의 CodeArchive 앱 열기를 사용할 수 있습니다. 앱 전용 persistent 세션은 원래 앱이 일회용 증명을 교환해 생성합니다. 브라우저와 앱의 세션은 별도이므로 Chrome을 닫아도 앱 로그인은 유지됩니다. Chrome 계정 쿠키나 프로필은 읽지 않습니다. 기존 OAuth callback과 Netlify API 프록시 주소는 유지합니다. GitHub App 설치도 웹브라우저에서 같은 계정을 확인하고 새 브라우저 세션에 설치 state를 발급하며, 설치 후 앱에서 연결 버튼을 다시 눌러 목록을 확인합니다. 이 브랜치는 Netlify를 배포하지 않습니다.
 
 확장 팝업은 PC 앱에 연결되지 않았을 때 연결 코드 입력만 표시하고, 연결되면 연결 영역을 숨깁니다. 연결이 끊기면 다시 연결 화면으로 돌아갑니다. 별도 확장 업데이트 조회·항목은 제거했으며 앱 릴리스의 포함 확장으로 갱신합니다.
 
 ### 웹 로그인 API 적용
 
-관련 Issue #378. 서버에는 `/api/desktop-auth`와 V22 마이그레이션을 추가했습니다. `DESKTOP_LOGIN_ENABLED`는 기본 `false`입니다. 기존 API 배포와 데이터베이스 마이그레이션 검증 후 이 플래그를 활성화해야 새 PC 앱의 웹 로그인이 동작합니다. 미적용 서버에서는 앱에 적용 필요 안내를 표시합니다. Netlify 웹 빌드·배포는 필요하지 않습니다.
+관련 Issue #378, #383. 서버에는 `/api/desktop-auth`와 V22·V23 마이그레이션을 추가했습니다. V23은 임시 로그인 요청의 콜백 필수 여부와 일회용 코드 해시를 추가하며 기존 요청은 이전 교환 방식을 유지합니다. `DESKTOP_LOGIN_ENABLED`는 기본 `false`입니다. 기존 API 배포와 데이터베이스 마이그레이션 검증 후 이 플래그를 활성화해야 새 PC 앱의 웹 로그인이 동작합니다. Netlify 웹 빌드·배포는 필요하지 않습니다.
 
-앱은 256비트 verifier와 S256 challenge를 생성합니다. 서버의 요청은 5분 동안 유효하고 브라우저 세션에 한 번만 묶입니다. 전용 페이지의 로그인 버튼은 CSRF로 보호되며 인증 전에 해당 요청의 앱 연결 동의를 기록합니다. 동의한 요청과 새로운 GitHub OAuth 계정이 확인되면 완료 화면으로 이동하며, 원래 앱만 verifier로 승인 결과를 한 번 교환할 수 있습니다. verifier는 URL·renderer·로그에 전달하지 않습니다. 완료 페이지의 앱 열기 주소는 자격 증명을 포함하지 않는 고정 `codearchive://auth/complete`입니다. 폼 페이지는 `Referrer-Policy: same-origin`으로 동일 Origin 요청을 유지하고 외부 사이트에는 Referer를 보내지 않습니다. 요청 할당은 데이터베이스 잠금으로 여러 서버 인스턴스에서 직렬화하고 전체 500개·서버가 해석한 동일 클라이언트당 10개의 대기 요청 제한과 만료 정리를 적용합니다. 공유 프록시·NAT 환경의 제한은 실제 배포에서 확인해야 합니다.
+앱은 256비트 verifier, S256 challenge와 별도의 state를 생성합니다. 브라우저의 `/api/desktop-auth/start`가 5분 동안 유효한 요청을 생성하고 GitHub OAuth로 바로 이동합니다. 인증 완료 화면은 일회용 코드·요청 ID·state를 `codearchive://auth/complete`로 앱에 전달합니다. 앱은 자신이 시작한 state를 확인하고 보관 중인 verifier와 코드를 교환해 독립 세션을 생성합니다. 다른 앱의 state, 중복 콜백, 잘못된 코드·verifier와 만료된 요청은 거부합니다. 코드만으로 로그인할 수 없으며 데이터베이스 요청에는 코드 해시만 저장합니다. verifier·앱 세션 쿠키·GitHub 토큰은 URL·renderer·로그에 전달하지 않습니다. 기존 로그인 폼은 CSRF 검사를 유지하며 GitHub로 이어지는 폼 이동만 CSP에서 허용합니다. 요청 할당은 데이터베이스 잠금으로 여러 서버 인스턴스에서 직렬화하고 전체 500개·서버가 해석한 동일 클라이언트당 10개의 대기 요청 제한과 만료 정리를 적용합니다. 공유 프록시·NAT 환경의 제한은 실제 배포에서 확인해야 합니다.
 
 ## 빌드와 검증
 
@@ -51,7 +51,7 @@ npm --prefix apps/desktop run dist
 
 개발 실행은 `npm --prefix apps/desktop run build` 후 `npm --prefix apps/desktop start`입니다. 확장 빌드는 기본으로 기존 build.local.json 설치 폴더를 백업 후 갱신합니다. 격리 검증에서는 `CODEARCHIVE_SKIP_INSTALLED_EXTENSION=true`로 설치 폴더 반영을 생략할 수 있습니다.
 
-`test:smoke`는 `CODEARCHIVE_DESKTOP_TEST_USER_DATA`와 `CODEARCHIVE_DESKTOP_SMOKE_OUTPUT`를 별도 검증 폴더로 지정하여 실행합니다. 앱 renderer·IPC·합성 확장 peer·실제 providers 읽기 API를 검증하며, 실제 사용자 Chrome 연결 검증을 대체하지 않습니다. 선택형 `DesktopBrowserSmokeTest`는 로컬 H2와 테스트 전용 GitHub 성공 응답으로 실제 Chrome 승인·Electron 세션 교환을 확인하며 Google/GitHub 공급자 로그인을 검증한 것은 아닙니다. 배포 패키지에는 smoke driver가 포함되지 않습니다.
+`test:smoke`는 `CODEARCHIVE_DESKTOP_TEST_USER_DATA`와 `CODEARCHIVE_DESKTOP_SMOKE_OUTPUT`를 별도 검증 폴더로 지정하여 실행합니다. 앱 renderer·IPC·합성 확장 peer·실제 providers 읽기 API를 검증하며, 실제 사용자 Chrome 연결 검증을 대체하지 않습니다. 선택형 `DesktopBrowserSmokeTest`는 로컬 H2와 테스트 전용 GitHub 성공 응답·콜백 전달로 Chrome 이동과 Electron 세션 교환을 확인합니다. 실제 Google/GitHub 공급자 로그인과 Windows 프로토콜 전달 검증은 별도로 필요합니다. 배포 패키지에는 smoke driver가 포함되지 않습니다.
 
 ## 릴리스와 업데이트
 

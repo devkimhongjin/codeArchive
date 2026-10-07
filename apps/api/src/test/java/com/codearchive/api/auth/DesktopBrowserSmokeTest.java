@@ -34,6 +34,7 @@ import org.springframework.test.context.ActiveProfiles;
 class DesktopBrowserSmokeTest {
     static final AtomicBoolean done = new AtomicBoolean();
     static final AtomicReference<String> browserPath = new AtomicReference<>();
+    static final AtomicReference<String> callbackUrl = new AtomicReference<>();
     @LocalServerPort int port;
     @Autowired JdbcTemplate jdbc;
     @Test void actualBrowserApprovalAndIndependentNativeCookie() throws Exception {
@@ -54,7 +55,7 @@ class DesktopBrowserSmokeTest {
                 String path = req.getRequestURI();
                 if (path.equals("/fixture/browser-url") && req.getMethod().equals("POST")) {
                     String target = req.getReader().readLine();
-                    if (target == null || !target.matches("/api/desktop-auth/authorize\\?requestId=[A-Za-z0-9_-]{43}")) { res.setStatus(400); return; }
+                    if (target == null || !target.matches("/api/desktop-auth/start\\?challenge=[A-Za-z0-9_-]{43}&state=[A-Za-z0-9_-]{43}")) { res.setStatus(400); return; }
                     browserPath.set(target); res.setStatus(204); return;
                 }
                 if (path.equals("/fixture/login")) {
@@ -62,6 +63,10 @@ class DesktopBrowserSmokeTest {
                     res.sendRedirect(browserPath.get()); return;
                 }
                 if (path.equals("/fixture/complete") && req.getMethod().equals("POST")) { done.set(true); res.setStatus(204); return; }
+                if (path.equals("/fixture/callback")) {
+                    if (callbackUrl.get() == null) { res.setStatus(202); return; }
+                    res.setHeader("Cache-Control", "no-store"); res.getWriter().write(callbackUrl.get()); return;
+                }
                 if (path.equals("/api/oauth2/authorization/github")) {
                     // This test-only provider stands in for the successful OAuth callback.
                     var authorities = List.of(new SimpleGrantedAuthority("ROLE_USER"));
@@ -69,7 +74,10 @@ class DesktopBrowserSmokeTest {
                     var auth = new OAuth2AuthenticationToken(principal, authorities, "github");
                     var context = SecurityContextHolder.createEmptyContext(); context.setAuthentication(auth);
                     new HttpSessionSecurityContextRepository().saveContext(context, req, res);
-                    success.onAuthenticationSuccess(req, res, auth); return;
+                    success.onAuthenticationSuccess(req, res, auth);
+                    if (req.getSession().getAttribute(DesktopLoginService.COMPLETED_KEY) instanceof DesktopLoginService.CallbackResult result)
+                        callbackUrl.set("codearchive://auth/complete?requestId=" + result.requestId() + "&state=" + result.state() + "&code=" + result.code());
+                    return;
                 }
                 chain.doFilter(request, response);
             });

@@ -76,7 +76,16 @@ async function run({ app, mainWindow, bridge, bridgePort, apiSession }) {
         },
         completed: async () => { approved = true; }
       });
-      await webLogin.start();
+      const loginResult = webLogin.start();
+      loginResult.catch(() => {});
+      // Test-only callback transport: this verifies browser/native exchange, not OS protocol delivery.
+      const deadline = Date.now() + 60000;
+      while (webLogin.pending() && Date.now() < deadline) {
+        const callback = await fetch(`${fixture}/fixture/callback`);
+        if (callback.status === 200) { await webLogin.receiveCompletion(await callback.text()); break; }
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      await loginResult;
       const me = await apiSession.fetch(`${fixture}/api/auth/me`, { credentials: 'include' });
       checks.actualBrowserApprovalAndNativeSession = approved && me.status === 200 && (await me.json()).githubId === '918273646';
       await fetch(`${fixture}/fixture/complete`, { method: 'POST' });

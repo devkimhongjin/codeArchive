@@ -39,7 +39,17 @@ public class GithubOAuth2SuccessHandler implements AuthenticationSuccessHandler 
         if (request.getSession(false) != null && request.getSession(false).getAttribute(DesktopLoginService.SESSION_KEY) instanceof String id) {
             try {
                 desktopLogin.check(id);
-                if (id.equals(request.getSession(false).getAttribute(DesktopLoginService.CONSENT_KEY))) {
+                if (request.getSession(false).getAttribute(DesktopLoginService.CALLBACK_KEY) instanceof DesktopLoginService.CallbackIntent callback
+                        && id.equals(callback.id()) && callback.expiresAt() > System.currentTimeMillis()) {
+                    String githubId = com.codearchive.api.auth.GithubAuthentication.githubId(authentication).orElseThrow();
+                    String code = desktopLogin.approveCallback(id, githubId);
+                    request.getSession(false).setAttribute(DesktopLoginService.COMPLETED_KEY,
+                            new DesktopLoginService.CallbackResult(callback.requestId(), callback.state(), code, callback.expiresAt()));
+                    request.getSession(false).removeAttribute(DesktopLoginService.SESSION_KEY);
+                    request.getSession(false).removeAttribute(DesktopLoginService.CALLBACK_KEY);
+                    request.getSession(false).removeAttribute(DesktopLoginService.CONSENT_KEY);
+                    DesktopBrowserRedirect.complete(response);
+                } else if (id.equals(request.getSession(false).getAttribute(DesktopLoginService.CONSENT_KEY))) {
                     String githubId = com.codearchive.api.auth.GithubAuthentication.githubId(authentication).orElseThrow();
                     desktopLogin.approve(id, githubId);
                     request.getSession(false).removeAttribute(DesktopLoginService.SESSION_KEY);
@@ -49,8 +59,11 @@ public class GithubOAuth2SuccessHandler implements AuthenticationSuccessHandler 
                 } else DesktopBrowserRedirect.confirm(response); // Compatibility for already-open legacy approval pages.
                 return;
             } catch (DesktopLoginService.Failure unavailable) {
+                if (request.getSession(false).getAttribute(DesktopLoginService.CALLBACK_KEY) instanceof DesktopLoginService.CallbackIntent callback)
+                    request.getSession(false).setAttribute(DesktopLoginService.FAILED_KEY, new DesktopLoginService.CallbackFailure(callback.state(), callback.expiresAt()));
                 request.getSession(false).removeAttribute(DesktopLoginService.SESSION_KEY);
                 request.getSession(false).removeAttribute(DesktopLoginService.CONSENT_KEY);
+                request.getSession(false).removeAttribute(DesktopLoginService.CALLBACK_KEY);
                 DesktopBrowserRedirect.failed(response); return;
             }
         }

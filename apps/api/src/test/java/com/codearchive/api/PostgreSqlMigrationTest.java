@@ -33,7 +33,7 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
-    private static final int LATEST_MIGRATION = 22;
+    private static final int LATEST_MIGRATION = 23;
 
     @Test
     void freshSchemaMigratesTwiceAndPassesHibernateValidation() throws Exception {
@@ -103,6 +103,24 @@ class PostgreSqlMigrationTest {
             assertEquals(4L, ((Number) database.scalar("SELECT version FROM user_settings WHERE user_id = ?", userId)).longValue());
             assertEquals("Existing profile", database.scalar("SELECT display_name FROM user_settings WHERE user_id = ?", userId));
             assertEquals(1L, ((Number) database.scalar("SELECT COUNT(*) FROM solutions WHERE user_id = ? AND published_at IS NULL", userId)).longValue());
+            assertEquals(0, database.flyway().migrate().migrationsExecuted);
+            validateWithHibernate(database);
+        } finally { database.drop(); }
+    }
+
+    @Test
+    void callbackProofUpgradePreservesLegacyLoginRequests() throws Exception {
+        TestDatabase database = TestDatabase.create();
+        try {
+            database.flyway(MigrationVersion.fromVersion("22")).migrate();
+            try (Connection connection = database.connection(); Statement statement = connection.createStatement()) {
+                statement.execute("INSERT INTO desktop_login_requests(id, challenge, client_key, expires_at, bound) VALUES ('" + "a".repeat(64)
+                        + "', '" + "b".repeat(43) + "', '" + "c".repeat(64) + "', CURRENT_TIMESTAMP + INTERVAL '5 minutes', TRUE)");
+            }
+            assertEquals(1, database.flyway().migrate().migrationsExecuted);
+            assertEquals(false, database.scalar("SELECT callback_required FROM desktop_login_requests WHERE id = ?", "a".repeat(64)));
+            org.junit.jupiter.api.Assertions.assertNull(database.scalar("SELECT callback_code_hash FROM desktop_login_requests WHERE id = ?", "a".repeat(64)));
+            assertEquals(true, database.scalar("SELECT bound FROM desktop_login_requests WHERE id = ?", "a".repeat(64)));
             assertEquals(0, database.flyway().migrate().migrationsExecuted);
             validateWithHibernate(database);
         } finally { database.drop(); }

@@ -8,11 +8,15 @@ const { createSetup } = require('./setup.cjs');
 const { createWebLogin } = require('./web-login.cjs');
 const { REMOTE_ORIGIN, APP_URL, BRIDGE_PORT, apiRequest, trustedRenderer, authUrl, externalUrl } = require('./policy.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'codearchive', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
-let mainWindow, tray, bridge, updater, quitting = false, activeRequests = 0;
+let mainWindow, tray, bridge, updater, webLogin, quitting = false, activeRequests = 0;
 const loginItemOptions = { path: process.execPath, args: ['--autostart'] };
 if (process.env.CODEARCHIVE_DESKTOP_TEST_USER_DATA) app.setPath('userData', path.resolve(process.env.CODEARCHIVE_DESKTOP_TEST_USER_DATA));
 if (!app.requestSingleInstanceLock()) { app.quit(); } else {
-  app.on('second-instance', () => { mainWindow?.show(); mainWindow?.focus(); });
+  app.on('second-instance', (_event, argv) => {
+    mainWindow?.show(); mainWindow?.focus();
+    const callback = argv.find(value => value.startsWith('codearchive://auth/'));
+    if (callback && webLogin) void webLogin.receiveCompletion(callback);
+  });
   app.whenReady().then(start).catch(() => { require('electron').dialog.showErrorBox('CodeArchive', 'PC 앱을 시작하지 못했습니다. 다른 CodeArchive 앱이 실행 중인지 확인해 주세요.'); app.quit(); });
 }
 async function start() {
@@ -49,7 +53,7 @@ async function start() {
   });
   const apiSession = session.fromPartition('persist:codearchive-account');
   apiSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  const webLogin = createWebLogin({ fetch: (...args) => apiSession.fetch(...args), openExternal: url => shell.openExternal(url), completed: async () => {
+  webLogin = createWebLogin({ fetch: (...args) => apiSession.fetch(...args), openExternal: url => shell.openExternal(url), completed: async () => {
     await mainWindow.loadURL(APP_URL); mainWindow.show(); mainWindow.focus();
   } });
   mainWindow = new BrowserWindow({ width: 1360, height: 900, minWidth: 900, minHeight: 620, show: !process.argv.includes('--autostart'), title: 'CodeArchive', icon: path.join(__dirname, 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
