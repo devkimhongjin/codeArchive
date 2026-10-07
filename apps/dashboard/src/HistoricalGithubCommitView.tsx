@@ -1,3 +1,4 @@
+import { useDesktopWork } from './DesktopActivity'
 import { useEffect, useRef, useState } from 'react'
 import { getAccountSettings, getHistoricalCommitCandidates, getMe, requestHistoricalCommitBatch } from './api'
 import { gitPath } from './codeExport'
@@ -37,6 +38,8 @@ export function HistoricalGithubCommitView({ user, mode, revision = 0 }: { user:
     } catch (error) { if (active()) setMessage(error instanceof Error ? error.message : '커밋 상태를 불러오지 못했습니다.') }
     finally { if (active() && !silent) setLoading(false) }
   }
+  const pending = records.some(record => record.state === 'PENDING' || record.state === 'RUNNING')
+  useDesktopWork(busy || loading || pending)
   useEffect(() => {
     mounted.current = true; run.current += 1; load.current += 1; inFlight.current = false; cancel.current = true
     setRecords([]); setSelected([]); setSettings(null); setPreview(null); setMessage(''); setBusy(false); setRequested([])
@@ -44,7 +47,6 @@ export function HistoricalGithubCommitView({ user, mode, revision = 0 }: { user:
     return () => { mounted.current = false; run.current += 1; load.current += 1; cancel.current = true }
   }, [context])
   useEffect(() => { if (revision) void refresh(false) }, [revision])
-  const pending = records.some(record => record.state === 'PENDING' || record.state === 'RUNNING')
   useEffect(() => {
     if (!pending || busy || loading || mode !== 'live') return
     let polling = false

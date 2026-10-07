@@ -1,6 +1,6 @@
 import { isCaptureRecord, isUuid } from "./capture";
-import { createExtensionUpdateChecker, EXTENSION_UPDATE_KEY } from './extensionUpdates';
 import { DashboardBridge } from "./bridge";
+import { DesktopConnection } from './desktopConnection';
 import { IndexedDbCaptureStore } from "./storage";
 import { loadPopupLocalState, prepareCaptureDownload, retryRelayConnection, storeCaptureLocalFirst } from "./backgroundActions";
 import { exportCode } from "./export";
@@ -31,6 +31,10 @@ const bridge = new DashboardBridge(store, {
 });
 
 const LOCAL_HISTORY_ROUTE_KEY = "codearchive-local-history-route";
+const desktopConnection = new DesktopConnection(bridge);
+void desktopConnection.connect();
+chrome.alarms.create('codearchive-desktop-reconnect', { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === 'codearchive-desktop-reconnect') void desktopConnection.connect(); });
 type LocalHistoryRoute = { tabId: number; url: string; status: string; platform: Platform };
 
 async function openHistoryPage(): Promise<{ status: "OPENED" }> {
@@ -206,17 +210,8 @@ function requestPostCaptureWork(capture: Parameters<typeof store.putCapture>[0])
   requestRelayDrain();
   void autoDownloadCapture(capture).catch(() => undefined);
 }
-const checkExtensionUpdate = createExtensionUpdateChecker(chrome.runtime.getManifest().version, {
-  get: async () => (await chrome.storage.local.get(EXTENSION_UPDATE_KEY))[EXTENSION_UPDATE_KEY],
-  set: async state => { await chrome.storage.local.set({ [EXTENSION_UPDATE_KEY]: state }); }
-});
-// Preserve the existing schedule across service-worker restarts.
-void chrome.alarms.get('codearchive-extension-update').then(existing => {
-  if (!existing) chrome.alarms.create('codearchive-extension-update', { periodInMinutes: 1440 });
-}).catch(() => undefined);
-chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "codearchive-extension-update") void checkExtensionUpdate().catch(() => undefined); });
-chrome.runtime.onStartup?.addListener(() => { void checkExtensionUpdate().catch(() => undefined); });
-chrome.runtime.onInstalled?.addListener(() => { void checkExtensionUpdate().catch(() => undefined); });
+// PC app releases now carry the extension bundle. Remove the legacy lookup alarm.
+void chrome.alarms.clear('codearchive-extension-update');
 chrome.alarms.create("codearchive-relay-drain", { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "codearchive-relay-drain") requestRelayDrain(); });
 requestRelayDrain();
@@ -226,7 +221,6 @@ type InternalMessage =
   | { type: "STORE_HISTORICAL_CAPTURE"; capture: unknown }
   | { type: "SET_SUBMISSION_PROGRESS"; attemptId: unknown; platform?: unknown; problemNumber?: unknown; title?: unknown; phase: unknown }
   | { type: "GET_POPUP_STATE" }
-  | { type: "CHECK_EXTENSION_UPDATE"; force?: boolean }
   | { type: "RETRY_RELAY" }
   | { type: "GET_GITHUB_COMMIT_STATUSES"; captureIds: unknown }
   | { type: "COPY_RECENT_CAPTURE"; captureId: string }
@@ -465,6 +459,13 @@ function mutateProgress(update: Parameters<typeof updateSubmissionProgress>[1]):
 type AnyInternalMessage = InternalMessage | ProgrammersAuxiliaryMessage;
 
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
+  const desktopMessage = message as { type?: string; code?: string } | null;
+  if (desktopMessage && ['DESKTOP_STATUS', 'DESKTOP_PAIR', 'DESKTOP_DISCONNECT'].includes(desktopMessage.type ?? '')) {
+    if (!isPopupSender(sender)) { sendResponse({ error: 'UNAUTHORIZED' }); return false; }
+    const operation = desktopMessage.type === 'DESKTOP_PAIR' ? desktopConnection.pair(desktopMessage.code ?? '') : desktopMessage.type === 'DESKTOP_DISCONNECT' ? desktopConnection.disconnect() : desktopConnection.connect().then(() => desktopConnection.status());
+    void operation.then(sendResponse).catch(error => sendResponse({ error: error instanceof Error ? error.message : 'PC 앱에 연결하지 못했습니다.' }));
+    return true;
+  }
   const object = asObject(message) as Partial<AnyInternalMessage> | null;
   if (!object?.type) return false;
 
@@ -542,12 +543,6 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     void Promise.all([loadPopupLocalState(store), chrome.storage.session.get(SUBMISSION_PROGRESS_KEY).catch(() => ({} as Record<string, unknown>))])
       .then(([state, progress]) => sendResponse({ ...state, submissionProgress: activeSubmissionProgress(progress[SUBMISSION_PROGRESS_KEY]) }))
       .catch(() => sendResponse({ pendingCount: 0, settings: null, recentCaptures: [], error: "STORAGE_ERROR" }));
-    return true;
-  }
-
-  if (object.type === 'CHECK_EXTENSION_UPDATE') {
-    if (!isPopupSender(sender)) { sendResponse({ error: 'UNAUTHORIZED' }); return false; }
-    void checkExtensionUpdate(object.force === true).then(sendResponse).catch(() => sendResponse({ error: 'UPDATE_CHECK_FAILED' }));
     return true;
   }
 

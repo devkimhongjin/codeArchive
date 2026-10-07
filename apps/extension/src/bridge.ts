@@ -152,6 +152,17 @@ export class DashboardBridge {
     const identity = senderIdentity(sender);
     if (!identity) return { error: "UNAUTHORIZED" };
 
+    return this.handleIdentifiedMessage(message, identity);
+  }
+
+  /** Only the paired extension-owned transport calls this; web callers cannot select its identity. */
+  async handleDesktopMessage(message: unknown, connectionId: string): Promise<BridgeResponse> {
+    if (!/^[a-f0-9]{32}$/.test(connectionId)) return { error: "UNAUTHORIZED" };
+    return this.handleIdentifiedMessage(message, { tabId: -1, frameId: 0, documentId: `desktop:${connectionId}` });
+  }
+
+  private async handleIdentifiedMessage(message: unknown, identity: SenderIdentity): Promise<BridgeResponse> {
+
     const object = asObject(message);
     const type = object?.type;
     if (!isMessageType(type)) return { error: "BAD_REQUEST" };

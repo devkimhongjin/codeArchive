@@ -19,7 +19,8 @@ test('public manifest key pins the same ID used by the dashboard', () => {
     'https://jungol.co.kr/*',
     'https://api.github.com/*',
     'https://codearchive-dashboard-beta.netlify.app/*',
-    'http://localhost:5173/*'
+    'http://localhost:5173/*',
+    'http://127.0.0.1:18791/*'
   ]);
   const isolated = manifest.content_scripts.find((script: { world?: string }) => script.world === 'ISOLATED');
   assert.ok(isolated);

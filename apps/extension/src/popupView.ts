@@ -4,14 +4,11 @@ import { canonicalLanguageDisplayName } from "../../../shared/language";
 import { formatCaptureMemory, formatExecutionTime, formatSolutionTime } from "./capturePresentation";
 import { buildLabel, updatedLabel } from "../../../shared/buildMetadata";
 import { activeSubmissionProgress, type SubmissionProgress } from "./submissionProgress";
-import { EXTENSION_RELEASE, trustedExtensionRelease } from '../../../shared/extensionRelease';
-import type { ExtensionUpdateState } from './extensionUpdates';
 
 type CapturePreview = Omit<Capture, "sourceCode"> & { githubCommitStatus?: GithubCommitStatus };
 
 interface PopupServices {
   load: () => Promise<unknown>;
-  loadExtensionUpdate?: (force?: boolean) => Promise<ExtensionUpdateState>;
   subscribeProgress?: (refresh: () => void) => void;
   copy: (text: string) => Promise<void>;
   copyCapture?: (captureId: string) => Promise<{ ok?: boolean; text?: string }>;
@@ -289,34 +286,5 @@ export function mountPopup(document: Document, services: PopupServices): void {
   };
   autoDownload?.addEventListener("change", () => { autoDownload.setAttribute("aria-checked", String(autoDownload.checked)); updateAutomation({ autoDownloadEnabled: autoDownload.checked }); });
   autoSync?.addEventListener("change", () => { autoSync.setAttribute("aria-checked", String(autoSync.checked)); updateAutomation({ autoSyncEnabled: autoSync.checked }); });
-  const updateStatus = document.querySelector<HTMLElement>('#extension-update-status');
-  const updateLink = document.querySelector<HTMLAnchorElement>('#extension-update-link');
-  const updateCheck = document.querySelector<HTMLButtonElement>('#extension-update-check');
-  let updateBusy = false;
-  const checkUpdate = async (force = false) => {
-    if (!services.loadExtensionUpdate || !updateStatus || !updateLink || updateBusy) return;
-    updateBusy = true;
-    if (updateCheck) updateCheck.disabled = true;
-    updateStatus.textContent = '새 릴리스를 확인하고 있습니다…';
-    updateLink.href = EXTENSION_RELEASE.releaseHistoryUrl;
-    updateLink.textContent = 'GitHub 릴리스 보기 ↗';
-    try {
-      const state = await services.loadExtensionUpdate(force);
-      const release = trustedExtensionRelease(state?.release);
-      if (!state || !/^\d+\.\d+\.\d+$/.test(state.installedVersion) ||
-          (state.status !== 'checked' && state.status !== 'unavailable') || (state.status === 'checked' && !release)) throw new Error('Invalid update state');
-      updateStatus.textContent = state.status === 'unavailable'
-        ? '최신 릴리스를 확인하지 못했습니다. 잠시 후 다시 확인해 주세요.'
-        : release && state.available ? `새 버전 v${release.version} · 설치됨 v${state.installedVersion}`
-        : `설치됨 v${state.installedVersion} · 더 새로운 릴리스가 없습니다.`;
-      if (release && state.available) {
-        updateLink.href = release.releasePageUrl;
-        updateLink.textContent = state.status === 'unavailable' ? `이전에 확인한 v${release.version} 릴리스 ↗` : `v${release.version} 업데이트 받기 ↗`;
-      }
-    } catch { updateStatus.textContent = '최신 릴리스를 확인하지 못했습니다. GitHub에서 확인해 주세요.'; }
-    finally { updateBusy = false; if (updateCheck) updateCheck.disabled = false; }
-  };
-  updateCheck?.addEventListener('click', () => void checkUpdate(true));
-  void checkUpdate();
   void load();
 }

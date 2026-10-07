@@ -6,9 +6,10 @@ import { ApiError } from './api'
 import type { AccountSettings } from './types'
 
 const mocks = vi.hoisted(() => ({
-  me: vi.fn(), list: vi.fn(), settings: vi.fn(), save: vi.fn(), grant: vi.fn(), revoke: vi.fn(), logout: vi.fn(), bridge: vi.fn(), installations: vi.fn(), startInstallation: vi.fn(), repositories: vi.fn(), branches: vi.fn(), directories: vi.fn(), tree: vi.fn(), addFile: vi.fn(), previewTreeOperation: vi.fn(), commitTreeOperation: vi.fn(), emptyBranch: vi.fn(), readmePreview: vi.fn(), initializeReadme: vi.fn(), navigate: vi.fn(),
+  markDraft: vi.fn(), me: vi.fn(), list: vi.fn(), settings: vi.fn(), save: vi.fn(), grant: vi.fn(), revoke: vi.fn(), logout: vi.fn(), bridge: vi.fn(), installations: vi.fn(), startInstallation: vi.fn(), repositories: vi.fn(), branches: vi.fn(), directories: vi.fn(), tree: vi.fn(), addFile: vi.fn(), previewTreeOperation: vi.fn(), commitTreeOperation: vi.fn(), emptyBranch: vi.fn(), readmePreview: vi.fn(), initializeReadme: vi.fn(), navigate: vi.fn(),
 }))
 
+vi.mock('./DesktopActivity', async (original) => ({ ...await original<typeof import('./DesktopActivity')>(), markDesktopDraft: mocks.markDraft }))
 vi.mock('./api', async (original) => ({
   ...await original<typeof import('./api')>(),
   getMe: mocks.me,
@@ -489,6 +490,7 @@ it('persists an inline code-view theme immediately and refreshes the connected e
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT' ? Promise.resolve({ capability: 'theme-capability' }) : Promise.resolve({ ok: true }))
   render(<App />)
   await screen.findAllByText('테마 풀이')
+  await waitFor(() => expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe('one-light'))
   fireEvent.change(screen.getByLabelText('코드 보기 테마'), { target: { value: 'solarized-light' } })
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ version: 4, lightTheme: 'solarized-light', darkTheme: 'dracula' }), 'account-17'))
   await waitFor(() => expect(bridgeMessages('CONFIGURE_RELAY').some(([, message]) => (message as { lightTheme?: string }).lightTheme === 'solarized-light')).toBe(true))
@@ -832,4 +834,16 @@ it('keeps an account-switch archive outage local and opens no replacement relay 
   expect(screen.getByText('B archive unavailable')).toBeTruthy()
   expect(mocks.grant).not.toHaveBeenCalled()
   expect(bridgeMessages('CONFIGURE_RELAY').some(([, message]) => (message as { accountId?: string; relay?: unknown }).accountId === '18' && (message as { relay?: unknown }).relay !== null)).toBe(false)
+})
+
+it('checkbox and template-token mutations explicitly protect unsaved account drafts from app restarts', async () => {
+  await openSettings()
+  expect(mocks.markDraft).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByLabelText('자동 동기화'))
+  expect(mocks.markDraft).toHaveBeenCalledOnce()
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 관리' }))
+  await screen.findByRole('heading', { name: 'GitHub 관리' })
+  const before = mocks.markDraft.mock.calls.length
+  fireEvent.click(within(screen.getByLabelText('Git 경로 토큰')).getByRole('button', { name: '{capture_ID}' }))
+  expect(mocks.markDraft.mock.calls.length).toBe(before + 1)
 })

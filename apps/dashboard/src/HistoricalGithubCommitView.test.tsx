@@ -87,3 +87,18 @@ it('platform filter limits the commit scope and preview includes only that platf
   await waitFor(() => expect(mocks.commit).toHaveBeenCalledTimes(1))
   expect(mocks.commit.mock.calls[0][1].captureIds).toEqual([record(1).captureId])
 })
+
+it('reports queued and running server commits as work until terminal states arrive', async () => {
+  const report = vi.fn().mockResolvedValue(undefined)
+  const desktopWindow = window as Window & { codeArchiveDesktop?: import('./desktop').DesktopApi }
+  desktopWindow.codeArchiveDesktop = { reportActivity: report } as unknown as import('./desktop').DesktopApi
+  try {
+    mocks.candidates.mockResolvedValue([record(1, 'PENDING'), record(2, 'RUNNING')])
+    render(<HistoricalGithubCommitView user={user} mode="live" />)
+    await screen.findByText('진행 중')
+    await waitFor(() => expect(report).toHaveBeenLastCalledWith({ busy: true, draft: false }))
+    mocks.candidates.mockResolvedValue([record(1, 'SUCCEEDED'), record(2, 'FAILED')])
+    fireEvent.click(screen.getByRole('button', { name: '서버·커밋 상태 새로고침' }))
+    await waitFor(() => expect(report).toHaveBeenLastCalledWith({ busy: false, draft: false }))
+  } finally { cleanup(); delete desktopWindow.codeArchiveDesktop }
+})

@@ -15,7 +15,7 @@ test("production history handler retries after entering submissions and reconnec
       set: async (value: Record<string, unknown>) => { Object.assign(stored, value); },
       remove: async (key: string) => { delete stored[key]; }
     } },
-    alarms: { get: async () => ({ name: "codearchive-extension-update" }), create() {}, onAlarm: { addListener() {} } },
+    alarms: { clear: async () => true, get: async () => ({ name: "codearchive-extension-update" }), create() {}, onAlarm: { addListener() {} } },
     tabs: {
       query: async () => [source],
       get: async (tabId: number) => { assert.equal(tabId, source.id); return source; },

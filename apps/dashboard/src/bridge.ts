@@ -1,4 +1,6 @@
 import type { Capture } from './types'
+import { desktopApi } from './desktop'
+import { EXTENSION_ID } from './extensionConfig'
 
 export type RuntimeApi = {
   lastError?: { message?: string }
@@ -23,6 +25,12 @@ export function requestBridge<T extends object>(
   message: Record<string, unknown>,
   options: { runtime?: RuntimeApi; timeoutMs?: number } = {},
 ): Promise<T> {
+  const desktop = desktopApi()
+  if (desktop && !options.runtime && extensionId !== EXTENSION_ID) return Promise.reject(new BridgeError('PC 앱 연결은 현재 CodeArchive 확장 ID만 지원합니다.'))
+  if (desktop && !options.runtime) return desktop.requestBridge(message).then(response => {
+    if (typeof response?.error === 'string') throw new BridgeError(response.error)
+    return response as T
+  })
   const runtime = options.runtime ?? runtimeFromWindow()
   if (!runtime?.sendMessage) return Promise.reject(new BridgeError('Chrome 확장 프로그램 API를 찾을 수 없습니다.'))
   return new Promise<T>((resolve, reject) => {

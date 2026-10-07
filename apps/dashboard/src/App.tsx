@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { DesktopSettings } from './DesktopSettings'
+import { useDesktopWork, markDesktopDraft } from './DesktopActivity'
+import { DesktopStatusProvider, DesktopVersion, DesktopUpdateNotice } from './DesktopStatus'
+import { DesktopSetup } from './DesktopSetup'
 import {
   BookOpen,
   Check,
@@ -284,6 +288,7 @@ export default function App() {
   const [pendingCountState, setPendingCountState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [lastSyncState, setLastSyncState] = useState<'idle' | 'success' | 'partial' | 'failed'>('idle')
   const [syncing, setSyncing] = useState(false)
+  useDesktopWork(syncing || settingsBusy || loading)
   const toastId = useRef(0)
   const accountGeneration = useRef(0)
   const syncInFlight = useRef(false)
@@ -416,6 +421,15 @@ export default function App() {
     toastId.current += 1
     setToast({ id: toastId.current, kind, message })
   }
+  useEffect(() => {
+    const started = (event: Event) => showToast('info', (event as CustomEvent<string>).detail === 'install'
+      ? '웹브라우저에서 GitHub App 설치를 마친 뒤 PC 앱에서 연결 버튼을 다시 눌러 주세요.'
+      : '웹브라우저에서 로그인한 뒤 PC 앱 로그인을 승인해 주세요.')
+    const failed = (event: Event) => showToast('error', (event as CustomEvent<string | null>).detail || '웹 로그인을 완료하지 못했습니다. 다시 시도해 주세요.')
+    window.addEventListener('codearchive-login-start', started)
+    window.addEventListener('codearchive-login-error', failed)
+    return () => { window.removeEventListener('codearchive-login-start', started); window.removeEventListener('codearchive-login-error', failed) }
+  }, [])
 
   const refreshSolutions = async (expectedGeneration?: number, expectedGithubId?: string) => {
     const generation = expectedGeneration ?? accountGeneration.current
@@ -1235,11 +1249,11 @@ export default function App() {
     : user ? '서버 연결 오류' : 'GitHub 로그인 전'
 
   return (
-    <div className="app-shell">
+    <DesktopStatusProvider><div className="app-shell">
+      <DesktopSetup />
       <header className="topbar">
         <div className="topbar-inner">
           <button className="brand" onClick={() => changeView('solutions')} aria-label="CodeArchive 홈">
-            <span className="brand-mark">B</span>
             <span className="brand-copy">
               <span className="brand-name">CodeArchive</span>
               <span className="brand-release"><span className="brand-beta">BETA</span><span className="brand-updated">{updatedLabel()}</span></span>
@@ -1299,6 +1313,7 @@ export default function App() {
       </header>
 
       <main className="page-content">
+        <DesktopVersion /><DesktopUpdateNotice />
         <section className={`connection-banner is-${bridgeStatus} ${extensionUpdateRequired ? 'needs-update' : ''}`} role="status">
           <div className="connection-icon"><Icon name={bridgeStatus === 'connected' ? 'check' : bridgeStatus === 'connecting' ? 'sync' : 'link'} size={17} /></div>
           <div className="connection-copy">
@@ -1412,7 +1427,7 @@ export default function App() {
             updateExportSettings={updateExportSettings}
             accountSettings={accountSettings}
             savedTarget={savedTarget}
-            updateAccountSettings={updateAccountSettingsDraft}
+            updateAccountSettings={next => { markDesktopDraft(); updateAccountSettingsDraft(next) }}
             codeThemeMode={codeThemeMode}
             onCodeThemeChange={(theme) => chooseCodeTheme(theme, false)}
             settingsBusy={settingsBusy}
@@ -1432,14 +1447,14 @@ export default function App() {
 
       <footer className="footer">
         <div className="footer-inner">
-          <span className="footer-brand"><span className="footer-mark">B</span> CodeArchive</span>
+          <span className="footer-brand">CodeArchive</span>
           <span>풀이를 모으고, 다시 푸는 흐름을 가볍게</span>
           <span className="footer-version" title={`Updated ${BUILD_METADATA.updatedDate}`}>{buildLabel()}</span>
         </div>
       </footer>
 
       {toast && <ToastView toast={toast} onClose={() => setToast(null)} />}
-    </div>
+    </div></DesktopStatusProvider>
   )
 }
 
@@ -2079,6 +2094,7 @@ function SettingsView({
     <section className="settings-page">
       <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> WORKSPACE / {section === 'github' ? 'GITHUB' : 'SETTINGS'}</p><h1>{section === 'github' ? 'GitHub 관리' : '설정'}</h1><p>{section === 'github' ? '저장소와 자동 커밋을 관리합니다.' : '프로필, 코드 저장 및 자동 동기화를 관리합니다.'}</p></div>
       {section === 'github' && user && savedTarget && <GithubRepositoryBrowser githubId={user.githubId} target={savedTarget} lightTheme={accountSettings.lightTheme} darkTheme={accountSettings.darkTheme} codeThemeMode={codeThemeMode} onExpectedAccountChange={onExpectedAccountChange} />}
+      {section === 'settings' && <DesktopSettings />}
       {section === 'settings' && <CommunitySettings user={user} ready={accountSettingsReady} publicByDefault={accountSettings.communityPublicByDefault ?? true} onChange={communityPublicByDefault => updateAccountSettings({ ...accountSettings, communityPublicByDefault })} onSave={onSaveSettings} saving={settingsBusy} onPublished={onCommunityPublished} onAuthInvalid={onExpectedAccountChange} />}
       <div className={`settings-layout ${section === 'github' ? 'is-github-management' : ''}`}>
         <div className="settings-column">
