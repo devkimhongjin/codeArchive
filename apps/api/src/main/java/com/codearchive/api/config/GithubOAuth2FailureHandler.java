@@ -2,6 +2,7 @@ package com.codearchive.api.config;
 
 import jakarta.servlet.ServletException;
 import com.codearchive.api.auth.DesktopLoginService;
+import com.codearchive.api.auth.DesktopBrowserRedirect;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -28,7 +29,7 @@ public class GithubOAuth2FailureHandler implements AuthenticationFailureHandler 
             if (request.getSession(false).getAttribute(DesktopLoginService.SESSION_KEY) instanceof String id) desktopLogin.cancel(id);
             request.getSession(false).removeAttribute(DesktopLoginService.SESSION_KEY);
             request.getSession(false).removeAttribute(DesktopLoginService.INSTALL_KEY);
-            response.sendRedirect("/api/desktop-auth/failed");
+            DesktopBrowserRedirect.failed(response);
         } else response.sendRedirect(properties.dashboardRoot() + "/?authError=github");
     }
 }
