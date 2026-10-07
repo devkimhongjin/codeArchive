@@ -1251,7 +1251,7 @@ export default function App() {
       <header className="topbar">
         <div className="topbar-inner">
           <button className="brand" onClick={() => changeView('solutions')} aria-label="CodeArchive 홈">
-            <span className="brand-mark">B</span>
+            
             <span className="brand-copy">
               <span className="brand-name">CodeArchive</span>
               <span className="brand-release"><span className="brand-beta">BETA</span><span className="brand-updated">{updatedLabel()}</span></span>
@@ -1444,7 +1444,7 @@ export default function App() {
 
       <footer className="footer">
         <div className="footer-inner">
-          <span className="footer-brand"><span className="footer-mark">B</span> CodeArchive</span>
+          <span className="footer-brand"> CodeArchive</span>
           <span>풀이를 모으고, 다시 푸는 흐름을 가볍게</span>
           <span className="footer-version" title={`Updated ${BUILD_METADATA.updatedDate}`}>{buildLabel()}</span>
         </div>
