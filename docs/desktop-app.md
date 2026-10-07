@@ -28,6 +28,8 @@ Electron renderer에는 Node.js 권한이 없습니다. sandbox, contextIsolatio
 
 ## 빌드와 검증
 
+PC 앱과 확장의 공통 아이콘 원본은 `shared/branding/codearchive.png`입니다. 원본을 교체한 뒤 Windows에서 `./scripts/generate-icons.ps1`을 실행하면 비율·투명도를 유지한 확장 PNG와 앱·트레이 PNG, 여러 크기의 Windows ICO를 생성합니다. 생성한 아이콘도 소스에 포함하므로 CI에서 변환 도구를 설치할 필요는 없습니다.
+
 ```powershell
 npm --prefix apps/dashboard ci
 npm --prefix apps/desktop ci

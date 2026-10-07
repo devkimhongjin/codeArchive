@@ -42,7 +42,7 @@ async function start() {
   });
   const apiSession = session.fromPartition('persist:codearchive-account');
   apiSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  mainWindow = new BrowserWindow({ width: 1360, height: 900, minWidth: 900, minHeight: 620, show: !process.argv.includes('--autostart'), title: 'CodeArchive', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
+  mainWindow = new BrowserWindow({ width: 1360, height: 900, minWidth: 900, minHeight: 620, show: !process.argv.includes('--autostart'), title: 'CodeArchive', icon: path.join(__dirname, 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => { openExternal(url); return { action: 'deny' }; });
   mainWindow.webContents.on('will-navigate', (event, url) => { if (url !== APP_URL) { event.preventDefault(); openExternal(url); } });
   mainWindow.webContents.session.setPermissionRequestHandler((_contents, permission, callback) => callback(permission === 'clipboard-sanitized-write'));
@@ -70,7 +70,7 @@ async function start() {
   });
   function openAuth(url) {
     if (authWindow && !authWindow.isDestroyed()) { authWindow.focus(); return; }
-    authWindow = new BrowserWindow({ parent: mainWindow, width: 700, height: 820, title: 'CodeArchive · GitHub 로그인', webPreferences: { partition: 'persist:codearchive-account', sandbox: true, nodeIntegration: false, contextIsolation: true } });
+    authWindow = new BrowserWindow({ parent: mainWindow, width: 700, height: 820, title: 'CodeArchive · GitHub 로그인', icon: path.join(__dirname, 'icon.png'), webPreferences: { partition: 'persist:codearchive-account', sandbox: true, nodeIntegration: false, contextIsolation: true } });
     authWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     authWindow.webContents.on('will-navigate', (event, target) => { const next = new URL(target); if (!['https://github.com', REMOTE_ORIGIN].includes(next.origin)) event.preventDefault(); });
     const finish = (_event, target) => {

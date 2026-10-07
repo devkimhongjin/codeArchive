@@ -34,14 +34,18 @@
     ],
     "win": {
       "target": "nsis",
-      "signAndEditExecutable": false,
-      "artifactName": "CodeArchive-Setup-${version}.${ext}"
+      "artifactName": "CodeArchive-Setup-${version}.${ext}",
+      "signExecutable": false,
+      "icon": "src/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "src/icon.ico",
+      "uninstallerIcon": "src/icon.ico",
+      "installerHeaderIcon": "src/icon.ico"
     },
     "protocols": [
       {
