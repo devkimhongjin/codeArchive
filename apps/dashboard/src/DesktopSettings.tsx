@@ -18,6 +18,7 @@ export function DesktopSettings() {
   const validPair = pair && Date.now() < pair.expiresAt
   return <section className="desktop-settings settings-card">
     <h3>PC 앱 설정 <small>v{status?.version ?? '—'}</small></h3>
+    <button type="button" className="ghost-button" onClick={() => window.dispatchEvent(new Event('codearchive-setup-open'))}>확장 설치 안내</button>
     <p>Chrome 확장 {status?.connected ? '연결됨' : '연결 안 됨'} · 창을 닫으면 트레이에서 계속 실행됩니다. 완전히 종료하려면 트레이 메뉴의 종료를 선택하세요.</p>
     <div className="desktop-actions"><button type="button" className="ghost-button" disabled={busy} onClick={() => void run(async () => setPair(await desktop.pair()))}>{status?.connected ? '확장 다시 연결' : '확장 연결 코드 발급'}</button><button type="button" className="ghost-button" disabled={busy || !status?.connected} onClick={() => void run(() => desktop.disconnect())}>연결 해제</button></div>
     {validPair && <p role="status">확장 팝업의 PC 앱 연결에 입력하세요: <strong className="desktop-pair-code">{pair.code}</strong> · 2분 동안 유효합니다.</p>}

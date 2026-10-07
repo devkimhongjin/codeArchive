@@ -8,11 +8,13 @@ PC 앱은 별도 패키지입니다. 기존 extension-v0.2.x 릴리스, 웹 대�
 
 ## 사용
 
-1. Windows 설치 파일을 실행하고 CodeArchive를 엽니다.
-2. 설정 → PC 앱 설정 → 확장 연결 코드 발급을 선택합니다.
-3. Chrome 확장 팝업의 PC 앱 연결에 6자리 코드를 입력합니다. 코드는 2분 동안 한 번만 사용할 수 있습니다.
+1. Windows 설치 파일을 실행하고 CodeArchive를 엽니다. 앱의 `resources/extension` 폴더에 같은 릴리스의 Chrome 확장이 함께 설치됩니다.
+2. 첫 실행의 확장 설치·연결 안내에서 경로를 복사하고 Chrome `chrome://extensions`의 개발자 모드 → 압축해제된 확장 로드로 해당 폴더를 등록합니다. 기존 확장 사용자는 삭제·중복 등록 없이 연결할 수 있습니다.
+3. 안내에서 연결 코드를 발급하고 Chrome 확장 팝업의 PC 앱 연결에 6자리 코드를 입력합니다. 코드는 2분 동안 한 번만 사용할 수 있습니다. 최초 한 번 승인하면 다음 앱 실행부터 자동 재연결하며, 이미 연결되어 있으면 코드 재입력 없이 설정을 완료할 수 있습니다.
 4. 앱이 연결되면 로그인 없이 로컬 풀이를 확인할 수 있습니다. 서버 동기화와 GitHub 작업은 GitHub 로그인 후 명시적으로 실행합니다.
 5. 앱 창을 닫으면 트레이에서 실행됩니다. 트레이 메뉴의 종료를 선택하면 완전히 종료합니다.
+
+설정 완료 상태는 앱 사용자 데이터에 저장되어 재실행·업데이트 후 유지됩니다. 나중에를 선택하면 다음 실행에서 다시 안내하며, 설정 → PC 앱 설정 → 확장 설치 안내에서도 열 수 있습니다. 포함 파일만으로 Chrome에 자동 설치되거나 연결 승인되는 것은 아닙니다. 앱 업데이트가 확장 파일을 갱신한 뒤 Chrome에서도 확장을 새로고침해 주세요.
 
 자동 시작은 기본으로 꺼져 있고 설치한 앱의 설정에서 켤 수 있습니다. Windows 로그인 시 트레이로 시작합니다. 기존 사이트 수집은 Chrome 확장에서 계속 진행하며 사이트 창 유지 안내가 적용됩니다. 앱만 종료해도 확장 로컬 수집은 영향을 받지 않습니다.
 
@@ -33,6 +35,7 @@ PC 앱과 확장의 공통 아이콘 원본은 `shared/branding/codearchive.png`
 ```powershell
 npm --prefix apps/dashboard ci
 npm --prefix apps/desktop ci
+npm --prefix apps/extension ci
 npm --prefix apps/desktop test
 npm --prefix apps/desktop run pack
 npm --prefix apps/desktop run dist

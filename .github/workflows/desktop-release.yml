@@ -24,10 +24,13 @@ jobs:
           cache-dependency-path: |
             apps/desktop/package-lock.json
             apps/dashboard/package-lock.json
+            apps/extension/package-lock.json
       - run: npm --prefix apps/dashboard ci
       - run: npm --prefix apps/desktop ci
+      - run: npm --prefix apps/extension ci
       - run: npm --prefix apps/dashboard test
       - run: npm --prefix apps/desktop test
+      - run: npm --prefix apps/extension test
       - run: npm --prefix apps/desktop run dist
         env:
           CODEARCHIVE_RELEASE_BUILD: 'true'

@@ -54,6 +54,15 @@
           "codearchive"
         ]
       }
+    ],
+    "extraResources": [
+      {
+        "from": "bundled-extension",
+        "to": "extension",
+        "filter": [
+          "**/*"
+        ]
+      }
     ]
   }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { DesktopSettings } from './DesktopSettings'
+import { DesktopSetup } from './DesktopSetup'
 import {
   BookOpen,
   Check,
@@ -1242,6 +1243,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <DesktopSetup />
       <header className="topbar">
         <div className="topbar-inner">
           <button className="brand" onClick={() => changeView('solutions')} aria-label="CodeArchive 홈">

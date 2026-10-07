@@ -365,3 +365,13 @@ h1, h2, p { margin-top: 0; }
 .desktop-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
 .desktop-pair-code { font-family: monospace; letter-spacing: 3px; padding: 4px 8px; }
 .desktop-autostart { display: flex; gap: 8px; align-items: center; }
+.desktop-setup { width: min(720px, calc(100vw - 64px)); max-height: calc(100vh - 64px); overflow: auto; padding: 28px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--ink); }
+.desktop-setup[open] { display: flex; flex-direction: column; }
+.desktop-setup > h2, .desktop-setup > p, .desktop-setup > .desktop-actions { flex-shrink: 0; }
+.desktop-setup::backdrop { background: rgba(15, 23, 42, .55); }
+.desktop-setup h2 { margin: 0 0 16px; }
+.desktop-setup p { margin: 12px 0; line-height: 1.7; }
+.desktop-setup-steps { padding-left: 24px; overflow: auto; min-height: 0; }
+.desktop-setup-steps li { margin: 24px 0; padding-left: 8px; }
+.desktop-setup-steps h3 { margin: 0 0 8px; }
+.desktop-setup input { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); color: inherit; font-family: monospace; }

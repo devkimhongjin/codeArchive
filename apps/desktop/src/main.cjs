@@ -4,6 +4,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createExtensionServer } = require('./extension-server.cjs');
 const { createUpdater, runInstaller } = require('./updater.cjs');
+const { createSetup } = require('./setup.cjs');
 const { REMOTE_ORIGIN, APP_URL, BRIDGE_PORT, apiRequest, trustedRenderer, authUrl, externalUrl } = require('./policy.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'codearchive', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 let mainWindow, authWindow, tray, bridge, updater, quitting = false, activeRequests = 0;
@@ -27,6 +28,7 @@ async function start() {
   const smoke = !app.isPackaged && process.argv.includes('--smoke-test');
   bridge = createExtensionServer({ token, saveToken, port: smoke ? 0 : BRIDGE_PORT, onStatus: connected => console.log(JSON.stringify({ event: 'desktop-extension-connection', connected })) });
   const bridgePort = await bridge.listen();
+  const setup = createSetup({ extensionPath: app.isPackaged ? path.join(process.resourcesPath, 'extension') : path.join(__dirname, '../bundled-extension'), statePath: path.join(userData, 'setup.json'), connected: () => bridge.connected(), openFolder: value => shell.openPath(value) });
   updater = createUpdater({ version: app.getVersion(), publicKeyPath: path.join(__dirname, 'update-public-key.pem'), directory: path.join(userData, 'updates') });
   const assets = path.resolve(__dirname, '../renderer');
   protocol.handle('codearchive', async request => {
@@ -59,6 +61,9 @@ async function start() {
   expose('desktop:login', value => { openAuth(authUrl(value)); return { ok: true }; });
   expose('desktop:status', () => ({ version: app.getVersion(), connected: bridge.connected(), autostart: app.isPackaged && app.getLoginItemSettings(loginItemOptions).openAtLogin, packaged: app.isPackaged, update: updater.status() }));
   expose('desktop:pair', () => bridge.createPairCode());
+  expose('desktop:setup', () => setup.get());
+  expose('desktop:extension-folder', () => setup.openFolder());
+  expose('desktop:setup-complete', () => setup.complete());
   expose('desktop:disconnect', async () => { await bridge.disconnect(); return { ok: true }; });
   expose('desktop:autostart', value => { if (typeof value !== 'boolean' || !app.isPackaged) throw new Error('자동 시작은 설치한 앱에서 설정할 수 있습니다.'); app.setLoginItemSettings({ ...loginItemOptions, openAtLogin: value }); return { ok: true }; });
   expose('desktop:update-check', () => updater.check());

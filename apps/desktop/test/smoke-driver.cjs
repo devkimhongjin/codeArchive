@@ -13,6 +13,14 @@ async function run({ app, mainWindow, bridge, bridgePort }) {
     const status = await mainWindow.webContents.executeJavaScript('window.codeArchiveDesktop.getStatus()');
     checks.preloadAndMainIpc = status.version === '0.1.0' && status.connected === false;
     checks.noNodeInRenderer = await mainWindow.webContents.executeJavaScript("typeof window.require === 'undefined' && typeof window.process === 'undefined'");
+    const setup = await mainWindow.webContents.executeJavaScript('window.codeArchiveDesktop.getSetup()');
+    checks.bundledExtension = setup.available && setup.extensionVersion === '0.3.0';
+    await new Promise(resolve => setTimeout(resolve, 300));
+    checks.firstRunGuide = await mainWindow.webContents.executeJavaScript("Boolean(document.querySelector('.desktop-setup')?.open) && document.body.textContent.includes('Chrome에 확장 등록') && document.querySelector('[aria-label=\"포함된 확장 폴더 경로\"]').value.length > 0");
+    if (directory) {
+      await mkdir(directory, { recursive: true });
+      try { await writeFile(path.join(directory, 'setup-guide.png'), (await mainWindow.webContents.capturePage({ stayAwake: true })).toPNG()); } catch { /* Optional screenshot. */ }
+    }
     const pair = await mainWindow.webContents.executeJavaScript('window.codeArchiveDesktop.pair()');
     const origin = `chrome-extension://${EXTENSION_ID}`;
     const response = await fetch(`http://127.0.0.1:${bridgePort}/pair`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ code: pair.code }) });
@@ -33,6 +41,14 @@ async function run({ app, mainWindow, bridge, bridgePort }) {
     checks.loopbackPaired = bridge.connected();
     const connection = await mainWindow.webContents.executeJavaScript("window.codeArchiveDesktop.requestBridge({type:'CONNECT'})");
     checks.nativeBridge = connection.version === '0.3.0';
+    await new Promise(resolve => setTimeout(resolve, 2100));
+    await mainWindow.webContents.executeJavaScript("[...document.querySelectorAll('.desktop-setup button')].find(button => button.textContent === '설정 완료').click()");
+    await new Promise(resolve => setTimeout(resolve, 300));
+    checks.setupCompletion = (await mainWindow.webContents.executeJavaScript('window.codeArchiveDesktop.getSetup()')).completed === true && await mainWindow.webContents.executeJavaScript("!document.querySelector('.desktop-setup').open");
+    await mainWindow.webContents.executeJavaScript("window.dispatchEvent(new Event('codearchive-setup-open'))");
+    await new Promise(resolve => setTimeout(resolve, 300));
+    checks.setupReopen = await mainWindow.webContents.executeJavaScript("document.querySelector('.desktop-setup').open");
+    await mainWindow.webContents.executeJavaScript("[...document.querySelectorAll('.desktop-setup button')].find(button => button.textContent === '나중에').click()");
     const providers = await mainWindow.webContents.executeJavaScript("window.codeArchiveDesktop.api({path:'/api/auth/providers',method:'GET',headers:{}})");
     checks.realApiRead = providers.status === 200 && typeof JSON.parse(providers.body).github.enabled === 'boolean';
     await mainWindow.webContents.executeJavaScript("history.replaceState(null,'','?view=settings'); window.dispatchEvent(new PopStateEvent('popstate'))");

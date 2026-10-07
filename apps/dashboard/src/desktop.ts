@@ -1,5 +1,8 @@
 type DesktopStatus = { version: string; connected: boolean; autostart: boolean; packaged: boolean; update: { state: string; version: string | null; message: string } }
 export type DesktopApi = {
+  getSetup(): Promise<{ extensionPath: string; extensionVersion: string | null; available: boolean; completed: boolean }>
+  openExtensionFolder(): Promise<unknown>
+  completeSetup(): Promise<unknown>
   requestBridge(message: Record<string, unknown>): Promise<Record<string, unknown>>
   api(request: { path: string; method: string; headers: Record<string, string>; body?: string }): Promise<{ status: number; headers: Record<string, string>; body: string }>
   login(url: string): Promise<unknown>

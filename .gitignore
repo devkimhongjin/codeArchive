@@ -4,6 +4,7 @@ node_modules/
 # Build
 dist/
 apps/desktop/renderer/
+apps/desktop/bundled-extension/
 coverage/
 apps/extension/build.local.json
 output/extension-build-backups/
