@@ -44,6 +44,8 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - run: npm --prefix apps/extension ci
+      - run: npm --prefix apps/dashboard ci
+      - run: npm --prefix apps/dashboard test
       - run: npm --prefix apps/extension test
       - name: Build release extension
         run: npm --prefix apps/extension run build

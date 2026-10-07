@@ -20,7 +20,7 @@ test("historical store accepts an owned SPA import and rejects unbound or moved 
       set: async (value: Record<string, unknown>) => { Object.assign(session, value); },
       remove: async (key: string) => { delete session[key]; }
     } },
-    tabs: {
+    tabs: { onUpdated: { addListener() {} },
       get: async (sourceId: number) => { assert.equal(sourceId, tabId); return { id: tabId, url: currentUrl }; },
       query: async () => [{ id: tabId, url: currentUrl }],
       sendMessage: async () => { duringStart?.(); return { status: "IMPORTING" }; }

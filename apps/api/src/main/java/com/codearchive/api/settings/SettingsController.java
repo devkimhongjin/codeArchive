@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -27,6 +28,19 @@ public class SettingsController {
   private final UserRepository users; private final UserSettingsRepository settings; private final RelayGrantService grants; private final GithubAppProvider github; private final String appId, privateKey, appSlug;
   public SettingsController(com.codearchive.api.community.CommunityPublicationPolicy publication, UserRepository users, UserSettingsRepository settings, RelayGrantService grants, GithubAppProvider github, @Value("${codearchive.github.app-id:}") String appId, @Value("${codearchive.github.app-private-key:}") String privateKey, @Value("${codearchive.github.app-slug:}") String appSlug) { this.publication = publication; this.users = users; this.settings = settings; this.grants = grants; this.github=github; this.appId=appId; this.privateKey=privateKey; this.appSlug=appSlug; }
   @GetMapping @Transactional public ResponseEntity<?> get(Authentication auth, @RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expectedGithubId) { var checked=GithubAccountAssertion.require(auth,expectedGithubId,users); if(!checked.accepted())return checked.failure(); UserSettings s = findOrCreate(checked.account().user()); return ResponseEntity.ok(response(s)); }
+  /** Extension mode always synchronizes. Enable only this flag, preserving all
+   * profile, publication and GitHub commit preferences under the account lock. */
+  @PostMapping("/automatic-sync") @Transactional public ResponseEntity<?> enableAutomaticSync(Authentication auth, @RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expectedGithubId) {
+    var checked = GithubAccountAssertion.require(auth, expectedGithubId, users);
+    if (!checked.accepted()) return checked.failure();
+    users.lockForCommunityLimit(checked.account().user().getId()).orElseThrow();
+    UserSettings s = findOrCreate(checked.account().user());
+    if (!s.isAutoSyncEnabled()) {
+      s.enableAutomaticSync(); settings.saveAndFlush(s);
+      grants.revokeActiveForUser(s.getUser().getId());
+    }
+    return ResponseEntity.ok(response(s));
+  }
   @PutMapping @Transactional public ResponseEntity<?> put(Authentication auth, @RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expectedGithubId, @RequestBody SettingsRequest request) {
     var checked=GithubAccountAssertion.require(auth,expectedGithubId,users); if(!checked.accepted())return checked.failure(); users.lockForCommunityLimit(checked.account().user().getId()).orElseThrow(); UserSettings s = findOrCreate(checked.account().user());
     String problem = validate(request); if (problem != null) return ResponseEntity.badRequest().body(new ApiError(problem));

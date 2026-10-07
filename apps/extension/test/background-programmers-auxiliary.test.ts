@@ -29,7 +29,7 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
   let injections = 0;
   let sourceQueries = 0;
   let removedListener: ((tabId: number) => void) | undefined;
-  let updatedListener: ((tabId: number, change: { url?: string }) => void) | undefined;
+  const updatedListeners: Array<(tabId: number, change: { url?: string }) => void> = [];
   const session: Record<string, unknown> = {
     [routeKey]: { tabId: sourceTabId, url: sourceUrl, status: "SCANNING", platform: "PROGRAMMERS" }
   };
@@ -69,7 +69,7 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
       },
       query: async () => { sourceQueries += 1; return []; },
       onRemoved: { addListener(callback: (tabId: number) => void) { removedListener = callback; } },
-      onUpdated: { addListener(callback: (tabId: number, change: { url?: string }) => void) { updatedListener = callback; } }
+      onUpdated: { addListener(callback: (tabId: number, change: { url?: string }) => void) { updatedListeners.push(callback); } }
     },
     scripting: { executeScript: async () => { injections += 1; } }
   };
@@ -230,12 +230,12 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
     assert.deepEqual(await request({ type: "PROGRAMMERS_AUX_READ", lessonUrl, mode: "preview" }), { ok: false, error: "READ_FAILED" });
     assert.equal(injections, 1, "only a missing receiver permits a one-time content injection");
 
-    assert.ok(removedListener); assert.ok(updatedListener);
+    assert.ok(removedListener); assert.ok(updatedListeners.length);
     const sourceRun = deferred<unknown>();
     sendResult = async () => sourceRun.promise;
     const pending = request({ type: "PROGRAMMERS_AUX_READ", lessonUrl, mode: "preview" });
     await new Promise(resolve => setTimeout(resolve, 0));
-    updatedListener!(sourceTabId, { url: "https://school.programmers.co.kr/learn/challenges" });
+    for (const updated of updatedListeners) updated(sourceTabId, { url: "https://school.programmers.co.kr/learn/challenges" });
     await new Promise(resolve => setTimeout(resolve, 0));
     sourceRun.resolve({ accountId: "947840" });
     assert.deepEqual(await pending, { ok: false, error: "INTERRUPTED" });

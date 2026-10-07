@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadPopupLocalState, prepareCaptureDownload, retryRelayConnection, storeCaptureLocalFirst } from "../src/backgroundActions";
+import { bindAutomaticCapture, nextAutomaticCapture, loadPopupLocalState, prepareCaptureDownload, retryRelayConnection, storeCaptureLocalFirst } from "../src/backgroundActions";
 import { createCapture } from "../src/capture";
 import { MemoryCaptureStore } from "../src/storage";
 
@@ -54,8 +54,12 @@ test("popup state is built only from local storage and never exposes source code
   const state = await loadPopupLocalState(store);
 
   assert.equal(state.pendingCount, 1);
-  assert.equal(state.recentCaptures.length, 1);
-  assert.equal("sourceCode" in state.recentCaptures[0]!, false);
+  assert.equal(state.recentCaptures.length, 0);
+  await store.markSynced([capture().captureId]);
+  const synced = await loadPopupLocalState(store);
+  assert.equal(synced.syncedProblemCount, 1);
+  assert.equal(synced.recentCaptures.length, 1);
+  assert.equal("sourceCode" in synced.recentCaptures[0]!, false);
 });
 
 test("automatic download preparation reuses profile, header and language extension rules", () => {
@@ -122,4 +126,21 @@ test("manual relay retry does not enable an automation preference that is off", 
   const result = await retryRelayConnection(store, async () => { drains += 1; });
   assert.deepEqual(result, { ok: false, status: null, pendingCount: 0, error: "AUTO_SYNC_OFF" });
   assert.equal(drains, 0);
+});
+
+test('always-on relay cannot upload old, historical, unbound or another account records', () => {
+  const settings = { autoSyncEnabled: true, autoDownloadEnabled: false, githubAutoCommitEnabled: false, githubTargetConfigured: false, accountId: '7', relay: { endpoint: '/api/relay/captures', secret: 'opaque', accountId: '7', generation: 1, status: 'CONFIRMED' as const } };
+  const owned = bindAutomaticCapture({ ...capture(), syncAccountId: 'attacker' }, settings);
+  assert.equal(owned.syncAccountId, '7');
+  assert.equal(bindAutomaticCapture(owned, { ...settings, accountId: undefined }).syncAccountId, undefined);
+  assert.equal(nextAutomaticCapture([capture(), { ...owned, syncAccountId: '8' }, { ...owned, historicalImport: true }, { ...owned, syncState: 'SYNCED' }], settings), undefined);
+  assert.equal(nextAutomaticCapture([capture(), owned], settings), owned);
+  assert.equal(nextAutomaticCapture([owned], { ...settings, accountId: '8' }), undefined);
+});
+
+test('same code in different connected accounts cannot suppress a new automatic capture', async () => {
+  const store = new MemoryCaptureStore();
+  assert.deepEqual(await store.putCapture({ ...capture(), syncAccountId: '7' }), { created: true });
+  assert.deepEqual(await store.putCapture({ ...capture('22222222-2222-4222-8222-222222222222'), syncAccountId: '8' }), { created: true });
+  assert.deepEqual(await store.putCapture({ ...capture('33333333-3333-4333-8333-333333333333'), syncAccountId: '8' }), { created: false });
 });

@@ -1,9 +1,9 @@
 import { isLightTheme, isDarkTheme } from "../../../shared/codeThemes";
 import { isCaptureRecord, isUuid } from "./capture";
 import { DashboardBridge } from "./bridge";
-import { DesktopConnection } from './desktopConnection';
+import { DASHBOARD_LOGIN_ROUTE_KEY, dashboardSender, dashboardExternalUrl, dashboardLoginReturn, dashboardReturnQuery } from './dashboardNavigation';
 import { IndexedDbCaptureStore } from "./storage";
-import { loadPopupLocalState, prepareCaptureDownload, retryRelayConnection, storeCaptureLocalFirst } from "./backgroundActions";
+import { bindAutomaticCapture, nextAutomaticCapture, loadPopupLocalState, prepareCaptureDownload, retryRelayConnection, storeCaptureLocalFirst } from "./backgroundActions";
 import { exportCode } from "./export";
 import { normalizedHeaderFields } from "../../../shared/headerFields";
 import { fetchGithubCommitStatuses, recordRelayAttempt, relayCapture, revokeRelay } from "./relay";
@@ -32,10 +32,8 @@ const bridge = new DashboardBridge(store, {
 });
 
 const LOCAL_HISTORY_ROUTE_KEY = "codearchive-local-history-route";
-const desktopConnection = new DesktopConnection(bridge);
-void desktopConnection.connect();
-chrome.alarms.create('codearchive-desktop-reconnect', { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === 'codearchive-desktop-reconnect') void desktopConnection.connect(); });
+// Remove only the legacy app reconnect alarm; stored pairing/data remain intact.
+void chrome.alarms.clear('codearchive-desktop-reconnect');
 type LocalHistoryRoute = { tabId: number; url: string; status: string; platform: Platform };
 
 async function openHistoryPage(): Promise<{ status: "OPENED" }> {
@@ -162,7 +160,7 @@ async function drainRelay(): Promise<void> {
   }
   if (!settings.autoSyncEnabled || !settings.relay) return;
   while (true) {
-    const next = (await store.listPending([], 1))[0];
+    const next = nextAutomaticCapture(await store.listAll(), settings);
     if (!next) return;
     const result = await relayCapture(next, settings);
     if (result === "ACK") await store.markSynced([next.captureId]);
@@ -194,24 +192,7 @@ function requestRelayDrain(): Promise<void> {
   return relayDrainPromise;
 }
 
-async function autoDownloadCapture(capture: Parameters<typeof store.putCapture>[0]): Promise<void> {
-  const settings = await store.getSettings();
-  if (!settings.autoDownloadEnabled) return;
-  const download = prepareCaptureDownload(capture, settings);
-  if (!download) return;
-  await chrome.downloads.download({
-    url: download.url,
-    filename: download.filename,
-    conflictAction: "uniquify",
-    saveAs: false
-  });
-}
-
-function requestPostCaptureWork(capture: Parameters<typeof store.putCapture>[0]): void {
-  requestRelayDrain();
-  void autoDownloadCapture(capture).catch(() => undefined);
-}
-// PC app releases now carry the extension bundle. Remove the legacy lookup alarm.
+// Chrome Web Store will own updates. Remove the legacy GitHub lookup alarm.
 void chrome.alarms.clear('codearchive-extension-update');
 chrome.alarms.create("codearchive-relay-drain", { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "codearchive-relay-drain") requestRelayDrain(); });
@@ -460,11 +441,20 @@ function mutateProgress(update: Parameters<typeof updateSubmissionProgress>[1]):
 type AnyInternalMessage = InternalMessage | ProgrammersAuxiliaryMessage;
 
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
-  const desktopMessage = message as { type?: string; code?: string } | null;
-  if (desktopMessage && ['DESKTOP_STATUS', 'DESKTOP_PAIR', 'DESKTOP_DISCONNECT'].includes(desktopMessage.type ?? '')) {
-    if (!isPopupSender(sender)) { sendResponse({ error: 'UNAUTHORIZED' }); return false; }
-    const operation = desktopMessage.type === 'DESKTOP_PAIR' ? desktopConnection.pair(desktopMessage.code ?? '') : desktopMessage.type === 'DESKTOP_DISCONNECT' ? desktopConnection.disconnect() : desktopConnection.connect().then(() => desktopConnection.status());
-    void operation.then(sendResponse).catch(error => sendResponse({ error: error instanceof Error ? error.message : 'PC 앱에 연결하지 못했습니다.' }));
+  const dashboardMessage = asObject(message);
+  if (dashboardMessage?.type === 'DASHBOARD_REQUEST' || dashboardMessage?.type === 'DASHBOARD_OPEN_EXTERNAL') {
+    if (!dashboardSender(sender, chrome.runtime.id)) { sendResponse({ error: 'UNAUTHORIZED' }); return false; }
+    if (dashboardMessage.type === 'DASHBOARD_REQUEST') {
+      void bridge.handleExtensionMessage(dashboardMessage.message, sender, chrome.runtime.id).then(sendResponse).catch(() => sendResponse({ error: 'BAD_REQUEST' }));
+    } else {
+      const url = dashboardExternalUrl(dashboardMessage.url);
+      if (!url) { sendResponse({ error: 'BAD_REQUEST' }); return false; }
+      void chrome.tabs.create({ url }).then(async tab => {
+        if (!Number.isSafeInteger(tab.id)) throw new Error('Login tab unavailable');
+        await chrome.storage.session.set({ [DASHBOARD_LOGIN_ROUTE_KEY]: { loginTabId: tab.id, dashboardTabId: sender.tab!.id, expiresAt: Date.now() + 10 * 60_000 } });
+        sendResponse({ ok: true });
+      }).catch(() => sendResponse({ error: '로그인 창을 열지 못했습니다.' }));
+    }
     return true;
   }
   const object = asObject(message) as Partial<AnyInternalMessage> | null;
@@ -486,7 +476,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       sendResponse({ ok: false, error: "INVALID_CAPTURE" });
       return false;
     }
-    void storeCaptureLocalFirst(store, capture, () => requestPostCaptureWork(capture))
+    void store.getSettings().then(settings => storeCaptureLocalFirst(store, bindAutomaticCapture(capture, settings), requestRelayDrain))
       .then(({ created }) => sendResponse({ ok: true, created }))
       .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;
@@ -689,6 +679,23 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   }
 
   return false;
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  const url = changeInfo.url ?? (changeInfo.status === 'complete' ? tab.url : undefined);
+  if (!url || !dashboardLoginReturn(url)) return;
+  void (async () => {
+    const route = asObject((await chrome.storage.session.get(DASHBOARD_LOGIN_ROUTE_KEY))[DASHBOARD_LOGIN_ROUTE_KEY]);
+    if (!route || route.loginTabId !== tabId || !Number.isSafeInteger(route.dashboardTabId) || typeof route.expiresAt !== 'number' || route.expiresAt < Date.now()) return;
+    const dashboardTabId = route.dashboardTabId as number;
+    const dashboard = await chrome.tabs.get(dashboardTabId);
+    const dashboardUrl = new URL(dashboard.url ?? '');
+    if (dashboardUrl.protocol !== 'chrome-extension:' || dashboardUrl.hostname !== chrome.runtime.id || dashboardUrl.pathname !== '/dashboard.html') return;
+    await chrome.storage.session.remove(DASHBOARD_LOGIN_ROUTE_KEY);
+    await chrome.tabs.update(dashboardTabId, { active: true });
+    await chrome.runtime.sendMessage({ type: new URL(url).searchParams.has('authError') ? 'DASHBOARD_LOGIN_FAILED' : 'DASHBOARD_LOGIN_COMPLETE', returnQuery: dashboardReturnQuery(url) }).catch(() => undefined);
+    await chrome.tabs.remove(tabId);
+  })().catch(() => undefined);
 });
 
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
