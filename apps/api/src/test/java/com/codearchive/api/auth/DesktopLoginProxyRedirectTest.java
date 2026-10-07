@@ -81,17 +81,19 @@ class DesktopLoginProxyRedirectTest {
     @Test void proxyLoginApprovalKeepsBrowserOriginAndCreatesAnIndependentNativeSession() throws Exception {
         String id = create();
         var bound = get("/api/desktop-auth/authorize?requestId=" + id, null);
-        redirect(bound, "/api/oauth2/authorization/github");
+        assertThat(bound.statusCode()).isEqualTo(200);
         String browserCookie = cookie(bound);
         var authenticated = get("/test/provider/success", browserCookie);
         redirect(authenticated, "/api/desktop-auth/confirm");
         var confirm = get("/api/desktop-auth/confirm", browserCookie);
         assertThat(confirm.statusCode()).isEqualTo(200);
+        assertThat(confirm.headers().firstValue("referrer-policy")).contains("same-origin");
         var token = Pattern.compile("name=\"_csrf\" value=\"([^\"]+)\"").matcher(confirm.body());
         assertThat(token.find()).isTrue();
         String csrfCookie = confirm.headers().allValues("set-cookie").stream().filter(value -> value.startsWith("XSRF-TOKEN="))
                 .map(value -> value.split(";", 2)[0]).findFirst().orElseThrow();
         var approval = client.send(request("/api/desktop-auth/approve", browserCookie + "; " + csrfCookie)
+                .header("Origin", "http://localhost:5173")
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .POST(HttpRequest.BodyPublishers.ofString("_csrf=" + URLEncoder.encode(token.group(1), StandardCharsets.UTF_8))).build(), HttpResponse.BodyHandlers.ofString());
         assertThat(approval.statusCode()).isEqualTo(200);
@@ -108,12 +110,46 @@ class DesktopLoginProxyRedirectTest {
         redirect(start, "/api/oauth2/authorization/github");
         String browserCookie = cookie(start);
         redirect(get("/test/provider/success", browserCookie), "/api/desktop-auth/install");
-        assertThat(get("/api/desktop-auth/install", browserCookie).statusCode()).isEqualTo(200);
+        var install = get("/api/desktop-auth/install", browserCookie);
+        assertThat(install.statusCode()).isEqualTo(200);
+        assertThat(install.headers().firstValue("referrer-policy")).contains("same-origin");
+    }
+    @Test void webLoginButtonRetainsOriginAndFreshOAuthAutomaticallyCompletesTheHandoff() throws Exception {
+        String id = create();
+        var landing = get("/api/desktop-auth/authorize?requestId=" + id, null);
+        assertThat(landing.statusCode()).isEqualTo(200);
+        assertThat(landing.headers().firstValue("content-type").orElse("")).contains("text/html");
+        assertThat(landing.headers().firstValue("referrer-policy")).contains("same-origin");
+        String browserCookie = cookie(landing);
+        var csrf = Pattern.compile("name=\"_csrf\" value=\"([^\"]+)\"").matcher(landing.body());
+        assertThat(csrf.find()).isTrue();
+        String csrfCookie = landing.headers().allValues("set-cookie").stream().filter(value -> value.startsWith("XSRF-TOKEN="))
+                .map(value -> value.split(";", 2)[0]).findFirst().orElseThrow();
+        var invalidOrigin = client.send(request("/api/desktop-auth/browser-login", browserCookie + "; " + csrfCookie)
+                .header("Origin", "null").header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString("_csrf=" + URLEncoder.encode(csrf.group(1), StandardCharsets.UTF_8))).build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(invalidOrigin.statusCode()).isEqualTo(403);
+        assertThat(invalidOrigin.body()).isEqualTo("Invalid CORS request");
+        var start = client.send(request("/api/desktop-auth/browser-login", browserCookie + "; " + csrfCookie)
+                .header("Origin", "http://localhost:5173").header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString("_csrf=" + URLEncoder.encode(csrf.group(1), StandardCharsets.UTF_8))).build(), HttpResponse.BodyHandlers.ofString());
+        redirect(start, "/api/oauth2/authorization/github");
+        assertThat(post("/api/desktop-auth/exchange", Map.of("requestId", id, "verifier", verifier)).statusCode()).isEqualTo(202);
+        redirect(get("/test/provider/success", browserCookie), "/api/desktop-auth/complete");
+        var complete = get("/api/desktop-auth/complete", browserCookie);
+        assertThat(complete.statusCode()).isEqualTo(200);
+        assertThat(complete.body()).contains("codearchive://auth/complete", "로그인이 완료되었습니다").doesNotContain(verifier, id);
+        var nonce = Pattern.compile("<script nonce=\"([^\"]+)\"").matcher(complete.body()); assertThat(nonce.find()).isTrue();
+        assertThat(complete.headers().firstValue("content-security-policy").orElse("")).contains("script-src 'nonce-" + nonce.group(1) + "'");
+        var exchange = post("/api/desktop-auth/exchange", Map.of("requestId", id, "verifier", verifier));
+        assertThat(exchange.statusCode()).isEqualTo(200);
+        assertThat(get("/api/auth/me", cookie(exchange)).statusCode()).isEqualTo(200);
+        assertThat(post("/api/desktop-auth/exchange", Map.of("requestId", id, "verifier", verifier)).statusCode()).isEqualTo(410);
     }
     @Test void failedProxyLoginKeepsTheBrowserOriginAndCancelsTheHandoff() throws Exception {
         String id = create();
         var bound = get("/api/desktop-auth/authorize?requestId=" + id, null);
-        redirect(bound, "/api/oauth2/authorization/github");
+        assertThat(bound.statusCode()).isEqualTo(200);
         redirect(get("/test/provider/failure", cookie(bound)), "/api/desktop-auth/failed");
         assertThat(post("/api/desktop-auth/exchange", Map.of("requestId", id, "verifier", verifier)).statusCode()).isEqualTo(410);
     }

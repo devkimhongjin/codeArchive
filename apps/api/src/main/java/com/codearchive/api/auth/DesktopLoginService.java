@@ -16,6 +16,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class DesktopLoginService {
     public static final String SESSION_KEY = "CODEARCHIVE_DESKTOP_LOGIN";
+    public static final String CONSENT_KEY = "CODEARCHIVE_DESKTOP_LOGIN_CONSENT";
+    public static final String COMPLETED_KEY = "CODEARCHIVE_DESKTOP_LOGIN_COMPLETED";
     public static final String INSTALL_KEY = "CODEARCHIVE_DESKTOP_INSTALL";
     public record InstallIntent(String githubId, long expiresAt) implements java.io.Serializable {}
     private final DesktopLoginRepository requests;

@@ -48,7 +48,7 @@ class DesktopLoginIntegrationTest {
     }
     Cookie bind(String id) throws Exception {
         var result = mvc.perform(get("/api/desktop-auth/authorize").param("requestId", id))
-                .andExpect(status().isFound()).andExpect(redirectedUrl("/api/oauth2/authorization/github")).andReturn();
+                .andExpect(status().isOk()).andExpect(header().string("Referrer-Policy", "same-origin")).andReturn();
         Cookie cookie = result.getResponse().getCookie("JSESSIONID");
         String sessionId = new String(Base64.getDecoder().decode(cookie.getValue()), StandardCharsets.UTF_8);
         var browserSession = sessions.findById(sessionId);
@@ -157,5 +157,22 @@ class DesktopLoginIntegrationTest {
             var results = pool.invokeAll(List.of(exchange, exchange));
             assertThat(List.of(results.get(0).get(), results.get(1).get())).containsExactlyInAnyOrder(200, 410);
         } finally { pool.shutdownNow(); }
+    }
+    @Test void webLoginStartRequiresBoundBrowserAndCsrfAndNeverApprovesBeforeOAuth() throws Exception {
+        String id = create(); var browser = bind(id);
+        mvc.perform(post("/api/desktop-auth/browser-login").cookie(browser)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/desktop-auth/browser-login").with(csrf())).andExpect(status().isGone());
+        mvc.perform(post("/api/desktop-auth/browser-login").cookie(browser).with(csrf()))
+                .andExpect(status().isFound()).andExpect(redirectedUrl("/api/oauth2/authorization/github"));
+        mvc.perform(get("/api/desktop-auth/complete").cookie(browser)).andExpect(status().isGone());
+        mvc.perform(post("/api/desktop-auth/exchange").contentType(MediaType.APPLICATION_JSON).content(exchangeBody(id, verifier))).andExpect(status().isAccepted());
+    }
+    @Test void anonymousBrowserCanCancelItsOwnBoundRequestWithCsrf() throws Exception {
+        String id = create();
+        var bound = mvc.perform(get("/api/desktop-auth/authorize").param("requestId", id)).andExpect(status().isOk()).andReturn();
+        var browser = bound.getResponse().getCookie("JSESSIONID");
+        mvc.perform(post("/api/desktop-auth/cancel").cookie(browser)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/desktop-auth/cancel").cookie(browser).with(csrf())).andExpect(status().isOk());
+        mvc.perform(post("/api/desktop-auth/exchange").contentType(MediaType.APPLICATION_JSON).content(exchangeBody(id, verifier))).andExpect(status().isGone());
     }
 }
