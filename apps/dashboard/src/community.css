@@ -24,12 +24,30 @@
 .community-results-heading > div { display: flex; align-items: end; gap: 8px; }
 .community-list-search { max-width: 350px; }
 .community-status { padding: 18px; color: var(--muted); background: #fff; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; }
-.community-results { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
-.community-results > button { display: grid; gap: 6px; min-width: 0; padding: 15px; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 9px; text-align: left; }
-.community-results > button.selected { border-color: var(--purple); background: #f8f6ff; }
-.community-results > button span { color: var(--purple); font-size: 11px; }
-.community-results > button strong { overflow-wrap: anywhere; font-size: 13px; }
-.community-results > button small { color: var(--muted); font-size: 10px; }
+.community-results { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.community-results table { width: 100%; min-width: 870px; border-collapse: collapse; text-align: left; font-size: 12px; }
+.community-results th { padding: 12px 14px; background: var(--purple-soft); color: var(--muted); font-weight: 700; white-space: nowrap; }
+.community-results td { padding: 14px; border-top: 1px solid var(--line); color: var(--ink); font-variant-numeric: tabular-nums; }
+.community-results tr.selected { background: var(--purple-soft); }
+.community-results time { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
+.community-code-link { padding: 0; color: var(--purple-ink); background: transparent; text-align: left; font-weight: 700; }
+.community-code-link:hover { text-decoration: underline; }
+.community-mine { display: inline-block; margin-left: 6px; padding: 2px 5px; border-radius: 4px; background: var(--purple-soft); color: var(--purple-ink); font-size: 10px; white-space: nowrap; }
+.community-list-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.community-own-solution > div { display: grid; gap: 5px; }
+.community-own-solution small { color: var(--muted); line-height: 1.6; }
+.community-reactions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.community-reactions button, .community-comments button:not(.primary-button) { padding: 6px 9px; background: var(--purple-soft); color: var(--purple-ink); border: 1px solid var(--line); border-radius: 5px; white-space: nowrap; font-size: 11px; }
+.community-reactions button[aria-pressed=true] { border-color: var(--purple); color: var(--purple); font-weight: 700; }
+.community-comments { border-top: 1px solid var(--line); padding-top: 15px; display: grid; gap: 12px; }
+.community-comments h4 { margin: 0; }
+.community-comments article { padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+.community-comments header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.community-comments header time, .community-comments header small { color: var(--muted); font-size: 10px; }
+.community-comment-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.community-comments form, .community-comments label { display: grid; gap: 8px; }
+.community-comments textarea { width: 100%; min-height: 85px; padding: 10px; resize: vertical; background: var(--surface); color: var(--ink); border: 1px solid var(--line-strong); border-radius: 6px; font: inherit; }
+.community-comments form > div { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 11px; }
 .community-results > p { color: var(--muted); font-size: 12px; }
 .community-pages { display: flex; align-items: center; justify-content: flex-end; gap: 8px; color: var(--muted); font-size: 11px; }
 .community-pages button { padding: 7px 11px; color: var(--purple-ink); background: var(--purple-soft); border-radius: 5px; }

@@ -22,7 +22,7 @@ it('opens the exact problem from the archive and keeps a shareable community URL
   expect(window.location.search).toContain('view=community')
   expect(window.location.search).toContain('platform=SWEA')
   expect(window.location.search).toContain('problemNumber=1234')
-  await waitFor(() => expect(mocks.community).toHaveBeenCalledWith('100', 'SWEA', '1234', '', 0))
+  await waitFor(() => expect(mocks.community).toHaveBeenCalledWith('100', 'SWEA', '1234', '', 0, 'submitted'))
   fireEvent.click(screen.getByRole('button', { name: '내 문제로 돌아가기' }))
   expect(window.location.search).toBe('')
   expect(await screen.findByRole('heading', { name: '내 문제' })).toBeTruthy()

@@ -23,11 +23,12 @@ import com.codearchive.api.automation.GithubAppProvider;
 public class SettingsController {
   private static final Set<String> LIGHT = Set.of("github-light", "vitesse-light", "catppuccin-latte", "solarized-light", "one-light");
   private static final Set<String> DARK = Set.of("github-dark", "vitesse-dark", "catppuccin-mocha", "dracula", "one-dark-pro");
+  private final com.codearchive.api.community.CommunityPublicationPolicy publication;
   private final UserRepository users; private final UserSettingsRepository settings; private final RelayGrantService grants; private final GithubAppProvider github; private final String appId, privateKey, appSlug;
-  public SettingsController(UserRepository users, UserSettingsRepository settings, RelayGrantService grants, GithubAppProvider github, @Value("${codearchive.github.app-id:}") String appId, @Value("${codearchive.github.app-private-key:}") String privateKey, @Value("${codearchive.github.app-slug:}") String appSlug) { this.users = users; this.settings = settings; this.grants = grants; this.github=github; this.appId=appId; this.privateKey=privateKey; this.appSlug=appSlug; }
+  public SettingsController(com.codearchive.api.community.CommunityPublicationPolicy publication, UserRepository users, UserSettingsRepository settings, RelayGrantService grants, GithubAppProvider github, @Value("${codearchive.github.app-id:}") String appId, @Value("${codearchive.github.app-private-key:}") String privateKey, @Value("${codearchive.github.app-slug:}") String appSlug) { this.publication = publication; this.users = users; this.settings = settings; this.grants = grants; this.github=github; this.appId=appId; this.privateKey=privateKey; this.appSlug=appSlug; }
   @GetMapping @Transactional public ResponseEntity<?> get(Authentication auth, @RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expectedGithubId) { var checked=GithubAccountAssertion.require(auth,expectedGithubId,users); if(!checked.accepted())return checked.failure(); UserSettings s = findOrCreate(checked.account().user()); return ResponseEntity.ok(response(s)); }
   @PutMapping @Transactional public ResponseEntity<?> put(Authentication auth, @RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expectedGithubId, @RequestBody SettingsRequest request) {
-    var checked=GithubAccountAssertion.require(auth,expectedGithubId,users); if(!checked.accepted())return checked.failure(); UserSettings s = findOrCreate(checked.account().user());
+    var checked=GithubAccountAssertion.require(auth,expectedGithubId,users); if(!checked.accepted())return checked.failure(); users.lockForCommunityLimit(checked.account().user().getId()).orElseThrow(); UserSettings s = findOrCreate(checked.account().user());
     String problem = validate(request); if (problem != null) return ResponseEntity.badRequest().body(new ApiError(problem));
     if (request.version() != s.getVersion()) return ResponseEntity.status(409).body(new ApiError("Settings changed; refresh and retry"));
     // Organization installation selection needs an App-install callback and
@@ -40,7 +41,9 @@ public class SettingsController {
     // A complete target plus automatic commits is a request for server-side
     // authority. Do not accept it unless this deployment has App credentials.
     if (request.githubAutoCommitEnabled() && requestedTarget(request) && !providerReady()) return ResponseEntity.badRequest().body(new ApiError("GitHub App provider is unavailable"));
+    boolean policyChanged = request.communityDuplicateVisibility() != null && !request.communityDuplicateVisibility().equals(s.getCommunityDuplicateVisibility());
     s.apply(request); settings.saveAndFlush(s);
+    if (policyChanged) publication.apply(s.getUser().getId(), s.getCommunityDuplicateVisibility(), true);
     // Settings versions fence relay credentials. Dashboard obtains a fresh
     // account/generation-bound grant after each successful save.
     grants.revokeActiveForUser(s.getUser().getId());
@@ -61,6 +64,7 @@ public class SettingsController {
   private long findRepositoryId(String githubId,long installation,String owner,String repository) throws Exception { for(int page=1;page<=100;page++){ var result=github.repositoriesPage(githubId,installation,page);var found=result.items().stream().filter(r->r.owner().equals(owner)&&r.name().equals(repository)).findFirst();if(found.isPresent())return found.get().id();if(!result.hasMore())break; } throw new SecurityException("repository mismatch"); }
   private static String validate(SettingsRequest r) {
     if (r == null || overOptional(r.name(),255) || overOptional(r.nickname(),80) || requiredOver(r.downloadFilenameTemplate(),160) || requiredOver(r.gitPathTemplate(),240) || (r.githubCommitMessageTemplate()!=null && requiredOver(r.githubCommitMessageTemplate(),200))) return "Invalid settings";
+    if (r.communityDuplicateVisibility() != null && !com.codearchive.api.community.CommunityPublicationPolicy.valid(r.communityDuplicateVisibility())) return "Invalid duplicate publication policy";
     if (!LIGHT.contains(r.lightTheme()) || !DARK.contains(r.darkTheme())) return "Unsupported Shiki theme";
     if (!HeaderFields.valid(r.copyHeaderFields()) || !HeaderFields.valid(r.downloadHeaderFields()) || !HeaderFields.valid(r.githubHeaderFields())) return "Invalid header fields";
     if (r.downloadFilenameTemplate().contains("/") || r.downloadFilenameTemplate().contains("\\") || control(r.downloadFilenameTemplate()) || reserved(r.downloadFilenameTemplate())) return "Download filename is unsafe";

@@ -152,13 +152,18 @@ export const requestHistoricalCommitBatch = (githubId: string, request: {
   method: 'POST', headers: accountAssertionHeaders(githubId), body: JSON.stringify(request),
 })
 
-export function getCommunitySolutions(expectedGithubId: string, platform: Platform, problemNumber: string, languageKey: string, page: number): Promise<CommunityPage> {
-  const query = new URLSearchParams({ platform, problemNumber, page: String(page), size: '20' })
+export function getCommunitySolutions(expectedGithubId: string, platform: Platform, problemNumber: string, languageKey: string, page: number, sort: import('./types').CommunitySort = 'submitted'): Promise<CommunityPage> {
+  const query = new URLSearchParams({ platform, problemNumber, page: String(page), size: '20', sort })
   if (languageKey) query.set('languageKey', languageKey)
   return requestJson<CommunityPage>(`/api/community/solutions?${query}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
 }
 
 export const getCommunityDetail = (expectedGithubId: string, id: number) => requestJson<CommunityDetail>(`/api/community/solutions/${id}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const setCommunityLike = (expectedGithubId: string, id: number, liked: boolean) => requestJson<import('./types').CommunityStats>(`/api/community/solutions/${id}/like`, { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ liked }) })
+export const getCommunityComments = (expectedGithubId: string, id: number, page: number) => requestJson<import('./types').CommunityCommentPage>(`/api/community/solutions/${id}/comments?page=${page}&size=20`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const addCommunityComment = (expectedGithubId: string, id: number, body: string) => requestJson<{ saved: boolean }>(`/api/community/solutions/${id}/comments`, { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ body }) })
+export const editCommunityComment = (expectedGithubId: string, id: number, commentId: number, body: string) => requestJson<{ saved: boolean }>(`/api/community/solutions/${id}/comments/${commentId}`, { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ body }) })
+export const deleteCommunityComment = (expectedGithubId: string, id: number, commentId: number) => requestJson<{ saved: boolean }>(`/api/community/solutions/${id}/comments/${commentId}`, { method: 'DELETE', headers: expectedGithubIdHeaders(expectedGithubId) })
 export const setCommunityVisibility = (expectedGithubId: string, id: number, visibility: 'private' | 'published') => requestJson<{ visibility: 'private' | 'published'; publishedAt: string | null }>(`/api/community/solutions/${id}/visibility`, { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ visibility }) })
 export const publishAllCommunitySolutions = (expectedGithubId: string) => requestJson<{ changedSubmissions: number; publishedProblems: number; publishedSubmissions: number }>('/api/community/solutions/publish-all', { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ visibility: 'published' }) })
 

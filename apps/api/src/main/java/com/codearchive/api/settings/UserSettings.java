@@ -32,6 +32,7 @@ public class UserSettings {
     @Column(name = "light_theme") private String lightTheme = "github-light";
     @Column(name = "dark_theme") private String darkTheme = "github-dark";
     @Column(name = "auto_sync_enabled") private boolean autoSyncEnabled;
+    @Column(name = "community_duplicate_visibility", nullable = false, length = 20) private String communityDuplicateVisibility = "all";
     @Column(name = "community_public_by_default", nullable = false) private boolean communityPublicByDefault = true;
     @Column(name = "github_auto_commit_enabled") private boolean githubAutoCommitEnabled;
     @Column(name = "github_installation_id") private Long githubInstallationId;
@@ -44,6 +45,7 @@ public class UserSettings {
     public UserSettings(AppUser user) { this.user = user; }
     public long getVersion() { return version; } public String getDisplayName() { return displayName; }
     public String getNickname() { return nickname == null || nickname.isBlank() ? user == null ? null : user.getGithubLogin() : nickname; }
+    public String getCommunityNickname() { return nickname == null || nickname.isBlank() ? "닉네임 미설정" : nickname; }
     public boolean isCopyHeader() { return copyHeader; } public boolean isDownloadHeader() { return downloadHeader; } public boolean isGithubHeader() { return githubHeader; }
     public java.util.List<String> getCopyHeaderFields() { return HeaderFields.parse(copyHeaderFields); }
     public java.util.List<String> getDownloadHeaderFields() { return HeaderFields.parse(downloadHeaderFields); }
@@ -52,6 +54,7 @@ public class UserSettings {
     public String getGithubCommitMessageTemplate() { return githubCommitMessageTemplate; }
     public String getLightTheme() { return lightTheme; } public String getDarkTheme() { return darkTheme; }
     public boolean isAutoSyncEnabled() { return autoSyncEnabled; } public boolean isGithubAutoCommitEnabled() { return githubAutoCommitEnabled; }
+    public String getCommunityDuplicateVisibility() { return communityDuplicateVisibility; }
     public boolean isCommunityPublicByDefault() { return communityPublicByDefault; }
     public Long getGithubInstallationId() { return githubInstallationId; } public String getGithubOwner() { return githubOwner; } public String getGithubRepository() { return githubRepository; }
     public String getGithubBranch() { return githubBranch; } public String getGithubRootPath() { return githubRootPath; } public Instant getAutomationEnabledAt() { return automationEnabledAt; } public AppUser getUser() { return user; }
@@ -72,6 +75,7 @@ public class UserSettings {
                 || !java.util.Objects.equals(githubRootPath, r.githubRootPath());
         displayName = r.name(); nickname = r.nickname(); copyHeader = r.copyHeader(); downloadHeader = r.downloadHeader(); githubHeader = r.githubHeader();
         // Old dashboards omit this field; never reset an explicit private preference.
+        if (r.communityDuplicateVisibility() != null) communityDuplicateVisibility = r.communityDuplicateVisibility();
         if (r.communityPublicByDefault() != null) communityPublicByDefault = r.communityPublicByDefault();
         if (r.copyHeaderFields() != null) copyHeaderFields = HeaderFields.encode(r.copyHeaderFields());
         if (r.downloadHeaderFields() != null) downloadHeaderFields = HeaderFields.encode(r.downloadHeaderFields());

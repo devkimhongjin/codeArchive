@@ -48,8 +48,13 @@ export type Solution = {
   publishedAt?: string | null
 }
 
-export type CommunityAuthor = { name: string; nickname: string | null; avatarUrl: string | null }
-export type CommunitySummary = { id: number; platform: Platform; problemNumber: string; title: string; language: string; languageKey: string; solvedAt: string | null; publishedAt: string; author: CommunityAuthor }
+export type CommunityAuthor = { nickname: string | null }
+export type CommunitySort = 'submitted' | 'execution' | 'memory' | 'likes'
+export type CommunityDuplicateVisibility = 'all' | 'execution' | 'memory' | 'length'
+export type CommunityStats = { likeCount: number; commentCount: number; liked: boolean }
+export type CommunityComment = { id: number; body: string; createdAt: string; updatedAt: string; author: CommunityAuthor; mine: boolean }
+export type CommunityCommentPage = { items: CommunityComment[]; page: number; size: number; total: number; hasMore: boolean }
+export type CommunitySummary = { id: number; platform: Platform; problemNumber: string; title: string; language: string; languageKey: string; solvedAt: string | null; publishedAt: string; author: CommunityAuthor; executionTime?: number | string | null; memoryValue?: number | string | null; memoryUnit?: string | null; codeLength?: number; mine?: boolean; likeCount?: number; commentCount?: number; liked?: boolean }
 export type CommunityDetail = CommunitySummary & { problemUrl: string; sourceCode: string; executionTime: number | string | null; memoryValue: number | string | null; memoryUnit: string | null }
 export type CommunityPage = { items: CommunitySummary[]; page: number; size: number; total: number; hasMore: boolean }
 
@@ -94,6 +99,7 @@ export type AccountSettings = {
   darkTheme: DarkTheme
   autoSyncEnabled: boolean
   communityPublicByDefault?: boolean
+  communityDuplicateVisibility?: CommunityDuplicateVisibility
   githubAutoCommitEnabled: boolean
   githubTargetConfigured: boolean
   githubStatus: 'AVAILABLE' | 'TARGET_MISSING' | string

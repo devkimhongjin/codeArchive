@@ -3,20 +3,26 @@ public record SettingsRequest(long version, String name, String nickname, boolea
     String downloadFilenameTemplate, String gitPathTemplate, String githubCommitMessageTemplate, String lightTheme, String darkTheme, boolean autoSyncEnabled,
     boolean githubAutoCommitEnabled, Long githubInstallationId, String githubOwner, String githubRepository, String githubBranch, String githubRootPath,
     java.util.List<String> copyHeaderFields, java.util.List<String> downloadHeaderFields, java.util.List<String> githubHeaderFields,
-    Boolean communityPublicByDefault) {
+    Boolean communityPublicByDefault, String communityDuplicateVisibility) {
+  public SettingsRequest(long version, String name, String nickname, boolean copyHeader, boolean downloadHeader, boolean githubHeader,
+      String downloadFilenameTemplate, String gitPathTemplate, String githubCommitMessageTemplate, String lightTheme, String darkTheme, boolean autoSyncEnabled,
+      boolean githubAutoCommitEnabled, Long githubInstallationId, String githubOwner, String githubRepository, String githubBranch, String githubRootPath,
+      java.util.List<String> copyHeaderFields, java.util.List<String> downloadHeaderFields, java.util.List<String> githubHeaderFields, Boolean communityPublicByDefault) {
+    this(version,name,nickname,copyHeader,downloadHeader,githubHeader,downloadFilenameTemplate,gitPathTemplate,githubCommitMessageTemplate,lightTheme,darkTheme,autoSyncEnabled,githubAutoCommitEnabled,githubInstallationId,githubOwner,githubRepository,githubBranch,githubRootPath,copyHeaderFields,downloadHeaderFields,githubHeaderFields,communityPublicByDefault,null);
+  }
   public SettingsRequest(long version, String name, String nickname, boolean copyHeader, boolean downloadHeader, boolean githubHeader,
       String downloadFilenameTemplate, String gitPathTemplate, String githubCommitMessageTemplate, String lightTheme, String darkTheme, boolean autoSyncEnabled,
       boolean githubAutoCommitEnabled, Long githubInstallationId, String githubOwner, String githubRepository, String githubBranch, String githubRootPath,
       java.util.List<String> copyHeaderFields, java.util.List<String> downloadHeaderFields, java.util.List<String> githubHeaderFields) {
     this(version, name, nickname, copyHeader, downloadHeader, githubHeader, downloadFilenameTemplate, gitPathTemplate, githubCommitMessageTemplate,
         lightTheme, darkTheme, autoSyncEnabled, githubAutoCommitEnabled, githubInstallationId, githubOwner, githubRepository, githubBranch, githubRootPath,
-        copyHeaderFields, downloadHeaderFields, githubHeaderFields, null);
+        copyHeaderFields, downloadHeaderFields, githubHeaderFields, null, null);
   }
   public SettingsRequest(long version, String name, String nickname, boolean copyHeader, boolean downloadHeader, boolean githubHeader,
       String downloadFilenameTemplate, String gitPathTemplate, String githubCommitMessageTemplate, String lightTheme, String darkTheme, boolean autoSyncEnabled,
       boolean githubAutoCommitEnabled, Long githubInstallationId, String githubOwner, String githubRepository, String githubBranch, String githubRootPath) {
     this(version, name, nickname, copyHeader, downloadHeader, githubHeader, downloadFilenameTemplate, gitPathTemplate, githubCommitMessageTemplate,
         lightTheme, darkTheme, autoSyncEnabled, githubAutoCommitEnabled, githubInstallationId, githubOwner, githubRepository, githubBranch, githubRootPath,
-        null, null, null, null);
+        null, null, null, null, null);
   }
 }
