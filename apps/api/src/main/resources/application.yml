@@ -30,6 +30,8 @@ spring:
   jackson:
     time-zone: UTC
 codearchive:
+  desktop-login:
+    enabled: ${DESKTOP_LOGIN_ENABLED:false}
   github:
     client-id: ${GITHUB_CLIENT_ID:}
     client-secret: ${GITHUB_CLIENT_SECRET:}
