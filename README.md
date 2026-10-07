@@ -2,11 +2,40 @@
 
 CodeArchive는 SWEA·Programmers·Jungol에서 통과한 알고리즘 풀이를 브라우저에 먼저 보관하고, 개인 대시보드와 GitHub 저장소로 연결하는 풀이 아카이브입니다. 제출한 코드를 다시 복사해 파일을 만들고 커밋하는 반복 작업을 줄이면서, 서버 연결이 끊겨도 로컬 풀이를 남기는 데 초점을 맞춥니다.
 
-[대시보드](https://codearchive-dashboard-beta.netlify.app) · [Issue](https://github.com/devkimhongjin/codeArchive/issues) · [확장 배포 이력](https://github.com/devkimhongjin/codeArchive/releases)
+[PC 앱 릴리스](https://github.com/devkimhongjin/codeArchive/releases/tag/desktop-v0.1.2) · [웹 대시보드](https://codearchive-dashboard-beta.netlify.app) · [Issue](https://github.com/devkimhongjin/codeArchive/issues) · [확장 배포 이력](https://github.com/devkimhongjin/codeArchive/releases)
 
-> 이 문서의 구현 기준은 2026-09-28 확인한 원격 `develop`의 [`4cb9676`](https://github.com/devkimhongjin/codeArchive/commit/4cb9676871f3d8d037ffe19d5d90fe1149a37343)입니다. 소스 병합, 로컬 실사용 확인, Release ZIP 검증, 운영 배포는 별도의 상태입니다. `master`에는 이전 구조가 남아 있습니다.
+## Windows PC 앱 설치
 
-2026-09-28 기준 공개 GitHub Release는 아직 없습니다. 현재는 아래 소스 빌드 절차를 사용합니다. ZIP 생성 경로는 준비됐지만, 첫 prerelease는 정확한 패키지의 설치·업데이트와 기존 데이터 보존 검증 후 발행합니다([#282](https://github.com/devkimhongjin/codeArchive/issues/282)).
+[CodeArchive Desktop v0.1.2 릴리스](https://github.com/devkimhongjin/codeArchive/releases/tag/desktop-v0.1.2)에서 [CodeArchive-Setup-0.1.2.exe](https://github.com/devkimhongjin/codeArchive/releases/download/desktop-v0.1.2/CodeArchive-Setup-0.1.2.exe)를 내려받아 설치합니다. Chrome 확장 v0.3.1도 설치 파일에 포함되어 있습니다.
+
+1. 설치 완료 화면에서 **바탕 화면에 바로가기 만들기**, **시작 메뉴에 바로가기 만들기**, 앱 실행 여부를 선택합니다.
+2. 앱 첫 실행의 **Chrome 확장 설치·연결** 안내에서 확장 폴더 경로를 복사합니다. 기본 설치 위치는 `%LOCALAPPDATA%\Programs\CodeArchive\resources\extension`이며, 다른 위치에 설치했다면 앱에 표시된 경로를 사용합니다.
+3. Chrome 주소창에 `chrome://extensions`를 입력하고 **개발자 모드 → 압축해제된 확장 프로그램을 로드합니다**에서 해당 폴더를 선택합니다.
+4. 안내의 **연결 코드 발급**을 누르고 확장 팝업의 **PC 앱 연결**에 6자리 코드를 입력합니다. 코드는 2분 동안 한 번만 사용할 수 있습니다. 연결 후 **설정 완료**를 누릅니다. 이후에는 앱과 확장이 자동 재연결됩니다. 나중에 다시 연결하려면 **설정 → PC 앱 설정 → 확장 연결 코드 발급**을 사용합니다.
+5. 연결 후 확장의 **대시보드 열기**로 PC 앱을 열 수 있습니다. 브라우저에 앱 열기 확인이 나타나면 수락합니다.
+
+포함된 확장 파일만으로 Chrome에 자동 등록되거나 연결 승인이 이루어지지는 않습니다. 로컬 수집에는 CodeArchive 계정 로그인이 필요하지 않으며, 풀이 수집은 Chrome 확장에서 진행합니다. 과거 풀이 수집 중에는 수집 화면과 원본 사이트 창을 모두 열어 두세요.
+
+### 기존 확장 사용자의 업데이트
+
+**기존 확장을 삭제하지 마세요.** 삭제하면 Chrome에 보관한 로컬 풀이가 사라질 수 있습니다. 현재 확장을 불러온 폴더에 새 앱의 `resources/extension` 파일을 덮어쓴 뒤 `chrome://extensions`에서 CodeArchive의 **새로고침(↻)**을 누릅니다. 같은 확장을 중복 등록하지 않습니다.
+
+앱에 포함된 `resources/extension` 폴더를 직접 등록했다면 앱 업데이트가 그 폴더의 파일도 갱신합니다. Chrome에서는 별도로 확장을 새로고침해야 합니다. 이전의 다른 폴더를 사용 중이라면 앱 업데이트 후 포함된 파일을 기존 폴더에 복사하고 새로고침합니다.
+
+### 로그인과 서버 기능
+
+앱에서 **GitHub 로그인**을 누르면 기본 웹브라우저의 GitHub 인증으로 이동합니다. GitHub의 **Sign in with Google**도 사용할 수 있습니다. 인증 후 브라우저의 **CodeArchive 열기**를 수락하면 앱으로 돌아와 로그인됩니다. 자동 이동이 차단되면 완료 화면의 앱 열기 버튼을 사용합니다.
+
+PC 앱 로그인은 브라우저 세션과 별도로 유지되어 Chrome을 종료해도 서버 풀이 목록을 사용할 수 있습니다. 사이트 풀이 수집에는 Chrome이 필요합니다. 서버 동기화와 GitHub 커밋은 앱에서 설정한 계정·저장 위치로 실행하며, GitHub App의 저장소 접근 승인은 로그인과 별도입니다. **과거 풀이 관리** 탭에서 일괄 동기화와 일괄 GitHub 커밋을 각각 실행할 수 있습니다.
+
+### PC 앱 업데이트와 자동 시작
+
+- 앱에 현재 PC 앱 버전이 표시됩니다. **설정 → PC 앱 설정**에서 업데이트를 직접 확인하고 다운로드·적용할 수 있습니다.
+- v0.1.2부터 새 버전을 감지하면 업데이트 팝업이 나타납니다. 적용 후 앱이 다시 실행됩니다.
+- **자동 업데이트**는 기본으로 꺼져 있습니다. 설정에서 켜면 앱이 트레이에 있고 진행 중인 작업이나 입력한 내용이 없을 때 업데이트를 적용합니다. 입력한 내용이 있으면 앱을 다시 실행할 때까지 자동 적용을 보류합니다. 작업과 저장을 마친 뒤 직접 업데이트할 수도 있습니다.
+- **Windows 로그인 시 자동 시작**도 설정에서 선택할 수 있으며 기본으로 꺼져 있습니다. 앱 창을 닫으면 트레이에 남고, 트레이 메뉴의 **종료**로 완전히 종료합니다.
+
+공개 릴리스는 `master` 소스를 기준으로 발행하며, 앱은 업데이트 정보의 고정 공개키 서명과 설치 파일의 SHA256을 확인합니다. 상세 내용은 [PC 앱 설치·연결·업데이트 문서](docs/desktop-app.md)를 참고하세요. 실제 설치·업데이트 확인 상태는 [#386](https://github.com/devkimhongjin/codeArchive/issues/386), 설치 완료 화면의 사용자 확인은 [#379](https://github.com/devkimhongjin/codeArchive/issues/379)에 기록합니다.
 
 ## 현재 기능
 
@@ -18,7 +47,7 @@ CodeArchive는 SWEA·Programmers·Jungol에서 통과한 알고리즘 풀이를 
 | 계정·동기화 | GitHub 로그인, 사용자별 서버 저장, 수동 동기화와 동의 기반 자동 Relay |
 | GitHub 연동 | 개인 계정의 App 설치·저장소·브랜치·폴더 선택, 경로/커밋 메시지 설정, 자동 커밋과 작업 상태 |
 | 저장소 관리 | 파일/폴더 트리 조회, 빈 저장소 초기화, 파일·폴더 추가, 이동·삭제 미리보기와 별도 커밋 확인 |
-| 커뮤니티 | 본인 풀이를 공개한 문제에 한해 다른 공개 풀이 탐색. 원격 `develop`은 기본 비공개 |
+| 커뮤니티 | 본인 풀이를 공개한 문제에 한해 다른 공개 풀이 탐색. 신규 풀이 기본 공개·비공개를 계정 설정에서 선택 |
 
 로그인 없이도 확장 프로그램의 로컬 저장·코드 조회·다운로드를 사용할 수 있습니다. 대시보드가 서버에 연결되지 않은 경우에도 허용된 확장 프로그램에서 로컬 기록을 읽습니다.
 
@@ -156,7 +185,7 @@ pwsh -NoProfile -File infra/gcp/staging-db-preflight.integration.ps1
 
 - 사이트 UI와 편집기 변경에 대한 실제 제출 검증을 지속하고, 로컬 수정분을 원격 통합·배포 검증으로 연결합니다.
 - 동일한 Release ZIP을 새로 설치하거나 기존 설치에 덮어썼을 때의 ID·기록 보존·동기화 흐름을 확인합니다.
-- 원격의 명시적 공개 방식과 로컬 후속 작업의 자동 공유 방식은 아직 구분해야 합니다. 커뮤니티 정책 변경은 [#318](https://github.com/devkimhongjin/codeArchive/issues/318)의 통합·마이그레이션 상태를 확인하세요.
+- 커뮤니티의 기존 풀이 공개 전환과 사용자 검증은 [#364](https://github.com/devkimhongjin/codeArchive/issues/364), [#365](https://github.com/devkimhongjin/codeArchive/issues/365)에 기록합니다.
 - 현재 정적 분석은 캐시 식별자 기반 코드만 있으며, 분석 실행 worker와 사용자 기능은 후속 범위입니다. 이전 구조의 AI 분석 서비스를 현재 제공 기능으로 표시하지 않습니다.
 
 성능 수치는 플랫폼이 표시하는 선택적 제출 메타데이터입니다. Programmers는 테스트별 시간 합계·메모리 평균을 사용하고, SWEA/Jungol과 측정 조건이 다릅니다. 단위를 알 수 없는 이전 메모리는 **단위 미확인**으로 표시하며, 수집하지 못한 값을 추정하지 않습니다.
