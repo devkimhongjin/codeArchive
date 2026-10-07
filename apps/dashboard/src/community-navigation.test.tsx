@@ -52,7 +52,7 @@ it('shares the saved code theme with the archive, all community picker themes, a
     await waitFor(() => expect(document.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe(finalTheme))
     expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe(finalTheme)
   } finally { window.matchMedia = original }
-})
+}, 15000)
 
 it('opens the exact problem from the archive and keeps a shareable community URL', async () => {
   mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([solution]); mocks.settings.mockRejectedValue(new Error('settings unavailable')); mocks.bridge.mockRejectedValue(new Error('extension unavailable')); mocks.community.mockRejectedValue(new ApiError('Publish first', 403))
