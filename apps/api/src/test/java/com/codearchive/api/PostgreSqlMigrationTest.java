@@ -98,7 +98,7 @@ class PostgreSqlMigrationTest {
                     "INSERT INTO user_settings(user_id, version, display_name) VALUES (?, 4, 'Existing profile')")) {
                 statement.setLong(1, userId); statement.executeUpdate();
             }
-            assertEquals(1, database.flyway().migrate().migrationsExecuted);
+            assertEquals(LATEST_MIGRATION - 20, database.flyway().migrate().migrationsExecuted);
             assertEquals(true, database.scalar("SELECT community_public_by_default FROM user_settings WHERE user_id = ?", userId));
             assertEquals(4L, ((Number) database.scalar("SELECT version FROM user_settings WHERE user_id = ?", userId)).longValue());
             assertEquals("Existing profile", database.scalar("SELECT display_name FROM user_settings WHERE user_id = ?", userId));
