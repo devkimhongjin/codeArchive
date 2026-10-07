@@ -4,7 +4,7 @@ const path = require('node:path');
 const { WebSocket } = require('ws');
 const { createHmac } = require('node:crypto');
 const { EXTENSION_ID } = require('../src/policy.cjs');
-async function run({ app, mainWindow, bridge, bridgePort, apiSession }) {
+async function run({ app, mainWindow, bridge, bridgePort, apiSession, updater }) {
   const directory = process.env.CODEARCHIVE_DESKTOP_SMOKE_OUTPUT;
   const checks = {};
   const timer = setTimeout(() => app.exit(1), process.env.CODEARCHIVE_DESKTOP_BROWSER_API ? 90000 : 30000);
@@ -21,7 +21,7 @@ async function run({ app, mainWindow, bridge, bridgePort, apiSession }) {
     checks.preloadAndMainIpc = status.version === app.getVersion() && status.connected === false;
     checks.noNodeInRenderer = await mainWindow.webContents.executeJavaScript("typeof window.require === 'undefined' && typeof window.process === 'undefined'");
     const setup = await mainWindow.webContents.executeJavaScript('window.codeArchiveDesktop.getSetup()');
-    checks.bundledExtension = setup.available && setup.extensionVersion === '0.3.0';
+    checks.bundledExtension = setup.available && setup.extensionVersion === '0.3.1';
     await new Promise(resolve => setTimeout(resolve, 300));
     checks.firstRunGuide = await mainWindow.webContents.executeJavaScript("Boolean(document.querySelector('.desktop-setup')?.open) && document.body.textContent.includes('Chrome에 확장 등록') && document.querySelector('[aria-label=\"포함된 확장 폴더 경로\"]').value.length > 0");
     if (directory) {
@@ -42,12 +42,12 @@ async function run({ app, mainWindow, bridge, bridgePort, apiSession }) {
     client.on('message', data => {
       const request = JSON.parse(data);
       if (request.type !== 'REQUEST') return;
-      const response = request.message.type === 'CONNECT' ? { capability: 'fixture-capability', expiresAt: Date.now() + 60000, version: '0.3.0', features: ['history-v1'] } : request.message.type === 'GET_STATUS' ? { pendingCount: 0 } : request.message.type === 'GET_LOCAL_ARCHIVE' ? { captures: [], localOnly: true, hasMore: false } : { ok: true };
+      const response = request.message.type === 'CONNECT' ? { capability: 'fixture-capability', expiresAt: Date.now() + 60000, version: '0.3.1', features: ['history-v1'] } : request.message.type === 'GET_STATUS' ? { pendingCount: 0 } : request.message.type === 'GET_LOCAL_ARCHIVE' ? { captures: [], localOnly: true, hasMore: false } : { ok: true };
       client.send(JSON.stringify({ type: 'RESPONSE', id: request.id, response }));
     });
     checks.loopbackPaired = bridge.connected();
     const connection = await mainWindow.webContents.executeJavaScript("window.codeArchiveDesktop.requestBridge({type:'CONNECT'})");
-    checks.nativeBridge = connection.version === '0.3.0';
+    checks.nativeBridge = connection.version === '0.3.1';
     await new Promise(resolve => setTimeout(resolve, 2100));
     await mainWindow.webContents.executeJavaScript("[...document.querySelectorAll('.desktop-setup button')].find(button => button.textContent === '설정 완료').click()");
     await new Promise(resolve => setTimeout(resolve, 300));
@@ -61,6 +61,20 @@ async function run({ app, mainWindow, bridge, bridgePort, apiSession }) {
     await mainWindow.webContents.executeJavaScript("history.replaceState(null,'','?view=settings'); window.dispatchEvent(new PopStateEvent('popstate'))");
     await new Promise(resolve => setTimeout(resolve, 2500));
     checks.renderedSettings = await mainWindow.webContents.executeJavaScript("document.body.textContent.includes('PC 앱 설정') && document.body.textContent.includes('Windows 로그인 시 자동 시작')");
+    checks.renderedAppVersionAndAutomaticSetting = await mainWindow.webContents.executeJavaScript(`document.querySelector('.desktop-version')?.textContent === 'PC 앱 v${app.getVersion()}' && [...document.querySelectorAll('label')].some(label => label.textContent.includes('자동 업데이트') && label.querySelector('input[type=checkbox]')?.checked === false) && !document.querySelector('.brand-mark') && !document.querySelector('.footer-mark')`);
+    const originalStatus = updater.status;
+    // Test-only update discovery fixture in this owned isolated process; no installer or release is published.
+    updater.status = () => ({ state: 'available', version: '0.1.3', message: 'Synthetic update fixture' });
+    await new Promise(resolve => setTimeout(resolve, 2200));
+    checks.updatePopup = await mainWindow.webContents.executeJavaScript("document.querySelector('.desktop-update-dialog')?.open && document.querySelector('.desktop-update-dialog').textContent.includes('v0.1.3')");
+    await mainWindow.webContents.executeJavaScript("[...document.querySelectorAll('.desktop-update-dialog button')].find(button => button.textContent === '나중에').click()");
+    await new Promise(resolve => setTimeout(resolve, 2200));
+    checks.updatePopupDismissedOnce = await mainWindow.webContents.executeJavaScript("!document.querySelector('.desktop-update-dialog').open");
+    updater.status = originalStatus;
+    const previousDashboardUrl = mainWindow.webContents.getURL();
+    mainWindow.hide();
+    app.emit('second-instance', {}, [process.execPath, 'codearchive://app/open']);
+    checks.dashboardProtocolShowsExistingWindow = mainWindow.isVisible() && mainWindow.webContents.getURL() === previousDashboardUrl;
     const fixture = process.env.CODEARCHIVE_DESKTOP_BROWSER_API;
     if (fixture) {
       if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(fixture)) throw Error('Invalid local smoke fixture');

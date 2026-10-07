@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { kstCalendarDate, resolveBuildInfo } from "../../../shared/build-info.mjs";
+import { isVersionAtLeast } from "../../../shared/extensionRelease";
 import { buildLabel, updatedLabel } from "../../../shared/buildMetadata";
 
 const readJson = (url: URL) => JSON.parse(readFileSync(url, "utf8").replace(/^\uFEFF/, ""));
@@ -17,7 +18,7 @@ test("release version is shared by packages and the extension manifest", () => {
   assert.equal(dashboardPackage.version, release.version);
   assert.equal(manifest.minimum_chrome_version, release.extension.minimumChromeVersion);
   assert.match(release.extension.id, /^[a-p]{32}$/);
-  assert.equal(release.extension.compatibility.dashboardMinimumExtensionVersion, release.version);
+  assert.ok(isVersionAtLeast(release.version, release.extension.compatibility.dashboardMinimumExtensionVersion));
 });
 
 test("local metadata is explicitly dev while release metadata uses injected source identity", () => {

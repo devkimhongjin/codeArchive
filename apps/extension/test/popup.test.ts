@@ -62,7 +62,7 @@ test('popup follows the Figma action hierarchy without legacy connection diagnos
   await settle();
   assert.equal(document.querySelector('.connection'), null);
   assert.equal(document.querySelector('#copy-id'), null);
-  assert.equal(document.querySelector('#capture-card .dashboard-link')?.getAttribute('href'), 'https://codearchive-dashboard-beta.netlify.app');
+  assert.equal(document.querySelector('#capture-card .dashboard-link')?.getAttribute('href'), 'codearchive://app/open');
   const history = document.querySelector<HTMLAnchorElement>('#local-history-link')!;
   assert.equal(history.textContent?.replace(/\s+/g, ' ').trim(), '과거 풀이 수집 ↗');
   assert.equal(history.getAttribute('href'), 'history.html');

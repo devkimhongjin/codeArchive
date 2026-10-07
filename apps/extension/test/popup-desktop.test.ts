@@ -12,9 +12,11 @@ test('popup gates actions on connection, hides pairing when connected, and retur
   await settle();
   assert.equal(document.querySelector<HTMLElement>('#popup-content')!.hidden, true);
   assert.equal(document.querySelector<HTMLElement>('#desktop-entry')!.hidden, false);
+  assert.equal(document.querySelector('#desktop-entry .dashboard-link')?.getAttribute('href'), 'codearchive://app/open');
   connected = true; await view.refresh();
   assert.equal(document.querySelector<HTMLElement>('#popup-content')!.hidden, false);
   assert.equal(document.querySelector<HTMLElement>('#desktop-entry')!.hidden, true);
+  assert.equal(document.querySelector('#capture-card .dashboard-link')?.getAttribute('href'), 'codearchive://app/open');
   connected = false; await view.refresh();
   assert.equal(document.querySelector<HTMLElement>('#popup-content')!.hidden, true);
   assert.equal(document.querySelector('#extension-update-check'), null);
