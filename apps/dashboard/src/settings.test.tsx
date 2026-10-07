@@ -489,6 +489,7 @@ it('persists an inline code-view theme immediately and refreshes the connected e
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT' ? Promise.resolve({ capability: 'theme-capability' }) : Promise.resolve({ ok: true }))
   render(<App />)
   await screen.findAllByText('테마 풀이')
+  await waitFor(() => expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe('one-light'))
   fireEvent.change(screen.getByLabelText('코드 보기 테마'), { target: { value: 'solarized-light' } })
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ version: 4, lightTheme: 'solarized-light', darkTheme: 'dracula' }), 'account-17'))
   await waitFor(() => expect(bridgeMessages('CONFIGURE_RELAY').some(([, message]) => (message as { lightTheme?: string }).lightTheme === 'solarized-light')).toBe(true))
