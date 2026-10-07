@@ -6,6 +6,7 @@ const { createExtensionServer } = require('./extension-server.cjs');
 const { createUpdater, runInstaller } = require('./updater.cjs');
 const { createSetup } = require('./setup.cjs');
 const { createUpdatePolicy } = require('./update-policy.cjs');
+const { createAutostartPolicy } = require('./autostart-policy.cjs');
 const { createWebLogin } = require('./web-login.cjs');
 const { REMOTE_ORIGIN, APP_URL, BRIDGE_PORT, apiRequest, trustedRenderer, authUrl, externalUrl } = require('./policy.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'codearchive', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -27,6 +28,14 @@ async function start() {
     if (app.isPackaged && !app.isDefaultProtocolClient('codearchive')) app.setAsDefaultProtocolClient('codearchive');
   }
   const userData = app.getPath('userData');
+  const autostart = createAutostartPolicy({
+    statePath: path.join(userData, 'autostart-initialized.json'),
+    legacyPaths: ['setup.json', 'extension-pair.bin', 'update-settings.json', 'Preferences'].map(file => path.join(userData, file)),
+    packaged: app.isPackaged, platform: process.platform,
+    getSettings: () => app.getLoginItemSettings(loginItemOptions),
+    setSettings: value => app.setLoginItemSettings({ ...loginItemOptions, openAtLogin: value }),
+  });
+  await autostart.initialize().catch(() => { /* Preserve Windows state if initialization cannot be recorded. */ });
   const tokenPath = path.join(userData, 'extension-pair.bin');
   async function saveToken(value) {
     if (value === null) { await require('node:fs/promises').unlink(tokenPath).catch(() => {}); return; }
@@ -87,7 +96,7 @@ async function start() {
   expose('desktop:extension-folder', () => setup.openFolder());
   expose('desktop:setup-complete', () => setup.complete());
   expose('desktop:disconnect', async () => { await bridge.disconnect(); return { ok: true }; });
-  expose('desktop:autostart', value => { if (typeof value !== 'boolean' || !app.isPackaged) throw new Error('자동 시작은 설치한 앱에서 설정할 수 있습니다.'); app.setLoginItemSettings({ ...loginItemOptions, openAtLogin: value }); return { ok: true }; });
+  expose('desktop:autostart', value => autostart.setEnabled(value));
   expose('desktop:update-check', () => updater.check());
   expose('desktop:update-install', () => updatePolicy.apply());
   expose('desktop:auto-update', value => updatePolicy.setEnabled(value));
