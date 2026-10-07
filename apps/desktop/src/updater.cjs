@@ -8,6 +8,7 @@ function isNewer(next, current) { const a = versionTuple(next), b = versionTuple
 function validateManifest(envelope, publicKey, current) {
   if (!envelope || typeof envelope.signature !== 'string' || !envelope.manifest || !verify(null, Buffer.from(JSON.stringify(envelope.manifest)), publicKey, Buffer.from(envelope.signature, 'base64'))) throw new Error('업데이트 서명을 확인하지 못했습니다.');
   const value = envelope.manifest;
+  if (value.source?.branch !== 'master' || !/^[a-f0-9]{40}$/.test(value.source?.commit)) throw new Error('master 릴리스 출처를 확인하지 못했습니다.');
   if (!isNewer(value.version, current)) return null;
   if (value.artifact?.url !== `${REPO}/releases/download/desktop-v${value.version}/CodeArchive-Setup-${value.version}.exe` || !/^[a-f0-9]{64}$/.test(value.artifact?.sha256)) throw new Error('업데이트 파일 정보가 올바르지 않습니다.');
   return value;
@@ -18,7 +19,7 @@ function createUpdater({ version, publicKeyPath, directory, fetcher = fetch }) {
     status: () => ({ ...status }),
     async check() {
       if (busy) return { ...status };
-      busy = true; status = { state: 'checking', version: null, message: '새 버전 확인 중…' };
+      busy = true; manifest = null; status = { state: 'checking', version: null, message: '새 버전 확인 중…' };
       try {
         const response = await fetcher('https://api.github.com/repos/devkimhongjin/codeArchive/releases?per_page=50', { signal: AbortSignal.timeout(15000), headers: { Accept: 'application/vnd.github+json' } });
         if (!response.ok) throw new Error('릴리스 목록을 가져오지 못했습니다.');
@@ -60,5 +61,5 @@ function createUpdater({ version, publicKeyPath, directory, fetcher = fetch }) {
     }
   };
 }
-function runInstaller(path) { const child = spawn(path, ['/S', '--updated'], { detached: true, stdio: 'ignore', windowsHide: true, shell: false }); child.unref(); return new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); }
+function runInstaller(path, spawnInstaller = spawn) { const child = spawnInstaller(path, ['/S', '--updated', '--force-run'], { detached: true, stdio: 'ignore', windowsHide: true, shell: false }); child.unref(); return new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); }
 module.exports = { createUpdater, validateManifest, isNewer, runInstaller };

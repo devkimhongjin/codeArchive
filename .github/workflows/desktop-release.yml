@@ -25,6 +25,13 @@ jobs:
             apps/desktop/package-lock.json
             apps/dashboard/package-lock.json
             apps/extension/package-lock.json
+      - name: Require master release source
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin +refs/heads/master:refs/remotes/origin/master
+          if ($LASTEXITCODE -ne 0) { throw 'Master source fetch failed' }
+          node scripts/release-source.mjs desktop
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop releases must come from master' }
       - run: npm --prefix apps/dashboard ci
       - run: npm --prefix apps/desktop ci
       - run: npm --prefix apps/extension ci

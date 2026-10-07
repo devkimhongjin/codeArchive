@@ -18,7 +18,7 @@ async function run({ app, mainWindow, bridge, bridgePort, apiSession }) {
       const response = await apiSession.fetch(`http://127.0.0.1:${probe.address().port}/probe`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
       checks.nativeRequestHasNoBrowserOrigin = (await response.json()).origin === null;
     } finally { await new Promise(resolve => probe.close(resolve)); }
-    checks.preloadAndMainIpc = status.version === '0.1.0' && status.connected === false;
+    checks.preloadAndMainIpc = status.version === app.getVersion() && status.connected === false;
     checks.noNodeInRenderer = await mainWindow.webContents.executeJavaScript("typeof window.require === 'undefined' && typeof window.process === 'undefined'");
     const setup = await mainWindow.webContents.executeJavaScript('window.codeArchiveDesktop.getSetup()');
     checks.bundledExtension = setup.available && setup.extensionVersion === '0.3.0';

@@ -143,6 +143,8 @@ pwsh -NoProfile -File infra/gcp/staging-db-preflight.integration.ps1
 
 ## 배포와 보안 경계
 
+- 모든 공개 릴리스는 검증된 `master` 커밋을 기준으로 발행합니다. 구현 PR의 기본 대상은 `develop`이며, 릴리스 발행 전에 `master` 승격을 별도로 확인합니다. [PC 앱 릴리스·업데이트 절차](docs/desktop-app.md#릴리스와-업데이트)를 따릅니다.
+
 - 현재 저장소의 [Netlify 설정](netlify.toml)은 Dashboard를 배포하고 `/api/*`를 Cloud Run API로 프록시합니다. 브라우저의 OAuth callback은 Dashboard origin을 사용합니다.
 - [GCP 배포 구성](infra/gcp/README.md)은 공개 API와 비공개 GitHub worker, Cloud Tasks OIDC 호출을 나눕니다. API와 worker의 DB가 검증된 비운영 대상인지 확인한 뒤 수동 배포합니다. 파일에 있는 구성은 현재 서비스의 배포 커밋을 보증하지 않습니다.
 - 기본 실행 모드는 `polling`이고, Cloud Tasks 배포에는 별도 환경 설정이 필요합니다. 내부 worker endpoint는 비공개 서비스에서만 활성화해야 합니다.

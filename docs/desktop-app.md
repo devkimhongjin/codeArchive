@@ -55,6 +55,13 @@ npm --prefix apps/desktop run dist
 
 ## 릴리스와 업데이트
 
+공개 릴리스의 기준 브랜치는 항상 `master`입니다. 구현 PR은 `develop` 대상으로 진행하고, 검증된 버전을 `master`에 승격한 후 릴리스를 발행합니다. `master` 승격만으로 Netlify 배포를 요청한 것으로 간주하지 않습니다.
+
+- 수동 발행: `gh workflow run desktop-release.yml --ref master -f publish=true` (확장은 `extension-release.yml`).
+- 태그 발행: `master`의 현재 커밋 또는 이전 릴리스 커밋에 버전과 일치하는 `desktop-vX.Y.Z` / `extension-vX.Y.Z` 태그를 만듭니다. 병합된 기능 브랜치의 커밋을 직접 태그하는 것도 거부하고 `master`의 첫 번째 부모 이력에 있는 커밋만 허용합니다.
+- 두 워크플로는 빌드·서명 전에 master 출처를 검사합니다. 버전별 릴리스 노트와 앱 버전·태그를 일치시키고 기존 릴리스 자산은 덮어쓰지 않습니다.
+- PC 앱 업데이트 메타데이터에는 서명 대상인 `source.branch=master`, `source.commit`이 포함됩니다. 후속 버전에도 기존 앱의 공개키와 일치하는 같은 업데이트 서명 키를 사용해야 합니다.
+
 GitHub Actions desktop-release는 Windows NSIS 설치 파일, 버전별 노트, Ed25519 서명된 업데이트 메타데이터를 생성합니다. signing 전용 `CODEARCHIVE_DESKTOP_UPDATE_KEY` secret이 필요하고 공개키와 일치하지 않으면 릴리스를 만들 수 없습니다. 개인키는 커밋·로그에 남기지 않습니다.
 
 앱은 desktop-v 태그의 안정 릴리스만 선택합니다. 기존 확장 릴리스와 버전이 섞이지 않습니다. 앱 시작과 실행 중 6시간마다 자동 확인하고 설정에서도 확인할 수 있습니다. 사용자가 다운로드·적용을 선택하면 서명, 정확한 GitHub 설치 파일 URL, 더 높은 버전, SHA256을 검증합니다. 진행 중인 앱 요청이 있으면 설치를 거부합니다. 업데이트 파일은 사용자 데이터 폴더에 저장하며 installer는 shell 없이 실행합니다.

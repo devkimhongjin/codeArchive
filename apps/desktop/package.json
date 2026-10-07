@@ -1,7 +1,7 @@
 {
   "name": "codearchive-desktop",
   "productName": "CodeArchive",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CodeArchive Windows dashboard",
   "author": "devkimhongjin",
   "private": true,

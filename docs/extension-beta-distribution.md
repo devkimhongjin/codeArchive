@@ -49,15 +49,15 @@ The public manifest key pins the extension ID, and IndexedDB upgrades are forwar
 
 The metadata binds the ZIP digest to its source commit, version, fixed extension ID, minimum Chrome version, and Dashboard/API compatibility floor. The workflow also embeds it in a machine-readable GitHub Release note. The Dashboard accepts only the pinned repository, tag and asset names, fixed schema and extension ID, then compares the ZIP asset's GitHub-provided SHA-256 digest before showing a download. It does not trust download URLs from release metadata.
 
-The workflow can run without publishing to inspect its Actions artifact. Publishing creates a prerelease tag named `extension-v<release.json version>` and refuses to replace an existing release. Keep historical prereleases available for incident review and controlled rollback.
+The workflow always requires `master` as its release source. Manual runs must select `master`; release tags must point to a commit on master's first-parent history. It can run without publishing to inspect its Actions artifact. Publishing creates a prerelease tag named `extension-v<release.json version>` and refuses to replace an existing release. Keep historical prereleases available for incident review and controlled rollback.
 
 ## Release operator checklist
 
 1. Update `release.json`; keep the Dashboard package, extension package, and manifest versions equal.
 2. Merge the verified change to `develop`.
-3. Run **Extension beta package** with `publish=false` and inspect the ZIP, metadata, and checksum artifact.
+3. Promote the verified release to `master`, then run **Extension beta package** on `master` with `publish=false` and inspect the ZIP, metadata, and checksum artifact.
 4. Load the ZIP as an unpacked extension over the existing beta installation and complete the local-data update check above.
-5. Only after that manual check, run the workflow from the intended release commit with `publish=true` (or push the matching `extension-v<version>` tag).
+5. Only after that manual check, run the workflow on `master` with `publish=true` (or push the matching `extension-v<version>` tag on its release commit).
 6. Verify the Dashboard's newest-compatible-release card before promoting any Dashboard deployment.
 
 Secrets, the GitHub App private key, OAuth credentials, and relay credentials must never be included in the ZIP or release metadata.
