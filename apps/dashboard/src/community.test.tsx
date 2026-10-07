@@ -21,7 +21,7 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 function Harness({ account = user, mode = 'live', initial = route, initialSolutions = [own] }: { account?: User | null; mode?: 'live' | 'local'; initial?: CommunityRoute; initialSolutions?: Solution[] }) {
   const [current, setCurrent] = useState(initial)
   const [solutions, setSolutions] = useState(initialSolutions)
-  return <CommunityView user={account} mode={mode} solutions={solutions} route={current} onRouteChange={setCurrent} onReturnToArchive={() => undefined} onVisibilityChanged={(_expectedGithubId, id, visibility, publishedAt) => setSolutions(values => values.map(value => value.id === id ? { ...value, visibility, publishedAt } : value))} onAuthInvalid={() => undefined} onLogin={() => undefined} lightTheme="github-light" darkTheme="github-dark" />
+  return <CommunityView user={account} mode={mode} solutions={solutions} route={current} onRouteChange={setCurrent} onReturnToArchive={() => undefined} onVisibilityChanged={(_expectedGithubId, id, visibility, publishedAt) => setSolutions(values => values.map(value => value.id === id ? { ...value, visibility, publishedAt } : value))} onAuthInvalid={() => undefined} onLogin={() => undefined} lightTheme="github-light" darkTheme="github-dark" codeThemeMode="light" onCodeThemeChange={() => undefined} />
 }
 
 beforeEach(() => { mocks.comments.mockResolvedValue({ items: [], page: 0, size: 20, total: 0, hasMore: false }); mocks.like.mockResolvedValue({ liked: true, likeCount: 1, commentCount: 0 }); mocks.list.mockResolvedValue(page); mocks.detail.mockResolvedValue({ ...summary, problemUrl: '#', sourceCode: 'class Other {}', executionTime: 12, memoryValue: 1024, memoryUnit: 'KB' }); mocks.visibility.mockResolvedValue({ visibility: 'published', publishedAt: '2026-09-23T00:00:00Z' }) })
@@ -84,7 +84,7 @@ it('does not offer publication for a non-accepted solution', async () => {
 it('keeps a valid session when publishing returns an eligibility conflict', async () => {
   mocks.visibility.mockRejectedValue(new ApiError('Only accepted solutions can be published', 409))
   const invalidated = vi.fn()
-  render(<CommunityView user={user} mode="live" solutions={[own]} route={route} onRouteChange={vi.fn()} onReturnToArchive={vi.fn()} onVisibilityChanged={vi.fn()} onAuthInvalid={invalidated} onLogin={vi.fn()} lightTheme="github-light" darkTheme="github-dark" />)
+  render(<CommunityView user={user} mode="live" solutions={[own]} route={route} onRouteChange={vi.fn()} onReturnToArchive={vi.fn()} onVisibilityChanged={vi.fn()} onAuthInvalid={invalidated} onLogin={vi.fn()} lightTheme="github-light" darkTheme="github-dark" codeThemeMode="light" onCodeThemeChange={() => undefined} />)
   fireEvent.click(await screen.findByRole('button', { name: '공개하기' }))
   fireEvent.click(screen.getByRole('button', { name: '이 풀이 공개 확인' }))
   expect(await screen.findByRole('alert')).toHaveProperty('textContent', '통과한 풀이만 공개할 수 있습니다. 풀이 상태를 새로 확인해 주세요.')
@@ -113,7 +113,7 @@ it('ignores a visibility response from a previous GitHub account', async () => {
   const pending = deferred<{ visibility: 'published'; publishedAt: string }>()
   mocks.visibility.mockReturnValue(pending.promise)
   const changed = vi.fn()
-  const props = { mode: 'live' as const, solutions: [own], route, onRouteChange: vi.fn(), onReturnToArchive: vi.fn(), onVisibilityChanged: changed, onAuthInvalid: vi.fn(), onLogin: vi.fn(), lightTheme: 'github-light' as const, darkTheme: 'github-dark' as const }
+  const props = { mode: 'live' as const, solutions: [own], route, onRouteChange: vi.fn(), onReturnToArchive: vi.fn(), onVisibilityChanged: changed, onAuthInvalid: vi.fn(), onLogin: vi.fn(), lightTheme: 'github-light' as const, darkTheme: 'github-dark' as const, codeThemeMode: 'light' as const, onCodeThemeChange: vi.fn() }
   const view = render(<CommunityView {...props} user={user} />)
   fireEvent.click(await screen.findByRole('button', { name: '공개하기' }))
   fireEvent.click(screen.getByRole('button', { name: '이 풀이 공개 확인' }))

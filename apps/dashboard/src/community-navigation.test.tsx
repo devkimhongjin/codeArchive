@@ -3,9 +3,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, expect, it, vi } from 'vitest'
 import App from './App'
 import { ApiError } from './api'
+import { CODE_THEME_MODE_KEY, DARK_THEMES, LIGHT_THEMES } from '../../../shared/codeThemes'
 
-const mocks = vi.hoisted(() => ({ me: vi.fn(), list: vi.fn(), settings: vi.fn(), bridge: vi.fn(), community: vi.fn() }))
-vi.mock('./api', async original => ({ ...await original<typeof import('./api')>(), getMe: mocks.me, getSolutions: mocks.list, getAccountSettings: mocks.settings, getCommunitySolutions: mocks.community }))
+const mocks = vi.hoisted(() => ({ me: vi.fn(), list: vi.fn(), settings: vi.fn(), bridge: vi.fn(), community: vi.fn(), detail: vi.fn(), comments: vi.fn(), save: vi.fn() }))
+vi.mock('./api', async original => ({ ...await original<typeof import('./api')>(), getMe: mocks.me, getSolutions: mocks.list, getAccountSettings: mocks.settings, getCommunitySolutions: mocks.community, getCommunityDetail: mocks.detail, getCommunityComments: mocks.comments, updateAccountSettings: mocks.save }))
 vi.mock('./bridge', async original => ({ ...await original<typeof import('./bridge')>(), requestBridge: mocks.bridge }))
 
 const user = { id: 17, githubId: '100', githubLogin: 'me' }
@@ -13,6 +14,44 @@ const solution = { id: 7, captureId: 'capture-7', platform: 'SWEA', problemNumbe
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done }); return { promise, resolve } }
 
 afterEach(() => { cleanup(); localStorage.clear(); window.history.replaceState({}, '', '/'); vi.clearAllMocks() })
+
+it('shares the saved code theme with the archive, all community picker themes, and a remounted community detail', async () => {
+  const original = window.matchMedia
+  window.matchMedia = (() => ({ matches: false })) as unknown as typeof window.matchMedia
+  localStorage.setItem(CODE_THEME_MODE_KEY, 'dark')
+  let settings = {
+    version: 1, name: '', nickname: '테스트', copyHeader: false, downloadHeader: false, githubHeader: false,
+    downloadFilenameTemplate: '{platform}-{number}', gitPathTemplate: '{nickname}/{platform}/{number}', githubCommitMessageTemplate: 'Add {platform} {number}',
+    lightTheme: 'solarized-light', darkTheme: 'dracula', autoSyncEnabled: false, githubAutoCommitEnabled: false,
+  }
+  const summary = { id: 44, platform: 'SWEA', problemNumber: '1234', title: '공개 코드', language: 'Java', languageKey: 'java', author: { nickname: '테스트' }, solvedAt: null }
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([solution]); mocks.bridge.mockRejectedValue(new Error('extension unavailable'))
+  mocks.settings.mockImplementation(async () => settings)
+  mocks.save.mockImplementation(async next => { settings = { ...next, version: next.version + 1 }; return settings })
+  mocks.community.mockResolvedValue({ items: [summary], page: 0, size: 20, total: 1, hasMore: false })
+  mocks.detail.mockResolvedValue({ ...summary, sourceCode: 'class Shared {}', problemUrl: '#' })
+  mocks.comments.mockResolvedValue({ items: [], page: 0, size: 20, total: 0, hasMore: false })
+  try {
+    const view = render(<App />)
+    await waitFor(() => expect(document.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe('dracula'))
+    fireEvent.click(screen.getByRole('button', { name: '다른 풀이 보기' }))
+    fireEvent.click(await screen.findByRole('button', { name: /테스트.*공개 코드.*코드 보기/ }))
+    await waitFor(() => expect(document.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe('dracula'))
+    for (const theme of [...LIGHT_THEMES, ...DARK_THEMES]) {
+      fireEvent.change(screen.getByLabelText('코드 보기 테마'), { target: { value: theme } })
+      await waitFor(() => expect(document.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe(theme))
+      await waitFor(() => expect(settings.lightTheme === theme || settings.darkTheme === theme).toBe(true))
+    }
+    fireEvent.click(screen.getByRole('button', { name: '내 문제로 돌아가기' }))
+    expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe('one-dark-pro')
+    fireEvent.click(screen.getByRole('button', { name: /^커뮤니티$/ }))
+    await waitFor(() => expect(document.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe('one-dark-pro'))
+    view.unmount()
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe('one-dark-pro'))
+    expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe('one-dark-pro')
+  } finally { window.matchMedia = original }
+})
 
 it('opens the exact problem from the archive and keeps a shareable community URL', async () => {
   mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([solution]); mocks.settings.mockRejectedValue(new Error('settings unavailable')); mocks.bridge.mockRejectedValue(new Error('extension unavailable')); mocks.community.mockRejectedValue(new ApiError('Publish first', 403))

@@ -1418,6 +1418,8 @@ export default function App() {
           onLogin={() => navigateSameTab(GITHUB_LOGIN_URL)}
           lightTheme={accountSettings.lightTheme}
           darkTheme={accountSettings.darkTheme}
+          codeThemeMode={codeThemeMode}
+          onCodeThemeChange={theme => chooseCodeTheme(theme, true)}
         />}
         {view === 'guide' && (
           <GuideView onSettings={() => changeView('settings')} onGithub={() => changeView('github')} />
