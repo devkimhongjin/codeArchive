@@ -27,6 +27,9 @@ public class GithubOAuth2FailureHandler implements AuthenticationFailureHandler 
         if (request.getSession(false) != null && (request.getSession(false).getAttribute(DesktopLoginService.SESSION_KEY) != null
                 || request.getSession(false).getAttribute(DesktopLoginService.INSTALL_KEY) != null)) {
             if (request.getSession(false).getAttribute(DesktopLoginService.SESSION_KEY) instanceof String id) desktopLogin.cancel(id);
+            if (request.getSession(false).getAttribute(DesktopLoginService.CALLBACK_KEY) instanceof DesktopLoginService.CallbackIntent callback)
+                request.getSession(false).setAttribute(DesktopLoginService.FAILED_KEY, new DesktopLoginService.CallbackFailure(callback.state(), callback.expiresAt()));
+            request.getSession(false).removeAttribute(DesktopLoginService.CALLBACK_KEY);
             request.getSession(false).removeAttribute(DesktopLoginService.SESSION_KEY);
             request.getSession(false).removeAttribute(DesktopLoginService.CONSENT_KEY);
             request.getSession(false).removeAttribute(DesktopLoginService.COMPLETED_KEY);

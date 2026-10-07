@@ -145,7 +145,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/desktop-auth/requests", "/api/desktop-auth/exchange").permitAll()
                         // The login button records explicit consent before OAuth; both routes retain CSRF checks.
                         .requestMatchers(HttpMethod.POST, "/api/desktop-auth/browser-login", "/api/desktop-auth/cancel").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/desktop-auth/authorize", "/api/desktop-auth/failed", "/api/desktop-auth/install").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/desktop-auth/start", "/api/desktop-auth/authorize", "/api/desktop-auth/failed", "/api/desktop-auth/install").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/relay/captures").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/relay/github-commit-status").permitAll()
                         .requestMatchers(HttpMethod.DELETE, "/api/relay/grants/self").permitAll()
