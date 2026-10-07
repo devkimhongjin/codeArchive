@@ -31,3 +31,35 @@ test('connection lookup failure keeps actions hidden and permits a later success
   fail = false; await view.refresh();
   assert.equal(document.querySelector<HTMLElement>('#desktop-entry')!.hidden, true);
 });
+test('popup shows pairing authentication errors and clears the message after reconnect', async () => {
+  const { document } = parseHTML(html);
+  let connected = false;
+  const message = 'PC 앱과 확장의 연결 정보가 일치하지 않습니다.';
+  const view = mountDesktopConnection(document, { send: async () => ({ connected, error: message }), schedule: () => {} });
+  await settle();
+  assert.equal(document.querySelector('#desktop-feedback')!.textContent, message);
+  assert.equal(document.querySelector<HTMLElement>('#popup-content')!.hidden, true);
+  connected = true;
+  await view.refresh();
+  assert.equal(document.querySelector('#desktop-feedback')!.textContent, '');
+  assert.equal(document.querySelector<HTMLElement>('#popup-content')!.hidden, false);
+});
+test('invalid pairing feedback survives the immediate status refresh and later polls', async () => {
+  const { document, window } = parseHTML(html);
+  let connected = false;
+  const failure = '연결 코드가 만료됐거나 올바르지 않습니다.';
+  const view = mountDesktopConnection(document, {
+    send: async message => message.type === 'DESKTOP_PAIR' ? { error: failure } : { connected, error: 'PC 앱에서 연결 코드를 발급해 주세요.' },
+    schedule: () => {},
+  });
+  await settle();
+  document.querySelector<HTMLInputElement>('#desktop-pair-code')!.value = '123456';
+  document.querySelector('#desktop-pair-form')!.dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await settle();
+  assert.equal(document.querySelector('#desktop-feedback')!.textContent, failure);
+  await view.refresh();
+  assert.equal(document.querySelector('#desktop-feedback')!.textContent, failure);
+  connected = true;
+  await view.refresh();
+  assert.equal(document.querySelector('#desktop-feedback')!.textContent, '');
+});

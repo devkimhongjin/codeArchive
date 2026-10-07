@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { DesktopSettings } from './DesktopSettings'
+import { desktopApi } from './desktop'
 import { useDesktopWork, markDesktopDraft } from './DesktopActivity'
 import { DesktopStatusProvider, DesktopVersion, DesktopUpdateNotice } from './DesktopStatus'
 import { DesktopSetup } from './DesktopSetup'
@@ -811,6 +812,7 @@ export default function App() {
     const oldId = currentExtensionId.current
     bridgeCapabilityRef.current = null
     setBridgeCapability(null)
+    let connectionError: unknown = null
     try {
       if (oldCapability) await requestBridge(oldId, { type: 'DISCONNECT', capability: oldCapability }).catch(() => undefined)
       for (const candidate of legacyOnly ? [LEGACY_EXTENSION_ID] : EXTENSION_CANDIDATES) {
@@ -848,13 +850,19 @@ export default function App() {
           }
           if (!silent) showToast('success', '확장 프로그램을 연결했습니다.')
           return capability
-        } catch { /* Only the two known installation identities are eligible. */ }
+        } catch (error) {
+          // A desktop transport error describes pairing/offline failures. The
+          // legacy browser identity is ineligible and must not mask that error.
+          if (!connectionError) connectionError = error
+        }
       }
       if (requestIsCurrent(fence, accountGeneration.current, bridgeOperation.current)) {
         setBridgeStatus('disconnected')
         setPendingCountState('idle')
         setExtensionVersion(null)
-        if (!silent) showToast('error', '확장 프로그램을 찾지 못했습니다. 설치 후 다시 시도해 주세요.')
+        if (!silent) showToast('error', desktopApi() && connectionError instanceof Error
+          ? connectionError.message
+          : '확장 프로그램을 찾지 못했습니다. 설치 후 다시 시도해 주세요.')
       }
       return false
     } finally { connectInFlight.current = false }

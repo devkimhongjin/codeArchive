@@ -5,6 +5,7 @@ import App from './App'
 import { EXTENSION_ID, LEGACY_EXTENSION_ID } from './extensionConfig'
 import { BridgeError } from './bridge'
 import { EXTENSION_RELEASE } from './extensionRelease'
+import type { DesktopApi } from './desktop'
 
 const mocks = vi.hoisted(() => ({
   me: vi.fn(),
@@ -47,6 +48,33 @@ const liveSettings = {
   lightTheme: 'github-light' as const, darkTheme: 'github-dark' as const, autoSyncEnabled: true, githubAutoCommitEnabled: true,
   githubTargetConfigured: true, githubStatus: 'AVAILABLE' as const, githubInstallationId: 44, githubOwner: 'private-account', githubRepository: 'archive', githubBranch: 'main', githubRootPath: null,
 }
+
+it('desktop reconnect preserves the pairing error instead of reporting a missing extension', async () => {
+  const originalClose = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close')
+  Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.removeAttribute('open') } })
+  const desktopWindow = window as Window & { codeArchiveDesktop?: DesktopApi }
+  const message = '확장 팝업에서 PC 앱 연결 코드를 입력해 주세요.'
+  desktopWindow.codeArchiveDesktop = {
+    getStatus: vi.fn().mockResolvedValue({ version: '0.1.2', connected: false, packaged: false, autoUpdate: false, update: { state: 'idle', version: null, message: '' } }),
+    getSetup: vi.fn().mockResolvedValue({ completed: true }),
+    reportActivity: vi.fn().mockResolvedValue(undefined),
+  } as unknown as DesktopApi
+  mocks.me.mockResolvedValue(user)
+  mocks.list.mockResolvedValue([])
+  mocks.settings.mockResolvedValue(liveSettings)
+  mocks.bridge.mockRejectedValue(new Error(message))
+  try {
+    render(<App />)
+    const reconnect = await screen.findByRole('button', { name: '확장 재연결' })
+    fireEvent.click(reconnect)
+    await screen.findByText(message)
+    expect(screen.queryByText('확장 프로그램을 찾지 못했습니다. 설치 후 다시 시도해 주세요.')).toBeNull()
+  } finally {
+    delete desktopWindow.codeArchiveDesktop
+    if (originalClose) Object.defineProperty(HTMLDialogElement.prototype, 'close', originalClose)
+    else delete (HTMLDialogElement.prototype as unknown as { close?: unknown }).close
+  }
+})
 
 function bridgeCalls(type: string) {
   return mocks.bridge.mock.calls.filter(([, message]) => message.type === type)

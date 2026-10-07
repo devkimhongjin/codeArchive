@@ -7,6 +7,7 @@ const { createUpdater, runInstaller } = require('./updater.cjs');
 const { createSetup } = require('./setup.cjs');
 const { createUpdatePolicy } = require('./update-policy.cjs');
 const { createWebLogin } = require('./web-login.cjs');
+const { createDiagnostics } = require('./diagnostics.cjs');
 const { REMOTE_ORIGIN, APP_URL, BRIDGE_PORT, apiRequest, trustedRenderer, authUrl, externalUrl } = require('./policy.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'codearchive', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 let mainWindow, tray, bridge, updater, webLogin, quitting = false, activeRequests = 0;
@@ -33,10 +34,13 @@ async function start() {
     if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows 보안 저장소를 사용할 수 없습니다.');
     await mkdir(userData, { recursive: true }); await writeFile(tokenPath, safeStorage.encryptString(value));
   }
-  let token = null;
-  try { if (safeStorage.isEncryptionAvailable()) token = safeStorage.decryptString(await readFile(tokenPath)); } catch { /* First launch or a revoked Windows key starts unpaired. */ }
+  let token = null, pairing = 'not-found', diagnostics = null;
+  try {
+    if (!safeStorage.isEncryptionAvailable()) pairing = 'encryption-unavailable';
+    else { token = safeStorage.decryptString(await readFile(tokenPath)); pairing = 'restored'; }
+  } catch (error) { pairing = error.code === 'ENOENT' ? 'not-found' : 'restore-failed'; }
   const smoke = !app.isPackaged && process.argv.includes('--smoke-test');
-  bridge = createExtensionServer({ token, saveToken, port: smoke ? 0 : BRIDGE_PORT, onStatus: connected => console.log(JSON.stringify({ event: 'desktop-extension-connection', connected })) });
+  bridge = createExtensionServer({ token, saveToken, port: smoke ? 0 : BRIDGE_PORT, onStatus: connected => { console.log(JSON.stringify({ event: 'desktop-extension-connection', connected })); void diagnostics?.connection(connected ? 'connected' : 'disconnected'); } });
   const bridgePort = await bridge.listen();
   const setup = createSetup({ extensionPath: app.isPackaged ? path.join(process.resourcesPath, 'extension') : path.join(__dirname, '../bundled-extension'), statePath: path.join(userData, 'setup.json'), connected: () => bridge.connected(), openFolder: value => shell.openPath(value) });
   updater = createUpdater({ version: app.getVersion(), publicKeyPath: path.join(__dirname, 'update-public-key.pem'), directory: path.join(userData, 'updates') });
@@ -55,6 +59,7 @@ async function start() {
     return new Response(response.body, { status: response.status, headers });
   });
   const apiSession = session.fromPartition('persist:codearchive-account');
+  diagnostics = createDiagnostics({ statePath: path.join(userData, 'connection-diagnostics.json'), version: app.getVersion(), userData, accountStorage: apiSession.storagePath, pairing, connected: bridge.connected() });
   apiSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   webLogin = createWebLogin({ fetch: (...args) => apiSession.fetch(...args), openExternal: url => shell.openExternal(url), completed: async () => {
     await mainWindow.loadURL(APP_URL); mainWindow.show(); mainWindow.focus();
@@ -72,7 +77,11 @@ async function start() {
     const work = !['GET', 'HEAD'].includes(request.method); if (work) updatePolicy.touch(); activeRequests++;
     try {
       const response = await apiSession.fetch(request.url, { method: request.method, headers: request.headers, body: request.body, credentials: 'include', redirect: 'manual', signal: AbortSignal.timeout(30000) });
+      if (request.url === `${REMOTE_ORIGIN}/api/auth/me`) void diagnostics.authentication(response.status);
       return { status: response.status, headers: { 'content-type': response.headers.get('content-type') ?? '' }, body: await response.text() };
+    } catch (error) {
+      if (request.url === `${REMOTE_ORIGIN}/api/auth/me`) void diagnostics.authentication(null);
+      throw error;
     } finally { activeRequests--; if (work) updatePolicy.touch(); }
   });
   expose('desktop:login', async value => {

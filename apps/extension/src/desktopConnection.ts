@@ -12,8 +12,9 @@ export class DesktopConnection {
   private ready = false;
   private connecting = false;
   private generation = 0;
+  private error: string | undefined;
   constructor(private readonly bridge: DashboardBridge) {}
-  status() { return { connected: this.ready }; }
+  status() { return { connected: this.ready, ...(this.error ? { error: this.error } : {}) }; }
   async pair(code: string) {
     if (!/^\d{6}$/.test(code)) throw new Error('PC 앱에 표시된 6자리 연결 코드를 입력해 주세요.');
     const response = await fetch(`${ENDPOINT}/pair`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }), signal: AbortSignal.timeout(5000) });
@@ -21,12 +22,14 @@ export class DesktopConnection {
     const value = await response.json() as Pairing;
     if (!/^[a-f0-9]{64}$/.test(value.token)) throw new Error('PC 앱 연결 응답이 올바르지 않습니다.');
     await chrome.storage.local.set({ [DESKTOP_CONNECTION_KEY]: { token: value.token } });
+    this.error = undefined;
     this.generation++; this.socket?.close(); this.socket = null; this.ready = false; this.connecting = false;
     await this.connect(); return { ok: true };
   }
   async disconnect() {
     await chrome.storage.local.remove(DESKTOP_CONNECTION_KEY);
     this.generation++; this.socket?.close(); this.socket = null; this.ready = false; this.connecting = false;
+    this.error = 'PC 앱에서 연결 코드를 발급한 뒤 확장 팝업에 입력해 주세요.';
     return { ok: true };
   }
   async connect() {
@@ -35,16 +38,16 @@ export class DesktopConnection {
     const generation = this.generation;
     let saved: Pairing | undefined;
     try { saved = (await chrome.storage.local.get(DESKTOP_CONNECTION_KEY))[DESKTOP_CONNECTION_KEY] as Pairing | undefined; }
-    catch { this.connecting = false; return; }
+    catch { this.connecting = false; this.error = '저장된 PC 앱 연결 정보를 읽지 못했습니다. 확장을 새로고침한 뒤 다시 시도해 주세요.'; return; }
     if (generation !== this.generation) return;
-    if (!saved || !/^[a-f0-9]{64}$/.test(saved.token)) { this.connecting = false; return; }
+    if (!saved || !/^[a-f0-9]{64}$/.test(saved.token)) { this.connecting = false; this.error = 'PC 앱에서 연결 코드를 발급한 뒤 확장 팝업에 입력해 주세요.'; return; }
     const socket = new WebSocket('ws://127.0.0.1:18791/bridge'); this.socket = socket;
     const id = crypto.randomUUID().replaceAll('-', '');
     const clientNonce = [...crypto.getRandomValues(new Uint8Array(32))].map(byte => byte.toString(16).padStart(2, '0')).join('');
     let serverNonce = '';
     let serverVerified = false;
     const current = () => this.socket === socket && generation === this.generation && socket.readyState === WebSocket.OPEN;
-    const timeout = setTimeout(() => { if (!this.ready) socket.close(); }, 5000);
+    const timeout = setTimeout(() => { if (this.socket === socket && !this.ready) { this.error = 'PC 앱 연결 응답 시간이 초과되었습니다. 앱을 실행한 뒤 다시 시도해 주세요.'; socket.close(); } }, 5000);
     const heartbeat = setInterval(() => { if (this.socket === socket && this.ready && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'HEARTBEAT' })); }, 20000);
     socket.onopen = () => socket.send(JSON.stringify({ type: 'HELLO', nonce: clientNonce }));
     socket.onmessage = async event => {
@@ -56,7 +59,7 @@ export class DesktopConnection {
         if (payload.clientNonce !== clientNonce || typeof payload.nonce !== 'string' || !/^[a-f0-9]{64}$/.test(payload.nonce)) { socket.close(); return; }
         const expected = await desktopProof(saved.token, 'server', `${clientNonce}:${payload.nonce}`);
         if (!current()) return;
-        if (payload.proof !== expected) { socket.close(); return; }
+        if (payload.proof !== expected) { this.error = 'PC 앱과 확장의 연결 정보가 일치하지 않습니다. 앱에서 새 연결 코드를 발급해 다시 연결해 주세요.'; socket.close(); return; }
         serverNonce = payload.nonce;
         serverVerified = true;
         const proof = await desktopProof(saved.token, 'client', `${clientNonce}:${serverNonce}`);
@@ -67,8 +70,8 @@ export class DesktopConnection {
         if (!serverVerified) { socket.close(); return; }
         const expected = await desktopProof(saved.token, 'ready', `${clientNonce}:${serverNonce}`);
         if (!current()) return;
-        if (payload.proof !== expected) { socket.close(); return; }
-        this.ready = true; this.connecting = false; clearTimeout(timeout); return;
+        if (payload.proof !== expected) { this.error = 'PC 앱 인증 응답을 확인하지 못했습니다. 앱에서 새 연결 코드를 발급해 다시 연결해 주세요.'; socket.close(); return; }
+        this.ready = true; this.connecting = false; this.error = undefined; clearTimeout(timeout); return;
       }
       if (this.ready && payload.type === 'REQUEST' && typeof payload.id === 'string' && /^[a-f0-9]{32}$/.test(payload.id)) {
         void this.bridge.handleDesktopMessage(payload.message, id).catch(() => ({ error: 'BAD_REQUEST' })).then(response => {
@@ -76,7 +79,7 @@ export class DesktopConnection {
         });
       }
     };
-    socket.onclose = () => { clearTimeout(timeout); clearInterval(heartbeat); if (this.socket === socket) { this.socket = null; this.ready = false; this.connecting = false; } };
+    socket.onclose = () => { clearTimeout(timeout); clearInterval(heartbeat); if (this.socket === socket) { this.socket = null; this.ready = false; this.connecting = false; this.error ??= 'PC 앱에 연결할 수 없습니다. 앱이 실행 중인지 확인해 주세요.'; } };
     socket.onerror = () => socket.close();
   }
 }
