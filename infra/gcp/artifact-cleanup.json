@@ -1,0 +1,17 @@
+[
+  {
+    "name": "delete-old-staging-images",
+    "action": { "type": "Delete" },
+    "condition": {
+      "tagState": "any",
+      "olderThan": "1d"
+    }
+  },
+  {
+    "name": "keep-two-recent-images",
+    "action": { "type": "Keep" },
+    "mostRecentVersions": {
+      "keepCount": 2
+    }
+  }
+]

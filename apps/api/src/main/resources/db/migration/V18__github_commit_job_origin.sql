@@ -1,0 +1,2 @@
+ALTER TABLE github_commit_jobs
+    ADD COLUMN origin VARCHAR(32) NOT NULL DEFAULT 'AUTOMATIC';

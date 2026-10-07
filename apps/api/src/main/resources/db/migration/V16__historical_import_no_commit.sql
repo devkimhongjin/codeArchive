@@ -1,0 +1,2 @@
+ALTER TABLE solutions
+    ADD COLUMN historical_import BOOLEAN NOT NULL DEFAULT FALSE;

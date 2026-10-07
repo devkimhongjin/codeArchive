@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>CodeArchive · 로컬 저장</title>
+    <link rel="stylesheet" href="archive.css">
+    <link rel="stylesheet" href="archive-viewer.css">
+  </head>
+  <body>
+    <main class="archive-page">
+      <header class="archive-header">
+        <div class="brand">
+          <span class="logo">{ }</span>
+          <div>
+            <h1>CodeArchive</h1>
+            <p>이 브라우저에 저장한 풀이</p>
+            <p class="archive-release"><span>BETA</span> <span id="archive-updated-label">Updated dev</span></p>
+          </div>
+        </div>
+        <div><a class="back-link" href="history.html" target="_blank" rel="noopener noreferrer">과거 풀이 수집 ↗</a><a class="back-link" href="popup.html">← 팝업으로 돌아가기</a></div>
+      </header>
+      <section class="archive-card" aria-live="polite" aria-busy="true">
+        <div class="archive-heading">
+          <div>
+            <p class="eyebrow"><span class="eyebrow-dot"></span> ARCHIVE / SOLUTIONS</p>
+            <h2>전체 풀이 <strong id="archive-count">—</strong></h2>
+            <p class="archive-description">이 브라우저에 저장한 풀이를 살펴보세요.</p>
+          </div>
+          <div class="archive-heading-actions"><span class="archive-source-label">SOURCE <strong>이 브라우저</strong></span><button id="archive-refresh" type="button">새로고침</button></div>
+        </div>
+        <div class="archive-toolbar">
+          <input id="archive-search" type="search" placeholder="문제 이름, 번호, 언어 검색" aria-label="문제 검색">
+          <div class="archive-platform-filters" role="group" aria-label="플랫폼 필터">
+            <button type="button" data-platform="ALL" class="active">전체</button>
+            <button type="button" data-platform="SWEA">SWEA</button>
+            <button type="button" data-platform="PROGRAMMERS">프로그래머스</button>
+            <button type="button" data-platform="JUNGOL">정올</button>
+          </div>
+          <select id="archive-language" aria-label="언어 필터"><option value="ALL">모든 언어</option></select>
+          <label class="archive-theme-controls" for="archive-code-theme">코드 보기 테마 <select id="archive-code-theme" aria-label="코드 보기 테마"></select></label>
+        </div>
+        <p id="archive-error" class="archive-error" role="alert" hidden>저장된 풀이를 불러오지 못했어요. 새로고침으로 다시 확인해 주세요.</p>
+        <div class="archive-content-grid">
+          <section class="archive-list-panel" aria-label="풀이 목록">
+            <div class="archive-panel-heading"><div><strong>풀이 목록</strong><span id="archive-filtered-count">0</span></div><label>정렬 <select id="archive-sort" aria-label="풀이 정렬"><option value="latest">최신 저장순</option><option value="oldest">오래된 저장순</option><option value="problem">문제 번호순</option><option value="title">문제 제목순</option></select></label></div>
+            <div id="archive-list" class="archive-list"></div>
+            <p id="archive-empty" class="archive-empty" hidden>아직 저장된 풀이가 없어요.</p>
+          </section>
+          <section id="archive-detail" class="archive-detail" aria-label="선택한 풀이 상세"></section>
+        </div>
+      </section>
+      <footer class="archive-footer" id="archive-build-label">vdev · dev+source-unknown</footer>
+    </main>
+    <script src="archive.js"></script>
+  </body>
+</html>
