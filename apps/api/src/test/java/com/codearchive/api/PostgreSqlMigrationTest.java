@@ -159,8 +159,9 @@ class PostgreSqlMigrationTest {
     void communityUpgradePreservesVisibilityAndSupportsNativeQueries() throws Exception {
         TestDatabase database = TestDatabase.create();
         try {
-            database.flyway(MigrationVersion.fromVersion("23")).migrate();
+            database.flyway(MigrationVersion.fromVersion("2")).migrate();
             long userId = database.insertGithubRows();
+            database.flyway(MigrationVersion.fromVersion("23")).migrate();
             try (Connection connection = database.connection(); PreparedStatement settings = connection.prepareStatement(
                     "INSERT INTO user_settings(user_id, nickname) VALUES (?, '풀이작성자')");
                     PreparedStatement publish = connection.prepareStatement(
