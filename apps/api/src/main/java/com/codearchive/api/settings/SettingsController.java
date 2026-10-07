@@ -21,8 +21,8 @@ import com.codearchive.api.automation.GithubAppProvider;
 
 @RestController @RequestMapping("/api/settings")
 public class SettingsController {
-  private static final Set<String> LIGHT = Set.of("github-light", "vitesse-light", "catppuccin-latte", "solarized-light", "one-light");
-  private static final Set<String> DARK = Set.of("github-dark", "vitesse-dark", "catppuccin-mocha", "dracula", "one-dark-pro");
+  private static final Set<String> LIGHT = Set.of("ayu-light", "catppuccin-latte", "everforest-light", "github-light", "github-light-default", "github-light-high-contrast", "gruvbox-light-hard", "gruvbox-light-medium", "gruvbox-light-soft", "horizon-bright", "kanagawa-lotus", "light-plus", "material-theme-lighter", "min-light", "night-owl-light", "one-light", "rose-pine-dawn", "slack-ochin", "snazzy-light", "solarized-light", "vitesse-light");
+  private static final Set<String> DARK = Set.of("andromeeda", "aurora-x", "ayu-dark", "ayu-mirage", "catppuccin-frappe", "catppuccin-macchiato", "catppuccin-mocha", "dark-plus", "dracula", "dracula-soft", "everforest-dark", "github-dark", "github-dark-default", "github-dark-dimmed", "github-dark-high-contrast", "gruvbox-dark-hard", "gruvbox-dark-medium", "gruvbox-dark-soft", "horizon", "houston", "kanagawa-dragon", "kanagawa-wave", "laserwave", "material-theme", "material-theme-darker", "material-theme-ocean", "material-theme-palenight", "min-dark", "monokai", "night-owl", "nord", "one-dark-pro", "plastic", "poimandres", "red", "rose-pine", "rose-pine-moon", "slack-dark", "solarized-dark", "synthwave-84", "tokyo-night", "vesper", "vitesse-black", "vitesse-dark");
   private final com.codearchive.api.community.CommunityPublicationPolicy publication;
   private final UserRepository users; private final UserSettingsRepository settings; private final RelayGrantService grants; private final GithubAppProvider github; private final String appId, privateKey, appSlug;
   public SettingsController(com.codearchive.api.community.CommunityPublicationPolicy publication, UserRepository users, UserSettingsRepository settings, RelayGrantService grants, GithubAppProvider github, @Value("${codearchive.github.app-id:}") String appId, @Value("${codearchive.github.app-private-key:}") String privateKey, @Value("${codearchive.github.app-slug:}") String appSlug) { this.publication = publication; this.users = users; this.settings = settings; this.grants = grants; this.github=github; this.appId=appId; this.privateKey=privateKey; this.appSlug=appSlug; }
@@ -65,7 +65,7 @@ public class SettingsController {
   private static String validate(SettingsRequest r) {
     if (r == null || overOptional(r.name(),255) || overOptional(r.nickname(),80) || requiredOver(r.downloadFilenameTemplate(),160) || requiredOver(r.gitPathTemplate(),240) || (r.githubCommitMessageTemplate()!=null && requiredOver(r.githubCommitMessageTemplate(),200))) return "Invalid settings";
     if (r.communityDuplicateVisibility() != null && !com.codearchive.api.community.CommunityPublicationPolicy.valid(r.communityDuplicateVisibility())) return "Invalid duplicate publication policy";
-    if (!LIGHT.contains(r.lightTheme()) || !DARK.contains(r.darkTheme())) return "Unsupported Shiki theme";
+    if (r.lightTheme() == null || r.darkTheme() == null || !LIGHT.contains(r.lightTheme()) || !DARK.contains(r.darkTheme())) return "Unsupported Shiki theme";
     if (!HeaderFields.valid(r.copyHeaderFields()) || !HeaderFields.valid(r.downloadHeaderFields()) || !HeaderFields.valid(r.githubHeaderFields())) return "Invalid header fields";
     if (r.downloadFilenameTemplate().contains("/") || r.downloadFilenameTemplate().contains("\\") || control(r.downloadFilenameTemplate()) || reserved(r.downloadFilenameTemplate())) return "Download filename is unsafe";
     String path = r.gitPathTemplate(); if (!safeRelative(path,240)) return "Git path must stay beneath the configured root";

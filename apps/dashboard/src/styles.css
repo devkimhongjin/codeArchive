@@ -380,3 +380,10 @@ h1, h2, p { margin-top: 0; }
 .desktop-setup-steps li { margin: 24px 0; padding-left: 8px; }
 .desktop-setup-steps h3 { margin: 0 0 8px; }
 .desktop-setup input { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); color: inherit; font-family: monospace; }
+
+.settings-theme-preview { display: grid; gap: 10px; margin: 18px 0; min-width: 0; }
+.settings-theme-preview > label { color: var(--muted); font-size: 11px; font-weight: 700; }
+.settings-theme-preview > select { width: 100%; max-width: 320px; min-height: 38px; padding: 8px 10px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.settings-theme-preview-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; font-size: 11px; }
+.settings-theme-preview-heading span { color: var(--muted); }
+.settings-theme-preview .code-viewer { min-height: 0; max-height: 260px; border: 1px solid var(--line); border-radius: 8px; }

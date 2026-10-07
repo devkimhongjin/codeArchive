@@ -42,14 +42,15 @@ it('shares the saved code theme with the archive, all community picker themes, a
       await waitFor(() => expect(document.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe(theme))
       await waitFor(() => expect(settings.lightTheme === theme || settings.darkTheme === theme).toBe(true))
     }
+    const finalTheme = DARK_THEMES.at(-1)!
     fireEvent.click(screen.getByRole('button', { name: '내 문제로 돌아가기' }))
-    expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe('one-dark-pro')
+    expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe(finalTheme)
     fireEvent.click(screen.getByRole('button', { name: /^커뮤니티$/ }))
-    await waitFor(() => expect(document.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe('one-dark-pro'))
+    await waitFor(() => expect(document.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe(finalTheme))
     view.unmount()
     render(<App />)
-    await waitFor(() => expect(document.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe('one-dark-pro'))
-    expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe('one-dark-pro')
+    await waitFor(() => expect(document.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe(finalTheme))
+    expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe(finalTheme)
   } finally { window.matchMedia = original }
 })
 
