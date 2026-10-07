@@ -125,6 +125,28 @@ class DesktopLoginIntegrationTest {
         mvc.perform(post("/api/desktop-auth/cancel").cookie(browser).with(csrf())).andExpect(status().isOk());
         mvc.perform(post("/api/desktop-auth/exchange").contentType(MediaType.APPLICATION_JSON).content(exchangeBody(id, verifier))).andExpect(status().isGone());
     }
+    @Test void callbackCodeIsRequiredAndBoundToOneRequestEvenWithTheRightVerifier() throws Exception {
+        var first = login.createCallback(challenge(), "callback-test");
+        var second = login.createCallback(challenge(), "callback-test");
+        String firstId = login.bind(first.requestId()), secondId = login.bind(second.requestId());
+        org.junit.jupiter.api.Assertions.assertThrows(DesktopLoginService.Failure.class, () -> login.approve(firstId, "918273645"));
+        String firstCode = login.approveCallback(firstId, "918273645");
+        String secondCode = login.approveCallback(secondId, "918273645");
+        for (String code : List.of("x".repeat(43), secondCode)) {
+            mvc.perform(post("/api/desktop-auth/exchange").contentType(MediaType.APPLICATION_JSON)
+                    .content(json.writeValueAsString(Map.of("requestId", first.requestId(), "verifier", verifier, "code", code))))
+                    .andExpect(status().isUnauthorized());
+        }
+        mvc.perform(post("/api/desktop-auth/exchange").contentType(MediaType.APPLICATION_JSON).content(exchangeBody(first.requestId(), verifier)))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/desktop-auth/exchange").contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(Map.of("requestId", first.requestId(), "verifier", verifier, "code", firstCode))))
+                .andExpect(status().isOk());
+        jdbc.update("UPDATE desktop_login_requests SET expires_at = ?", java.sql.Timestamp.from(java.time.Instant.now().minusSeconds(1)));
+        mvc.perform(post("/api/desktop-auth/exchange").contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(Map.of("requestId", second.requestId(), "verifier", verifier, "code", secondCode))))
+                .andExpect(status().isGone());
+    }
     @Test void pendingRequestsAreBoundedAndExpiredRowsAreCleanedUp() throws Exception {
         for (int i = 0; i < 10; i++) create();
         mvc.perform(post("/api/desktop-auth/requests").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(Map.of("challenge", challenge())))).andExpect(status().isTooManyRequests());

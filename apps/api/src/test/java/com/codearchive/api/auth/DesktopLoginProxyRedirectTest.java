@@ -46,6 +46,7 @@ class DesktopLoginProxyRedirectTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired DesktopLoginRepository requests;
     @Autowired ObjectMapper json;
+    @Autowired org.springframework.session.SessionRepository<?> sessions;
     final HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
     final String verifier = "v".repeat(43);
 
@@ -152,6 +153,49 @@ class DesktopLoginProxyRedirectTest {
         assertThat(bound.statusCode()).isEqualTo(200);
         redirect(get("/test/provider/failure", cookie(bound)), "/api/desktop-auth/failed");
         assertThat(post("/api/desktop-auth/exchange", Map.of("requestId", id, "verifier", verifier)).statusCode()).isEqualTo(410);
+    }
+    @Test void directLoginRedirectsToOAuthAndOnlyItsBrowserCodeAndNativeProofCanExchange() throws Exception {
+        String state = "s".repeat(43);
+        String challenge = Base64.getUrlEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(verifier.getBytes(StandardCharsets.US_ASCII)));
+        var started = get("/api/desktop-auth/start?challenge=" + challenge + "&state=" + state, null);
+        redirect(started, "/api/oauth2/authorization/github");
+        assertThat(started.body()).doesNotContain("<form", "<button");
+        String browserCookie = cookie(started);
+        redirect(get("/test/provider/success", browserCookie), "/api/desktop-auth/complete");
+        var complete = get("/api/desktop-auth/complete", browserCookie);
+        assertThat(complete.statusCode()).isEqualTo(200);
+        var link = Pattern.compile("href=\"(codearchive://auth/complete[^\"]+)\"").matcher(complete.body());
+        assertThat(link.find()).isTrue();
+        URI target = URI.create(link.group(1).replace("&amp;", "&"));
+        Map<String, String> values = java.util.Arrays.stream(target.getRawQuery().split("&")).map(value -> value.split("=", 2))
+                .collect(java.util.stream.Collectors.toMap(pair -> pair[0], pair -> pair[1]));
+        assertThat(values.get("state")).isEqualTo(state);
+        assertThat(complete.body()).contains("window.location.replace(").doesNotContain(verifier, "<form", "<button");
+        String id = values.get("requestId"), code = values.get("code");
+        assertThat(post("/api/desktop-auth/exchange", Map.of("requestId", id, "verifier", verifier)).statusCode()).isEqualTo(401);
+        assertThat(post("/api/desktop-auth/exchange", Map.of("requestId", id, "verifier", verifier, "code", "x".repeat(43))).statusCode()).isEqualTo(401);
+        assertThat(post("/api/desktop-auth/exchange", Map.of("requestId", id, "verifier", "x".repeat(43), "code", code)).statusCode()).isEqualTo(401);
+        assertThat(jdbc.queryForObject("SELECT callback_code_hash FROM desktop_login_requests", String.class)).isNotEqualTo(code).matches("[a-f0-9]{64}");
+        var exchanged = post("/api/desktop-auth/exchange", Map.of("requestId", id, "verifier", verifier, "code", code));
+        assertThat(exchanged.statusCode()).isEqualTo(200);
+        String nativeCookie = cookie(exchanged);
+        assertThat(nativeCookie).isNotEqualTo(browserCookie);
+        sessions.deleteById(new String(Base64.getDecoder().decode(browserCookie.substring("JSESSIONID=".length())), StandardCharsets.UTF_8));
+        // Only remove the browser session: native authentication remains independently persisted.
+        assertThat(get("/api/auth/me", nativeCookie).statusCode()).isEqualTo(200);
+        assertThat(post("/api/desktop-auth/exchange", Map.of("requestId", id, "verifier", verifier, "code", code)).statusCode()).isEqualTo(410);
+    }
+    @Test void directLoginFailureReturnsOnlyItsStateAndCancelsTheRequest() throws Exception {
+        String state = "s".repeat(43);
+        var started = get("/api/desktop-auth/start?challenge=" + "a".repeat(43) + "&state=" + state, null);
+        redirect(started, "/api/oauth2/authorization/github");
+        String browserCookie = cookie(started);
+        redirect(get("/test/provider/failure", browserCookie), "/api/desktop-auth/failed");
+        var failed = get("/api/desktop-auth/failed", browserCookie);
+        assertThat(failed.statusCode()).isEqualTo(200);
+        assertThat(failed.body()).contains("codearchive://auth/failed?state=" + state).doesNotContain("requestId=", "&code=");
+        assertThat(requests.count()).isZero();
+        assertThat(get("/api/desktop-auth/start?challenge=" + "a".repeat(43) + "&state=invalid", null).statusCode()).isEqualTo(400);
     }
     @TestConfiguration static class ProviderFixture {
         @Bean FilterRegistrationBean<Filter> testProvider(GithubOAuth2SuccessHandler success, GithubOAuth2FailureHandler failure) {

@@ -15,6 +15,8 @@ public class DesktopLoginRequest {
     @Column(name = "expires_at", nullable = false) private Instant expiresAt;
     @Column(nullable = false) private boolean bound;
     @Column(name = "github_id", length = 64) private String githubId;
+    @Column(name = "callback_required", nullable = false) private boolean callbackRequired;
+    @Column(name = "callback_code_hash", length = 64) private String callbackCodeHash;
     protected DesktopLoginRequest() {}
     DesktopLoginRequest(String id, String challenge, String clientKey, Instant expiresAt) {
         this.id = id; this.challenge = challenge; this.clientKey = clientKey; this.expiresAt = expiresAt;
@@ -25,4 +27,8 @@ public class DesktopLoginRequest {
     void bind() { bound = true; }
     String githubId() { return githubId; }
     void approve(String value) { githubId = value; }
+    boolean callbackRequired() { return callbackRequired; }
+    void requireCallback() { callbackRequired = true; }
+    String callbackCodeHash() { return callbackCodeHash; }
+    void callbackCodeHash(String value) { callbackCodeHash = value; }
 }

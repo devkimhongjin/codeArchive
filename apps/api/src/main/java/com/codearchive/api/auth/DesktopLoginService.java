@@ -19,6 +19,11 @@ public class DesktopLoginService {
     public static final String CONSENT_KEY = "CODEARCHIVE_DESKTOP_LOGIN_CONSENT";
     public static final String COMPLETED_KEY = "CODEARCHIVE_DESKTOP_LOGIN_COMPLETED";
     public static final String INSTALL_KEY = "CODEARCHIVE_DESKTOP_INSTALL";
+    public static final String CALLBACK_KEY = "CODEARCHIVE_DESKTOP_CALLBACK";
+    public static final String FAILED_KEY = "CODEARCHIVE_DESKTOP_FAILED_CALLBACK";
+    public record CallbackIntent(String requestId, String id, String state, long expiresAt) implements java.io.Serializable {}
+    public record CallbackResult(String requestId, String state, String code, long expiresAt) implements java.io.Serializable {}
+    public record CallbackFailure(String state, long expiresAt) implements java.io.Serializable {}
     public record InstallIntent(String githubId, long expiresAt) implements java.io.Serializable {}
     private final DesktopLoginRepository requests;
     private final UserRepository users;
@@ -37,6 +42,13 @@ public class DesktopLoginService {
     public void available() { if (!enabled) throw new Failure(HttpStatus.SERVICE_UNAVAILABLE); }
     @Transactional
     public Started create(String challenge, String peer) {
+        return create(challenge, peer, false);
+    }
+    @Transactional
+    public Started createCallback(String challenge, String peer) {
+        return create(challenge, peer, true);
+    }
+    private Started create(String challenge, String peer, boolean callback) {
         available();
         if (challenge == null || !challenge.matches("[A-Za-z0-9_-]{43}")) throw new Failure(HttpStatus.BAD_REQUEST);
         // A global cap and expiry prevent abandoned public requests accumulating in storage.
@@ -49,7 +61,9 @@ public class DesktopLoginService {
         byte[] bytes = new byte[32]; random.nextBytes(bytes);
         String id = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
         Instant expiry = now.plusSeconds(300);
-        requests.save(new DesktopLoginRequest(hash(id), challenge, clientKey, expiry));
+        var request = new DesktopLoginRequest(hash(id), challenge, clientKey, expiry);
+        if (callback) request.requireCallback();
+        requests.save(request);
         return new Started(id, 300000);
     }
     @Transactional
@@ -70,12 +84,26 @@ public class DesktopLoginService {
     @Transactional
     public void approve(String id, String githubId) {
         available(); DesktopLoginRequest request = current(id);
-        if (!request.bound() || request.githubId() != null || users.findByGithubId(githubId).isEmpty())
+        if (request.callbackRequired() || !request.bound() || request.githubId() != null || users.findByGithubId(githubId).isEmpty())
             throw new Failure(HttpStatus.CONFLICT);
         request.approve(githubId);
     }
     @Transactional
+    public String approveCallback(String id, String githubId) {
+        available(); DesktopLoginRequest request = current(id);
+        if (!request.callbackRequired() || !request.bound() || request.githubId() != null || users.findByGithubId(githubId).isEmpty())
+            throw new Failure(HttpStatus.CONFLICT);
+        byte[] bytes = new byte[32]; random.nextBytes(bytes);
+        String code = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        request.approve(githubId); request.callbackCodeHash(hash(code));
+        return code;
+    }
+    @Transactional
     public AppUser exchange(String rawId, String verifier) {
+        return exchange(rawId, verifier, null);
+    }
+    @Transactional
+    public AppUser exchange(String rawId, String verifier, String code) {
         available();
         if (rawId == null || !rawId.matches("[A-Za-z0-9_-]{43}") || verifier == null || !verifier.matches("[A-Za-z0-9_-]{43,128}"))
             throw new Failure(HttpStatus.BAD_REQUEST);
@@ -84,6 +112,9 @@ public class DesktopLoginService {
         if (!MessageDigest.isEqual(actual.getBytes(StandardCharsets.US_ASCII), request.challenge().getBytes(StandardCharsets.US_ASCII)))
             throw new Failure(HttpStatus.UNAUTHORIZED);
         if (request.githubId() == null) return null;
+        if (request.callbackRequired() && (code == null || !code.matches("[A-Za-z0-9_-]{43}")
+                || request.callbackCodeHash() == null || !MessageDigest.isEqual(hash(code).getBytes(StandardCharsets.US_ASCII),
+                        request.callbackCodeHash().getBytes(StandardCharsets.US_ASCII)))) throw new Failure(HttpStatus.UNAUTHORIZED);
         AppUser user = users.findByGithubId(request.githubId()).orElseThrow(() -> new Failure(HttpStatus.GONE));
         requests.delete(request); requests.flush();
         return user;

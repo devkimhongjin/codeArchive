@@ -29,7 +29,28 @@ public class DesktopLoginController {
         this.login = login; this.installations = installations;
     }
     public record StartInput(String challenge) {}
-    public record ExchangeInput(String requestId, String verifier) {}
+    public record ExchangeInput(String requestId, String verifier, String code) {}
+    @GetMapping(value = "/start", produces = MediaType.TEXT_HTML_VALUE)
+    public String start(@RequestParam String challenge, @RequestParam String state, HttpServletRequest request, HttpServletResponse response) {
+        protect(response);
+        if (!state.matches("[A-Za-z0-9_-]{43}") || !challenge.matches("[A-Za-z0-9_-]{43}"))
+            throw new DesktopLoginService.Failure(HttpStatus.BAD_REQUEST);
+        try {
+            var started = login.createCallback(challenge, request.getRemoteAddr());
+            String id = login.bind(started.requestId());
+            var browser = request.getSession();
+            browser.setAttribute(DesktopLoginService.SESSION_KEY, id);
+            browser.setAttribute(DesktopLoginService.CALLBACK_KEY, new DesktopLoginService.CallbackIntent(started.requestId(), id, state, System.currentTimeMillis() + started.expiresIn()));
+            browser.removeAttribute(DesktopLoginService.CONSENT_KEY);
+            browser.removeAttribute(DesktopLoginService.COMPLETED_KEY);
+            browser.removeAttribute(DesktopLoginService.FAILED_KEY);
+            browser.removeAttribute(DesktopLoginService.INSTALL_KEY);
+            DesktopBrowserRedirect.oauth(response); return "";
+        } catch (DesktopLoginService.Failure failure) {
+            response.setStatus(failure.status.value());
+            return appReturnPage(response, "codearchive://auth/failed?state=" + state, false);
+        }
+    }
     @PostMapping("/requests")
     public DesktopLoginService.Started create(@RequestBody StartInput input, HttpServletRequest request, HttpServletResponse response) {
         protect(response); nativeRequest(request); return login.create(input.challenge(), request.getRemoteAddr());
@@ -41,6 +62,8 @@ public class DesktopLoginController {
         request.getSession().setAttribute(DesktopLoginService.SESSION_KEY, id);
         request.getSession().removeAttribute(DesktopLoginService.CONSENT_KEY);
         request.getSession().removeAttribute(DesktopLoginService.COMPLETED_KEY);
+        request.getSession().removeAttribute(DesktopLoginService.CALLBACK_KEY);
+        request.getSession().removeAttribute(DesktopLoginService.FAILED_KEY);
         return page("CodeArchive PC 앱 로그인", "<p>GitHub 계정으로 로그인하면 이 PC 앱에 연결됩니다. GitHub 로그인 화면에서 Google 로그인을 사용할 수 있습니다.</p>"
                 + csrfForm(request, "/api/desktop-auth/browser-login", "GitHub로 로그인")
                 + csrfForm(request, "/api/desktop-auth/cancel", "로그인 취소")
@@ -56,6 +79,10 @@ public class DesktopLoginController {
     @GetMapping(value = "/complete", produces = MediaType.TEXT_HTML_VALUE)
     public String complete(HttpServletRequest request, HttpServletResponse response) {
         protect(response);
+        Object result = request.getSession(false) == null ? null : request.getSession(false).getAttribute(DesktopLoginService.COMPLETED_KEY);
+        if (result instanceof DesktopLoginService.CallbackResult callback && callback.expiresAt() > System.currentTimeMillis()) {
+            return appReturnPage(response, "codearchive://auth/complete?requestId=" + callback.requestId() + "&state=" + callback.state() + "&code=" + callback.code(), true);
+        }
         if (request.getSession(false) == null
                 || !(request.getSession(false).getAttribute(DesktopLoginService.COMPLETED_KEY) instanceof Long expires)
                 || expires <= System.currentTimeMillis()) throw new DesktopLoginService.Failure(HttpStatus.GONE);
@@ -89,11 +116,17 @@ public class DesktopLoginController {
         request.getSession().removeAttribute(DesktopLoginService.SESSION_KEY);
         request.getSession().removeAttribute(DesktopLoginService.CONSENT_KEY);
         request.getSession().removeAttribute(DesktopLoginService.COMPLETED_KEY);
+        request.getSession().removeAttribute(DesktopLoginService.CALLBACK_KEY);
+        request.getSession().removeAttribute(DesktopLoginService.FAILED_KEY);
         return page("로그인을 취소했습니다", "<p>이 창을 닫아도 됩니다. PC 앱에서 다시 로그인할 수 있습니다.</p>");
     }
     @GetMapping(value = "/failed", produces = MediaType.TEXT_HTML_VALUE)
-    public String failed(HttpServletResponse response) {
-        protect(response); return page("로그인하지 못했습니다", "<p>PC 앱에서 다시 로그인해 주세요.</p>");
+    public String failed(HttpServletRequest request, HttpServletResponse response) {
+        protect(response);
+        Object result = request.getSession(false) == null ? null : request.getSession(false).getAttribute(DesktopLoginService.FAILED_KEY);
+        if (result instanceof DesktopLoginService.CallbackFailure failure && failure.expiresAt() > System.currentTimeMillis())
+            return appReturnPage(response, "codearchive://auth/failed?state=" + failure.state(), false);
+        return page("로그인하지 못했습니다", "<p>PC 앱에서 다시 로그인해 주세요.</p>");
     }
     @GetMapping(value = "/install", produces = MediaType.TEXT_HTML_VALUE)
     public String install(@RequestParam(required = false) String githubId, HttpServletRequest request, HttpServletResponse response, Authentication authentication) throws IOException {
@@ -129,7 +162,7 @@ public class DesktopLoginController {
     public ResponseEntity<?> exchange(@RequestBody ExchangeInput input, HttpServletRequest request, HttpServletResponse response) {
         protect(response);
         nativeRequest(request);
-        AppUser user = login.exchange(input.requestId(), input.verifier());
+        AppUser user = login.exchange(input.requestId(), input.verifier(), input.code());
         if (user == null) return ResponseEntity.accepted().body(Map.of("pending", true));
         // Create an independent native session; browser cookies are never copied.
         if (request.getSession(false) != null) request.getSession(false).invalidate();
@@ -180,16 +213,21 @@ public class DesktopLoginController {
         // no-referrer makes a browser navigation POST use Origin:null, which CORS correctly rejects.
         // Keep the origin for same-origin forms without sending referrers to external providers.
         response.setHeader("Referrer-Policy", "same-origin");
+        // Chrome applies form-action to the OAuth redirect chain as well as the initial POST.
+        response.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://github.com; frame-ancestors 'none'; base-uri 'none'");
     }
     private static String appReturnPage(HttpServletResponse response) {
+        return appReturnPage(response, "codearchive://auth/complete", true);
+    }
+    private static String appReturnPage(HttpServletResponse response, String target, boolean success) {
         byte[] bytes = new byte[18]; new SecureRandom().nextBytes(bytes);
         String nonce = Base64.getEncoder().encodeToString(bytes);
         response.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-" + nonce
                 + "'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
-        return page("로그인이 완료되었습니다", "<p>CodeArchive 앱을 여는 중입니다. 브라우저에서 앱 열기를 확인해 주세요.</p>"
-                + "<p><a href=\"codearchive://auth/complete\">CodeArchive 앱 열기</a></p>"
-                + "<p>앱이 이미 실행 중이면 로그인이 자동으로 반영됩니다. 이 창은 닫아도 됩니다.</p>"
-                + "<script nonce=\"" + nonce + "\">window.location.href='codearchive://auth/complete';</script>");
+        return page(success ? "로그인이 완료되었습니다" : "로그인하지 못했습니다", "<p>CodeArchive로 돌아가는 중입니다. 브라우저에서 앱 열기를 확인해 주세요.</p>"
+                + "<p><a href=\"" + HtmlUtils.htmlEscape(target) + "\">CodeArchive 앱 열기</a></p>"
+                + "<p>이 창은 닫아도 됩니다.</p>"
+                + "<script nonce=\"" + nonce + "\">window.location.replace('" + target + "');</script>");
     }
     private static String page(String title, String content) {
         return "<!doctype html><html lang=\"ko\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>CodeArchive</title>"
