@@ -42,7 +42,7 @@ it('shares the saved code theme with the archive, all community picker themes, a
       await waitFor(() => expect(document.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe(theme))
       await waitFor(() => expect(settings.lightTheme === theme || settings.darkTheme === theme).toBe(true))
     }
-    const finalTheme = DARK_THEMES.at(-1)!
+    const finalTheme = DARK_THEMES[DARK_THEMES.length - 1]!
     fireEvent.click(screen.getByRole('button', { name: '내 문제로 돌아가기' }))
     expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe(finalTheme)
     fireEvent.click(screen.getByRole('button', { name: /^커뮤니티$/ }))
