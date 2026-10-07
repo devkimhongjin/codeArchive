@@ -6,6 +6,8 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.security.SecureRandom;
+import java.util.Base64;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -32,16 +34,36 @@ public class DesktopLoginController {
     public DesktopLoginService.Started create(@RequestBody StartInput input, HttpServletRequest request, HttpServletResponse response) {
         protect(response); nativeRequest(request); return login.create(input.challenge(), request.getRemoteAddr());
     }
-    @GetMapping("/authorize")
-    public void authorize(@RequestParam String requestId, HttpServletRequest request, HttpServletResponse response) throws IOException {
-        protect(response);
+    @GetMapping(value = "/authorize", produces = MediaType.TEXT_HTML_VALUE)
+    public String authorize(@RequestParam String requestId, HttpServletRequest request, HttpServletResponse response) {
+        protectForm(response);
         String id = login.bind(requestId);
         request.getSession().setAttribute(DesktopLoginService.SESSION_KEY, id);
+        request.getSession().removeAttribute(DesktopLoginService.CONSENT_KEY);
+        request.getSession().removeAttribute(DesktopLoginService.COMPLETED_KEY);
+        return page("CodeArchive PC 앱 로그인", "<p>GitHub 계정으로 로그인하면 이 PC 앱에 연결됩니다. GitHub 로그인 화면에서 Google 로그인을 사용할 수 있습니다.</p>"
+                + csrfForm(request, "/api/desktop-auth/browser-login", "GitHub로 로그인")
+                + csrfForm(request, "/api/desktop-auth/cancel", "로그인 취소")
+                + "<p>이 PC 앱에서 직접 로그인 버튼을 눌렀을 때만 진행하세요. 요청은 5분 후 만료됩니다.</p>");
+    }
+    @PostMapping("/browser-login")
+    public void browserLogin(HttpServletRequest request, HttpServletResponse response) {
+        protect(response);
+        String id = binding(request); login.check(id);
+        request.getSession().setAttribute(DesktopLoginService.CONSENT_KEY, id);
         DesktopBrowserRedirect.oauth(response);
+    }
+    @GetMapping(value = "/complete", produces = MediaType.TEXT_HTML_VALUE)
+    public String complete(HttpServletRequest request, HttpServletResponse response) {
+        protect(response);
+        if (request.getSession(false) == null
+                || !(request.getSession(false).getAttribute(DesktopLoginService.COMPLETED_KEY) instanceof Long expires)
+                || expires <= System.currentTimeMillis()) throw new DesktopLoginService.Failure(HttpStatus.GONE);
+        return appReturnPage(response);
     }
     @GetMapping(value = "/confirm", produces = MediaType.TEXT_HTML_VALUE)
     public String confirm(HttpServletRequest request, HttpServletResponse response, Authentication authentication) {
-        protect(response); login.check(binding(request));
+        protectForm(response); login.check(binding(request));
         var identity = GithubAuthentication.identity(authentication).orElseThrow(() -> new DesktopLoginService.Failure(HttpStatus.UNAUTHORIZED));
         CsrfToken token = (CsrfToken) request.getAttribute(CsrfToken.class.getName());
         return page("PC 앱 로그인 확인", "<p>이 PC에서 직접 로그인 버튼을 눌렀을 때만 승인하세요.</p><p>로그인 계정: <strong>@"
@@ -57,12 +79,16 @@ public class DesktopLoginController {
         String githubId = GithubAuthentication.githubId(authentication).orElseThrow(() -> new DesktopLoginService.Failure(HttpStatus.UNAUTHORIZED));
         login.approve(binding(request), githubId);
         request.getSession().removeAttribute(DesktopLoginService.SESSION_KEY);
-        return page("로그인을 승인했습니다", "<p>PC 앱으로 돌아가세요. 이 창은 닫아도 됩니다.</p>");
+        request.getSession().removeAttribute(DesktopLoginService.CONSENT_KEY);
+        request.getSession().setAttribute(DesktopLoginService.COMPLETED_KEY, System.currentTimeMillis() + 300000L);
+        return appReturnPage(response);
     }
     @PostMapping(value = "/cancel", produces = MediaType.TEXT_HTML_VALUE)
     public String cancel(HttpServletRequest request, HttpServletResponse response) {
         protect(response); login.cancel(binding(request));
         request.getSession().removeAttribute(DesktopLoginService.SESSION_KEY);
+        request.getSession().removeAttribute(DesktopLoginService.CONSENT_KEY);
+        request.getSession().removeAttribute(DesktopLoginService.COMPLETED_KEY);
         return page("로그인을 취소했습니다", "<p>이 창을 닫아도 됩니다. PC 앱에서 다시 로그인할 수 있습니다.</p>");
     }
     @GetMapping(value = "/failed", produces = MediaType.TEXT_HTML_VALUE)
@@ -71,7 +97,7 @@ public class DesktopLoginController {
     }
     @GetMapping(value = "/install", produces = MediaType.TEXT_HTML_VALUE)
     public String install(@RequestParam(required = false) String githubId, HttpServletRequest request, HttpServletResponse response, Authentication authentication) throws IOException {
-        protect(response); login.available();
+        protectForm(response); login.available();
         if (githubId != null) {
             if (!githubId.matches("[0-9]{1,64}")) throw new DesktopLoginService.Failure(HttpStatus.BAD_REQUEST);
             request.getSession().setAttribute(DesktopLoginService.INSTALL_KEY, new DesktopLoginService.InstallIntent(githubId, System.currentTimeMillis() + 300000));
@@ -148,6 +174,22 @@ public class DesktopLoginController {
     private static void protect(HttpServletResponse response) {
         response.setHeader("Cache-Control", "no-store"); response.setHeader("Referrer-Policy", "no-referrer");
         response.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+    }
+    private static void protectForm(HttpServletResponse response) {
+        protect(response);
+        // no-referrer makes a browser navigation POST use Origin:null, which CORS correctly rejects.
+        // Keep the origin for same-origin forms without sending referrers to external providers.
+        response.setHeader("Referrer-Policy", "same-origin");
+    }
+    private static String appReturnPage(HttpServletResponse response) {
+        byte[] bytes = new byte[18]; new SecureRandom().nextBytes(bytes);
+        String nonce = Base64.getEncoder().encodeToString(bytes);
+        response.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-" + nonce
+                + "'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+        return page("로그인이 완료되었습니다", "<p>CodeArchive 앱을 여는 중입니다. 브라우저에서 앱 열기를 확인해 주세요.</p>"
+                + "<p><a href=\"codearchive://auth/complete\">CodeArchive 앱 열기</a></p>"
+                + "<p>앱이 이미 실행 중이면 로그인이 자동으로 반영됩니다. 이 창은 닫아도 됩니다.</p>"
+                + "<script nonce=\"" + nonce + "\">window.location.href='codearchive://auth/complete';</script>");
     }
     private static String page(String title, String content) {
         return "<!doctype html><html lang=\"ko\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>CodeArchive</title>"
