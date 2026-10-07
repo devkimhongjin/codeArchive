@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { DesktopSettings } from './DesktopSettings'
+import { useDesktopWork, markDesktopDraft } from './DesktopActivity'
+import { DesktopStatusProvider, DesktopVersion, DesktopUpdateNotice } from './DesktopStatus'
 import { DesktopSetup } from './DesktopSetup'
 import {
   BookOpen,
@@ -286,6 +288,7 @@ export default function App() {
   const [pendingCountState, setPendingCountState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [lastSyncState, setLastSyncState] = useState<'idle' | 'success' | 'partial' | 'failed'>('idle')
   const [syncing, setSyncing] = useState(false)
+  useDesktopWork(syncing || settingsBusy || loading)
   const toastId = useRef(0)
   const accountGeneration = useRef(0)
   const syncInFlight = useRef(false)
@@ -1246,12 +1249,11 @@ export default function App() {
     : user ? '서버 연결 오류' : 'GitHub 로그인 전'
 
   return (
-    <div className="app-shell">
+    <DesktopStatusProvider><div className="app-shell">
       <DesktopSetup />
       <header className="topbar">
         <div className="topbar-inner">
           <button className="brand" onClick={() => changeView('solutions')} aria-label="CodeArchive 홈">
-            
             <span className="brand-copy">
               <span className="brand-name">CodeArchive</span>
               <span className="brand-release"><span className="brand-beta">BETA</span><span className="brand-updated">{updatedLabel()}</span></span>
@@ -1311,6 +1313,7 @@ export default function App() {
       </header>
 
       <main className="page-content">
+        <DesktopVersion /><DesktopUpdateNotice />
         <section className={`connection-banner is-${bridgeStatus} ${extensionUpdateRequired ? 'needs-update' : ''}`} role="status">
           <div className="connection-icon"><Icon name={bridgeStatus === 'connected' ? 'check' : bridgeStatus === 'connecting' ? 'sync' : 'link'} size={17} /></div>
           <div className="connection-copy">
@@ -1424,7 +1427,7 @@ export default function App() {
             updateExportSettings={updateExportSettings}
             accountSettings={accountSettings}
             savedTarget={savedTarget}
-            updateAccountSettings={updateAccountSettingsDraft}
+            updateAccountSettings={next => { markDesktopDraft(); updateAccountSettingsDraft(next) }}
             codeThemeMode={codeThemeMode}
             onCodeThemeChange={(theme) => chooseCodeTheme(theme, false)}
             settingsBusy={settingsBusy}
@@ -1444,14 +1447,14 @@ export default function App() {
 
       <footer className="footer">
         <div className="footer-inner">
-          <span className="footer-brand"> CodeArchive</span>
+          <span className="footer-brand">CodeArchive</span>
           <span>풀이를 모으고, 다시 푸는 흐름을 가볍게</span>
           <span className="footer-version" title={`Updated ${BUILD_METADATA.updatedDate}`}>{buildLabel()}</span>
         </div>
       </footer>
 
       {toast && <ToastView toast={toast} onClose={() => setToast(null)} />}
-    </div>
+    </div></DesktopStatusProvider>
   )
 }
 

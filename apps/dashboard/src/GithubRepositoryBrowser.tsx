@@ -1,3 +1,4 @@
+import { useDesktopWork } from './DesktopActivity'
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, commitGithubTreeOperation, editGithubFile, getGithubBranches, getGithubEmptyDefaultBranch, getGithubFile, getGithubInstallations, getGithubRepositories, getGithubTree, previewGithubTreeOperation } from './api'
 import { CodeBlock } from './CodeBlock'
@@ -99,6 +100,7 @@ export function GithubRepositoryBrowser({ githubId, target, lightTheme, darkThem
     } finally { if (generation === browseGeneration.current) setBusy(false) }
   }
 
+  useDesktopWork(busy || fileBusy || editBusy || deleteBusy || editing)
   useEffect(() => {
     void verifyTarget()
     return () => { ++browseGeneration.current; ++fileGeneration.current }

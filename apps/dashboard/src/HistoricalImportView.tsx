@@ -1,3 +1,4 @@
+import { useDesktopWork } from './DesktopActivity'
 import { useEffect, useRef, useState } from 'react'
 import { bulkUpload, getHistoricalSubmissionIds, getMe } from './api'
 import { requestBridge } from './bridge'
@@ -48,6 +49,7 @@ export function HistoricalImportView({ extensionId, capability, supported = true
     } catch (error) { if (active()) setMessage(error instanceof Error ? error.message : '로컬 기록을 불러오지 못했습니다.') }
     finally { if (active()) setLoading(false) }
   }
+  useDesktopWork(busy || loading)
   useEffect(() => {
     mounted.current = true; run.current += 1; load.current += 1; cancel.current = true
     inFlight.current = false; setBusy(false); setRecords([]); setSelected([]); setSynced(new Set()); setServerChecked(false); setMessage(''); setProgress({ done: 0, total: 0 })

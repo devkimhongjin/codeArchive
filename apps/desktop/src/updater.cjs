@@ -17,6 +17,7 @@ function createUpdater({ version, publicKeyPath, directory, fetcher = fetch }) {
   let manifest = null, status = { state: 'idle', version: null, message: '새 버전을 확인할 수 있습니다.' }, busy = false;
   return {
     status: () => ({ ...status }),
+    defer() { if (!busy && manifest && status.state === 'ready') status = { state: 'available', version: manifest.version, message: '업데이트 적용을 보류했습니다. 작업을 마친 뒤 다시 시도해 주세요.' }; },
     async check() {
       if (busy) return { ...status };
       busy = true; manifest = null; status = { state: 'checking', version: null, message: '새 버전 확인 중…' };

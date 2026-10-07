@@ -1,4 +1,4 @@
-type DesktopStatus = { version: string; connected: boolean; autostart: boolean; packaged: boolean; update: { state: string; version: string | null; message: string } }
+export type DesktopStatus = { version: string; connected: boolean; autostart: boolean; packaged: boolean; autoUpdate: boolean; update: { state: string; version: string | null; message: string } }
 export type DesktopApi = {
   getSetup(): Promise<{ extensionPath: string; extensionVersion: string | null; available: boolean; completed: boolean }>
   openExtensionFolder(): Promise<unknown>
@@ -10,6 +10,8 @@ export type DesktopApi = {
   pair(): Promise<{ code: string; expiresAt: number }>
   disconnect(): Promise<unknown>
   setAutostart(value: boolean): Promise<unknown>
+  setAutoUpdate(value: boolean): Promise<unknown>
+  reportActivity(value: { busy: boolean; draft: boolean }): Promise<unknown>
   checkUpdate(): Promise<DesktopStatus['update']>
   installUpdate(): Promise<unknown>
 }

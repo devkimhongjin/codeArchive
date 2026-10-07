@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('codeArchiveDesktop', Object.freeze({
   completeSetup: () => ipcRenderer.invoke('desktop:setup-complete'),
   disconnect: () => ipcRenderer.invoke('desktop:disconnect'),
   setAutostart: value => ipcRenderer.invoke('desktop:autostart', value),
+  setAutoUpdate: value => ipcRenderer.invoke('desktop:auto-update', value),
+  reportActivity: value => ipcRenderer.invoke('desktop:activity', value),
   checkUpdate: () => ipcRenderer.invoke('desktop:update-check'),
   installUpdate: () => ipcRenderer.invoke('desktop:update-install')
 }));
