@@ -2,6 +2,7 @@ package com.codearchive.api.config;
 
 import com.codearchive.api.auth.GithubAccountService;
 import com.codearchive.api.auth.DesktopLoginService;
+import com.codearchive.api.auth.DesktopBrowserRedirect;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -36,11 +37,11 @@ public class GithubOAuth2SuccessHandler implements AuthenticationSuccessHandler 
         OAuth2User principal = oauth2.getPrincipal();
         accountService.upsert(principal);
         if (request.getSession(false) != null && request.getSession(false).getAttribute(DesktopLoginService.SESSION_KEY) instanceof String id) {
-            try { desktopLogin.check(id); response.sendRedirect("/api/desktop-auth/confirm"); return; }
+            try { desktopLogin.check(id); DesktopBrowserRedirect.confirm(response); return; }
             catch (DesktopLoginService.Failure unavailable) { request.getSession(false).removeAttribute(DesktopLoginService.SESSION_KEY); }
         }
         if (request.getSession(false) != null && request.getSession(false).getAttribute(DesktopLoginService.INSTALL_KEY) instanceof DesktopLoginService.InstallIntent intent) {
-            if (intent.expiresAt() > System.currentTimeMillis()) { response.sendRedirect("/api/desktop-auth/install"); return; }
+            if (intent.expiresAt() > System.currentTimeMillis()) { DesktopBrowserRedirect.install(response); return; }
             request.getSession(false).removeAttribute(DesktopLoginService.INSTALL_KEY);
         }
         response.sendRedirect(properties.dashboardRoot() + "/");

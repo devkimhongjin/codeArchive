@@ -37,7 +37,7 @@ public class DesktopLoginController {
         protect(response);
         String id = login.bind(requestId);
         request.getSession().setAttribute(DesktopLoginService.SESSION_KEY, id);
-        response.sendRedirect("/api/oauth2/authorization/github");
+        DesktopBrowserRedirect.oauth(response);
     }
     @GetMapping(value = "/confirm", produces = MediaType.TEXT_HTML_VALUE)
     public String confirm(HttpServletRequest request, HttpServletResponse response, Authentication authentication) {
@@ -78,7 +78,7 @@ public class DesktopLoginController {
         }
         String expected = installAccount(request);
         var identity = GithubAuthentication.githubId(authentication);
-        if (identity.isEmpty()) { response.sendRedirect("/api/oauth2/authorization/github"); return ""; }
+        if (identity.isEmpty()) { DesktopBrowserRedirect.oauth(response); return ""; }
         if (!expected.equals(identity.get())) {
             response.setStatus(409);
             return page("GitHub 계정이 다릅니다", "<p>웹브라우저와 PC 앱에서 같은 GitHub 계정으로 로그인한 뒤 다시 연결해 주세요.</p>");
