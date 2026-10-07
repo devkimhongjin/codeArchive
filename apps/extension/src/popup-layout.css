@@ -1,0 +1,103 @@
+.dashboard-link {
+  margin-top: 12px;
+}
+
+
+.history-entry p {
+  margin: 8px 0 0;
+  color: #7e738f;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.history-entry .primary {
+  margin-top: 12px;
+}
+
+.recent-heading {
+  align-items: flex-start;
+}
+
+.recent-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.recent-archive-link {
+  color: #735aa1;
+  font-size: 9px;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.recent-archive-link:hover {
+  text-decoration: underline;
+}
+
+.github-label {
+  color: #70637f;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.github-succeeded {
+  color: #26734d;
+}
+
+.github-failed,
+.github-unknown {
+  color: #a33846;
+}
+
+.recent-performance {
+  margin: 3px 0 0;
+  color: #776c86;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.recent-progress .recent-title {
+  display: block;
+  margin: 5px 0 0;
+  color: #56476b;
+}
+
+.progress-label {
+  color: #6847c7;
+}
+
+.release-badge {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  margin-left: auto;
+  color: #9b92a8;
+  font: 500 8px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+}
+
+.release-badge .badge {
+  margin-left: 0;
+}
+
+footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#build-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+}
+
+.retry-relay {
+  width: 100%;
+  margin-top: 10px;
+  color: #6847c7;
+  border-color: #cfc1f4;
+  background: #f8f5ff;
+  font-weight: 700;
+}

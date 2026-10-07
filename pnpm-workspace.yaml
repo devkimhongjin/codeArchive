@@ -1,4 +1,0 @@
-packages:
-  - "apps/extension"
-  - "apps/web"
-  - "packages/*"

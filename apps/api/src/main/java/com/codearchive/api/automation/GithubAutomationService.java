@@ -1,0 +1,279 @@
+package com.codearchive.api.automation;
+
+import com.codearchive.api.auth.AppUser;
+import com.codearchive.api.settings.UserSettings;
+import com.codearchive.api.settings.UserSettingsRepository;
+import com.codearchive.api.solution.Solution;
+import com.codearchive.api.solution.SolutionRepository;
+import com.codearchive.api.solution.CaptureValidationException;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.Supplier;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+/** Durable GitHub commit-job boundary; provider work happens only after capture persistence commits. */
+@Service
+public class GithubAutomationService {
+
+    private final GithubCommitJobRepository jobs;
+    private final UserSettingsRepository settings;
+    private final SolutionRepository solutions;
+    private final GithubProvider provider;
+    private final GithubJobDispatcher dispatcher;
+    private final TransactionTemplate transactions;
+    private final Duration runningLease;
+
+    @Autowired
+    public GithubAutomationService(GithubCommitJobRepository jobs, UserSettingsRepository settings,
+            SolutionRepository solutions, GithubProvider provider, GithubJobDispatcher dispatcher,
+            PlatformTransactionManager manager,
+            @Value("${codearchive.github.worker-running-lease-ms:300000}") long runningLeaseMs) {
+        this.jobs = jobs;
+        this.settings = settings;
+        this.solutions = solutions;
+        this.provider = provider;
+        this.dispatcher = dispatcher;
+        this.transactions = new TransactionTemplate(manager);
+        this.runningLease = Duration.ofMillis(Math.max(1_000, runningLeaseMs));
+    }
+
+    /** Test-only compatibility constructor; production always receives its durable dispatcher. */
+    public GithubAutomationService(GithubCommitJobRepository jobs, UserSettingsRepository settings,
+            SolutionRepository solutions, GithubProvider provider) {
+        this.jobs = jobs;
+        this.settings = settings;
+        this.solutions = solutions;
+        this.provider = provider;
+        this.dispatcher = GithubJobDispatcher.noop();
+        this.transactions = null;
+        this.runningLease = Duration.ofMinutes(5);
+    }
+
+    /**
+     * The relay calls this within its capture transaction. The unique DB constraint stays
+     * the idempotency boundary for concurrent relay deliveries.
+     */
+    @Transactional
+    public void consider(AppUser user, Solution solution) {
+        UserSettings current = settings.findByUserId(user.getId()).orElse(null);
+        if (!eligible(current, solution)) {
+            return;
+        }
+        GithubCommitJob job = jobs.findByUserIdAndCaptureId(user.getId(), solution.getCaptureId())
+                .orElseGet(() -> jobs.save(new GithubCommitJob(user, solution.getCaptureId(), current.getVersion())));
+        if (job != null) {
+            scheduleDeliveryAfterCommit(job.getId());
+        }
+    }
+
+    /** Polling-mode compatibility: stale leases are terminal and PENDING jobs are processed. */
+    public void poll() {
+        recoverStaleRunning();
+        pendingJobIds().forEach(this::process);
+    }
+
+    /** Cloud worker recovery: stale leases become UNKNOWN and PENDING work is re-enqueued. */
+    public void recoverAndDispatch() {
+        recoverStaleRunning();
+        pendingJobIds().forEach(this::dispatchCommittedJob);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, CommitJobState> statuses(AppUser user, List<String> captureIds) {
+        Map<String, CommitJobState> result = new LinkedHashMap<>();
+        jobs.findByUserIdAndCaptureIdIn(user.getId(), captureIds)
+                .forEach(job -> result.put(job.getCaptureId(), job.getState()));
+        return result;
+    }
+
+    @Transactional
+    public Map<String, CommitJobState> requestManualHistorical(List<Solution> selected, long settingsVersion,
+            long installationId, String owner, String repository, String branch) {
+        return requestHistorical(selected, settingsVersion, installationId, owner, repository, branch, false);
+    }
+
+    @Transactional
+    public Map<String, CommitJobState> requestManualHistoricalByCapture(List<Solution> selected, long settingsVersion,
+            long installationId, String owner, String repository, String branch) {
+        return requestHistorical(selected, settingsVersion, installationId, owner, repository, branch, true);
+    }
+
+    private Map<String, CommitJobState> requestHistorical(List<Solution> selected, long settingsVersion,
+            long installationId, String owner, String repository, String branch, boolean byCapture) {
+        if (selected.isEmpty()) throw new CaptureValidationException("No historical submissions selected");
+        AppUser user = selected.get(0).getUser();
+        UserSettings current = settings.findByUserId(user.getId()).orElse(null);
+        if (current == null || !current.githubTargetConfigured() || current.getVersion() != settingsVersion ||
+                !java.util.Objects.equals(current.getGithubInstallationId(), installationId) ||
+                !java.util.Objects.equals(current.getGithubOwner(), owner) ||
+                !java.util.Objects.equals(current.getGithubRepository(), repository) ||
+                !java.util.Objects.equals(current.getGithubBranch(), branch))
+            throw new CaptureValidationException("GitHub target or settings changed");
+        Map<String, CommitJobState> result = new LinkedHashMap<>();
+        for (Solution solution : selected.stream().sorted(java.util.Comparator.comparing(Solution::getCaptureId)).toList()) {
+            if (!user.getId().equals(solution.getUser().getId()) || !solution.isHistoricalImport() ||
+                    solution.getHistoricalSubmissionId() == null)
+                throw new CaptureValidationException("Only synced historical submissions can be committed");
+            GithubCommitJob job = jobs.findByUserIdAndCaptureId(user.getId(), solution.getCaptureId())
+                    .orElseGet(() -> jobs.saveAndFlush(new GithubCommitJob(user, solution.getCaptureId(),
+                            settingsVersion, CommitJobOrigin.HISTORICAL_MANUAL)));
+            if (job.getOrigin() != CommitJobOrigin.HISTORICAL_MANUAL)
+                throw new CaptureValidationException("Capture already has another GitHub job");
+            // Lock existing work before an explicit failed-job retry. UNKNOWN
+            // remains terminal because GitHub may already have accepted it.
+            if (byCapture) {
+                job = jobs.findByIdForClaim(job.getId()).orElseThrow(() -> new CaptureValidationException("Job missing"));
+                if (job.getState() == CommitJobState.FAILED) {
+                    job.retryManual(settingsVersion);
+                    jobs.saveAndFlush(job);
+                } else if ((job.getState() == CommitJobState.PENDING || job.getState() == CommitJobState.RUNNING) &&
+                        job.getSettingsGeneration() != settingsVersion) {
+                    throw new CaptureValidationException("Pending job belongs to previous settings");
+                }
+            }
+            result.put(byCapture ? solution.getCaptureId() : solution.getHistoricalSubmissionId(), job.getState());
+            if (job.getState() == CommitJobState.PENDING) scheduleDeliveryAfterCommit(job.getId());
+        }
+        return result;
+    }
+
+    public ProcessResult process(Long id) {
+        Claim claim = inTransaction(() -> claim(id));
+        if (claim == null) {
+            return ProcessResult.IGNORED;
+        }
+        GithubProvider.Result outcome;
+        try {
+            outcome = provider.createOnly(claim.settings(), claim.solution(), () -> finalWriteAuthorized(claim));
+        } catch (RuntimeException ignored) {
+            // A provider exception after a durable claim is ambiguous, never retryable.
+            outcome = GithubProvider.Result.unknown("Provider threw after durable claim");
+        }
+        GithubProvider.Result finalOutcome = outcome;
+        return inTransaction(() -> complete(id, finalOutcome));
+    }
+
+    private ProcessResult complete(Long id, GithubProvider.Result outcome) {
+        GithubCommitJob job = jobs.findById(id).orElse(null);
+        if (job == null || job.getState() != CommitJobState.RUNNING) {
+            return ProcessResult.IGNORED;
+        }
+        ProcessResult result = ProcessResult.COMPLETED;
+        switch (outcome.outcome()) {
+            case SUCCEEDED -> job.terminal(CommitJobState.SUCCEEDED);
+            case UNKNOWN -> job.terminal(CommitJobState.UNKNOWN);
+            case FAILED -> job.terminal(CommitJobState.FAILED);
+            case RETRYABLE -> {
+                if (job.getAttempts() >= 3) {
+                    job.terminal(CommitJobState.FAILED);
+                } else {
+                    job.retry();
+                    result = ProcessResult.RETRYABLE;
+                }
+            }
+        }
+        jobs.saveAndFlush(job);
+        return result;
+    }
+
+    private void recoverStaleRunning() {
+        Instant staleBefore = Instant.now().minus(runningLease);
+        inTransaction(() -> {
+            jobs.findTop25ByStateAndUpdatedAtBeforeOrderByCreatedAtAsc(CommitJobState.RUNNING, staleBefore)
+                    .forEach(job -> {
+                        job.terminal(CommitJobState.UNKNOWN);
+                        jobs.saveAndFlush(job);
+                    });
+            return null;
+        });
+    }
+
+    private List<Long> pendingJobIds() {
+        return inTransaction(() -> jobs.findTop25ByStateOrderByCreatedAtAsc(CommitJobState.PENDING).stream()
+                .map(GithubCommitJob::getId)
+                .toList());
+    }
+
+    private Claim claim(Long id) {
+        GithubCommitJob job = jobs.findByIdForClaim(id).orElse(null);
+        if (job == null || job.getState() != CommitJobState.PENDING) {
+            return null;
+        }
+        UserSettings current = settings.findByUserId(job.getUser().getId()).orElse(null);
+        Solution solution = solutions.findByUserIdAndCaptureId(job.getUser().getId(), job.getCaptureId()).orElse(null);
+        if (!eligibleForJob(current, solution, job)) {
+            job.terminal(CommitJobState.FAILED);
+            jobs.saveAndFlush(job);
+            return null;
+        }
+        job.start();
+        jobs.saveAndFlush(job);
+        return new Claim(current, solution, job.getOrigin());
+    }
+
+    private boolean eligible(UserSettings current, Solution solution) {
+        return current != null && !solution.isHistoricalImport()
+                && current.isAutoSyncEnabled() && current.isGithubAutoCommitEnabled()
+                && current.githubTargetConfigured() && current.getAutomationEnabledAt() != null
+                && !solution.getObservedAt().isBefore(current.getAutomationEnabledAt());
+    }
+
+    private boolean eligibleForJob(UserSettings current, Solution solution, GithubCommitJob job) {
+        if (current == null || solution == null || !current.githubTargetConfigured() ||
+                current.getVersion() != job.getSettingsGeneration()) return false;
+        if (job.getOrigin() == CommitJobOrigin.HISTORICAL_MANUAL)
+            return solution.isHistoricalImport() && solution.getHistoricalSubmissionId() != null;
+        return !solution.isHistoricalImport() && current.isAutoSyncEnabled() && current.isGithubAutoCommitEnabled();
+    }
+
+    private boolean finalWriteAuthorized(Claim claim) {
+        UserSettings current = settings.findByUserId(claim.settings().getUser().getId()).orElse(null);
+        if (current == null || current.getVersion() != claim.settings().getVersion() || !current.githubTargetConfigured()) return false;
+        return claim.origin() == CommitJobOrigin.HISTORICAL_MANUAL
+                ? claim.solution().isHistoricalImport() && claim.solution().getHistoricalSubmissionId() != null
+                : !claim.solution().isHistoricalImport() && current.isAutoSyncEnabled() && current.isGithubAutoCommitEnabled();
+    }
+
+    private void scheduleDeliveryAfterCommit(Long jobId) {
+        if (jobId == null) {
+            return;
+        }
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { dispatchCommittedJob(jobId); }
+            });
+        } else {
+            dispatchCommittedJob(jobId);
+        }
+    }
+
+    private void dispatchCommittedJob(Long jobId) {
+        try {
+            int generation = inTransaction(() -> jobs.findById(jobId).map(GithubCommitJob::getDeliveryGeneration).orElse(0));
+            if (generation == 0) dispatcher.dispatch(jobId);
+            else dispatcher.dispatch(jobId, generation);
+        } catch (RuntimeException exception) {
+            // The capture and PENDING job are already durable. Recovery will retry delivery.
+            org.slf4j.LoggerFactory.getLogger(GithubAutomationService.class)
+                    .warn("GitHub job task dispatch failed after commit; job remains pending (jobId={})", jobId);
+        }
+    }
+
+    private <T> T inTransaction(Supplier<T> work) {
+        return transactions == null ? work.get() : transactions.execute(status -> work.get());
+    }
+
+    private record Claim(UserSettings settings, Solution solution, CommitJobOrigin origin) { }
+
+    public enum ProcessResult { COMPLETED, RETRYABLE, IGNORED }
+}

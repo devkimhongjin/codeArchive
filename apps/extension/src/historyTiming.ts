@@ -1,0 +1,68 @@
+export const HISTORY_TIMING_STORAGE_KEY = "codearchive.history-timing.v1" as const;
+import type { Platform } from "./types";
+
+export type HistoricalTimingSample = {
+  version: 1;
+  platform: Platform;
+  count: number;
+  durationMs: number;
+  startedAt: number;
+  endedAt: number;
+};
+
+type CompletedTask = { status?: unknown; total?: unknown; completed?: unknown; skipped?: unknown;
+  saved?: unknown; duplicate?: unknown; startedAt?: unknown; endedAt?: unknown };
+
+const validTimestamp = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value > 0;
+
+export function readHistoricalTimingSample(value: unknown): HistoricalTimingSample | null {
+  if (!value || typeof value !== "object") return null;
+  const sample = value as Partial<HistoricalTimingSample>;
+  const count = sample.count, startedAt = sample.startedAt, endedAt = sample.endedAt, durationMs = sample.durationMs;
+  if (typeof count !== "number" || typeof startedAt !== "number" || typeof endedAt !== "number" || typeof durationMs !== "number") return null;
+  if (sample.version !== 1 || (sample.platform !== "JUNGOL" && sample.platform !== "SWEA" && sample.platform !== "PROGRAMMERS") || !Number.isSafeInteger(count) || count < 1 || count > 5_000 ||
+      !validTimestamp(startedAt) || !validTimestamp(endedAt) || !Number.isFinite(durationMs) || durationMs <= 0 ||
+      endedAt < startedAt || Math.abs((endedAt - startedAt) - durationMs) > 1) return null;
+  return { version: 1, platform: sample.platform, count, durationMs, startedAt, endedAt };
+}
+
+/** Completed local imports become timing evidence only when every selected store settled successfully. */
+export function timingSampleFromCompletedTask(task: CompletedTask, platform: Platform = "JUNGOL"): HistoricalTimingSample | null {
+  const count = task.total, startedAt = task.startedAt, endedAt = task.endedAt;
+  if (typeof count !== "number" || typeof startedAt !== "number" || typeof endedAt !== "number") return null;
+  if (task.status !== "DONE" || !Number.isSafeInteger(count) || count < 1 || count > 5_000 ||
+      task.completed !== count || task.skipped !== 0 || typeof task.saved !== "number" ||
+      typeof task.duplicate !== "number" || task.saved + task.duplicate !== count ||
+      !validTimestamp(startedAt) || !validTimestamp(endedAt)) return null;
+  const durationMs = endedAt - startedAt;
+  return durationMs > 0 ? { version: 1, platform, count, durationMs, startedAt, endedAt } : null;
+}
+
+export async function persistHistoricalTimingSample(
+  storage: { set: (items: Record<string, unknown>) => Promise<void> }, sample: HistoricalTimingSample
+): Promise<void> {
+  await storage.set({ [HISTORY_TIMING_STORAGE_KEY]: sample });
+}
+
+export function estimateHistoricalDuration(sample: HistoricalTimingSample | null, count: number): number | null {
+  if (!sample || !Number.isSafeInteger(count) || count < 0) return null;
+  return sample.durationMs / sample.count * count;
+}
+
+/** Update the current run's mean only when another item settles, not while its successor is pending. */
+export function estimateHistoricalTotalDuration(
+  task: CompletedTask & { lastProgressAt?: unknown }, sample: HistoricalTimingSample | null
+): number | null {
+  const { total, completed, startedAt, endedAt, lastProgressAt } = task;
+  if (typeof total !== "number" || !Number.isSafeInteger(total) || total < 1 || total > 5_000 ||
+      typeof completed !== "number" || !Number.isSafeInteger(completed) || completed < 0 || completed > total) return null;
+  if (typeof startedAt === "number" && validTimestamp(startedAt)) {
+    if (task.status === "DONE" && completed === total && typeof endedAt === "number" &&
+        validTimestamp(endedAt) && endedAt > startedAt) return endedAt - startedAt;
+    if (completed > 0 && typeof lastProgressAt === "number" && validTimestamp(lastProgressAt) && lastProgressAt > startedAt) {
+      const estimate = (lastProgressAt - startedAt) / completed * total;
+      if (Number.isFinite(estimate)) return estimate;
+    }
+  }
+  return estimateHistoricalDuration(sample, total);
+}

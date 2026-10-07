@@ -1,0 +1,289 @@
+import { PROGRAMMERS_CODE_SELECTOR, PROGRAMMERS_LESSON_PATH, PROGRAMMERS_ORIGIN, PROGRAMMERS_SUBMIT_SELECTOR } from "./adapters/programmersSelectors";
+import { SWEA_EDITOR_SELECTORS, SWEA_ORIGIN, SWEA_SOLVING_PATH, SWEA_SUBMIT_SELECTORS } from "./adapters/sweaSelectors";
+import { JUNGOL_ORIGIN, JUNGOL_PROBLEM_PATH, JUNGOL_SOURCE_SELECTOR, jungolSelectedLanguage, jungolSubmitControl } from "./adapters/jungolSelectors";
+import { BUILD_METADATA } from "../../../shared/buildMetadata";
+import { installProgrammersHistorySource } from "./programmersHistorySource";
+
+export const EDITOR_SYNC_ATTRIBUTE = "data-codearchive-editor-sync";
+
+// SWEA's editor has historically been exposed as a global `cEditor` binding.
+// Some page revisions declare it with `let`, which makes it available to page
+// scripts and inline handlers but does not create `window.cEditor`. Keep the
+// declaration type-only and resolve the binding at call time in MAIN world.
+declare const cEditor: { save?: () => unknown } | undefined;
+type MonacoModel = { uri: { toString(): string }; getValue(): string };
+type MonacoApi = { editor?: { getModels?: () => MonacoModel[] } };
+declare const monaco: MonacoApi | undefined;
+
+type MainWorldWindow = Window & {
+  cEditor?: { save?: () => unknown };
+  monaco?: MonacoApi;
+};
+
+function isSwea(location: Location): boolean {
+  return location.origin === SWEA_ORIGIN && location.pathname === SWEA_SOLVING_PATH;
+}
+
+function isProgrammers(location: Location): boolean {
+  return location.origin === PROGRAMMERS_ORIGIN && PROGRAMMERS_LESSON_PATH.test(location.pathname);
+}
+
+function isJungol(location: Location): boolean {
+  return location.origin === JUNGOL_ORIGIN && JUNGOL_PROBLEM_PATH.test(location.pathname);
+}
+
+function setSyncStatus(document: Document, status: "synced" | "failed"): void {
+  document.documentElement?.setAttribute(EDITOR_SYNC_ATTRIBUTE, `${status}:${Date.now()}`);
+}
+
+function syncSwea(document: Document, window: MainWorldWindow): boolean {
+  try {
+    let editor: MainWorldWindow["cEditor"];
+    // `typeof` is safe when the page does not define the binding. The direct
+    // lookup is required for page scripts that use a lexical global (`let
+    // cEditor`) instead of an own property on window.
+    if (typeof cEditor !== "undefined") editor = cEditor;
+    else editor = window.cEditor;
+    if (!editor || typeof editor.save !== "function") return false;
+    editor.save();
+    return SWEA_EDITOR_SELECTORS.code.some((selector) => !!document.querySelector(selector));
+  } catch {
+    return false;
+  }
+}
+
+function syncProgrammers(document: Document): boolean {
+  try {
+    const code = document.querySelector<HTMLTextAreaElement>(PROGRAMMERS_CODE_SELECTOR);
+    if (!code) return false;
+    const textareaEditor = (code as HTMLTextAreaElement & {
+      CodeMirror?: { save?: () => unknown; getValue?: () => string };
+    }).CodeMirror;
+    const wrapper = document.querySelector<HTMLElement>(".CodeMirror") as (HTMLElement & {
+      CodeMirror?: { save?: () => unknown; getValue?: () => string };
+      save?: () => unknown;
+      getValue?: () => string;
+    }) | null;
+    const codeMirror = textareaEditor ?? wrapper?.CodeMirror ?? (wrapper?.save || wrapper?.getValue ? wrapper : undefined);
+    if (codeMirror && typeof codeMirror.save !== "function" && typeof codeMirror.getValue !== "function") return false;
+    if (codeMirror && typeof codeMirror.save === "function") codeMirror.save();
+    // CodeMirror 5 normally exposes save() on the textarea instance. If a
+    // page revision only exposes getValue(), copy that authoritative value to
+    // the platform's source field before the isolated listener snapshots it.
+    if (codeMirror && typeof codeMirror.getValue === "function") {
+      const value = codeMirror.getValue();
+      if (typeof value === "string" && code.value !== value) code.value = value;
+    }
+    // A wrapper without an editor instance is not safe to treat as a synced
+    // source. A plain textarea is accepted only when no CodeMirror wrapper is
+    // present on the page.
+    if (wrapper && !codeMirror) return false;
+    return typeof code.value === "string";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read the selected history model, or its exact native response when the
+ * site's ESM Monaco instance has no global API. `#code` is the current editor
+ * and is never a fallback for an older submission.
+ */
+export function syncProgrammersHistoryModel(document: Document, window: MainWorldWindow, readObservedSource?: (uri: string) => string | null): boolean {
+  try {
+    const root = document.documentElement;
+    const requestedUri = root?.dataset.codearchiveProgrammersHistoryUri ?? "";
+    const requestStamp = root?.dataset.codearchiveProgrammersHistoryRequest ?? "";
+    if (!/^inmemory:\/\/model\/\d{1,20}$/.test(requestedUri)) return false;
+    if (!new RegExp(`^${requestedUri.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:\\d{1,20}$`).test(requestStamp)) return false;
+    const editors = [...document.querySelectorAll<HTMLElement>(
+      `.submission-history-wrapper [class*="ListItemCodeWrapper"] .monaco-editor[role="code"][data-uri="${requestedUri}"]`
+    )];
+    if (editors.length !== 1) return false;
+    const api = typeof monaco !== "undefined" ? monaco : window.monaco;
+    const models = api?.editor?.getModels?.().filter(model => model.uri.toString() === requestedUri) ?? [];
+    if (models.length > 1) return false;
+    const sourceCode = models.length === 1 ? models[0]?.getValue() : readObservedSource?.(requestedUri);
+    if (typeof sourceCode !== "string" || !sourceCode.trim() || sourceCode.length > 1_000_000) return false;
+    let target = document.querySelector<HTMLTextAreaElement>('textarea[data-codearchive-programmers-history-source]');
+    if (!target) {
+      target = document.createElement("textarea");
+      target.hidden = true;
+      target.dataset.codearchiveProgrammersHistorySource = "";
+      (document.body ?? root)?.append(target);
+    }
+    target.value = sourceCode;
+    target.dataset.codearchiveProgrammersHistoryUri = requestedUri;
+    target.dataset.codearchiveProgrammersHistoryRequest = requestStamp;
+    root?.setAttribute("data-codearchive-programmers-history-response", `${requestStamp}:${Date.now()}`);
+    return true;
+  } catch { return false; }
+}
+
+function syncJungol(document: Document, location: Location, window: MainWorldWindow): boolean {
+  try {
+    const problemNumber = location.pathname.match(JUNGOL_PROBLEM_PATH)?.[1];
+    const activeEditors = [...document.querySelectorAll<HTMLElement>(".monaco-editor[data-uri]")];
+    if (!problemNumber || activeEditors.length !== 1) return false;
+    const uri = activeEditors[0]?.dataset.uri;
+    if (!uri || !uri.includes(`/problem_${problemNumber}_`)) return false;
+    const api = typeof monaco !== "undefined" ? monaco : window.monaco;
+    const matches = api?.editor?.getModels?.().filter((model) => model.uri.toString() === uri) ?? [];
+    if (matches.length !== 1) return false;
+    const sourceCode = matches[0]?.getValue();
+    if (!sourceCode?.trim()) return false;
+    const language = jungolSelectedLanguage(document);
+    if (!language) return false;
+    let source = document.querySelector<HTMLTextAreaElement>(JUNGOL_SOURCE_SELECTOR);
+    if (!source) {
+      source = document.createElement("textarea");
+      source.dataset.codearchiveJungolSource = "";
+      source.hidden = true;
+      (document.body ?? document.documentElement).append(source);
+    }
+    source.value = sourceCode;
+    source.dataset.codearchiveJungolProblem = problemNumber;
+    source.dataset.codearchiveJungolLanguage = language;
+    delete source.dataset.codearchiveJungolRequestAt;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Observe only the platform's own JSON judge POST, without changing it. */
+export function installJungolJudgeObserver(document: Document, location: Location, window: MainWorldWindow): () => void {
+  const originalFetch = window.fetch;
+  const observedFetch: typeof fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    try {
+      if (isJungol(location) && (typeof input === "string" || input instanceof URL) && init?.method?.toUpperCase() === "POST" && typeof init.body === "string") {
+        const url = new URL(String(input), location.href);
+        const headers = new Headers(init.headers);
+        if (
+          ((url.origin === "https://saet.jungol.co.kr" && url.pathname === "/judge") ||
+            (url.origin === JUNGOL_ORIGIN && url.pathname === "/saet/judge")) &&
+          headers.get("content-type")?.startsWith("application/json")
+        ) {
+          const payload: unknown = JSON.parse(init.body);
+          if (payload && typeof payload === "object") {
+            const judge = payload as Record<string, unknown>;
+            const problemNumber = location.pathname.match(JUNGOL_PROBLEM_PATH)?.[1];
+            const sourceCode = judge.sourceText;
+            const altLanguage = judge.altLanguage;
+            const language = jungolSelectedLanguage(document);
+            if (
+              problemNumber && Number(judge.problemId) === Number(problemNumber) &&
+              typeof sourceCode === "string" && sourceCode.trim() && sourceCode.length <= 1_000_000 &&
+              typeof altLanguage === "string" && typeof language === "string" &&
+              altLanguage.replace(/[^a-z0-9]/gi, "").toUpperCase() === language.replace(/[^a-z0-9]/gi, "").toUpperCase()
+            ) {
+              let source = document.querySelector<HTMLTextAreaElement>(JUNGOL_SOURCE_SELECTOR);
+              if (!source) {
+                source = document.createElement("textarea");
+                source.dataset.codearchiveJungolSource = "";
+                source.hidden = true;
+                (document.body ?? document.documentElement).append(source);
+              }
+              source.value = sourceCode;
+              source.dataset.codearchiveJungolProblem = problemNumber;
+              source.dataset.codearchiveJungolLanguage = language;
+              source.dataset.codearchiveJungolRequestAt = String(Date.now());
+              setSyncStatus(document, "synced");
+            }
+          }
+        }
+      }
+    } catch {
+      // Never interfere with the site's own submission request.
+    }
+    return originalFetch.call(window, input, init);
+  }) as typeof fetch;
+  window.fetch = observedFetch;
+  return () => { if (window.fetch === observedFetch) window.fetch = originalFetch; };
+}
+
+export function syncEditorAtSubmitClick(document: Document, location: Location, window: MainWorldWindow = globalThis as unknown as MainWorldWindow): boolean {
+  const synced = isSwea(location)
+    ? syncSwea(document, window)
+    : isProgrammers(location)
+      ? syncProgrammers(document)
+      : isJungol(location)
+        ? syncJungol(document, location, window)
+      : false;
+  setSyncStatus(document, synced ? "synced" : "failed");
+  return synced;
+}
+
+function submitTarget(target: EventTarget | null, document: Document, location: Location): Element | null {
+  const ElementConstructor = document.defaultView?.Element;
+  if (!target) return null;
+  if (ElementConstructor && !(target instanceof ElementConstructor)) return null;
+  if (!ElementConstructor && typeof (target as unknown as { closest?: unknown }).closest !== "function") return null;
+  const element = target as Element;
+  if (isJungol(location)) {
+    let current: Element | null = element;
+    while (current) {
+      if (jungolSubmitControl(current)) return current;
+      current = current.parentElement;
+    }
+    return null;
+  }
+  const selectors = isSwea(location) ? SWEA_SUBMIT_SELECTORS : isProgrammers(location) ? [PROGRAMMERS_SUBMIT_SELECTOR] : [];
+  for (const selector of selectors) {
+    const match = element.closest(selector);
+    if (match) return match;
+  }
+  return null;
+}
+
+export function installMainWorldSync(document: Document, location: Location, window: MainWorldWindow = globalThis as unknown as MainWorldWindow): () => void {
+  const markReady = () => document.documentElement?.setAttribute("data-codearchive-main-world-build", BUILD_METADATA.buildId);
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", markReady, { once: true });
+  else markReady();
+  const removeJungolObserver = location?.origin === JUNGOL_ORIGIN ? installJungolJudgeObserver(document, location, window) : () => {};
+  const historySource = location?.origin === PROGRAMMERS_ORIGIN ? installProgrammersHistorySource(document, location, window) : null;
+  let historyRetry: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+  const readHistorySource = () => {
+    if (historyRetry !== undefined) clearTimeout(historyRetry);
+    const stamp = document.documentElement?.dataset.codearchiveProgrammersHistoryRequest;
+    let attempts = 0;
+    const attempt = () => {
+      historyRetry = undefined;
+      if (disposed || !isProgrammers(location) || !stamp || document.documentElement?.dataset.codearchiveProgrammersHistoryRequest !== stamp) return;
+      if (syncProgrammersHistoryModel(document, window, historySource?.read) || ++attempts >= 100) return;
+      historyRetry = setTimeout(attempt, 100);
+    };
+    attempt();
+  };
+  const onClick = (event: Event) => {
+    if (submitTarget(event.target, document, location)) void syncEditorAtSubmitClick(document, location, window);
+  };
+  document.addEventListener("click", onClick, true);
+  const MutationObserverConstructor = document.defaultView?.MutationObserver ?? globalThis.MutationObserver;
+  const historySourceObserver = MutationObserverConstructor ? new MutationObserverConstructor(() => {
+    if (isProgrammers(location)) readHistorySource();
+  }) : null;
+  let observingHistoryRoot = false;
+  const observeHistoryRoot = () => {
+    const root = document.documentElement;
+    if (!root || observingHistoryRoot) return;
+    observingHistoryRoot = true;
+    historySourceObserver?.observe(root, { attributes: true, attributeFilter: ["data-codearchive-programmers-history-uri"] });
+  };
+  observeHistoryRoot();
+  if (!observingHistoryRoot) document.addEventListener("DOMContentLoaded", observeHistoryRoot, { once: true });
+  return () => {
+    disposed = true;
+    if (historyRetry !== undefined) clearTimeout(historyRetry);
+    historySource?.cleanup();
+    document.removeEventListener("click", onClick, true);
+    document.removeEventListener("DOMContentLoaded", observeHistoryRoot);
+    historySourceObserver?.disconnect();
+    removeJungolObserver();
+  };
+}
+
+if (typeof document !== "undefined" && typeof window !== "undefined") {
+  installMainWorldSync(document, window.location, window);
+}

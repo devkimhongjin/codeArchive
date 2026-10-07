@@ -1,0 +1,32 @@
+import type { PlatformAdapter } from "../types";
+import { ProgrammersAdapter } from "./programmers";
+import { SweaAdapter } from "./swea";
+import { JungolAdapter } from "./jungol";
+
+export function createAdapter(
+  document: Document,
+  location: Location,
+  sweaProblemUrl: string | null = null,
+  allowSweaQuerylessFallback = true
+): PlatformAdapter | null {
+  if (location.origin === "https://swexpertacademy.com" && location.pathname === "/main/solvingProblem/solvingProblem.do") {
+    return new SweaAdapter(document, location, undefined, undefined, sweaProblemUrl, allowSweaQuerylessFallback);
+  }
+  // Keep the listener on the origin when the site navigates to a lesson
+  // without loading a new document. The adapter still verifies the exact
+  // lesson path before accepting a submission.
+  if (location.origin === "https://school.programmers.co.kr") {
+    return new ProgrammersAdapter(document, location);
+  }
+  // Jungol navigates from lists to problems without reloading the document.
+  // Keep the adapter alive across that route change; its problem detection
+  // remains restricted to an exact /problem/<number> path.
+  if (location.origin === "https://jungol.co.kr") {
+    return new JungolAdapter(document, location);
+  }
+  return null;
+}
+
+export { ProgrammersAdapter } from "./programmers";
+export { SweaAdapter } from "./swea";
+export { JungolAdapter } from "./jungol";

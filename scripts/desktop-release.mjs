@@ -1,0 +1,13 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import { createHash, sign, verify } from 'node:crypto';
+import { masterReleaseSource } from './release-source.mjs';
+const [installer, output] = process.argv.slice(2);
+const config = JSON.parse(await readFile('apps/desktop/package.json', 'utf8'));
+if (!/^\d+\.\d+\.\d+$/.test(config.version) || !installer || !output || !process.env.CODEARCHIVE_DESKTOP_UPDATE_KEY) throw new Error('Installer, output and dedicated update signing key are required.');
+const notes = await readFile(`docs/releases/desktop-v${config.version}.md`, 'utf8');
+if (!notes.startsWith(`# CodeArchive Desktop v${config.version}`)) throw new Error('Versioned desktop release notes are required.');
+const source = masterReleaseSource({ kind: 'desktop' });
+const manifest = { version: config.version, source, artifact: { url: `https://github.com/devkimhongjin/codeArchive/releases/download/desktop-v${config.version}/CodeArchive-Setup-${config.version}.exe`, sha256: createHash('sha256').update(await readFile(installer)).digest('hex') } };
+const signature = sign(null, Buffer.from(JSON.stringify(manifest)), process.env.CODEARCHIVE_DESKTOP_UPDATE_KEY).toString('base64');
+if (!verify(null, Buffer.from(JSON.stringify(manifest)), await readFile('apps/desktop/src/update-public-key.pem'), Buffer.from(signature, 'base64'))) throw new Error('Release signing key does not match the app public key.');
+await writeFile(output, JSON.stringify({ manifest, signature }, null, 2) + '\n');

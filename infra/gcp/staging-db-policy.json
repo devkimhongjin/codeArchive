@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "inventoryStatus": "verified",
+  "reviewedAt": "2026-10-06T00:14:55Z",
+  "validUntil": "2026-10-13T00:14:55Z",
+  "services": [
+    {
+      "project": "project-eab5ae90-9598-4b25-92f",
+      "region": "asia-southeast1",
+      "service": "codearchive-api-stg",
+      "role": "nonproduction",
+      "datasourceAlias": "staging-direct",
+      "evidence": "GCP Cloud Run codearchive-api-stg service description and staging target rechecked 2026-10-06; prod Spring profile, empty command/args, unchanged datasource secret versions 1",
+      "springProfile": "prod"
+    },
+    {
+      "project": "project-eab5ae90-9598-4b25-92f",
+      "region": "asia-southeast1",
+      "service": "codearchive-github-worker-stg",
+      "role": "nonproduction",
+      "datasourceAlias": "staging-direct",
+      "evidence": "GCP Cloud Run codearchive-github-worker-stg service description and staging target rechecked 2026-10-06; prod Spring profile, empty command/args, unchanged datasource secret versions 1",
+      "springProfile": "prod"
+    }
+  ],
+  "datasourceAliases": [
+    {
+      "alias": "staging-direct",
+      "canonicalDatabaseId": "neon:old-sea-48302710:br-damp-sun-azcrpfkb:neondb:codearchive_v2",
+      "evidence": "Canonical Neon mapping originally verified 2026-09-23 for direct compute ep-polished-field-az66tpuq. On 2026-10-06 both Cloud Run services still bind the same immutable URL/username/password Secret Manager versions 1, ENABLED and created 2026-09-23; no datasource remapping performed. See docs/staging-inventory-review-20261006.md",
+      "secretVersions": {
+        "url": { "name": "codearchive-staging-datasource-url", "version": "1" },
+        "username": { "name": "codearchive-staging-datasource-username", "version": "1" },
+        "password": { "name": "codearchive-staging-datasource-password", "version": "1" }
+      }
+    }
+  ],
+  "approvedNonproductionDatabases": [
+    {
+      "canonicalDatabaseId": "neon:old-sea-48302710:br-damp-sun-azcrpfkb:neondb:codearchive_v2",
+      "evidence": "Neon codearchive-beta staging branch br-damp-sun-azcrpfkb forked from production 2026-09-23; codearchive_v2 Flyway rank 12 and 5 users/99 solutions observed"
+    }
+  ],
+  "protectedProductionDatabases": [
+    "neon:old-sea-48302710:br-old-dust-aztcw6u8:neondb:codearchive_v2"
+  ]
+}
