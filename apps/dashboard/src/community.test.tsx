@@ -38,16 +38,26 @@ it('shows login or server connection guidance without requesting community data'
 
 it('loads only same-problem summaries and fetches source after explicit selection', async () => {
   render(<Harness />)
-  expect(await screen.findByRole('button', { name: /닉네임.*다른 풀이.*코드 보기/ })).toBeTruthy()
+  const listPanel = screen.getByRole('region', { name: '공개 풀이 목록' })
+  const codePanel = screen.getByRole('region', { name: '선택한 공개 풀이 코드' })
+  expect(codePanel.textContent).toContain('풀이를 선택해 주세요')
+  expect(listPanel.contains(await screen.findByRole('button', { name: /닉네임.*다른 풀이.*코드 보기/ }))).toBe(true)
   expect(mocks.list).toHaveBeenCalledWith('100', 'SWEA', '1234', '', 0, 'submitted')
   expect(mocks.detail).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: /닉네임.*다른 풀이/ }))
-  expect((await screen.findByLabelText('검증 코드')).textContent).toContain('class Other {}')
+  const code = await screen.findByLabelText('검증 코드')
+  expect(code.textContent).toContain('class Other {}')
+  expect(codePanel.contains(code)).toBe(true)
+  expect(listPanel.contains(code)).toBe(false)
   expect(mocks.detail).toHaveBeenCalledWith('100', 44)
   fireEvent.click(screen.getByRole('button', { name: '목록으로' }))
   await waitFor(() => expect(screen.queryByLabelText('검증 코드')).toBeNull())
+  const results = listPanel.querySelector('.community-results')!
+  results.scrollTop = 500
   fireEvent.click(screen.getByRole('button', { name: '다음' }))
   await waitFor(() => expect(mocks.list).toHaveBeenCalledWith('100', 'SWEA', '1234', '', 1, 'submitted'))
+  await screen.findByRole('button', { name: /닉네임.*다른 풀이.*코드 보기/ })
+  expect(listPanel.querySelector('.community-results')!.scrollTop).toBe(0)
   fireEvent.change(screen.getByLabelText('커뮤니티 언어 필터'), { target: { value: 'java' } })
   await waitFor(() => expect(mocks.list).toHaveBeenCalledWith('100', 'SWEA', '1234', 'java', 0, 'submitted'))
 })
@@ -116,10 +126,10 @@ it('ignores a visibility response from a previous GitHub account', async () => {
   expect((screen.getByRole('button', { name: '공개하기' }) as HTMLButtonElement).disabled).toBe(false)
 })
 
-it('renders a table with own submissions, nickname only, and identifiable own visibility controls', async () => {
+it('renders a submission list with own submissions, nickname only, and identifiable own visibility controls', async () => {
   mocks.list.mockResolvedValue({ ...page, items: [{ ...summary, mine: true, executionTime: 3, memoryValue: 2, memoryUnit: 'KiB', codeLength: 13 }] })
   render(<Harness initialSolutions={[{ ...own, executionTime: 4, memoryValue: 12, memoryUnit: 'KB', solvedAt: '2026-09-23T00:00:00Z' }]} />)
-  expect(await screen.findByRole('table')).toBeTruthy()
+  expect(await screen.findByRole('list')).toBeTruthy()
   expect(screen.getByText('내 풀이')).toBeTruthy()
   expect(screen.queryByText('다른 사용자')).toBeNull()
   expect(screen.getByText(/실행시간 4 ms · 메모리 12 KB · 코드 길이 13 B/)).toBeTruthy()
