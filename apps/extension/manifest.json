@@ -1,17 +1,23 @@
 {
   "manifest_version": 3,
   "name": "CodeArchive",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "description": "Capture accepted algorithm solutions locally for CodeArchive.",
   "minimum_chrome_version": "120",
-  "permissions": ["downloads", "alarms", "storage", "scripting"],
+  "permissions": [
+    "downloads",
+    "alarms",
+    "storage",
+    "scripting"
+  ],
   "host_permissions": [
     "https://swexpertacademy.com/*",
     "https://school.programmers.co.kr/*",
     "https://jungol.co.kr/*",
     "https://api.github.com/*",
     "https://codearchive-dashboard-beta.netlify.app/*",
-    "http://localhost:5173/*"
+    "http://localhost:5173/*",
+    "http://127.0.0.1:18791/*"
   ],
   "background": {
     "service_worker": "background.js",

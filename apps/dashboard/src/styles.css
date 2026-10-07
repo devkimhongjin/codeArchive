@@ -358,3 +358,10 @@ h1, h2, p { margin-top: 0; }
 .history-commit-preview { border: 1px solid var(--border, #dbe2ee); border-radius: 12px; padding: 20px; margin-top: 16px; }
 .history-commit-preview ul { max-height: 240px; overflow: auto; overflow-wrap: anywhere; }
 .historical-import-list { max-height: 360px; overflow: auto; }
+/* Desktop-only controls reuse the existing dashboard card and button styles. */
+.desktop-settings { margin-bottom: 24px; padding: 24px; }
+.desktop-settings h3 { display: flex; align-items: baseline; gap: 12px; }
+.desktop-settings p { margin: 12px 0; }
+.desktop-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+.desktop-pair-code { font-family: monospace; letter-spacing: 3px; padding: 4px 8px; }
+.desktop-autostart { display: flex; gap: 8px; align-items: center; }

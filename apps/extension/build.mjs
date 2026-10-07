@@ -43,5 +43,5 @@ await cp(resolve(root, "src/archive-viewer.css"), resolve(dist, "archive-viewer.
 await cp(resolve(root, "src/history.html"), resolve(dist, "history.html"));
 await cp(resolve(root, "src/history.css"), resolve(dist, "history.css"));
 
-const published = await publishConfiguredBuild({ extensionRoot: root, dist, backupRoot: resolve(root, "../../output/extension-build-backups") });
+const published = process.env.CODEARCHIVE_SKIP_INSTALLED_EXTENSION === 'true' ? { published: false } : await publishConfiguredBuild({ extensionRoot: root, dist, backupRoot: resolve(root, "../../output/extension-build-backups") });
 if (published.published) console.log(`Updated installed extension (${published.files} files); backup: ${published.backup ?? "none"}`);

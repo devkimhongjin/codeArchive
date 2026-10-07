@@ -1,0 +1,49 @@
+# Windows PC 앱
+
+관련 Issue: #371(앱), #372(확장 연결), #373(설치·업데이트·자동 시작).
+
+## 기존 사용자와의 호환성
+
+PC 앱은 별도 패키지입니다. 기존 extension-v0.2.x 릴리스, 웹 대시보드, API 및 로컬 IndexedDB 데이터는 유지합니다. 확장 v0.3.0은 웹 연결을 유지하면서 PC 앱 연결을 추가합니다. 기존 확장을 삭제하지 않고 같은 ID와 설치 폴더에서 업데이트합니다.
+
+## 사용
+
+1. Windows 설치 파일을 실행하고 CodeArchive를 엽니다.
+2. 설정 → PC 앱 설정 → 확장 연결 코드 발급을 선택합니다.
+3. Chrome 확장 팝업의 PC 앱 연결에 6자리 코드를 입력합니다. 코드는 2분 동안 한 번만 사용할 수 있습니다.
+4. 앱이 연결되면 로그인 없이 로컬 풀이를 확인할 수 있습니다. 서버 동기화와 GitHub 작업은 GitHub 로그인 후 명시적으로 실행합니다.
+5. 앱 창을 닫으면 트레이에서 실행됩니다. 트레이 메뉴의 종료를 선택하면 완전히 종료합니다.
+
+자동 시작은 기본으로 꺼져 있고 설치한 앱의 설정에서 켤 수 있습니다. Windows 로그인 시 트레이로 시작합니다. 기존 사이트 수집은 Chrome 확장에서 계속 진행하며 사이트 창 유지 안내가 적용됩니다. 앱만 종료해도 확장 로컬 수집은 영향을 받지 않습니다.
+
+## 연결 및 로그인
+
+PC 앱은 `127.0.0.1:18791`에만 바인딩합니다. `/pair` 및 `/bridge`는 정확한 CodeArchive 확장 Origin과 Host를 검사하며 일반 웹 페이지와 다른 확장 Origin을 거부합니다. 연결 코드는 실패 5회, 2분 만료, 1회 소비를 적용합니다. 승인 후 256비트 토큰을 발급하고 앱에는 Windows 보안 저장소로 암호화해 저장합니다. 확장은 자신의 Chrome storage에 토큰을 저장합니다. 연결 해제는 토큰과 소켓을 폐기하며 풀이를 삭제하지 않습니다.
+
+연결 때 양쪽의 새 nonce와 역할별 HMAC으로 앱·확장이 서로 인증합니다. 이전 연결에서 받은 challenge와 READY는 새 연결에서 재사용할 수 없으며, 지속 토큰은 재연결 메시지로 보내지 않습니다. 연결 코드는 요청 본문을 받은 뒤에도 같은 발급 세대·만료·시도 횟수를 재확인합니다.
+
+확장 서비스 워커는 별도 PC 세션 identity에 기존 DashboardBridge 계약을 적용합니다. 웹 세션과 capability를 공유하지 않으며 읽기만으로 ACK 권한이 생기지 않습니다. 기존 서버 업로드 성공 후 ACK·계정 검증·설정 버전 계약을 재사용합니다.
+
+Electron renderer에는 Node.js 권한이 없습니다. sandbox, contextIsolation, CSP 및 main-frame IPC 검증을 적용합니다. API 요청은 기존 운영 로그인/API Origin의 `/api/` 경로와 허용 헤더만 접근합니다. 현재 OAuth callback을 유지하기 위해 격리된 GitHub 로그인 창과 앱 전용 persistent 세션을 사용합니다. Chrome 계정 쿠키나 프로필은 읽지 않습니다. 기존 Netlify API 프록시는 현재 호환 단계에서 유지하며, GCP로 로그인 진입점까지 직접 이전하는 작업은 별도 서버 변경이 필요합니다. 이 브랜치는 Netlify를 배포하지 않습니다.
+
+## 빌드와 검증
+
+```powershell
+npm --prefix apps/dashboard ci
+npm --prefix apps/desktop ci
+npm --prefix apps/desktop test
+npm --prefix apps/desktop run pack
+npm --prefix apps/desktop run dist
+```
+
+개발 실행은 `npm --prefix apps/desktop run build` 후 `npm --prefix apps/desktop start`입니다. 확장 빌드는 기본으로 기존 build.local.json 설치 폴더를 백업 후 갱신합니다. 격리 검증에서는 `CODEARCHIVE_SKIP_INSTALLED_EXTENSION=true`로 설치 폴더 반영을 생략할 수 있습니다.
+
+`test:smoke`는 `CODEARCHIVE_DESKTOP_TEST_USER_DATA`와 `CODEARCHIVE_DESKTOP_SMOKE_OUTPUT`를 별도 검증 폴더로 지정하여 실행합니다. 앱 renderer·IPC·합성 확장 peer·실제 providers 읽기 API를 검증하며, 실제 사용자 Chrome 연결 검증을 대체하지 않습니다. 배포 패키지에는 smoke driver가 포함되지 않습니다.
+
+## 릴리스와 업데이트
+
+GitHub Actions desktop-release는 Windows NSIS 설치 파일, 버전별 노트, Ed25519 서명된 업데이트 메타데이터를 생성합니다. signing 전용 `CODEARCHIVE_DESKTOP_UPDATE_KEY` secret이 필요하고 공개키와 일치하지 않으면 릴리스를 만들 수 없습니다. 개인키는 커밋·로그에 남기지 않습니다.
+
+앱은 desktop-v 태그의 안정 릴리스만 선택합니다. 기존 확장 릴리스와 버전이 섞이지 않습니다. 앱 시작과 실행 중 6시간마다 자동 확인하고 설정에서도 확인할 수 있습니다. 사용자가 다운로드·적용을 선택하면 서명, 정확한 GitHub 설치 파일 URL, 더 높은 버전, SHA256을 검증합니다. 진행 중인 앱 요청이 있으면 설치를 거부합니다. 업데이트 파일은 사용자 데이터 폴더에 저장하며 installer는 shell 없이 실행합니다.
+
+업데이트 무결성 서명은 Windows SmartScreen용 Authenticode 서명과 별개입니다. 현재 베타 installer는 Authenticode 인증서가 없어 Windows 게시자 경고가 표시될 수 있습니다. 업데이트에 사용한 개인키는 이후 버전에서도 동일하게 보관해야 합니다.

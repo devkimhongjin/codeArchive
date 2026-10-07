@@ -1,0 +1,55 @@
+{
+  "name": "codearchive-desktop",
+  "productName": "CodeArchive",
+  "version": "0.1.0",
+  "description": "CodeArchive Windows dashboard",
+  "author": "devkimhongjin",
+  "private": true,
+  "main": "src/main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "electron .",
+    "test": "node --import tsx --test test/*.test.cjs",
+    "test:smoke": "electron . --smoke-test",
+    "pack": "npm run build && electron-builder --win --dir",
+    "dist": "npm run build && electron-builder --win nsis"
+  },
+  "dependencies": {
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "electron": "44.6.0",
+    "electron-builder": "26.15.3",
+    "tsx": "4.23.13"
+  },
+  "build": {
+    "appId": "io.github.devkimhongjin.codearchive",
+    "directories": {
+      "output": "../../output/desktop-packages"
+    },
+    "files": [
+      "src/**",
+      "renderer/**",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "signAndEditExecutable": false,
+      "artifactName": "CodeArchive-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "protocols": [
+      {
+        "name": "CodeArchive",
+        "schemes": [
+          "codearchive"
+        ]
+      }
+    ]
+  }
+}

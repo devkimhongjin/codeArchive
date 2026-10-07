@@ -1,6 +1,7 @@
 import { isCaptureRecord, isUuid } from "./capture";
 import { createExtensionUpdateChecker, EXTENSION_UPDATE_KEY } from './extensionUpdates';
 import { DashboardBridge } from "./bridge";
+import { DesktopConnection } from './desktopConnection';
 import { IndexedDbCaptureStore } from "./storage";
 import { loadPopupLocalState, prepareCaptureDownload, retryRelayConnection, storeCaptureLocalFirst } from "./backgroundActions";
 import { exportCode } from "./export";
@@ -31,6 +32,10 @@ const bridge = new DashboardBridge(store, {
 });
 
 const LOCAL_HISTORY_ROUTE_KEY = "codearchive-local-history-route";
+const desktopConnection = new DesktopConnection(bridge);
+void desktopConnection.connect();
+chrome.alarms.create('codearchive-desktop-reconnect', { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === 'codearchive-desktop-reconnect') void desktopConnection.connect(); });
 type LocalHistoryRoute = { tabId: number; url: string; status: string; platform: Platform };
 
 async function openHistoryPage(): Promise<{ status: "OPENED" }> {
@@ -465,6 +470,13 @@ function mutateProgress(update: Parameters<typeof updateSubmissionProgress>[1]):
 type AnyInternalMessage = InternalMessage | ProgrammersAuxiliaryMessage;
 
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
+  const desktopMessage = message as { type?: string; code?: string } | null;
+  if (desktopMessage && ['DESKTOP_STATUS', 'DESKTOP_PAIR', 'DESKTOP_DISCONNECT'].includes(desktopMessage.type ?? '')) {
+    if (!isPopupSender(sender)) { sendResponse({ error: 'UNAUTHORIZED' }); return false; }
+    const operation = desktopMessage.type === 'DESKTOP_PAIR' ? desktopConnection.pair(desktopMessage.code ?? '') : desktopMessage.type === 'DESKTOP_DISCONNECT' ? desktopConnection.disconnect() : desktopConnection.connect().then(() => desktopConnection.status());
+    void operation.then(sendResponse).catch(error => sendResponse({ error: error instanceof Error ? error.message : 'PC 앱에 연결하지 못했습니다.' }));
+    return true;
+  }
   const object = asObject(message) as Partial<AnyInternalMessage> | null;
   if (!object?.type) return false;
 

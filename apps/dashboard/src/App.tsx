@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { DesktopSettings } from './DesktopSettings'
 import {
   BookOpen,
   Check,
@@ -416,6 +417,11 @@ export default function App() {
     toastId.current += 1
     setToast({ id: toastId.current, kind, message })
   }
+  useEffect(() => {
+    const failed = () => showToast('error', 'PC 앱에서 로그인 창을 열지 못했습니다. 다시 시도해 주세요.')
+    window.addEventListener('codearchive-login-error', failed)
+    return () => window.removeEventListener('codearchive-login-error', failed)
+  }, [])
 
   const refreshSolutions = async (expectedGeneration?: number, expectedGithubId?: string) => {
     const generation = expectedGeneration ?? accountGeneration.current
@@ -2079,6 +2085,7 @@ function SettingsView({
     <section className="settings-page">
       <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> WORKSPACE / {section === 'github' ? 'GITHUB' : 'SETTINGS'}</p><h1>{section === 'github' ? 'GitHub 관리' : '설정'}</h1><p>{section === 'github' ? '저장소와 자동 커밋을 관리합니다.' : '프로필, 코드 저장 및 자동 동기화를 관리합니다.'}</p></div>
       {section === 'github' && user && savedTarget && <GithubRepositoryBrowser githubId={user.githubId} target={savedTarget} lightTheme={accountSettings.lightTheme} darkTheme={accountSettings.darkTheme} codeThemeMode={codeThemeMode} onExpectedAccountChange={onExpectedAccountChange} />}
+      {section === 'settings' && <DesktopSettings />}
       {section === 'settings' && <CommunitySettings user={user} ready={accountSettingsReady} publicByDefault={accountSettings.communityPublicByDefault ?? true} onChange={communityPublicByDefault => updateAccountSettings({ ...accountSettings, communityPublicByDefault })} onSave={onSaveSettings} saving={settingsBusy} onPublished={onCommunityPublished} onAuthInvalid={onExpectedAccountChange} />}
       <div className={`settings-layout ${section === 'github' ? 'is-github-management' : ''}`}>
         <div className="settings-column">

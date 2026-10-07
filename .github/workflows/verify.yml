@@ -28,6 +28,7 @@ jobs:
           cache-dependency-path: |
             apps/dashboard/package-lock.json
             apps/extension/package-lock.json
+            apps/desktop/package-lock.json
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -39,6 +40,10 @@ jobs:
       - run: npm --prefix apps/dashboard ci
       - run: npm --prefix apps/dashboard test
       - run: npm --prefix apps/dashboard run build
+      - run: npm --prefix apps/desktop ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - run: npm --prefix apps/desktop test
       - run: npm --prefix apps/extension ci
       - run: npm --prefix apps/extension test
       - run: npm --prefix apps/extension run build

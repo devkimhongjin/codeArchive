@@ -3,6 +3,7 @@ node_modules/
 
 # Build
 dist/
+apps/desktop/renderer/
 coverage/
 apps/extension/build.local.json
 output/extension-build-backups/
@@ -33,6 +34,7 @@ Thumbs.db
 # Chrome extension local data
 *.crx
 *.pem
+!apps/desktop/src/update-public-key.pem
 
 # Temporary files
 tmp/

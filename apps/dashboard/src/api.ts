@@ -1,6 +1,7 @@
 import { GITHUB_LOGIN_URL, type AccountSettings, type AuthProviders, type BulkResponse, type Capture, type RelayGrant, type Solution, type User, type GithubInstallation, type GithubInstallationStart, type GithubRepositoryTarget, type GithubBranchTarget, type GithubDirectoryTarget, type GithubTreePage, type GithubFileView, type GithubAddFileRequest, type GithubEditFileRequest, type GithubTreeOperationPreviewRequest, type GithubTreeOperationPreview, type GithubPage, type CommunityPage, type CommunityDetail, type Platform } from './types'
 
 export { GITHUB_LOGIN_URL } from './types'
+import { apiFetch } from './desktop'
 
 export class ApiError extends Error {
   status: number
@@ -20,7 +21,7 @@ let csrfState: { headerName: string; token: string } | null = null
 
 async function ensureCsrf(force = false) {
   if (csrfState && !force) return csrfState
-  const response = await fetch('/api/auth/csrf', { credentials: 'include' })
+  const response = await apiFetch('/api/auth/csrf', { credentials: 'include' })
   const payload = (await readPayload(response)) as CsrfResponse | undefined
   if (!response.ok || !payload?.token) {
     throw new ApiError('보안 토큰을 가져오지 못했습니다.', response.status || 500, payload)
@@ -58,7 +59,7 @@ export async function requestJson<T>(path: string, init: RequestInit = {}, retry
     headers.set(csrf.headerName, csrf.token)
   }
 
-  const response = await fetch(path, {
+  const response = await apiFetch(path, {
     ...init,
     headers,
     credentials: 'include',
