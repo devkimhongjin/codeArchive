@@ -35,14 +35,40 @@ class DesktopOAuthRoutingTest {
         assertThat(response.getRedirectedUrl()).isEqualTo("http://localhost:5173/");
         assertThat(request.getSession().getAttribute(DesktopLoginService.INSTALL_KEY)).isNull();
     }
+    @Test void consentedDesktopLoginApprovesOnlyTheFreshOAuthAccountAndReturnsToTheApp() throws Exception {
+        var login = mock(DesktopLoginService.class);
+        var handler = new GithubOAuth2SuccessHandler(mock(GithubAccountService.class), new GithubOAuth2Properties(), login);
+        var request = new MockHttpServletRequest(); var response = new MockHttpServletResponse();
+        String id = "a".repeat(64);
+        request.getSession().setAttribute(DesktopLoginService.SESSION_KEY, id);
+        request.getSession().setAttribute(DesktopLoginService.CONSENT_KEY, id);
+        handler.onAuthenticationSuccess(request, response, auth());
+        verify(login).approve(id, "101");
+        assertThat(response.getRedirectedUrl()).isEqualTo("/api/desktop-auth/complete");
+        assertThat(request.getSession().getAttribute(DesktopLoginService.SESSION_KEY)).isNull();
+        assertThat(request.getSession().getAttribute(DesktopLoginService.CONSENT_KEY)).isNull();
+        assertThat(request.getSession().getAttribute(DesktopLoginService.COMPLETED_KEY)).isInstanceOf(Long.class);
+    }
+    @Test void mismatchedConsentCannotApproveANativeLogin() throws Exception {
+        var login = mock(DesktopLoginService.class);
+        var handler = new GithubOAuth2SuccessHandler(mock(GithubAccountService.class), new GithubOAuth2Properties(), login);
+        var request = new MockHttpServletRequest(); var response = new MockHttpServletResponse();
+        request.getSession().setAttribute(DesktopLoginService.SESSION_KEY, "a".repeat(64));
+        request.getSession().setAttribute(DesktopLoginService.CONSENT_KEY, "b".repeat(64));
+        handler.onAuthenticationSuccess(request, response, auth());
+        verify(login, never()).approve(anyString(), anyString());
+        assertThat(response.getRedirectedUrl()).isEqualTo("/api/desktop-auth/confirm");
+    }
     @Test void oauthFailureCancelsThePendingNativeHandoff() throws Exception {
         var login = mock(DesktopLoginService.class);
         var handler = new GithubOAuth2FailureHandler(new GithubOAuth2Properties(), login);
         var request = new MockHttpServletRequest(); var response = new MockHttpServletResponse();
         request.getSession().setAttribute(DesktopLoginService.SESSION_KEY, "a".repeat(64));
+        request.getSession().setAttribute(DesktopLoginService.CONSENT_KEY, "a".repeat(64));
         handler.onAuthenticationFailure(request, response, new org.springframework.security.authentication.BadCredentialsException("test"));
         verify(login).cancel("a".repeat(64));
         assertThat(request.getSession().getAttribute(DesktopLoginService.SESSION_KEY)).isNull();
+        assertThat(request.getSession().getAttribute(DesktopLoginService.CONSENT_KEY)).isNull();
         assertThat(response.getRedirectedUrl()).isEqualTo("/api/desktop-auth/failed");
     }
 }

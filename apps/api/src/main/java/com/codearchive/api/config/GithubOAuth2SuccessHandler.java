@@ -37,8 +37,22 @@ public class GithubOAuth2SuccessHandler implements AuthenticationSuccessHandler 
         OAuth2User principal = oauth2.getPrincipal();
         accountService.upsert(principal);
         if (request.getSession(false) != null && request.getSession(false).getAttribute(DesktopLoginService.SESSION_KEY) instanceof String id) {
-            try { desktopLogin.check(id); DesktopBrowserRedirect.confirm(response); return; }
-            catch (DesktopLoginService.Failure unavailable) { request.getSession(false).removeAttribute(DesktopLoginService.SESSION_KEY); }
+            try {
+                desktopLogin.check(id);
+                if (id.equals(request.getSession(false).getAttribute(DesktopLoginService.CONSENT_KEY))) {
+                    String githubId = com.codearchive.api.auth.GithubAuthentication.githubId(authentication).orElseThrow();
+                    desktopLogin.approve(id, githubId);
+                    request.getSession(false).removeAttribute(DesktopLoginService.SESSION_KEY);
+                    request.getSession(false).removeAttribute(DesktopLoginService.CONSENT_KEY);
+                    request.getSession(false).setAttribute(DesktopLoginService.COMPLETED_KEY, System.currentTimeMillis() + 300000L);
+                    DesktopBrowserRedirect.complete(response);
+                } else DesktopBrowserRedirect.confirm(response); // Compatibility for already-open legacy approval pages.
+                return;
+            } catch (DesktopLoginService.Failure unavailable) {
+                request.getSession(false).removeAttribute(DesktopLoginService.SESSION_KEY);
+                request.getSession(false).removeAttribute(DesktopLoginService.CONSENT_KEY);
+                DesktopBrowserRedirect.failed(response); return;
+            }
         }
         if (request.getSession(false) != null && request.getSession(false).getAttribute(DesktopLoginService.INSTALL_KEY) instanceof DesktopLoginService.InstallIntent intent) {
             if (intent.expiresAt() > System.currentTimeMillis()) { DesktopBrowserRedirect.install(response); return; }

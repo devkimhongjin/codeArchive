@@ -28,6 +28,8 @@ public class GithubOAuth2FailureHandler implements AuthenticationFailureHandler 
                 || request.getSession(false).getAttribute(DesktopLoginService.INSTALL_KEY) != null)) {
             if (request.getSession(false).getAttribute(DesktopLoginService.SESSION_KEY) instanceof String id) desktopLogin.cancel(id);
             request.getSession(false).removeAttribute(DesktopLoginService.SESSION_KEY);
+            request.getSession(false).removeAttribute(DesktopLoginService.CONSENT_KEY);
+            request.getSession(false).removeAttribute(DesktopLoginService.COMPLETED_KEY);
             request.getSession(false).removeAttribute(DesktopLoginService.INSTALL_KEY);
             DesktopBrowserRedirect.failed(response);
         } else response.sendRedirect(properties.dashboardRoot() + "/?authError=github");
