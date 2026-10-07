@@ -35,3 +35,20 @@ test('expired login resets state without completing', async () => {
   const login = createWebLogin({ now: () => time, sleep: async () => { time = 10002; }, fetch: async () => ({ status: 200, json: async () => ({ requestId: 'a'.repeat(43), expiresIn: 10000 }) }), openExternal: () => {}, completed: () => { throw Error('must not complete'); } });
   await assert.rejects(login.start(), /만료/); assert.equal(login.pending(), false);
 });
+test('unavailable login server reports actionable status without opening the browser and allows retry', async () => {
+  for (const [status, message] of [[401, /로그인 서버 적용 상태/], [403, /로그인 서버 적용 상태/], [404, /아직 적용/], [503, /아직 적용/], [429, /요청이 많습니다/]]) {
+    let attempts = 0, opened = 0, completed = 0;
+    const login = createWebLogin({ now: () => 1, sleep: async () => {}, openExternal: async () => { opened++; }, completed: async () => { completed++; },
+      fetch: async url => url.endsWith('/requests')
+        ? (++attempts === 1 ? { status } : { status: 200, json: async () => ({ requestId: 'a'.repeat(43), expiresIn: 100000 }) })
+        : { status: 200 }
+    });
+    await assert.rejects(login.start(), message);
+    assert.equal(login.pending(), false); assert.equal(opened, 0); assert.equal(completed, 0);
+    assert.deepEqual(await login.start(), { ok: true }); assert.equal(opened, 1); assert.equal(completed, 1);
+  }
+});
+test('native errors cannot impersonate safe login messages to reveal credentials', async () => {
+  const login = createWebLogin({ fetch: async () => { throw Error('로그인 요청 https://example.test/request?verifier=secret'); }, openExternal: () => {}, completed: () => {} });
+  await assert.rejects(login.start(), error => !error.message.includes('secret') && /연결 상태/.test(error.message));
+});
