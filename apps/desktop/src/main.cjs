@@ -17,7 +17,10 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
 }
 async function start() {
   Menu.setApplicationMenu(null);
-  if (process.platform === 'win32') app.setAppUserModelId('io.github.devkimhongjin.codearchive');
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('io.github.devkimhongjin.codearchive');
+    if (app.isPackaged && !app.isDefaultProtocolClient('codearchive')) app.setAsDefaultProtocolClient('codearchive');
+  }
   const userData = app.getPath('userData');
   const tokenPath = path.join(userData, 'extension-pair.bin');
   async function saveToken(value) {
