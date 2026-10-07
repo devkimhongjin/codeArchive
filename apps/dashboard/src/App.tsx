@@ -419,9 +419,13 @@ export default function App() {
     setToast({ id: toastId.current, kind, message })
   }
   useEffect(() => {
-    const failed = () => showToast('error', 'PC 앱에서 로그인 창을 열지 못했습니다. 다시 시도해 주세요.')
+    const started = (event: Event) => showToast('info', (event as CustomEvent<string>).detail === 'install'
+      ? '웹브라우저에서 GitHub App 설치를 마친 뒤 PC 앱에서 연결 버튼을 다시 눌러 주세요.'
+      : '웹브라우저에서 로그인한 뒤 PC 앱 로그인을 승인해 주세요.')
+    const failed = (event: Event) => showToast('error', (event as CustomEvent<string | null>).detail || '웹 로그인을 완료하지 못했습니다. 다시 시도해 주세요.')
+    window.addEventListener('codearchive-login-start', started)
     window.addEventListener('codearchive-login-error', failed)
-    return () => window.removeEventListener('codearchive-login-error', failed)
+    return () => { window.removeEventListener('codearchive-login-start', started); window.removeEventListener('codearchive-login-error', failed) }
   }, [])
 
   const refreshSolutions = async (expectedGeneration?: number, expectedGithubId?: string) => {

@@ -5,9 +5,10 @@ const { pathToFileURL } = require('node:url');
 const { createExtensionServer } = require('./extension-server.cjs');
 const { createUpdater, runInstaller } = require('./updater.cjs');
 const { createSetup } = require('./setup.cjs');
+const { createWebLogin } = require('./web-login.cjs');
 const { REMOTE_ORIGIN, APP_URL, BRIDGE_PORT, apiRequest, trustedRenderer, authUrl, externalUrl } = require('./policy.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'codearchive', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
-let mainWindow, authWindow, tray, bridge, updater, quitting = false, activeRequests = 0;
+let mainWindow, tray, bridge, updater, quitting = false, activeRequests = 0;
 const loginItemOptions = { path: process.execPath, args: ['--autostart'] };
 if (process.env.CODEARCHIVE_DESKTOP_TEST_USER_DATA) app.setPath('userData', path.resolve(process.env.CODEARCHIVE_DESKTOP_TEST_USER_DATA));
 if (!app.requestSingleInstanceLock()) { app.quit(); } else {
@@ -15,6 +16,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   app.whenReady().then(start).catch(() => { require('electron').dialog.showErrorBox('CodeArchive', 'PC 앱을 시작하지 못했습니다. 다른 CodeArchive 앱이 실행 중인지 확인해 주세요.'); app.quit(); });
 }
 async function start() {
+  Menu.setApplicationMenu(null);
   if (process.platform === 'win32') app.setAppUserModelId('io.github.devkimhongjin.codearchive');
   const userData = app.getPath('userData');
   const tokenPath = path.join(userData, 'extension-pair.bin');
@@ -44,6 +46,9 @@ async function start() {
   });
   const apiSession = session.fromPartition('persist:codearchive-account');
   apiSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  const webLogin = createWebLogin({ fetch: (...args) => apiSession.fetch(...args), openExternal: url => shell.openExternal(url), completed: async () => {
+    await mainWindow.loadURL(APP_URL); mainWindow.show(); mainWindow.focus();
+  } });
   mainWindow = new BrowserWindow({ width: 1360, height: 900, minWidth: 900, minHeight: 620, show: !process.argv.includes('--autostart'), title: 'CodeArchive', icon: path.join(__dirname, 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => { openExternal(url); return { action: 'deny' }; });
   mainWindow.webContents.on('will-navigate', (event, url) => { if (url !== APP_URL) { event.preventDefault(); openExternal(url); } });
@@ -52,13 +57,20 @@ async function start() {
   function expose(channel, action) { ipcMain.handle(channel, async (event, ...args) => { if (!trustedRenderer(event.senderFrame, mainWindow.webContents)) throw new Error('허용되지 않은 앱 요청입니다.'); return action(...args); }); }
   expose('desktop:bridge', async message => { activeRequests++; try { return await bridge.request(message); } finally { activeRequests--; } });
   expose('desktop:api', async input => {
-    const request = apiRequest(input); activeRequests++;
+    const request = apiRequest(input);
+    if (webLogin.pending() && !['GET', 'HEAD'].includes(request.method)) throw new Error('웹 로그인을 마친 뒤 다시 시도해 주세요.');
+    activeRequests++;
     try {
       const response = await apiSession.fetch(request.url, { method: request.method, headers: request.headers, body: request.body, credentials: 'include', redirect: 'manual', signal: AbortSignal.timeout(30000) });
       return { status: response.status, headers: { 'content-type': response.headers.get('content-type') ?? '' }, body: await response.text() };
     } finally { activeRequests--; }
   });
-  expose('desktop:login', value => { openAuth(authUrl(value)); return { ok: true }; });
+  expose('desktop:login', async value => {
+    const target = authUrl(value);
+    if (new URL(target).origin === 'https://github.com') return openInstallation();
+    activeRequests++;
+    try { return await webLogin.start(); } finally { activeRequests--; }
+  });
   expose('desktop:status', () => ({ version: app.getVersion(), connected: bridge.connected(), autostart: app.isPackaged && app.getLoginItemSettings(loginItemOptions).openAtLogin, packaged: app.isPackaged, update: updater.status() }));
   expose('desktop:pair', () => bridge.createPairCode());
   expose('desktop:setup', () => setup.get());
@@ -73,27 +85,21 @@ async function start() {
     if (activeRequests > 0) throw new Error('작업이 진행 중입니다. 작업을 마친 뒤 다시 시도해 주세요.');
     await runInstaller(installer); quitting = true; app.quit(); return { ok: true };
   });
-  function openAuth(url) {
-    if (authWindow && !authWindow.isDestroyed()) { authWindow.focus(); return; }
-    authWindow = new BrowserWindow({ parent: mainWindow, width: 700, height: 820, title: 'CodeArchive · GitHub 로그인', icon: path.join(__dirname, 'icon.png'), webPreferences: { partition: 'persist:codearchive-account', sandbox: true, nodeIntegration: false, contextIsolation: true } });
-    authWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    authWindow.webContents.on('will-navigate', (event, target) => { const next = new URL(target); if (!['https://github.com', REMOTE_ORIGIN].includes(next.origin)) event.preventDefault(); });
-    const finish = (_event, target) => {
-      const destination = new URL(target);
-      if (destination.origin === REMOTE_ORIGIN && destination.pathname === '/') {
-        authWindow?.close(); mainWindow.loadURL(`${APP_URL}${destination.search}`); mainWindow.show(); mainWindow.focus();
-      }
-    };
-    authWindow.webContents.on('did-navigate', finish);
-    authWindow.on('closed', () => { authWindow = null; });
-    authWindow.loadURL(url);
+  async function openInstallation() {
+    if (webLogin.pending()) throw new Error('웹 로그인을 마친 뒤 다시 시도해 주세요.');
+    const response = await apiSession.fetch(`${REMOTE_ORIGIN}/api/auth/me`, { credentials: 'include', redirect: 'error', signal: AbortSignal.timeout(15000) });
+    if (response.status !== 200) throw new Error('PC 앱에 다시 로그인한 뒤 GitHub 연결을 시도해 주세요.');
+    const account = await response.json();
+    if (typeof account.githubId !== 'string' || !/^[0-9]{1,64}$/.test(account.githubId)) throw new Error('GitHub 계정을 확인하지 못했습니다.');
+    await shell.openExternal(`${REMOTE_ORIGIN}/api/desktop-auth/install?githubId=${account.githubId}`);
+    return { ok: true };
   }
-  function openExternal(value) { try { const url = externalUrl(value); if (/^https:\/\/github.com\/apps\/[\w-]+\/installations\/new/.test(url)) openAuth(authUrl(url)); else void shell.openExternal(url); } catch { /* Reject unsupported protocols and destinations. */ } }
+  function openExternal(value) { try { const url = externalUrl(value); if (/^https:\/\/github.com\/apps\/[\w-]+\/installations\/new/.test(url)) void openInstallation().catch(() => {}); else void shell.openExternal(url); } catch { /* Reject unsupported protocols and destinations. */ } }
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'tray.png')));
   tray.setToolTip('CodeArchive'); tray.setContextMenu(Menu.buildFromTemplate([{ label: '대시보드 열기', click: () => { mainWindow.show(); mainWindow.focus(); } }, { label: '종료', click: () => { quitting = true; app.quit(); } }]));
   tray.on('double-click', () => { mainWindow.show(); mainWindow.focus(); });
   await mainWindow.loadURL(APP_URL);
-  if (smoke) await require('../test/smoke-driver.cjs').run({ app, mainWindow, bridge, bridgePort });
+  if (smoke) await require('../test/smoke-driver.cjs').run({ app, mainWindow, bridge, bridgePort, apiSession });
   if (app.isPackaged) { void updater.check(); const timer = setInterval(() => void updater.check(), 6 * 60 * 60 * 1000); timer.unref(); }
 }
 app.on('before-quit', () => { quitting = true; void bridge?.close(); });

@@ -1,6 +1,7 @@
 package com.codearchive.api.config;
 
 import jakarta.servlet.ServletException;
+import com.codearchive.api.auth.DesktopLoginService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -12,14 +13,22 @@ import org.springframework.stereotype.Component;
 public class GithubOAuth2FailureHandler implements AuthenticationFailureHandler {
 
     private final GithubOAuth2Properties properties;
+    private final DesktopLoginService desktopLogin;
 
-    public GithubOAuth2FailureHandler(GithubOAuth2Properties properties) {
+    public GithubOAuth2FailureHandler(GithubOAuth2Properties properties, DesktopLoginService desktopLogin) {
         this.properties = properties;
+        this.desktopLogin = desktopLogin;
     }
 
     @Override
     public void onAuthenticationFailure(HttpServletRequest request, HttpServletResponse response,
                                         AuthenticationException exception) throws IOException, ServletException {
-        response.sendRedirect(properties.dashboardRoot() + "/?authError=github");
+        if (request.getSession(false) != null && (request.getSession(false).getAttribute(DesktopLoginService.SESSION_KEY) != null
+                || request.getSession(false).getAttribute(DesktopLoginService.INSTALL_KEY) != null)) {
+            if (request.getSession(false).getAttribute(DesktopLoginService.SESSION_KEY) instanceof String id) desktopLogin.cancel(id);
+            request.getSession(false).removeAttribute(DesktopLoginService.SESSION_KEY);
+            request.getSession(false).removeAttribute(DesktopLoginService.INSTALL_KEY);
+            response.sendRedirect("/api/desktop-auth/failed");
+        } else response.sendRedirect(properties.dashboardRoot() + "/?authError=github");
     }
 }
