@@ -8,9 +8,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const release = JSON.parse(await readFile(resolve(root, 'release.json'), 'utf8'));
 const hosts = [
   'https://swexpertacademy.com/*', 'https://school.programmers.co.kr/*',
-  'https://jungol.co.kr/*', 'https://api.github.com/*',
+  'https://jungol.co.kr/*',
   'https://codearchive-dashboard-beta.netlify.app/*'
 ];
+const retiredReleaseHost = 'https://api.github.com/*';
 const developmentHost = 'http://localhost:5173/*';
 const permissions = ['downloads', 'alarms', 'storage', 'scripting'];
 const extensionCsp = "script-src 'self'; object-src 'self';";
@@ -35,7 +36,9 @@ export function prepareManifest(original) {
   if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) fail('invalid version');
   if (manifest.version !== release.version || manifest.minimum_chrome_version !== release.extension.minimumChromeVersion) fail('manifest does not match the release version contract');
   if (!sameSet(manifest.permissions, permissions) || manifest.optional_permissions?.length) fail('unexpected permissions; review their justification');
-  const expectedHosts = manifest.host_permissions?.includes(developmentHost) ? [...hosts, developmentHost] : hosts;
+  const expectedHosts = [...hosts,
+    ...(manifest.host_permissions?.includes(retiredReleaseHost) ? [retiredReleaseHost] : []),
+    ...(manifest.host_permissions?.includes(developmentHost) ? [developmentHost] : [])];
   if (!sameSet(manifest.host_permissions, expectedHosts) || manifest.optional_host_permissions?.length) fail('unexpected host permissions');
   const external = ['https://codearchive-dashboard-beta.netlify.app/*'];
   const externalMatches = manifest.externally_connectable?.matches;
@@ -55,7 +58,7 @@ export function prepareManifest(original) {
     ].includes(match))) fail('unexpected content script scope');
     if (script.all_frames || script.match_about_blank || script.match_origin_as_fallback) fail('unexpected content script frame scope');
   }
-  manifest.host_permissions = manifest.host_permissions.filter(value => value !== developmentHost);
+  manifest.host_permissions = manifest.host_permissions.filter(value => value !== developmentHost && value !== retiredReleaseHost);
   manifest.externally_connectable.matches = external;
   manifest.content_security_policy = { extension_pages: extensionCsp };
   return manifest;
@@ -177,7 +180,7 @@ export async function prepareStorePackage({ dist, output }) {
     artifact: { name, sha256, bytes: zip.length },
     permissions: manifest.permissions, hostPermissions: manifest.host_permissions,
     externalMatches: manifest.externally_connectable.matches,
-    checks: { localManifestUnchanged: true, developmentPermissionsRemoved: true, localPageResourcesPresent: true, sourceMapsExcluded: true },
+    checks: { localManifestUnchanged: true, developmentPermissionsRemoved: true, retiredReleasePermissionRemoved: true, localPageResourcesPresent: true, sourceMapsExcluded: true },
     files: [...files].map(([path, bytes]) => ({ path, bytes: bytes.length, sha256: digest(bytes) })),
     remainingVerification: ['Chrome runtime and interrupted-job recovery', 'Store-issued extension ID and API allowed origin', 'Published privacy policy URL and store disclosures', 'Master release source and version']
   };
