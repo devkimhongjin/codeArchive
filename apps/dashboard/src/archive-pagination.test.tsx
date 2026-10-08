@@ -44,7 +44,7 @@ it('pages 20 problem groups, keeps duplicate submissions together and selects th
   expect(scrollList.scrollTop).toBe(0)
   expect(rows()).toHaveLength(20)
   expect(await screen.findByRole('heading', { name: '문제 21' })).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: '연동 가이드' }))
+  fireEvent.click(screen.getByRole('button', { name: '설정' }))
   fireEvent.click(screen.getByRole('button', { name: /전체 풀이/ }))
   expect(page().value).toBe('2')
   fireEvent.change(page(), { target: { value: '3' } })

@@ -18,7 +18,7 @@ import { activeSubmissionProgress, SUBMISSION_PROGRESS_KEY, updateSubmissionProg
 import type { Platform } from "./types";
 import { isJungolHistoryPath } from "./historicalJungol";
 import { isHistoricalSubmissionId } from "./historicalIdentity";
-import { historyPlatformForUrl, mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
+import { historyPlatformForUrl, isLocalHistoryPageSender, mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
 import { requestLocalHistoryMessage } from "./localHistoryConnection";
 
 const store = new IndexedDbCaptureStore();
@@ -410,9 +410,7 @@ function isPopupSender(sender: chrome.runtime.MessageSender): boolean {
 }
 
 function isHistoryPageSender(sender: chrome.runtime.MessageSender): boolean {
-  if (sender.id !== chrome.runtime.id || sender.frameId !== 0 || typeof sender.url !== "string") return false;
-  try { const url = new URL(sender.url); return url.protocol === "chrome-extension:" && url.hostname === chrome.runtime.id && url.pathname === "/history.html"; }
-  catch { return false; }
+  return isLocalHistoryPageSender(sender, chrome.runtime.id);
 }
 
 let popupGithubBusy = false;

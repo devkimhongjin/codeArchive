@@ -293,8 +293,11 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   showPlatform(); void loadTiming(); void loadPlatform();
 }
 
-if (typeof document !== "undefined" && typeof chrome !== "undefined") mountHistory(document, {
+if (typeof document !== "undefined" && typeof chrome !== "undefined") {
+  if (new URLSearchParams(window.location.search).get('embedded') === '1') document.body.classList.add('embedded-history');
+  mountHistory(document, {
   send: message => chrome.runtime.sendMessage(message) as Promise<unknown>,
   readTiming: () => chrome.storage.local.get(HISTORY_TIMING_STORAGE_KEY),
   openSite: url => chrome.windows.create({ url, type: "normal", focused: true })
-});
+  });
+}

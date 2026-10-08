@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { HistoricalImportView, selectHistoricalSubmissionIds } from './HistoricalImportView'
+import { HistoricalCollectionView } from './HistoricalCollectionView'
 import type { Capture, Platform } from './types'
 
 const mocks = vi.hoisted(() => ({ bridge: vi.fn(), me: vi.fn(), ids: vi.fn(), upload: vi.fn() }))
@@ -36,7 +37,8 @@ it('lists all platforms without login and does not expose code or upload', async
   render(<HistoricalImportView {...props} user={null} mode="local" />)
   expect(await screen.findByText('로컬 문제 3건 · 제출 3건 · 서버 기록 미확인')).toBeTruthy()
   expect(screen.queryByText('private source')).toBeNull(); expect(mocks.ids).not.toHaveBeenCalled(); expect(mocks.upload).not.toHaveBeenCalled()
-  fireEvent.click(screen.getByRole('button', { name: '과거 풀이 수집 열기' }))
+  render(<HistoricalCollectionView extensionId="extension" capability="cap" supported />)
+  fireEvent.click(screen.getByRole('button', { name: '수집 화면 열기' }))
   await waitFor(() => expect(mocks.bridge).toHaveBeenCalledWith('extension', { type: 'OPEN_HISTORY', capability: 'cap' }))
 })
 it('syncs all three platforms and ACKs only server accepted captures', async () => {

@@ -139,19 +139,17 @@ it('restores the archive and community route when browser history changes', asyn
   expect(screen.getByText('SWEA #1234')).toBeTruthy()
 })
 
-it('restores guide, settings, and GitHub management when navigating browser history', async () => {
+it('restores settings and GitHub management when navigating browser history', async () => {
   mocks.me.mockRejectedValue(new ApiError('Authentication is required', 401)); mocks.bridge.mockRejectedValue(new Error('extension unavailable'))
   render(<App />)
-  fireEvent.click(screen.getByRole('button', { name: '연동 가이드' }))
-  const guideState = window.history.state
   fireEvent.click(screen.getByRole('button', { name: '설정' }))
   const settingsState = window.history.state
   fireEvent.click(screen.getByRole('button', { name: 'GitHub 관리' }))
   const githubState = window.history.state
-  window.dispatchEvent(new PopStateEvent('popstate', { state: guideState }))
-  expect(await screen.findByRole('heading', { name: '연동 가이드' })).toBeTruthy()
   window.dispatchEvent(new PopStateEvent('popstate', { state: settingsState }))
   expect(await screen.findByRole('heading', { name: '설정' })).toBeTruthy()
   window.dispatchEvent(new PopStateEvent('popstate', { state: githubState }))
   expect(await screen.findByRole('heading', { name: 'GitHub 관리' })).toBeTruthy()
+  window.dispatchEvent(new PopStateEvent('popstate', { state: { codeArchiveView: 'guide' } }))
+  expect(await screen.findByRole('heading', { name: /전체 풀이/ })).toBeTruthy()
 })

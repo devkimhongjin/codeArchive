@@ -6,8 +6,8 @@ import { HISTORY_PLATFORMS, historyKey, historyPlatformLabel, historyProblemCoun
 import type { Capture, HistoricalRecord, Platform, User } from './types'
 export { selectHistoricalSubmissionIds } from '../../../shared/historicalSelection'
 
-/** Source-site collection belongs to the extension. This surface only uploads retained records. */
-export function HistoricalImportView({ extensionId, capability, supported = true, user, mode, onImported, onActivityChange }: {
+/** Uploads retained records; collection is a separate history-management action. */
+export function HistoricalImportView({ extensionId, capability, user, mode, onImported, onActivityChange }: {
   extensionId: string; capability: string | null; supported?: boolean; user: User | null; mode: 'local' | 'live'
   onImported: () => void; onActivityChange?: (label: string | null) => void
 }) {
@@ -118,17 +118,9 @@ export function HistoricalImportView({ extensionId, capability, supported = true
   const visible = records.filter(record => filter === 'ALL' || record.platform === filter)
   const chosen = records.filter(record => (filter === 'ALL' || record.platform === filter) && selected.includes(historyKey(record)) && (!synced.has(historyKey(record)) || record.metadataPending === true))
   const visiblePending = visible.filter(record => (!synced.has(historyKey(record)) || record.metadataPending === true))
-  const openCollection = async () => {
-    const expected = context
-    try {
-      await requestBridge(extensionId, { type: 'OPEN_HISTORY', capability })
-      if (current(expected)) setMessage('확장 프로그램에서 과거 풀이 수집 화면을 열었습니다.')
-    } catch { if (current(expected)) setMessage('확장 프로그램 화면을 열지 못했습니다.') }
-  }
   return <section className="historical-import" aria-label="과거 풀이 일괄 동기화">
     <h2>과거 풀이 일괄 동기화</h2><p>확장 프로그램에 저장한 기록을 서버로 동기화합니다. GitHub 커밋은 별도로 요청합니다.</p>
     <div className="historical-import-actions">
-      <button type="button" disabled={!capability || !supported || busy} onClick={() => void openCollection()}>과거 풀이 수집 열기</button>
       <button type="button" disabled={!capability || busy || loading} onClick={() => void loadLocal()}>로컬·서버 기록 새로고침</button>
       <label>플랫폼 <select aria-label="동기화 플랫폼" value={filter} disabled={busy} onChange={event => setFilter(event.target.value as typeof filter)}><option value="ALL">전체</option>{HISTORY_PLATFORMS.map(platform => <option key={platform} value={platform}>{historyPlatformLabel[platform]}</option>)}</select></label>
     </div>
