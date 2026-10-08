@@ -54,34 +54,79 @@ export function mountPopup(document: Document, services: PopupServices): void {
   const githubAuto = document.querySelector<HTMLInputElement>('#github-auto')!;
   const automationStatus = document.querySelector<HTMLElement>('#automation-status')!;
   const retryRelay = document.querySelector<HTMLButtonElement>('#retry-relay')!;
-  let loading = false, retrying = false, reloadPending = false, generation = 0, githubBusy = false;
+  let loading = false, retrying = false, reloadPending = false, githubBusy = false;
+  let localReady = false;
   let githubState: { githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; accountId?: string; accountSettingsVersion?: number } | undefined;
   let toggleNotice = '';
+  let statusAccount: string | undefined;
+  let knownStatuses = new Map<string, GithubCommitStatus>();
+  let recentRenderKey: string | undefined;
+  let visibleCaptures: Preview[] = [];
+  let statusContext = '', statusEpoch = 0, statusInFlight = false, statusRefreshPending = false;
+  const showRecent = (captures: Preview[]) => {
+    const key = JSON.stringify(captures);
+    if (key === recentRenderKey) return;
+    recentRenderKey = key;
+    renderRecent(document, recentList, recentEmpty, captures);
+  };
+  const showCurrentRecent = () => showRecent(visibleCaptures.map(capture => ({ ...capture, githubCommitStatus: knownStatuses.get(capture.captureId) })));
+  async function refreshStatuses(): Promise<void> {
+    if (!services.loadGithubStatuses || !visibleCaptures.length || !localReady || githubBusy) return;
+    if (statusInFlight) { statusRefreshPending = true; return; }
+    const epoch = statusEpoch, ids = visibleCaptures.map(capture => capture.captureId);
+    statusInFlight = true;
+    try {
+      const response = await services.loadGithubStatuses(ids);
+      if (epoch !== statusEpoch || !response?.statuses) return;
+      for (const id of ids) {
+        const status = response.statuses[id];
+        if (typeof status === 'string' && ['NOT_REQUESTED', 'PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'UNKNOWN'].includes(status)) knownStatuses.set(id, status);
+      }
+      showCurrentRecent();
+    } catch { /* Missing remote evidence retains the last confirmed display. */ }
+    finally {
+      statusInFlight = false;
+      if (statusRefreshPending) { statusRefreshPending = false; void refreshStatuses(); }
+    }
+  }
   async function load(): Promise<void> {
     if (githubBusy) { reloadPending = true; return; }
     if (loading) { reloadPending = true; return; }
-    loading = true; const currentGeneration = ++generation;
+    loading = true; localReady = false;
     error.hidden = true; recentError.hidden = true; recentCard.setAttribute('aria-busy', 'true');
     try {
       const state = await services.load() as { settings?: NonNullable<typeof githubState> & { relay?: { status?: string } }; recentCaptures?: unknown; error?: unknown } | null;
       if (!state?.settings || state.error) throw new Error('Invalid state');
+      if (statusAccount !== state.settings.accountId) {
+        knownStatuses.clear(); statusAccount = state.settings.accountId;
+      }
       const seen = new Set<string>();
       const captures = (Array.isArray(state.recentCaptures) ? state.recentCaptures : []).filter(asSynced)
         .filter(capture => { const key = `${capture.platform}:${capture.problemNumber}`; if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, 3);
+      // A replacement submission must never inherit the previous problem's status.
+      knownStatuses = new Map(captures.flatMap(capture => {
+        const status = knownStatuses.get(capture.captureId) ?? capture.githubCommitStatus;
+        return status ? [[capture.captureId, status] as const] : [];
+      }));
+      visibleCaptures = captures;
+      const nextStatusContext = JSON.stringify([state.settings.accountId, state.settings.accountSettingsVersion, captures.map(capture => capture.captureId)]);
+      if (nextStatusContext !== statusContext) { statusContext = nextStatusContext; statusEpoch++; }
       githubAuto.checked = state.settings.githubAutoCommitEnabled === true; githubAuto.setAttribute('aria-checked', String(githubAuto.checked));
       githubState = state.settings;
+      localReady = true;
       githubAuto.disabled = false;
       const relayStatus = state.settings.relay?.status;
       automationStatus.textContent = relayStatus === 'CONFIRMED' ? '자동 동기화 중' : relayStatus === 'OFFLINE' ? '오프라인' : relayStatus === 'RELAY_ERROR' ? '동기화 오류' : '대시보드 로그인 필요';
       retryRelay.hidden = !services.retryRelay || (relayStatus !== 'OFFLINE' && relayStatus !== 'RELAY_ERROR');
       if (toggleNotice) { error.hidden = false; error.textContent = toggleNotice; }
-      recentCount.textContent = captures.length ? `${captures.length}문제` : '없음'; renderRecent(document, recentList, recentEmpty, captures);
-      if (captures.length && services.loadGithubStatuses) void services.loadGithubStatuses(captures.map(capture => capture.captureId)).then(response => {
-        if (currentGeneration !== generation || !response?.statuses) return;
-        renderRecent(document, recentList, recentEmpty, captures.map(capture => ({ ...capture, githubCommitStatus: response.statuses![capture.captureId] ?? capture.githubCommitStatus })));
-      }).catch(() => undefined);
+      recentCount.textContent = captures.length ? `${captures.length}문제` : '없음'; showCurrentRecent();
+      // Remote polling coalesces independently: local captures and controls stay responsive.
+      void refreshStatuses();
     } catch {
       githubState = undefined; githubAuto.disabled = true;
+      localReady = false;
+      knownStatuses.clear(); statusAccount = undefined; recentRenderKey = undefined;
+      visibleCaptures = []; statusEpoch++; statusContext = '';
       error.hidden = false; recentError.hidden = false; automationStatus.textContent = '확인 필요'; retryRelay.hidden = true;
       error.textContent = '동기화 상태를 불러오지 못했어요. 팝업을 다시 열어 주세요.';
       recentList.replaceChildren(); recentCount.textContent = '확인 실패'; recentEmpty.hidden = true;
@@ -92,14 +137,14 @@ export function mountPopup(document: Document, services: PopupServices): void {
   }
   githubAuto.addEventListener('click', event => {
     event.preventDefault();
-    if (githubBusy || loading || !githubState) return;
+    if (githubBusy || !localReady || !githubState) return;
     if (!githubState.githubTargetConfigured || !githubState.accountId || !Number.isSafeInteger(githubState.accountSettingsVersion)) {
       services.openDashboard?.('github'); return;
     }
     if (!services.updateGithubAutomation) return;
     const command: GithubToggleRequest = { enabled: !githubState.githubAutoCommitEnabled,
       accountId: githubState.accountId, settingsVersion: githubState.accountSettingsVersion! };
-    githubBusy = true; githubAuto.disabled = true; toggleNotice = ''; error.hidden = true;
+    githubBusy = true; statusEpoch++; githubAuto.disabled = true; toggleNotice = ''; error.hidden = true;
     automationStatus.textContent = 'GitHub 설정 저장 중…';
     void services.updateGithubAutomation(command).then(result => {
       if (result.needsTarget) { services.openDashboard?.('github'); return; }

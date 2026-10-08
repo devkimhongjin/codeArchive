@@ -281,7 +281,7 @@ it('shows an update action for a connected extension below the compatibility flo
 
   render(<App />)
   expect(await screen.findByText('확장 프로그램 업데이트 필요 · v0.1.9')).toBeTruthy()
-  expect(screen.getByRole('button', { name: '확장 업데이트' })).toBeTruthy()
+  expect(screen.getByRole('link', { name: '확장 업데이트' }).getAttribute('href')).toContain('/releases')
 })
 
 it('refreshes the exact remaining count and exposes a partial sync result', async () => {

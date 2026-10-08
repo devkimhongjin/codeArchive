@@ -15,6 +15,35 @@ async function preview(count = 2) {
   await waitFor(() => expect((screen.getByRole('button', { name: `선택한 ${count}건 커밋 대상 확인` }) as HTMLButtonElement).disabled).toBe(false))
   fireEvent.click(screen.getByRole('button', { name: `선택한 ${count}건 커밋 대상 확인` }))
 }
+it('maps only selected native submission IDs to server capture IDs before commit confirmation', async () => {
+  const chosen = record(1), outside = { ...record(2), historicalSubmissionId: chosen.historicalSubmissionId }
+  mocks.candidates.mockResolvedValue([chosen, outside, record(3)])
+  render(<HistoricalGithubCommitView user={user} mode="live" selectionScope={{ batchId: 'SWEA:123', platform: 'SWEA', submissionIds: [chosen.historicalSubmissionId] }} previewRequest={1} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'GitHub 커밋 1건 요청' }))
+  await waitFor(() => expect(mocks.commit).toHaveBeenCalledOnce())
+  expect(mocks.commit.mock.calls[0][1].captureIds).toEqual([chosen.captureId])
+  expect(screen.queryByText(/문제2|문제3/)).toBeNull()
+})
+it('does not preview a scope missing any server submission', async () => {
+  render(<HistoricalGithubCommitView user={user} mode="live" selectionScope={{ batchId: 'SWEA:123', platform: 'SWEA', submissionIds: ['site-1', 'missing'] }} previewRequest={1} />)
+  await screen.findByText(/서버에 모두 동기화되지 않았습니다/)
+  expect(screen.queryByRole('button', { name: /GitHub 커밋 .*건 요청/ })).toBeNull()
+  expect(mocks.commit).not.toHaveBeenCalled()
+})
+it('drops the old preview immediately when a different collection selection replaces it', async () => {
+  const first = { batchId: 'SWEA:123', platform: 'SWEA' as const, submissionIds: ['site-1'] }
+  const second = { batchId: 'SWEA:124', platform: 'SWEA' as const, submissionIds: ['site-3'] }
+  const view = render(<HistoricalGithubCommitView user={user} mode="live" selectionScope={first} previewRequest={1} />)
+  await screen.findByRole('button', { name: 'GitHub 커밋 1건 요청' })
+  let resolve!: (records: HistoricalCommitCandidate[]) => void
+  mocks.candidates.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+  view.rerender(<HistoricalGithubCommitView user={user} mode="live" selectionScope={second} previewRequest={1} />)
+  expect(screen.queryByRole('button', { name: 'GitHub 커밋 1건 요청' })).toBeNull()
+  await act(async () => { resolve([record(1), record(3)]) })
+  fireEvent.click(await screen.findByRole('button', { name: 'GitHub 커밋 1건 요청' }))
+  await waitFor(() => expect(mocks.commit).toHaveBeenCalledOnce())
+  expect(mocks.commit.mock.calls[0][1].captureIds).toEqual([record(3).captureId])
+})
 it('requires a read comparison before allowing explicit uncertain-job retry', async () => {
   mocks.candidates.mockResolvedValue([record(1, 'UNKNOWN')])
   mocks.reconcile.mockResolvedValueOnce({ captureId: record(1).captureId, state: 'UNKNOWN', comparison: 'MISSING', diagnostic: 'BLOB_UNCONFIRMED', retryAllowed: true })
@@ -121,3 +150,23 @@ it('reports queued and running server commits as work until terminal states arri
     await waitFor(() => expect(report).toHaveBeenLastCalledWith({ busy: false, draft: false }))
   } finally { cleanup(); delete desktopWindow.codeArchiveDesktop }
 })
+
+for (const failure of ['rejected', 'missing', 'ambiguous']) {
+  it(`invalidates the prior commit preview immediately on refresh and retains no readiness after ${failure} validation`, async () => {
+    const scope = { batchId: 'SWEA:123', platform: 'SWEA' as const, submissionIds: ['site-1'] }
+    render(<HistoricalGithubCommitView user={user} mode="live" selectionScope={scope} previewRequest={1} />)
+    await screen.findByRole('button', { name: 'GitHub 커밋 1건 요청' })
+    let resolve!: (records: HistoricalCommitCandidate[]) => void, reject!: (error: Error) => void
+    mocks.candidates.mockImplementationOnce(() => new Promise((done, fail) => { resolve = done; reject = fail }))
+    fireEvent.click(screen.getByRole('button', { name: '서버·커밋 상태 새로고침' }))
+    expect(screen.queryByRole('button', { name: 'GitHub 커밋 1건 요청' })).toBeNull()
+    expect((screen.getByRole('button', { name: '선택한 1건 커밋 대상 확인' }) as HTMLButtonElement).disabled).toBe(true)
+    await act(async () => {
+      if (failure === 'rejected') reject(new Error('refresh failed'))
+      else resolve(failure === 'missing' ? [] : [record(1), { ...record(1), captureId: record(3).captureId }])
+    })
+    expect(screen.queryByRole('button', { name: /GitHub 커밋 .*건 요청/ })).toBeNull()
+    expect((screen.getByRole('button', { name: '선택한 0건 커밋 대상 확인' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(mocks.commit).not.toHaveBeenCalled()
+  })
+}

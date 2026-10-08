@@ -2,6 +2,7 @@ import { reconcileSubmissions, type ReconciliationRow, type ReconciliationSubmis
 import type { ReconciliationEvidence } from './reconciliationEvidence';
 import { selectHistoricalSubmissionIds, type HistoricalSelectionMode } from "../../../shared/historicalSelection";
 import { HISTORY_TIMING_STORAGE_KEY, estimateHistoricalTotalDuration, readHistoricalTimingSample, type HistoricalTimingSample } from "./historyTiming";
+import { isHistoricalCollectionScope, isTrustedHistoricalCollectionRequest, type HistoricalCollectionNotice } from '../../../shared/historicalCollectionScope';
 
 type Platform = "JUNGOL" | "SWEA" | "PROGRAMMERS";
 type Candidate = ReconciliationSubmission & { submissionId: string; problemNumber: string; title: string; language?: string; createdAt?: string; executionTime?: number; memoryValue?: number };
@@ -12,11 +13,14 @@ type State = { status: string; candidates?: Candidate[]; truncated?: boolean; pr
 }; completed?: number; total?: number; saved?: number; duplicate?: number;
   startedAt?: number; endedAt?: number; lastProgressAt?: number; timingSample?: unknown;
   failureReason?: string; failurePage?: number; failedProblemNumber?: string;
+  storedSubmissionIds?: string[];
   skipped?: number; failedSubmissionIds?: string[]; verificationFailures?: Record<string, number>;
   problemCount?: number; submissionCount?: number; unsupportedProblemNumbers?: string[] };
 export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
   schedule?: (work: () => void, delay: number) => unknown; now?: () => number;
-  readTiming?: () => Promise<unknown>; openSite?: (url: string) => Promise<unknown> };
+  readTiming?: () => Promise<unknown>; openSite?: (url: string) => Promise<unknown>;
+  onCollectionNotice?: (notice: HistoricalCollectionNotice) => void;
+  subscribeCollectionRequest?: (publish: () => void) => void };
 
 const platformInfo: Record<Platform, { href: string; linkLabel: string; description: string; guide: string }> = {
   JUNGOL: { href: "https://jungol.co.kr/", linkLabel: "정올 열기 ↗", description: "정올에서 제출 내역을 연 뒤 이 브라우저에 로컬로 저장할 수 있습니다.", guide: "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요." },
@@ -26,6 +30,15 @@ const platformInfo: Record<Platform, { href: string; linkLabel: string; descript
 
 export function mountHistory(doc: Document, services: HistoryServices) {
   const send = services.send;
+  let lastNotice = '';
+  let currentNotice: HistoricalCollectionNotice = { type: 'CODEARCHIVE_HISTORY_COLLECTION', scope: null };
+  services.subscribeCollectionRequest?.(() => services.onCollectionNotice?.(currentNotice));
+  const notifyCollection = (scope: HistoricalCollectionNotice['scope']) => {
+    const notice: HistoricalCollectionNotice = { type: 'CODEARCHIVE_HISTORY_COLLECTION', scope };
+    currentNotice = notice;
+    const key = JSON.stringify(notice);
+    if (key !== lastNotice) { lastNotice = key; services.onCollectionNotice?.(notice); }
+  };
   const scan = doc.querySelector<HTMLButtonElement>("#scan")!;
   const cancel = doc.querySelector<HTMLButtonElement>("#cancel")!;
   const importButton = doc.querySelector<HTMLButtonElement>("#import")!;
@@ -151,6 +164,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     importButton.disabled = taskActive || !readyForImport || selected.size === 0 || selected.size > 5_000;
   }
   function showPlatform() {
+    notifyCollection(null);
     const current = platform(), info = platformInfo[current];
     siteLink.href = info.href; siteLink.textContent = info.linkLabel; description.textContent = info.description; platformHelp.textContent = info.guide;
     clearCandidates(); progressBar.hidden = true; progress.textContent = ""; if (taskStage) taskStage.textContent = ""; if (taskTime) { taskTime.textContent = ""; taskTime.hidden = true; }
@@ -186,6 +200,9 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   async function applyState(value: unknown, expected: Platform = platform(), epoch = platformEpoch) {
     if (!ownsPlatform(expected, epoch)) return;
     const state = validState(value); if (!state) { status.textContent = "확장 프로그램 응답을 확인할 수 없습니다."; return; }
+    const completedScope = { batchId: `${expected}:${state.startedAt}`, platform: expected, submissionIds: state.storedSubmissionIds };
+    notifyCollection(state.status === 'DONE' && typeof state.total === 'number' && Number.isInteger(state.total) && state.total > 0 &&
+      state.completed === state.total && isHistoricalCollectionScope(completedScope) && completedScope.submissionIds.length <= state.total ? completedScope : null);
     const active = state.status === "SCANNING" || state.status === "IMPORTING" || state.status === "CANCELLING";
     taskActive = active;
     const stateSample = readHistoricalTimingSample(state.timingSample);
@@ -285,16 +302,40 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     render();
   });
   clearReconciliation?.addEventListener("click", () => { reconciliation = null; selected = new Set(selectHistoricalSubmissionIds(candidates.filter(item => !localIds.has(item.submissionId)), policy.value as HistoricalSelectionMode)); clearReconciliation.hidden = true; if (verifyExisting) verifyExisting.hidden = true; if (reconciliationHelp) reconciliationHelp.hidden = true; if (reconciliationStatus) reconciliationStatus.textContent = ""; render(); });
-  scan.addEventListener("click", async () => { const expected = platform(), epoch = platformEpoch; try { if (!await refreshLocalIds(expected, epoch) || !ownsPlatform(expected, epoch)) return; clearCandidates(); render(); await applyState(await send({ type: "LOCAL_HISTORY_SCAN_START", platform: expected }), expected, epoch); } catch { if (ownsPlatform(expected, epoch)) { status.textContent = "후보 찾기를 시작하지 못했습니다. 원본 제출 이력 탭을 확인해 주세요."; scan.disabled = false; } } });
+  scan.addEventListener("click", async () => {
+    if (scan.disabled) return;
+    const expected = platform(), epoch = ++platformEpoch;
+    notifyCollection(null); clearCandidates(); render();
+    scan.disabled = true; policy.disabled = true; platformSelect.disabled = true;
+    try {
+      if (!await refreshLocalIds(expected, epoch) || !ownsPlatform(expected, epoch)) return;
+      await applyState(await send({ type: "LOCAL_HISTORY_SCAN_START", platform: expected }), expected, epoch);
+    } catch { if (ownsPlatform(expected, epoch)) {
+      status.textContent = "후보 찾기를 시작하지 못했습니다. 원본 제출 이력 탭을 확인해 주세요.";
+      scan.disabled = false; policy.disabled = false; platformSelect.disabled = false;
+    } }
+  });
   cancel.addEventListener("click", async () => { const expected = platform(), epoch = platformEpoch; try { await applyState(await send({ type: "LOCAL_HISTORY_CANCEL", platform: expected }), expected, epoch); } catch { if (ownsPlatform(expected, epoch)) { status.textContent = "중단 요청을 전달하지 못했습니다. 원본 탭을 확인해 주세요."; cancel.disabled = false; } } });
   policy.addEventListener("change", () => { selected = new Set(selectHistoricalSubmissionIds(candidates.filter(allowedForRecovery), policy.value as HistoricalSelectionMode)); render(); });
   platformSelect.addEventListener("change", () => { platformEpoch += 1; showPlatform(); void loadTiming(); void loadPlatform(); });
-  importButton.addEventListener("click", async () => { const expected = platform(), epoch = platformEpoch; if (!readyForImport) return; try { await applyState(await send({ type: "LOCAL_HISTORY_IMPORT_START", platform: expected, submissionIds: selectedInCandidateOrder() }), expected, epoch); } catch { if (ownsPlatform(expected, epoch)) { status.textContent = "로컬 저장을 시작하지 못했습니다. 다시 시도해 주세요."; render(); } } });
+  importButton.addEventListener("click", async () => { const expected = platform(), epoch = platformEpoch; if (!readyForImport) return; notifyCollection(null); try { await applyState(await send({ type: "LOCAL_HISTORY_IMPORT_START", platform: expected, submissionIds: selectedInCandidateOrder() }), expected, epoch); } catch { if (ownsPlatform(expected, epoch)) { status.textContent = "로컬 저장을 시작하지 못했습니다. 다시 시도해 주세요."; render(); } } });
   showPlatform(); void loadTiming(); void loadPlatform();
 }
 
-if (typeof document !== "undefined" && typeof chrome !== "undefined") mountHistory(document, {
+if (typeof document !== "undefined" && typeof chrome !== "undefined") {
+  if (new URLSearchParams(window.location.search).get('embedded') === '1') document.body.classList.add('embedded-history');
+  mountHistory(document, {
   send: message => chrome.runtime.sendMessage(message) as Promise<unknown>,
   readTiming: () => chrome.storage.local.get(HISTORY_TIMING_STORAGE_KEY),
-  openSite: url => chrome.windows.create({ url, type: "normal", focused: true })
-});
+  openSite: url => chrome.windows.create({ url, type: "normal", focused: true }),
+  subscribeCollectionRequest: publish => {
+    window.addEventListener('message', event => {
+      if (window.parent !== window && new URLSearchParams(window.location.search).get('embedded') === '1' &&
+          isTrustedHistoricalCollectionRequest(event, window.parent, window.location.origin)) publish();
+    });
+  },
+  onCollectionNotice: notice => {
+    if (window.parent !== window && new URLSearchParams(window.location.search).get('embedded') === '1') window.parent.postMessage(notice, window.location.origin);
+  }
+  });
+}

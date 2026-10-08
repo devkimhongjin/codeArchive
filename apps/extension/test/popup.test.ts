@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { parseHTML } from 'linkedom';
 import { mountPopup } from '../src/popupView';
+import type { GithubCommitStatus } from '../src/relay';
 const html = readFileSync(new URL('../src/popup.html', import.meta.url), 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 function record(id: string, syncState = 'SYNCED', problemNumber = id) {
@@ -89,4 +90,52 @@ test('state error clears old rows instead of implying successful sync', async ()
   const { document } = parseHTML(html); let refresh: (() => void) | undefined; let failed = false;
   mountPopup(document, { load: async () => failed ? { error: 'STORAGE_ERROR' } : { settings: {}, recentCaptures: [record('one')] }, copy: async () => {}, subscribeProgress: callback => { refresh = callback; } }); await settle();
   failed = true; refresh?.(); await settle(); assert.equal(document.querySelector('.recent-item'), null); assert.equal(document.querySelector<HTMLElement>('#error')!.hidden, false);
+});
+
+test('remote status polling retains confirmed labels and DOM while delayed or unavailable', async () => {
+  const { document } = parseHTML(html); let refresh!: () => void;
+  let statusCalls = 0; let resolve!: (value: { statuses: Record<string, GithubCommitStatus> }) => void;
+  mountPopup(document, {
+    load: async () => ({ settings: { accountId: '1' }, recentCaptures: [record('one')] }), copy: async () => {},
+    subscribeProgress: callback => { refresh = callback; },
+    loadGithubStatuses: () => ++statusCalls === 1 ? Promise.resolve({ statuses: { one: 'SUCCEEDED' } }) : new Promise(done => { resolve = done; }),
+  });
+  await settle(); const item = document.querySelector('.recent-item');
+  assert.equal(document.querySelector('.github-label')?.textContent, 'GitHub 완료');
+  refresh(); await settle(); refresh(); refresh(); await settle();
+  assert.equal(statusCalls, 2);
+  assert.equal(document.querySelector('.recent-item'), item);
+  assert.equal(document.querySelector('.github-label')?.textContent, 'GitHub 완료');
+  resolve({ statuses: {} }); await settle(); await settle();
+  assert.equal(document.querySelector('.recent-item'), item);
+  assert.equal(document.querySelector('.github-label')?.textContent, 'GitHub 완료');
+  resolve({ statuses: { one: 'PENDING' } }); await settle();
+  assert.equal(document.querySelector('.github-label')?.textContent, '커밋 대기');
+});
+
+test('cached labels do not cross accounts or replacement submissions of the same problem', async () => {
+  const { document } = parseHTML(html); let refresh!: () => void; let accountId = '1'; let captureId = 'one';
+  let statuses: Record<string, GithubCommitStatus> = { one: 'SUCCEEDED' };
+  mountPopup(document, {
+    load: async () => ({ settings: { accountId }, recentCaptures: [record(captureId, 'SYNCED', '1')] }), copy: async () => {},
+    subscribeProgress: callback => { refresh = callback; }, loadGithubStatuses: async () => ({ statuses }),
+  });
+  await settle(); assert.equal(document.querySelector('.github-label')?.textContent, 'GitHub 완료');
+  accountId = '2'; statuses = {}; refresh(); await settle(); assert.equal(document.querySelector('.github-label'), null);
+  statuses = { one: 'SUCCEEDED' }; refresh(); await settle();
+  captureId = 'two'; statuses = {}; refresh(); await settle(); assert.equal(document.querySelector('.github-label'), null);
+});
+
+test('GitHub toggles remain usable during remote polling and discard pre-toggle responses', async () => {
+  const { document } = parseHTML(html); let resolve!: (value: { statuses: Record<string, GithubCommitStatus> }) => void; let writes = 0;
+  mountPopup(document, {
+    load: async () => ({ settings: { accountId: '1', accountSettingsVersion: 1, githubTargetConfigured: true, githubAutoCommitEnabled: false }, recentCaptures: [record('one')] }),
+    copy: async () => {}, loadGithubStatuses: () => new Promise(done => { resolve = done; }),
+    updateGithubAutomation: async () => { writes++; return { ok: true, relayReady: true }; },
+  });
+  await settle();
+  document.querySelector('#github-auto')!.dispatchEvent(new document.defaultView!.Event('click', { cancelable: true }));
+  await settle(); assert.equal(writes, 1);
+  resolve({ statuses: { one: 'SUCCEEDED' } }); await settle(); await settle();
+  assert.equal(document.querySelector('.github-label'), null);
 });

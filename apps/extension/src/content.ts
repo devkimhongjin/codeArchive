@@ -699,7 +699,7 @@ function startSweaImport(document: Document, location: Location, ids: unknown): 
     const capture = hydrated.capture;
     try { const response = await chrome.runtime.sendMessage({ type: "STORE_HISTORICAL_CAPTURE", capture }); if (!(response as { ok?: boolean })?.ok) throw new HistoricalImportFailure("STORE_REJECTED"); if ((response as { reconciliation?: string }).reconciliation === "ambiguous") return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId }; return { saved: (response as { created?: boolean }).created ? 1 : 0, duplicate: (response as { created?: boolean }).created ? 0 : 1, skipped: 0 }; }
     catch (error) { if (error instanceof HistoricalImportFailure) throw error; throw new HistoricalImportFailure("STORE_FAILED"); }
-  }, (candidate, result) => { if (result.saved + result.duplicate > 0) completedProblems.add(`SWEA:${candidate.problemNumber}`); });
+  }, (candidate, result) => { if (result.saved + result.duplicate > 0) completedProblems.add(`SWEA:${candidate.problemNumber}`); }, candidate => candidate.submissionId);
   void controller.settled().then(() => {
     if (generation !== sweaGeneration || sweaController !== controller || !controller.state) return;
     const timingSample = timingSampleFromCompletedTask(controller.state, "SWEA");
@@ -875,7 +875,7 @@ function startProgrammersImport(document: Document, location: Location, ids: unk
       if (stored.reconciliation === "ambiguous") return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId };
       return { saved: stored.created === true ? 1 : 0, duplicate: stored.created === true ? 0 : 1, skipped: 0 };
     } catch (error) { if (error instanceof HistoricalImportFailure) throw error; throw new HistoricalImportFailure("STORE_FAILED"); }
-  }, (candidate, result) => { if (result.saved + result.duplicate) completedProblems.add(`PROGRAMMERS:${candidate.problemNumber}`); });
+  }, (candidate, result) => { if (result.saved + result.duplicate) completedProblems.add(`PROGRAMMERS:${candidate.problemNumber}`); }, candidate => candidate.submissionId);
   programmersLocalState = { status: "IMPORTING", startedAt: Date.now(), unsupportedProblemNumbers };
   void controller.settled().then(() => {
     if (generation !== programmersLocalGeneration || programmersLocalController !== controller || !controller.state) return;
@@ -1070,7 +1070,7 @@ function startLocalJungolImport(document: Document, location: Location, ids: unk
     return result;
   }, (candidate, result) => {
     if (result.saved + result.duplicate > 0) completedProblemKeys.add(`JUNGOL:${candidate.problemNumber}`);
-  });
+  }, candidate => candidate.submissionId);
   void controller.settled().then(() => {
     if (jungolLocalTask !== task || jungolImportOwner !== task || !controller.state) return;
     const timingSample = timingSampleFromCompletedTask(controller.state);

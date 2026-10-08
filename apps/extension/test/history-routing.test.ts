@@ -1,6 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mayRediscoverHistorySource, mayStoreHistoricalFromSender, mayStoreLocalHistoryCapture, sameHistorySource } from "../src/historyRouting";
+import { isLocalHistoryPageSender, mayRediscoverHistorySource, mayStoreHistoricalFromSender, mayStoreLocalHistoryCapture, sameHistorySource } from "../src/historyRouting";
+
+test('collection frames are restricted to the same packaged history and dashboard documents', () => {
+  const extensionId = 'fixture-extension';
+  const page = { id: extensionId, frameId: 0, url: `chrome-extension://${extensionId}/history.html` };
+  const embedded = { ...page, frameId: 7, url: `${page.url}?embedded=1`, tab: { id: 2, url: `chrome-extension://${extensionId}/dashboard.html?view=history` } };
+  assert.equal(isLocalHistoryPageSender(page, extensionId), true);
+  assert.equal(isLocalHistoryPageSender(embedded, extensionId), true);
+  for (const sender of [
+    { ...embedded, id: 'other-extension' }, { ...embedded, url: 'https://example.test/history.html' },
+    { ...embedded, url: `chrome-extension://${extensionId}/popup.html` },
+    { ...embedded, tab: { id: 2, url: 'https://example.test/dashboard.html' } },
+    { ...embedded, tab: { id: 2, url: 'chrome-extension://other-extension/dashboard.html' } },
+    { ...embedded, tab: { id: 2, url: `chrome-extension://${extensionId}/popup.html` } },
+    { ...embedded, tab: undefined }, { ...embedded, frameId: undefined }, { ...embedded, frameId: -1 },
+  ]) assert.equal(isLocalHistoryPageSender(sender, extensionId), false);
+});
 
 test("local history keeps an owned same-account source through a sid detail dialog", () => {
   assert.equal(sameHistorySource("https://jungol.co.kr/submission?account=mine", "https://jungol.co.kr/submission?account=mine&sid=9"), true);

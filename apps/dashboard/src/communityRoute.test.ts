@@ -21,6 +21,7 @@ it('rejects malformed route values and removes private community context on othe
   expect(readView('?view=history')).toBe('history')
   expect(urlForView('history', route, new URL('https://example.test/?view=community&platform=SWEA&problemNumber=123'))).toBe('/?view=history')
   expect(readView('?view=unsupported')).toBe('solutions')
+  expect(readView('?view=guide')).toBe('solutions')
 })
 
 it('keeps an exact Jungol problem in a shared community link', () => {

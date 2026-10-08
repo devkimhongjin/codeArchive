@@ -4,12 +4,14 @@ import { bulkUpload, getHistoricalSubmissionIds, getMe } from './api'
 import { requestBridge } from './bridge'
 import { HISTORY_PLATFORMS, historyKey, historyPlatformLabel, historyProblemCount, isHistoricalRecord } from './historicalRecords'
 import type { Capture, HistoricalRecord, Platform, User } from './types'
+import { belongsToCollection, type HistoricalCollectionScope } from '../../../shared/historicalCollectionScope'
 export { selectHistoricalSubmissionIds } from '../../../shared/historicalSelection'
 
-/** Source-site collection belongs to the extension. This surface only uploads retained records. */
-export function HistoricalImportView({ extensionId, capability, supported = true, user, mode, onImported, onActivityChange }: {
+/** Uploads retained records; collection is a separate history-management action. */
+export function HistoricalImportView({ extensionId, capability, user, mode, onImported, onActivityChange, selectionScope, onCommitReady, onBusyChange }: {
   extensionId: string; capability: string | null; supported?: boolean; user: User | null; mode: 'local' | 'live'
   onImported: () => void; onActivityChange?: (label: string | null) => void
+  selectionScope?: HistoricalCollectionScope; onCommitReady?: () => void; onBusyChange?: (busy: boolean) => void
 }) {
   const [records, setRecords] = useState<HistoricalRecord[]>([])
   const [selected, setSelected] = useState<string[]>([])
@@ -19,12 +21,14 @@ export function HistoricalImportView({ extensionId, capability, supported = true
   const [synced, setSynced] = useState<Set<string>>(new Set())
   const [serverChecked, setServerChecked] = useState(false)
   const run = useRef(0), load = useRef(0), mounted = useRef(true), inFlight = useRef(false), cancel = useRef(false)
-  const context = JSON.stringify({ extensionId, capability, mode, userId: user?.id, githubId: user?.githubId })
+  const loadedContext = useRef<string | null>(null)
+  const context = JSON.stringify({ extensionId, capability, mode, userId: user?.id, githubId: user?.githubId, selectionScope })
   const currentContext = useRef(context); currentContext.current = context
   const current = (expected: string) => mounted.current && currentContext.current === expected
   const loadLocal = async () => {
     if (!capability || inFlight.current) return
     const token = ++load.current, expected = context
+    loadedContext.current = null
     const active = () => current(expected) && load.current === token
     setLoading(true)
     setServerChecked(false)
@@ -33,7 +37,8 @@ export function HistoricalImportView({ extensionId, capability, supported = true
       if (!active()) return
       if (response.localOnly !== true || !Array.isArray(response.records) || !response.records.every(isHistoricalRecord) ||
           new Set(response.records.map(historyKey)).size !== response.records.length || new Set(response.records.map(record => record.captureId)).size !== response.records.length) throw new Error('로컬 목록을 확인하지 못했습니다. 확장 프로그램을 업데이트해 주세요.')
-      const local = response.records
+      const local = selectionScope ? response.records.filter(record => belongsToCollection(record, selectionScope)) : response.records
+      if (selectionScope && local.length !== selectionScope.submissionIds.length) throw new Error('수집에서 선택한 저장 기록을 모두 확인하지 못했습니다. 수집 화면에서 다시 확인해 주세요.')
       setRecords(local); setSynced(new Set()); setSelected(local.map(historyKey))
       if (user && mode === 'live') {
         const known = new Set<string>()
@@ -45,7 +50,7 @@ export function HistoricalImportView({ extensionId, capability, supported = true
         }
         setSynced(known); setServerChecked(true); setSelected(local.filter(record => (!known.has(historyKey(record)) || record.metadataPending === true)).map(historyKey))
       }
-      if (active()) setMessage('')
+      if (active()) { loadedContext.current = expected; setMessage('') }
     } catch (error) { if (active()) setMessage(error instanceof Error ? error.message : '로컬 기록을 불러오지 못했습니다.') }
     finally { if (active()) setLoading(false) }
   }
@@ -57,10 +62,11 @@ export function HistoricalImportView({ extensionId, capability, supported = true
     return () => { mounted.current = false; run.current += 1; load.current += 1; cancel.current = true }
   }, [context])
   useEffect(() => { onActivityChange?.(busy ? '과거 풀이 일괄 동기화 중' : null); return () => onActivityChange?.(null) }, [busy, onActivityChange])
-  const sync = async () => {
-    if (!user || mode !== 'live' || !capability || inFlight.current || loading) return
-    const chosen = records.filter(record => (filter === 'ALL' || record.platform === filter) && selected.includes(historyKey(record)) && (!synced.has(historyKey(record)) || record.metadataPending === true))
-    if (!chosen.length) return
+  useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false) }, [busy, onBusyChange])
+  const sync = async (commitAfter = false) => {
+    if (!user || mode !== 'live' || !capability || inFlight.current || loading || loadedContext.current !== context) return
+    const chosen = records.filter(record => (selectionScope || (filter === 'ALL' || record.platform === filter) && selected.includes(historyKey(record))) && (!synced.has(historyKey(record)) || record.metadataPending === true))
+    if (!chosen.length && !(commitAfter && selectionScope && serverChecked && records.length === selectionScope.submissionIds.length)) return
     const token = ++run.current, expected = context, initial = user
     const active = () => current(expected) && token === run.current
     const checkAccount = async () => {
@@ -111,33 +117,39 @@ export function HistoricalImportView({ extensionId, capability, supported = true
         }
       }
       if (!active()) return
-      setMessage(`${cancel.current ? '동기화 중단' : '동기화 완료'} · 문제 ${historyProblemCount(chosen.filter(record => acknowledged.has(historyKey(record))))}건 · 제출 ${acceptedCount}건${failedCount ? ` · 실패 ${failedCount}건 (선택을 유지했습니다)` : ''}`)
+      setMessage(!chosen.length ? `선택한 제출 ${records.length}건은 이미 동기화되어 있습니다.` : `${cancel.current ? '동기화 중단' : '동기화 완료'} · 문제 ${historyProblemCount(chosen.filter(record => acknowledged.has(historyKey(record))))}건 · 제출 ${acceptedCount}건${failedCount ? ` · 실패 ${failedCount}건 (선택을 유지했습니다)` : ''}`)
+      if (commitAfter && !cancel.current && failedCount === 0 && done === chosen.length) {
+        await checkAccount()
+        if (active()) onCommitReady?.()
+      }
     } catch (error) { if (active()) setMessage(`동기화 ${acceptedCount}건 확인 · ${error instanceof Error ? error.message : '동기화 실패'}. 남은 기록은 다시 시도할 수 있습니다.`) }
     finally { if (active()) { inFlight.current = false; setBusy(false); if (acceptedCount) onImported() } }
   }
-  const visible = records.filter(record => filter === 'ALL' || record.platform === filter)
-  const chosen = records.filter(record => (filter === 'ALL' || record.platform === filter) && selected.includes(historyKey(record)) && (!synced.has(historyKey(record)) || record.metadataPending === true))
+  const visible = records.filter(record => selectionScope || filter === 'ALL' || record.platform === filter)
+  const scopeReady = loadedContext.current === context
+  const chosen = records.filter(record => (selectionScope || (filter === 'ALL' || record.platform === filter) && selected.includes(historyKey(record))) && (!synced.has(historyKey(record)) || record.metadataPending === true))
   const visiblePending = visible.filter(record => (!synced.has(historyKey(record)) || record.metadataPending === true))
-  const openCollection = async () => {
-    const expected = context
-    try {
-      await requestBridge(extensionId, { type: 'OPEN_HISTORY', capability })
-      if (current(expected)) setMessage('확장 프로그램에서 과거 풀이 수집 화면을 열었습니다.')
-    } catch { if (current(expected)) setMessage('확장 프로그램 화면을 열지 못했습니다.') }
-  }
   return <section className="historical-import" aria-label="과거 풀이 일괄 동기화">
     <h2>과거 풀이 일괄 동기화</h2><p>확장 프로그램에 저장한 기록을 서버로 동기화합니다. GitHub 커밋은 별도로 요청합니다.</p>
-    <div className="historical-import-actions">
-      <button type="button" disabled={!capability || !supported || busy} onClick={() => void openCollection()}>과거 풀이 수집 열기</button>
+    {!selectionScope && <div className="historical-import-actions">
       <button type="button" disabled={!capability || busy || loading} onClick={() => void loadLocal()}>로컬·서버 기록 새로고침</button>
       <label>플랫폼 <select aria-label="동기화 플랫폼" value={filter} disabled={busy} onChange={event => setFilter(event.target.value as typeof filter)}><option value="ALL">전체</option>{HISTORY_PLATFORMS.map(platform => <option key={platform} value={platform}>{historyPlatformLabel[platform]}</option>)}</select></label>
-    </div>
+    </div>}
     {!capability && <p>확장 프로그램을 연결해 주세요.</p>}{loading && <p role="status">로컬·서버 기록을 확인하고 있습니다.</p>}
     <p>로컬 문제 {historyProblemCount(visible)}건 · 제출 {visible.length}건 · {user && mode === 'live' && serverChecked ? `서버 동기화 확인 ${visible.filter(record => synced.has(historyKey(record))).length}건` : '서버 기록 미확인'}</p>
+    {!selectionScope && <>
     <label><input type="checkbox" disabled={busy || loading || !visiblePending.length} checked={!!visiblePending.length && visiblePending.every(record => selected.includes(historyKey(record)))} onChange={event => setSelected(previous => event.target.checked ? [...new Set([...previous, ...visiblePending.map(historyKey)])] : previous.filter(key => !visiblePending.some(record => historyKey(record) === key)))} />현재 플랫폼 전체 선택</label>
     <div className="historical-import-list">{visible.map(record => <label key={historyKey(record)}><input type="checkbox" checked={selected.includes(historyKey(record))} disabled={busy || loading || (synced.has(historyKey(record)) && !record.metadataPending)} onChange={event => setSelected(previous => event.target.checked ? [...previous, historyKey(record)] : previous.filter(key => key !== historyKey(record)))} /><span>{historyPlatformLabel[record.platform]} {record.problemNumber} · {record.title} · {record.language}</span><small>{record.metadataPending ? '보강 정보 동기화 대기' : synced.has(historyKey(record)) ? '서버 동기화 완료' : '로컬 보관'}</small></label>)}</div>
+    </>}
     {records.length === 0 && !loading && capability && <p>이 브라우저에 저장된 과거 풀이가 없습니다.</p>}
-    {user && mode === 'live' ? <div className="historical-import-actions"><button type="button" disabled={busy || loading || !capability || !chosen.length} onClick={() => void sync()}>선택한 {chosen.length}건 일괄 동기화</button>{busy && <button type="button" onClick={() => { cancel.current = true; setMessage('진행 중인 저장 확인 후 중단합니다.') }}>동기화 중단</button>}</div> : <p>서버 동기화는 CodeArchive 로그인 후 직접 실행할 수 있습니다.</p>}
+    {selectionScope ? <>
+      <div className="historical-import-actions">
+        <button type="button" disabled={!user || mode !== 'live' || busy || loading || !capability || !scopeReady || !chosen.length} onClick={() => void sync()}>일괄 동기화 {chosen.length}건</button>
+        {onCommitReady && <button type="button" disabled={!user || mode !== 'live' || busy || loading || !capability || !scopeReady || !serverChecked || records.length !== selectionScope.submissionIds.length} onClick={() => void sync(true)}>일괄 GitHub 커밋</button>}
+        {busy && <button type="button" onClick={() => { cancel.current = true; setMessage('진행 중인 저장 확인 후 중단합니다.') }}>동기화 중단</button>}
+      </div>
+      {(!user || mode !== 'live') && <p>서버 동기화와 GitHub 커밋은 CodeArchive 로그인 후 실행할 수 있습니다.</p>}
+    </> : user && mode === 'live' ? <div className="historical-import-actions"><button type="button" disabled={busy || loading || !capability || !scopeReady || !chosen.length} onClick={() => void sync()}>선택한 {chosen.length}건 일괄 동기화</button>{busy && <button type="button" onClick={() => { cancel.current = true; setMessage('진행 중인 저장 확인 후 중단합니다.') }}>동기화 중단</button>}</div> : <p>서버 동기화는 CodeArchive 로그인 후 직접 실행할 수 있습니다.</p>}
     {progress.total > 0 && <div className="history-batch-progress"><progress aria-label="서버 동기화 진행률" max={progress.total} value={progress.done} /><span>{progress.done}/{progress.total}건 처리</span></div>}
     {message && <p role="status">{message}</p>}
   </section>
