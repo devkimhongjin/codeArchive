@@ -11,7 +11,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@babel/parser": "8.0.7",
+    "@lezer/python": "1.1.19",
     "@vitejs/plugin-react": "latest",
+    "java-parser": "3.0.1",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
@@ -21,6 +24,7 @@
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.3",
+    "@types/node": "26.5.1",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "jsdom": "^30.0.1",
@@ -28,5 +32,10 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "overrides": {
+    "lodash": "4.18.1",
+    "lodash-es": "4.18.1",
+    "source-map-js": "1.2.2"
   }
 }

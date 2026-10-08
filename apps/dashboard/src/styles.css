@@ -387,3 +387,9 @@ h1, h2, p { margin-top: 0; }
 .settings-theme-preview-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; font-size: 11px; }
 .settings-theme-preview-heading span { color: var(--muted); }
 .settings-theme-preview .code-viewer { min-height: 0; max-height: 260px; border: 1px solid var(--line); border-radius: 8px; }
+
+.static-analysis-panel { margin-top: 20px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); color: var(--ink); }
+.static-analysis-panel h3 { margin: 0 0 8px; font-size: 15px; }
+.static-analysis-panel p, .static-analysis-panel li { font-size: 12px; line-height: 1.65; }
+.static-analysis-panel button { margin: 4px 8px 4px 0; padding: 8px 12px; background: var(--purple-soft); color: var(--purple-ink); border-radius: 8px; }
+.static-analysis-panel small { color: var(--muted); overflow-wrap: anywhere; }
