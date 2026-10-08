@@ -5,6 +5,8 @@ import java.time.Instant;
 
 public class SolutionResponse {
     private final Long id;
+    private final ProblemDifficulty difficulty;
+    public ProblemDifficulty getDifficulty() { return difficulty; }
     private final String captureId;
     private final Platform platform;
     private final String problemNumber;
@@ -27,6 +29,7 @@ public class SolutionResponse {
 
     private SolutionResponse(Solution solution) {
         this.id = solution.getId();
+        this.difficulty = solution.getDifficulty();
         this.captureId = solution.getCaptureId();
         this.platform = solution.getPlatform();
         this.problemNumber = solution.getProblemNumber();

@@ -1,3 +1,4 @@
+import { normalizeDifficulty } from '../../../shared/difficulty';
 import {
   CAPTURE_RESULT,
   type Capture,
@@ -101,8 +102,10 @@ export function createCapture(
   if (draft.historicalSubmissionId !== undefined &&
       (draft.historicalImport !== true || !isHistoricalSubmissionId(draft.platform, draft.historicalSubmissionId))) return null;
 
+  const difficulty = normalizeDifficulty(draft.platform, draft.problemNumber.trim(), draft.problemUrl, draft.difficulty);
   return {
     captureId,
+    ...(difficulty ? { difficulty } : {}),
     platform: draft.platform,
     problemNumber: draft.problemNumber.trim(),
     title: draft.title.trim(),

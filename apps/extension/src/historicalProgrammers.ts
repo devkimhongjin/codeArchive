@@ -1,3 +1,5 @@
+import { programmersListingDifficulty } from './problemDifficulty';
+import type { ProblemDifficulty } from '../../../shared/difficulty';
 import { canonicalLanguageKey } from "../../../shared/language";
 import { programmersHistoricalSubmissionId } from "./historicalIdentity";
 
@@ -17,6 +19,7 @@ export type ProgrammersHistoryPreview =
   | { status: "READY"; candidates: ProgrammersHistoryCandidate[]; skipped: number; truncated: boolean };
 
 export interface ProgrammersListingLesson {
+  difficulty?: ProblemDifficulty;
   problemNumber: string;
   title: string;
   lessonUrl: string;
@@ -284,7 +287,8 @@ export function readProgrammersSolvedListingPage(document: Document, location: L
     const title = normalizedText(link?.textContent);
     if (!status?.classList.contains("solved") || !match || !title || title.length > 500 || seen.has(match[1]!)) return { status: "INCOMPLETE" };
     seen.add(match[1]!);
-    lessons.push({ problemNumber: match[1]!, title, lessonUrl: `${PROGRAMMERS_ORIGIN}${path}`, page, order: (page - 1) * 20 + index });
+    const difficulty = programmersListingDifficulty(row, match[1]!, `${PROGRAMMERS_ORIGIN}${path}`);
+    lessons.push({ ...(difficulty ? { difficulty } : {}), problemNumber: match[1]!, title, lessonUrl: `${PROGRAMMERS_ORIGIN}${path}`, page, order: (page - 1) * 20 + index });
   }
   const next = document.querySelectorAll<HTMLButtonElement>("button[aria-label='다음 페이지']");
   const first = document.querySelectorAll<HTMLButtonElement>("button[aria-label='처음 페이지']");

@@ -1,3 +1,4 @@
+import type { ProblemDifficulty } from '../../../shared/difficulty'
 import type { LightTheme, DarkTheme } from '../../../shared/codeThemes'
 import type { HeaderField } from '../../../shared/headerFields'
 
@@ -26,6 +27,7 @@ export type AuthProviders = {
 }
 
 export type Solution = {
+  difficulty?: ProblemDifficulty
   id?: number
   captureId: string
   platform: Platform
@@ -42,6 +44,7 @@ export type Solution = {
   memoryUsage?: number | string
   memoryValue?: number | string
   memoryUnit?: 'KB' | 'KiB' | 'MB' | 'MiB' | 'UNKNOWN' | string
+  metadataPending?: boolean
   historicalImport?: boolean
   historicalSubmissionId?: string
   visibility?: 'private' | 'published'
@@ -68,7 +71,7 @@ export type BulkResponse = {
 }
 
 export type ExtensionCapability = string
-export type HistoricalRecord = Pick<Solution, 'captureId' | 'platform' | 'problemNumber' | 'title' | 'language' | 'solvedAt'> & { historicalSubmissionId: string }
+export type HistoricalRecord = Pick<Solution, 'captureId' | 'platform' | 'problemNumber' | 'title' | 'language' | 'solvedAt' | 'metadataPending'> & { historicalSubmissionId: string }
 export type HistoricalCommitState = 'NONE' | 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN'
 export type HistoricalCommitCandidate = HistoricalRecord & { state: HistoricalCommitState }
 
