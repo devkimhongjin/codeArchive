@@ -31,6 +31,8 @@ export interface Capture {
   syncState: SyncState;
   /** Verified metadata changed; historical records still require explicit sync. */
   metadataPending?: boolean;
+  /** Monotonic metadata snapshot, incremented only by verified enrichment. */
+  metadataRevision?: number;
   syncedAt?: string;
   /** Device-only upload ownership. Legacy/unbound records require explicit sync. */
   syncAccountId?: string;

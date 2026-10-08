@@ -42,3 +42,17 @@ for (const mode of ['memory', 'indexeddb'] as const) test(`${mode}: enriches onl
   assert.equal((await store.listAll()).length, 1)
   await store.markSynced([old.captureId]); assert.equal((await store.getCapture(old.captureId))!.metadataPending, false)
 })
+
+for (const mode of ['memory', 'indexeddb'] as const) test(`${mode}: stale upload ACK preserves newer metadata revision atomically`, async () => {
+  const store = mode === 'memory' ? new MemoryCaptureStore() : new IndexedDbCaptureStore({ indexedDb: indexedDB, databaseName: `ack-revision-${crypto.randomUUID()}` });
+  const base = createCapture({ captureId: record.captureId, platform: 'SWEA', problemNumber: '123', title: 'Title', problemUrl: 'https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=VerifiedKey', language: 'JAVA', sourceCode: 'class Main {}', result: 'ACCEPTED', solvedAt: record.solvedAt, historicalImport: true, historicalSubmissionId: candidate.submissionId })!;
+  await store.putCapture(base);
+  await store.putCapture({ ...base, captureId: crypto.randomUUID(), executionTime: 10 });
+  assert.equal((await store.getCapture(base.captureId))!.metadataRevision, 1);
+  await store.putCapture({ ...base, captureId: crypto.randomUUID(), executionTime: 10, memoryValue: 2048, memoryUnit: 'KB' });
+  assert.deepEqual(await store.markSynced([base.captureId], new Map([[base.captureId, 1]])), []);
+  const pending = (await store.getCapture(base.captureId))!;
+  assert.equal(pending.metadataRevision, 2); assert.equal(pending.metadataPending, true); assert.equal(pending.syncState, 'PENDING');
+  assert.deepEqual(await store.markSynced([base.captureId], new Map([[base.captureId, 2]])), [base.captureId]);
+  assert.equal((await store.getCapture(base.captureId))!.metadataPending, false);
+});

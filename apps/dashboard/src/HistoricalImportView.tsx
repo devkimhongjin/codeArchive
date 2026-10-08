@@ -77,7 +77,7 @@ export function HistoricalImportView({ extensionId, capability, supported = true
         const serverIds = await getHistoricalSubmissionIds(initial.githubId, platform)
         if (!active()) return
         if (!Array.isArray(serverIds) || serverIds.some(id => typeof id !== 'string')) throw new Error('서버 제출 목록을 확인하지 못했습니다.')
-        const known = new Set(serverIds), platformRecords = chosen.filter(record => record.platform === platform)
+        const platformRecords = chosen.filter(record => record.platform === platform)
         for (let offset = 0; offset < platformRecords.length; offset += 50) {
           if (!active() || cancel.current) break
           await checkAccount()
@@ -91,16 +91,14 @@ export function HistoricalImportView({ extensionId, capability, supported = true
               !captures.every(capture => capture.historicalImport === true && capture.platform === platform &&
                 batch.some(record => record.captureId === capture.captureId && record.historicalSubmissionId === capture.historicalSubmissionId))) throw new Error('선택한 로컬 제출을 검증하지 못했습니다.')
           if (cancel.current) break
-          const upload = captures.filter(capture => (!known.has(capture.historicalSubmissionId!) || capture.metadataPending === true))
-          let accepted = captures.filter(capture => known.has(capture.historicalSubmissionId!) && !capture.metadataPending).map(capture => capture.captureId)
-          if (upload.length) {
-            const response = await bulkUpload(upload, initial.githubId)
-            if (!active()) return
-            if (!Array.isArray(response.acceptedCaptureIds) || response.acceptedCaptureIds.some(id => !upload.some(capture => capture.captureId === id))) throw new Error('서버 수락 응답을 검증하지 못했습니다.')
-            accepted = [...new Set([...accepted, ...response.acceptedCaptureIds])]
-          }
+          // Native-id membership is not proof of this complete snapshot being accepted.
+          const upload = captures;
+          const response = await bulkUpload(upload, initial.githubId)
+          if (!active()) return
+          if (!Array.isArray(response.acceptedCaptureIds) || response.acceptedCaptureIds.some(id => !upload.some(capture => capture.captureId === id))) throw new Error('서버 수락 응답을 검증하지 못했습니다.')
+          const accepted = [...new Set(response.acceptedCaptureIds)]
           if (accepted.length) {
-            const ack = await requestBridge<{ ok?: boolean }>(extensionId, { type: 'ACK', capability, captureIds: accepted })
+            const ack = await requestBridge<{ ok?: boolean }>(extensionId, { type: 'ACK', capability, captureIds: accepted, captureRevisions: captures.filter(capture => accepted.includes(capture.captureId)).map(capture => ({ captureId: capture.captureId, revision: capture.metadataRevision ?? 0 })) })
             if (!active()) return
             if (ack.ok !== true) throw new Error('로컬 동기화 표시를 확인하지 못했습니다. 새로고침 후 서버 기록을 다시 확인해 주세요.')
           }

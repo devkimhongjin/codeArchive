@@ -44,7 +44,7 @@ export type Solution = {
   memoryUsage?: number | string
   memoryValue?: number | string
   memoryUnit?: 'KB' | 'KiB' | 'MB' | 'MiB' | 'UNKNOWN' | string
-  metadataPending?: boolean
+  metadataPending?: boolean; metadataRevision?: number
   historicalImport?: boolean
   historicalSubmissionId?: string
   visibility?: 'private' | 'published'

@@ -22,7 +22,7 @@ function verifiedHistoricalEnrichment(existing: Capture, incoming: Capture): { r
   const difficulty = normalizeDifficulty(existing.platform, existing.problemNumber, existing.problemUrl, incoming.difficulty);
   if (!existing.difficulty && difficulty) patch.difficulty = difficulty;
   if (!Object.keys(patch).length) return { result: { created: false } };
-  return { result: { created: false, reconciliation: "enrichment_available", captureId: existing.captureId }, capture: { ...existing, ...patch, syncState: "PENDING", metadataPending: true } };
+  return { result: { created: false, reconciliation: "enrichment_available", captureId: existing.captureId }, capture: { ...existing, ...patch, syncState: "PENDING", metadataPending: true, metadataRevision: (existing.metadataRevision ?? 0) + 1 } };
 }
 
 export interface CaptureStore {
@@ -37,7 +37,7 @@ export interface CaptureStore {
   getCapture(captureId: string): Promise<Capture | null>;
   listPending(excludedCaptureIds?: Iterable<string>, limit?: number): Promise<Capture[]>;
   countPending(): Promise<number>;
-  markSynced(captureIds: Iterable<string>): Promise<string[]>;
+  markSynced(captureIds: Iterable<string>, expectedRevisions?: ReadonlyMap<string, number>): Promise<string[]>;
   getSettings(): Promise<CaptureSettings>;
   updateSettings(patch: Partial<CaptureSettings>): Promise<CaptureSettings>;
   /** Serialized atomic read/modify/write for settings-bearing background work. */
@@ -274,7 +274,7 @@ export class IndexedDbCaptureStore implements CaptureStore {
     return (values as StoredCapture[]).filter(capture => capture.historicalImport !== true).length;
   }
 
-  async markSynced(captureIds: Iterable<string>): Promise<string[]> {
+  async markSynced(captureIds: Iterable<string>, expectedRevisions?: ReadonlyMap<string, number>): Promise<string[]> {
     const ids = [...new Set(captureIds)];
     if (ids.length === 0) return [];
     const database = await this.open();
@@ -283,7 +283,8 @@ export class IndexedDbCaptureStore implements CaptureStore {
     const synced: string[] = [];
     for (const captureId of ids) {
       const existing = (await requestResult(store.get(captureId))) as StoredCapture | undefined;
-      if (!existing || existing.syncState !== "PENDING") continue;
+      if (!existing || expectedRevisions && expectedRevisions.get(captureId) !== (existing.metadataRevision ?? 0)) continue;
+      if (existing.syncState !== "PENDING") { if (expectedRevisions && existing.syncState === "SYNCED") synced.push(captureId); continue; }
       const updated: StoredCapture = {
         ...existing,
         syncState: "SYNCED", metadataPending: false,
@@ -452,11 +453,12 @@ export class MemoryCaptureStore implements CaptureStore {
     return [...this.captures.values()].filter((capture) => capture.syncState === "PENDING" && capture.historicalImport !== true).length;
   }
 
-  async markSynced(captureIds: Iterable<string>): Promise<string[]> {
+  async markSynced(captureIds: Iterable<string>, expectedRevisions?: ReadonlyMap<string, number>): Promise<string[]> {
     const synced: string[] = [];
     for (const captureId of new Set(captureIds)) {
       const capture = this.captures.get(captureId);
-      if (!capture || capture.syncState !== "PENDING") continue;
+      if (!capture || expectedRevisions && expectedRevisions.get(captureId) !== (capture.metadataRevision ?? 0)) continue;
+      if (capture.syncState !== "PENDING") { if (expectedRevisions && capture.syncState === "SYNCED") synced.push(captureId); continue; }
       capture.syncState = "SYNCED";
       capture.metadataPending = false;
       capture.syncedAt = new Date().toISOString();
