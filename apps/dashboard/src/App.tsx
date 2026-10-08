@@ -1712,11 +1712,11 @@ function GuideView({ onSettings, onGithub }: { onSettings: () => void; onGithub:
           </div>
         </article>
         <GuideStep number="01" title="확장 프로그램 설치" text="ZIP을 압축 해제하고 Chrome 우측 상단의 확장 프로그램 → 확장 프로그램 관리로 이동합니다. 개발자 모드를 켠 뒤 압축 해제한 폴더를 끌어다 놓으세요." action="chrome://extensions" />
-        <GuideStep number="02" title="첫 PASS를 로컬에 저장" text="지원 사이트에서 정답 제출을 완료하세요. 대시보드 연결 여부와 관계없이 먼저 로컬 저장이 완료되고, 자동 다운로드를 켰다면 파일도 내려받습니다." action="확장 프로그램 열기" />
+        <GuideStep number="02" title="새 정답 자동 동기화" text="대시보드 로그인과 확장 연결을 완료한 뒤 지원 사이트에서 정답을 제출하세요. 새 정답은 자동으로 서버에 동기화됩니다." action="확장 프로그램 열기" />
         <GuideStep number="03" title="GitHub 로그인 · 자동 연결" text="확장 프로그램에서 대시보드를 열고 GitHub로 로그인하세요. 설치된 CodeArchive가 자동으로 연결되므로 확장 ID를 복사하거나 붙여 넣지 않습니다." action="연결 상태 확인" onAction={onSettings} />
         <GuideStep number="04" title="자동 동기화 연결" text="로그인한 계정과 확장 연결을 확인하세요. 새 정답 제출은 자동으로 동기화하며, 대시보드를 닫은 뒤에도 계속 처리합니다. 과거에 수집한 풀이는 일괄 동기화 탭에서 직접 전송합니다." action="자동화 설정" onAction={onSettings} />
         <GuideStep number="05" title="GitHub App · 저장 위치 선택" text="GitHub 관리에서 연결 및 저장 위치 선택을 누르면 필요한 경우 GitHub App 설치 화면으로 이동합니다. 설치 계정, 저장소, 브랜치와 폴더를 선택한 뒤 GitHub 자동 커밋을 켜세요." action="GitHub 관리" onAction={onGithub} />
-        <GuideStep number="06" title="저장 결과 확인" text="확장 프로그램의 최근 저장한 풀이에서 동기화 대기·동기화됨과 GitHub 완료·커밋 대기·커밋 중·커밋 실패·커밋 확인 필요·자동 커밋 안 함 상태를 확인하세요. 대시보드의 동기화 숫자는 아직 서버로 보내지 않은 로컬 풀이 수입니다." action="대시보드 확인" />
+        <GuideStep number="06" title="저장 결과 확인" text="확장 프로그램의 최근 동기화된 문제에서 서버 저장 결과를 확인하세요. 대시보드에서 GitHub 완료·커밋 대기·커밋 중·커밋 실패·커밋 확인 필요·자동 커밋 안 함 상태를 확인할 수 있습니다. 대시보드의 동기화 숫자는 아직 서버로 보내지 않은 로컬 풀이 수입니다." action="대시보드 확인" />
       </div>
       <div className="guide-update-note"><Icon name="check" size={18} /><div><strong>업데이트할 때 로컬 풀이를 유지하려면</strong><p>확장을 삭제하지 말고 기존 압축 해제 폴더의 파일을 새 ZIP 내용으로 교체한 뒤 확장 관리 화면에서 ‘새로고침’을 누르세요. 고정된 확장 ID가 유지되므로 IndexedDB 로컬 기록도 그대로 사용합니다.</p></div></div>
       <section className="guide-recovery" aria-labelledby="guide-recovery-title">
