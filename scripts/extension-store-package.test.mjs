@@ -69,6 +69,8 @@ test('store manifest removes development grants while preserving the pinned iden
   assert.equal(manifest.key, source.key);
   assert.equal(manifest.version, source.version);
   assert.ok(manifest.host_permissions.every(value => value.startsWith('https://')));
+  assert.equal(manifest.host_permissions.includes('https://api.github.com/*'), false);
+  assert.deepEqual(manifest.host_permissions, source.host_permissions.filter(value => value !== 'http://localhost:5173/*' && value !== 'https://api.github.com/*'));
   assert.deepEqual(manifest.externally_connectable.matches, ['https://codearchive-dashboard-beta.netlify.app/*']);
   assert.equal(manifest.content_security_policy.extension_pages, "script-src 'self'; object-src 'self';");
   assert.deepEqual(prepareManifest(manifest), manifest);
