@@ -31,7 +31,7 @@
     "vitest": "latest"
   },
   "engines": {
-    "node": ">=18"
+    "node": "^22.18.0 || >=24.11.0"
   },
   "overrides": {
     "lodash": "4.18.1",
