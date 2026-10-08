@@ -1,3 +1,4 @@
+import { loadReconciliationEvidence } from './reconciliationEvidence';
 import { isLightTheme, isDarkTheme } from "../../../shared/codeThemes";
 import { setPopupGithubAutomation } from './popupGithubAutomation';
 import { isCaptureRecord, isUuid } from "./capture";
@@ -215,6 +216,7 @@ type InternalMessage =
   | { type: "STORE_SWEA_PROBLEM_CONTEXT"; context: unknown }
   | { type: "GET_SWEA_PROBLEM_CONTEXT"; sourceUrl: unknown }
   | { type: "OPEN_LOCAL_HISTORY" }
+  | { type: "LOCAL_HISTORY_RECONCILIATION"; platform: unknown }
   | { type: "LOCAL_HISTORY_IDS"; platform?: unknown }
   | { type: "LOCAL_HISTORY_SCAN_START" | "LOCAL_HISTORY_STATUS" | "LOCAL_HISTORY_CANCEL"; platform?: unknown }
   | { type: "LOCAL_HISTORY_IMPORT_START"; platform?: unknown; submissionIds: unknown };
@@ -516,8 +518,8 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
         sendResponse({ ok: false, error: "INVALID_HISTORICAL_CAPTURE" });
         return;
       }
-      const { created } = await store.putCapture(capture);
-      sendResponse({ ok: true, created });
+      const written = await store.putCapture(capture);
+      sendResponse({ ok: true, ...written });
     })()
       .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;
@@ -571,6 +573,13 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       if (result.ok && result.relayReady) void requestRelayDrain();
       sendResponse(result);
     }).catch(() => sendResponse({ ok: false, error: 'STORAGE_ERROR' })).finally(() => { popupGithubBusy = false; });
+    return true;
+  }
+
+  if (object.type === "LOCAL_HISTORY_RECONCILIATION") {
+    if (!isHistoryPageSender(sender)) { sendResponse({ error: "UNAUTHORIZED" }); return false; }
+    if (object.platform !== "SWEA" && object.platform !== "PROGRAMMERS") { sendResponse({ error: "BAD_REQUEST" }); return false; }
+    void loadReconciliationEvidence(store, object.platform).then(sendResponse).catch(() => sendResponse({ error: "EVIDENCE_UNAVAILABLE" }));
     return true;
   }
 

@@ -60,6 +60,19 @@ public class SolutionController {
         return ResponseEntity.ok(solutions);
     }
 
+    @GetMapping("/reconciliation-records")
+    public ResponseEntity<?> reconciliationRecords(Authentication authentication,
+            @RequestHeader(value = "X-CodeArchive-Account", required = false) String assertion,
+            @RequestParam String platform, @RequestParam(defaultValue = "0") long cursor) {
+        Optional<GithubIdentity> identity = GithubAuthentication.identity(authentication);
+        if (identity.isEmpty()) return ResponseEntity.status(401).body(new ApiError("Authentication is required"));
+        ResponseEntity<?> failure = validateAccountAssertion(identity.get().githubId(), assertion);
+        if (failure != null) return failure;
+        if (!("SWEA".equals(platform) || "PROGRAMMERS".equals(platform)) || cursor < 0)
+            return ResponseEntity.badRequest().body(new ApiError("Invalid reconciliation page"));
+        return ResponseEntity.ok(solutionService.reconciliationPage(identity.get().githubId(), Platform.valueOf(platform), cursor));
+    }
+
     @GetMapping("/historical-submission-ids")
     public ResponseEntity<?> historicalSubmissionIds(
             Authentication authentication,

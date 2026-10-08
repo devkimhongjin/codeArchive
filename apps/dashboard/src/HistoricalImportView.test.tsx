@@ -103,3 +103,18 @@ it('cancellation acknowledges in-flight success and prevents the next batch', as
   await act(async () => { resolve({ acceptedCaptureIds: captures.slice(0, 50).map(record => record.captureId), failures: [] }) })
   await screen.findByText('동기화 중단 · 문제 50건 · 제출 50건'); expect(mocks.upload).toHaveBeenCalledTimes(1)
 })
+
+it('uploads verified enrichment even when the native submission already exists remotely', async () => {
+  const record = { ...capture(1, 'SWEA'), metadataPending: true }; setup([record]); mocks.ids.mockResolvedValue([record.historicalSubmissionId]);
+  render(<HistoricalImportView {...props} />); await start(1);
+  await screen.findByText('동기화 완료 · 문제 1건 · 제출 1건');
+  expect(mocks.upload.mock.calls[0][0][0].metadataPending).toBe(true);
+  expect(mocks.bridge.mock.calls.filter(([, message]) => message.type === 'ACK')).toHaveLength(1);
+});
+it('retains failed enrichment without acknowledging it as synchronized', async () => {
+  const record = { ...capture(1, 'SWEA'), metadataPending: true }; setup([record]); mocks.ids.mockResolvedValue([record.historicalSubmissionId]);
+  mocks.upload.mockResolvedValue({ acceptedCaptureIds: [], failures: [] });
+  render(<HistoricalImportView {...props} />); await start(1);
+  await screen.findByText(/실패 1건/);
+  expect(mocks.bridge.mock.calls.filter(([, message]) => message.type === 'ACK')).toHaveLength(0);
+});

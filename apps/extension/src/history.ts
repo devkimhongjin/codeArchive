@@ -1,8 +1,10 @@
+import { reconcileSubmissions, type ReconciliationRow, type ReconciliationSubmission } from '../../../shared/submissionReconciliation';
+import type { ReconciliationEvidence } from './reconciliationEvidence';
 import { selectHistoricalSubmissionIds, type HistoricalSelectionMode } from "../../../shared/historicalSelection";
 import { HISTORY_TIMING_STORAGE_KEY, estimateHistoricalTotalDuration, readHistoricalTimingSample, type HistoricalTimingSample } from "./historyTiming";
 
 type Platform = "JUNGOL" | "SWEA" | "PROGRAMMERS";
-type Candidate = { submissionId: string; problemNumber: string; title: string; language?: string; createdAt?: string; executionTime?: number; memoryValue?: number };
+type Candidate = ReconciliationSubmission & { submissionId: string; problemNumber: string; title: string; language?: string; createdAt?: string; executionTime?: number; memoryValue?: number };
 type State = { status: string; candidates?: Candidate[]; truncated?: boolean; progress?: {
   phase: string; stage?: string; rows: number; pagesLoaded: number; groupsExpanded: number; groupsTotal: number; groupsTotalKnown?: boolean;
   historiesRead?: number; historiesTotal?: number; currentProblemNumber?: string;
@@ -41,6 +43,13 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   const candidatesPanel = doc.querySelector<HTMLElement>("#candidates")!;
   const list = doc.querySelector<HTMLElement>("#candidate-list")!;
   const help = doc.querySelector<HTMLElement>("#candidate-help")!;
+  const reconciliationButton = doc.querySelector<HTMLButtonElement>("#reconcile");
+  const verifyExisting = doc.querySelector<HTMLButtonElement>("#verify-existing");
+  const clearReconciliation = doc.querySelector<HTMLButtonElement>("#clear-reconciliation");
+  const reconciliationStatus = doc.querySelector<HTMLElement>("#reconciliation-status");
+  const reconciliationHelp = doc.querySelector<HTMLElement>("#reconciliation-help");
+  let reconciliation: ReconciliationRow[] | null = null;
+  let reconciliationEpoch = 0, reconciliationBusy = false;
   let candidates: Candidate[] = [], localIds = new Set<string>(), selected = new Set<string>();
   let pollingEpoch: number | null = null, readyForImport = false, platformEpoch = 0, taskActive = false;
   let timingSample: HistoricalTimingSample | null = null;
@@ -87,7 +96,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     if (state.status === "FAILED") return "수집을 완료하지 못했습니다. 원본 탭 상태를 확인해 주세요.";
     return state.status === "READY" ? `후보 목록을 확인했습니다.${unsupportedNotice}` : platformInfo[platform()].guide;
   }
-  function clearCandidates() { candidates = []; selected.clear(); readyForImport = false; candidatesPanel.hidden = true; list.replaceChildren(); }
+  function clearCandidates() { reconciliationEpoch++; reconciliationBusy = false; reconciliation = null; if (reconciliationStatus) reconciliationStatus.textContent = ""; if (clearReconciliation) clearReconciliation.hidden = true; if (verifyExisting) verifyExisting.hidden = true; if (reconciliationHelp) reconciliationHelp.hidden = true; candidates = []; selected.clear(); readyForImport = false; candidatesPanel.hidden = true; list.replaceChildren(); }
   function formatElapsed(milliseconds: number) {
     const seconds = Math.max(0, Math.floor(milliseconds / 1_000));
     const hours = Math.floor(seconds / 3_600), minutes = Math.floor(seconds % 3_600 / 60), remainder = seconds % 60;
@@ -105,21 +114,31 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     taskTime.textContent = `진행 시간 ${formatElapsed(finishedAt - state.startedAt)} / 예상 총 시간 ${estimatedTotal === null ? "?시간" : formatElapsed(estimatedTotal)}`;
   }
   function selectedInCandidateOrder() {
-    return candidates.filter(item => !localIds.has(item.submissionId) && selected.has(item.submissionId)).map(item => item.submissionId);
+    return candidates.filter(item => allowedForRecovery(item) && selected.has(item.submissionId)).map(item => item.submissionId);
+  }
+  function allowedForRecovery(item: Candidate) {
+    if (!reconciliation) return !localIds.has(item.submissionId);
+    const state = reconciliation.find(row => row.submissionId === item.submissionId)?.state;
+    return state === "missing_local" || state === "enrichment_available";
   }
   function render() {
-    const allowed = candidates.filter(item => !localIds.has(item.submissionId));
-    selected = new Set([...selected].filter(id => allowed.some(item => item.submissionId === id)));
+    const allowed = reconciliation ? candidates : candidates.filter(item => !localIds.has(item.submissionId));
+    selected = new Set([...selected].filter(id => allowed.some(item => item.submissionId === id && allowedForRecovery(item))));
     list.replaceChildren();
     for (const candidate of allowed) {
       const row = doc.createElement("label"); row.className = "row";
-      const checkbox = doc.createElement("input"); checkbox.type = "checkbox"; checkbox.checked = selected.has(candidate.submissionId); checkbox.setAttribute("aria-label", `제출 #${candidate.submissionId}`);
+      const checkbox = doc.createElement("input"); checkbox.disabled = !allowedForRecovery(candidate); checkbox.type = "checkbox"; checkbox.checked = selected.has(candidate.submissionId); checkbox.setAttribute("aria-label", `제출 #${candidate.submissionId}`);
       checkbox.addEventListener("change", () => { checkbox.checked ? selected.add(candidate.submissionId) : selected.delete(candidate.submissionId); render(); });
       const title = doc.createElement("span"); title.textContent = `#${candidate.problemNumber} · ${candidate.title}`;
       const meta = doc.createElement("small"); meta.className = "meta";
       meta.textContent = platform() === "PROGRAMMERS"
         ? `${candidate.createdAt ?? "제출 시각 확인됨"}${candidate.language ? ` · ${candidate.language}` : ""}`
         : `제출 #${candidate.submissionId}${candidate.executionTime !== undefined ? ` · ${candidate.executionTime}ms` : ""}${candidate.memoryValue !== undefined ? ` · ${candidate.memoryValue}${platform() === "SWEA" ? "KB" : "MB"}` : ""}`;
+      if (reconciliation) {
+        const state = reconciliation.find(item => item.submissionId === candidate.submissionId)?.state ?? "unsupported";
+        const labels = { matched: "로컬·서버 제출 키 일치", missing_local: "로컬 기록 없음 · 원본 확인 후 복구 가능", missing_remote: "서버 기록 없음 · 관리 탭에서 동기화", enrichment_available: "정보 보강 가능 · 원본 재확인 필요", ambiguous: "동일 제출 확인 불가 · 자동 병합 제외", unsupported: "대조 미확인" };
+        meta.textContent += ` · ${labels[state]}`;
+      }
       row.append(checkbox, title, meta); list.append(row);
     }
     const problemCount = new Set(allowed.map(item => `${platform()}:${item.problemNumber}`)).size;
@@ -127,7 +146,8 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     const excluded = candidates.length - allowed.length;
     help.textContent = selected.size > 5_000 ? `${summary} · 한 번에 최대 5,000개 제출을 저장할 수 있습니다. 선택 범위를 줄여 주세요.` :
       excluded ? `${summary} · 이미 이 브라우저에 저장한 제출 ${excluded}건은 후보에서 제외했습니다.` : summary;
-    importButton.textContent = `선택한 ${selected.size}건 로컬 저장`;
+    importButton.textContent = reconciliation ? `선택한 ${selected.size}건 원본 검증·복구/보강` : `선택한 ${selected.size}건 로컬 저장`;
+    if (reconciliationButton) reconciliationButton.disabled = reconciliationBusy || taskActive || !readyForImport || platform() === "JUNGOL";
     importButton.disabled = taskActive || !readyForImport || selected.size === 0 || selected.size > 5_000;
   }
   function showPlatform() {
@@ -237,9 +257,37 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     try { await services.openSite(platformInfo[current].href); }
     catch { if (platform() === current && platformEpoch === epoch) status.textContent = "사이트를 새 창에서 열지 못했습니다. 다시 눌러 주세요."; }
   });
+  reconciliationButton?.addEventListener("click", async () => {
+    const expected = platform(), epoch = platformEpoch;
+    if (reconciliationBusy || !readyForImport || taskActive || expected === "JUNGOL") return;
+    reconciliationBusy = true; const requestEpoch = ++reconciliationEpoch;
+    reconciliationButton.disabled = true;
+    if (reconciliationStatus) reconciliationStatus.textContent = "로컬·서버 제출 기록을 대조하고 있습니다.";
+    try {
+      const evidence = await send({ type: "LOCAL_HISTORY_RECONCILIATION", platform: expected }) as ReconciliationEvidence;
+      if (!ownsPlatform(expected, epoch) || requestEpoch !== reconciliationEpoch || taskActive) return;
+      if (!evidence || !Array.isArray(evidence.local) || !Array.isArray(evidence.remote) || typeof evidence.localComplete !== "boolean" || typeof evidence.remoteComplete !== "boolean") throw new Error("Unverified evidence");
+      reconciliation = evidence.localComplete ? reconcileSubmissions(expected, candidates, evidence.local, evidence.remote, evidence.remoteComplete) : candidates.map(item => ({ submissionId: item.submissionId, state: "unsupported" as const }));
+      selected = new Set(selectHistoricalSubmissionIds(candidates.filter(allowedForRecovery), policy.value as HistoricalSelectionMode));
+      if (clearReconciliation) clearReconciliation.hidden = false;
+      if (verifyExisting) verifyExisting.hidden = false;
+      if (reconciliationHelp) reconciliationHelp.hidden = false;
+      if (reconciliationStatus) reconciliationStatus.textContent = evidence.remoteComplete ? "본인 서버 기록 대조 완료. 복구·보강할 제출을 선택하세요." : "서버 대조를 확인하지 못했습니다. 로컬 기록만 확인했으며 서버 누락으로 판단하지 않습니다. 대시보드 로그인·연결을 확인하세요.";
+      render();
+    } catch { if (ownsPlatform(expected, epoch) && reconciliationStatus) reconciliationStatus.textContent = "기록을 대조하지 못했습니다. 기존 수집과 저장 기록은 유지됩니다."; }
+    finally { if (requestEpoch === reconciliationEpoch) { reconciliationBusy = false; if (ownsPlatform(expected, epoch)) reconciliationButton.disabled = taskActive || !readyForImport; } }
+  });
+  verifyExisting?.addEventListener("click", () => {
+    if (!reconciliation || taskActive) return;
+    reconciliation = reconciliation.map(row => row.localCaptureId && ["matched", "missing_remote"].includes(row.state) ? { ...row, state: "enrichment_available" } : row);
+    selected = new Set(selectHistoricalSubmissionIds(candidates.filter(allowedForRecovery), policy.value as HistoricalSelectionMode));
+    if (reconciliationStatus) reconciliationStatus.textContent = "기존 제출 원본을 다시 확인합니다. 코드·문제·언어·시각이 일치하고 새로 확인한 정보가 있을 때만 빈 값을 보강합니다.";
+    render();
+  });
+  clearReconciliation?.addEventListener("click", () => { reconciliation = null; selected = new Set(selectHistoricalSubmissionIds(candidates.filter(item => !localIds.has(item.submissionId)), policy.value as HistoricalSelectionMode)); clearReconciliation.hidden = true; if (verifyExisting) verifyExisting.hidden = true; if (reconciliationHelp) reconciliationHelp.hidden = true; if (reconciliationStatus) reconciliationStatus.textContent = ""; render(); });
   scan.addEventListener("click", async () => { const expected = platform(), epoch = platformEpoch; try { if (!await refreshLocalIds(expected, epoch) || !ownsPlatform(expected, epoch)) return; clearCandidates(); render(); await applyState(await send({ type: "LOCAL_HISTORY_SCAN_START", platform: expected }), expected, epoch); } catch { if (ownsPlatform(expected, epoch)) { status.textContent = "후보 찾기를 시작하지 못했습니다. 원본 제출 이력 탭을 확인해 주세요."; scan.disabled = false; } } });
   cancel.addEventListener("click", async () => { const expected = platform(), epoch = platformEpoch; try { await applyState(await send({ type: "LOCAL_HISTORY_CANCEL", platform: expected }), expected, epoch); } catch { if (ownsPlatform(expected, epoch)) { status.textContent = "중단 요청을 전달하지 못했습니다. 원본 탭을 확인해 주세요."; cancel.disabled = false; } } });
-  policy.addEventListener("change", () => { selected = new Set(selectHistoricalSubmissionIds(candidates.filter(item => !localIds.has(item.submissionId)), policy.value as HistoricalSelectionMode)); render(); });
+  policy.addEventListener("change", () => { selected = new Set(selectHistoricalSubmissionIds(candidates.filter(allowedForRecovery), policy.value as HistoricalSelectionMode)); render(); });
   platformSelect.addEventListener("change", () => { platformEpoch += 1; showPlatform(); void loadTiming(); void loadPlatform(); });
   importButton.addEventListener("click", async () => { const expected = platform(), epoch = platformEpoch; if (!readyForImport) return; try { await applyState(await send({ type: "LOCAL_HISTORY_IMPORT_START", platform: expected, submissionIds: selectedInCandidateOrder() }), expected, epoch); } catch { if (ownsPlatform(expected, epoch)) { status.textContent = "로컬 저장을 시작하지 못했습니다. 다시 시도해 주세요."; render(); } } });
   showPlatform(); void loadTiming(); void loadPlatform();

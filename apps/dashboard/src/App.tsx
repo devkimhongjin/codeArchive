@@ -1,3 +1,4 @@
+import { normalizeDifficulty, difficultyKey } from '../../../shared/difficulty'
 import { StaticAnalysisPanel } from './StaticAnalysisPanel'
 import { CodeThemePreview } from './CodeThemePreview'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -131,6 +132,7 @@ function normalizeSolution(value: unknown, index = 0): Solution {
   const rawVisibility = read('visibility')
   return {
     id,
+    difficulty: normalizeDifficulty(platform, String(read('problemNumber', 'problem_number') ?? ''), String(read('problemUrl', 'problem_url') ?? ''), raw.difficulty),
     captureId: String(read('captureId', 'capture_id') ?? `remote-${index}`),
     platform,
     problemNumber: String(read('problemNumber', 'problem_number') ?? '—'),
@@ -266,6 +268,7 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [platformFilter, setPlatformFilter] = useState<'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'>('ALL')
   const [languageFilter, setLanguageFilter] = useState('ALL')
+  const [difficultyFilter, setDifficultyFilter] = useState('ALL')
   const [solutionSort, setSolutionSort] = useState<SolutionSort>('latest')
   const [solutionPage, setSolutionPage] = useState(1)
   const [loading, setLoading] = useState(false)
@@ -558,8 +561,8 @@ export default function App() {
   }, [solutions])
 
   const filteredSolutions = useMemo(() => {
-    return filterAndSortSolutions(solutions, { query, platform: platformFilter, languageKey: languageFilter, sort: solutionSort })
-  }, [languageFilter, platformFilter, query, solutionSort, solutions])
+    return filterAndSortSolutions(solutions, { query, platform: platformFilter, languageKey: languageFilter, difficulty: difficultyFilter, sort: solutionSort })
+  }, [difficultyFilter, languageFilter, platformFilter, query, solutionSort, solutions])
 
   const solutionGroups = useMemo(() => groupSolutions(filteredSolutions), [filteredSolutions])
   const solutionPageCount = Math.max(1, Math.ceil(solutionGroups.length / ARCHIVE_PAGE_SIZE))
@@ -1373,6 +1376,8 @@ export default function App() {
             query={query}
             platformFilter={platformFilter}
             languageFilter={languageFilter}
+            difficultyFilter={difficultyFilter}
+            setDifficultyFilter={value => { setDifficultyFilter(value); setSolutionPage(1) }}
             languages={languages}
             solutionSort={solutionSort}
             loading={loading}
@@ -1498,6 +1503,8 @@ function SolutionsView({
   query,
   platformFilter,
   languageFilter,
+  difficultyFilter,
+  setDifficultyFilter,
   languages,
   solutionSort,
   loading,
@@ -1528,6 +1535,8 @@ function SolutionsView({
   query: string
   platformFilter: 'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'
   languageFilter: string
+  difficultyFilter: string
+  setDifficultyFilter: (value: string) => void
   languages: Array<{ key: string; label: string }>
   solutionSort: SolutionSort
   loading: boolean
@@ -1548,7 +1557,7 @@ function SolutionsView({
   const listRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = 0
-  }, [page, query, platformFilter, languageFilter, solutionSort])
+  }, [page, query, platformFilter, languageFilter, difficultyFilter, solutionSort])
   return (
     <section className="solutions-layout" aria-label="풀이 아카이브">
       <div className="solutions-heading">
@@ -1576,8 +1585,9 @@ function SolutionsView({
         <select value={languageFilter} onChange={(event) => setLanguageFilter(event.target.value)} aria-label="언어 필터">
           {languages.map((language) => <option key={language.key} value={language.key}>{language.label}</option>)}
         </select>
+        <select aria-label="난이도 필터" value={difficultyFilter} onChange={event => setDifficultyFilter(event.target.value)}><option value="ALL">모든 난이도</option><option value="UNKNOWN">미확인</option>{[...new Set(solutions.filter(item => item.difficulty).map(item => difficultyKey(item.platform, item.difficulty)))].sort().map(key => <option key={key} value={key}>{key.replace(':', ' ')}</option>)}</select>
         <label className="archive-theme-picker">코드 보기 테마 <CodeThemeSelect value={codeThemeMode === 'dark' ? darkTheme : lightTheme} onChange={onCodeThemeChange} /></label>
-        {(query || platformFilter !== 'ALL' || languageFilter !== 'ALL') && <button className="filter-reset" onClick={() => { setQuery(''); setPlatformFilter('ALL'); setLanguageFilter('ALL') }}><Icon name="close" size={13} /> 필터 초기화</button>}
+        {(query || platformFilter !== 'ALL' || languageFilter !== 'ALL' || difficultyFilter !== 'ALL') && <button className="filter-reset" onClick={() => { setQuery(''); setPlatformFilter('ALL'); setLanguageFilter('ALL'); setDifficultyFilter('ALL') }}><Icon name="close" size={13} /> 필터 초기화</button>}
       </div>
 
       <div className="content-grid">
@@ -1617,7 +1627,7 @@ function SolutionGroupRow({ group, selected, onSelect, onOtherSolutions }: { gro
       <span className={`platform-logo ${group.platform === 'SWEA' ? 'swea' : group.platform === 'JUNGOL' ? 'jungol' : 'programmers'}`}>{group.platform === 'SWEA' ? 'S' : group.platform === 'JUNGOL' ? 'J' : 'P'}</span>
       <span className="solution-row-main">
         <span className="solution-row-top"><span className="solution-platform">{group.platform}</span><span className="solution-result">풀이 {group.submissions.length}개</span></span>
-        <span className="solution-title">{group.title}</span>
+        <span className="solution-title">{group.title}</span><small>{group.submissions.find(item => item.difficulty)?.difficulty?.label ?? '난이도 미확인'}</small>
         <span className="solution-row-bottom"><span>#{group.problemNumber}</span><span className="row-divider" /><span>{languageLabels}</span><span className="row-time"><Icon name="clock" size={12} /> {formatDate(latest.solvedAt ?? latest.observedAt)}</span></span>
       </span>
       <Icon name="chevron" size={17} />
@@ -1636,7 +1646,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
             <div className="detail-heading-main">
               <div className="detail-breadcrumb"><span>{solution.platform}</span><Icon name="chevron" size={12} /><span>#{solution.problemNumber}</span></div>
               <h2>{solution.title}</h2>
-              <div className="detail-subline"><span>{canonicalLanguageDisplayName(solution.language)}</span><span className="row-divider" /><span>풀이 시간 {formatObservedTime(solution.solvedAt ?? solution.observedAt)}</span></div>
+              <div className="detail-subline"><span>{solution.difficulty?.label ?? '난이도 미확인'}</span><span>{canonicalLanguageDisplayName(solution.language)}</span><span className="row-divider" /><span>풀이 시간 {formatObservedTime(solution.solvedAt ?? solution.observedAt)}</span></div>
             </div>
             <div className="detail-heading-actions"><button type="button" className="problem-link" onClick={() => onOtherSolutions(solution.platform, solution.problemNumber)}>다른 풀이 보기</button><a className="problem-link" href={solution.problemUrl} target="_blank" rel="noreferrer">문제 보기 <Icon name="external" size={14} /></a></div>
           </div>
@@ -1686,7 +1696,7 @@ function GuideView({ onSettings, onGithub }: { onSettings: () => void; onGithub:
     <section className="guide-page">
       <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> GET STARTED / BRIDGE</p><h1>연동 가이드</h1><p>설치부터 첫 PASS 저장, 자동 동기화와 GitHub 커밋 확인까지 순서대로 진행합니다.</p></div>
       <div className="guide-grid">
-        <article className="guide-card guide-hero"><div className="guide-hero-icon"><Icon name="link" size={25} /></div><div><span className="card-kicker">CODEARCHIVE BRIDGE</span><h2>PASS 한 번으로 저장 흐름을 확인하세요</h2><p>풀이는 먼저 브라우저에 저장됩니다. 자동 동기화를 켜면 대시보드를 닫아도 릴레이가 대기 중인 풀이를 서버로 전송하고, 설정에 따라 GitHub 커밋까지 요청합니다.</p></div><button className="primary-button" onClick={onSettings}>설정 열기 <Icon name="chevron" size={14} /></button></article>
+        <article className="guide-card guide-hero"><div className="guide-hero-icon"><Icon name="link" size={25} /></div><div><span className="card-kicker">CODEARCHIVE BRIDGE</span><h2>PASS 한 번으로 저장 흐름을 확인하세요</h2><p>풀이는 먼저 브라우저에 저장됩니다. 로그인과 확장 연결을 완료하면 대시보드를 닫아도 릴레이가 대기 중인 풀이를 서버로 전송하고, 설정에 따라 GitHub 커밋까지 요청합니다.</p></div><button className="primary-button" onClick={onSettings}>설정 열기 <Icon name="chevron" size={14} /></button></article>
         <article className="guide-card extension-release-card">
           <div className="release-heading"><div><span className="card-kicker">BETA DISTRIBUTION</span><h2>검증된 확장 프로그램 받기</h2></div><span className={`release-state is-${releaseState}`}>{releaseState === 'loading' ? '확인 중' : releaseState === 'ready' ? `v${latestRelease?.version}` : '릴리스 준비 중'}</span></div>
           <p>Chrome Web Store 출시 전에는 ZIP을 내려받아 개발자 모드에서 직접 로드합니다. 웹사이트가 확장을 자동 설치하거나 업데이트할 수는 없습니다.</p>
@@ -1704,7 +1714,7 @@ function GuideView({ onSettings, onGithub }: { onSettings: () => void; onGithub:
         <GuideStep number="01" title="확장 프로그램 설치" text="ZIP을 압축 해제하고 Chrome 우측 상단의 확장 프로그램 → 확장 프로그램 관리로 이동합니다. 개발자 모드를 켠 뒤 압축 해제한 폴더를 끌어다 놓으세요." action="chrome://extensions" />
         <GuideStep number="02" title="첫 PASS를 로컬에 저장" text="지원 사이트에서 정답 제출을 완료하세요. 대시보드 연결 여부와 관계없이 먼저 로컬 저장이 완료되고, 자동 다운로드를 켰다면 파일도 내려받습니다." action="확장 프로그램 열기" />
         <GuideStep number="03" title="GitHub 로그인 · 자동 연결" text="확장 프로그램에서 대시보드를 열고 GitHub로 로그인하세요. 설치된 CodeArchive가 자동으로 연결되므로 확장 ID를 복사하거나 붙여 넣지 않습니다." action="연결 상태 확인" onAction={onSettings} />
-        <GuideStep number="04" title="자동 동기화 설정" text="설정에서 자동 동기화를 켜고 저장하세요. 릴레이가 연결 확인됨 상태가 되면 로컬 대기 풀이를 전송하며, 대시보드를 닫은 뒤의 새 PASS도 계속 처리합니다." action="자동화 설정" onAction={onSettings} />
+        <GuideStep number="04" title="자동 동기화 연결" text="로그인한 계정과 확장 연결을 확인하세요. 새 정답 제출은 자동으로 동기화하며, 대시보드를 닫은 뒤에도 계속 처리합니다. 과거에 수집한 풀이는 일괄 동기화 탭에서 직접 전송합니다." action="자동화 설정" onAction={onSettings} />
         <GuideStep number="05" title="GitHub App · 저장 위치 선택" text="GitHub 관리에서 연결 및 저장 위치 선택을 누르면 필요한 경우 GitHub App 설치 화면으로 이동합니다. 설치 계정, 저장소, 브랜치와 폴더를 선택한 뒤 GitHub 자동 커밋을 켜세요." action="GitHub 관리" onAction={onGithub} />
         <GuideStep number="06" title="저장 결과 확인" text="확장 프로그램의 최근 저장한 풀이에서 동기화 대기·동기화됨과 GitHub 완료·커밋 대기·커밋 중·커밋 실패·커밋 확인 필요·자동 커밋 안 함 상태를 확인하세요. 대시보드의 동기화 숫자는 아직 서버로 보내지 않은 로컬 풀이 수입니다." action="대시보드 확인" />
       </div>
@@ -1712,7 +1722,7 @@ function GuideView({ onSettings, onGithub }: { onSettings: () => void; onGithub:
       <section className="guide-recovery" aria-labelledby="guide-recovery-title">
         <h2 id="guide-recovery-title" className="guide-recovery-title">연결 상태별 복구 방법</h2>
         <article className="guide-card"><span className="card-kicker">PENDING</span><h2>확인 대기</h2><p>릴레이 정보가 아직 확인되지 않았습니다. 대시보드를 열어 확장 연결을 확인하고 설정 저장이 끝날 때까지 기다리세요.</p></article>
-        <article className="guide-card"><span className="card-kicker">SETUP</span><h2>릴레이 설정 필요</h2><p>GitHub 저장 대상은 있지만 자동 전송 릴레이가 없습니다. 대시보드 설정에서 자동 동기화를 켜고 설정을 다시 저장하세요.</p></article>
+        <article className="guide-card"><span className="card-kicker">SETUP</span><h2>릴레이 설정 필요</h2><p>GitHub 저장 대상은 있지만 자동 전송 릴레이가 없습니다. 로그인 상태와 확장 연결을 확인한 뒤 설정을 다시 저장하세요.</p></article>
         <article className="guide-card"><span className="card-kicker">RELAY</span><h2>릴레이 오류 · 오프라인</h2><p>로컬 저장은 유지됩니다. 네트워크를 확인하고 확장 프로그램의 <strong>연결 재시도</strong>를 누르세요. 연결되면 자동화 ON/OFF 설정에 따라 대기 중인 풀이가 처리됩니다.</p></article>
         <article className="guide-card"><span className="card-kicker">AUTH</span><h2>인증 만료</h2><p>대시보드를 열어 GitHub에 다시 로그인하고 이 브라우저를 다시 연결하세요. 인증이 복구되기 전에는 자동 동기화와 GitHub 자동 커밋이 일시 중지됩니다.</p></article>
         <article className="guide-card"><span className="card-kicker">EXTENSION</span><h2>확장 프로그램 연결 끊김</h2><p>대시보드 상단의 <strong>확장 재연결</strong>을 누르세요. 계속 연결되지 않으면 확장이 활성화됐는지 확인하고 확장 관리 화면에서 새로고침하세요.</p></article>
@@ -2196,7 +2206,7 @@ function SettingsView({
             {targetBusy && <div className="github-target-overlay" role="status" aria-live="assertive"><Icon name="sync" size={20} /><strong>{targetLoadingText}</strong><span>GitHub에서 안전하게 확인하고 있습니다.</span></div>}
           </article>}
         </div>
-        {section === 'settings' && <aside className="settings-sidebar"><article className="account-card"><span className="card-kicker">ACCOUNT</span>{user ? <><div className="account-large"><ProfileAvatar user={user} large /><div><strong>{displayUser(user)}</strong><span>@{user.githubLogin} · CodeArchive 계정</span></div></div><button className="wide-ghost-button" onClick={onLogout}><Icon name="logout" size={14} /> 로그아웃</button></> : <><div className="account-logged-out"><div className="logged-out-icon"><Icon name="user" size={18} /></div><strong>로그인이 필요합니다</strong><span>내 풀이를 저장하고 동기화하세요.</span></div><button className="primary-button wide" onClick={onLogin}>GitHub로 로그인 <Icon name="github" size={14} /></button></>}</article><article className="privacy-card"><Icon name="check" size={16} /><div><strong>데이터를 직접 통제하세요</strong><p>자동 동기화를 켜면 새 캡처가 안전한 릴레이로 전송됩니다. 끄면 수동 동기화만 사용합니다.</p></div></article></aside>}
+        {section === 'settings' && <aside className="settings-sidebar"><article className="account-card"><span className="card-kicker">ACCOUNT</span>{user ? <><div className="account-large"><ProfileAvatar user={user} large /><div><strong>{displayUser(user)}</strong><span>@{user.githubLogin} · CodeArchive 계정</span></div></div><button className="wide-ghost-button" onClick={onLogout}><Icon name="logout" size={14} /> 로그아웃</button></> : <><div className="account-logged-out"><div className="logged-out-icon"><Icon name="user" size={18} /></div><strong>로그인이 필요합니다</strong><span>내 풀이를 저장하고 동기화하세요.</span></div><button className="primary-button wide" onClick={onLogin}>GitHub로 로그인 <Icon name="github" size={14} /></button></>}</article><article className="privacy-card"><Icon name="check" size={16} /><div><strong>데이터를 직접 통제하세요</strong><p>로그인 후 새 정답 제출은 자동 동기화됩니다. 과거에 수집한 풀이는 일괄 동기화 탭에서 직접 전송합니다.</p></div></article></aside>}
       </div>
     </section>
   )

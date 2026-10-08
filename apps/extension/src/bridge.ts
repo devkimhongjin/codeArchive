@@ -312,8 +312,8 @@ export class DashboardBridge {
       for (const platform of ["JUNGOL", "SWEA", "PROGRAMMERS"] as const) {
         const ids = await this.store.listHistoricalSubmissionIds(platform);
         const captures = await this.store.listHistoricalBySubmissionIds(platform, ids);
-        records.push(...captures.map(({ captureId, platform, historicalSubmissionId, problemNumber, title, language, solvedAt }) =>
-          ({ captureId, platform, historicalSubmissionId, problemNumber, title, language, solvedAt })));
+        records.push(...captures.map(({ captureId, platform, historicalSubmissionId, problemNumber, title, language, solvedAt, metadataPending }) =>
+          ({ captureId, platform, historicalSubmissionId, problemNumber, title, language, solvedAt, ...(metadataPending ? { metadataPending } : {}) })));
       }
       // Metadata reads never issue ACK authority or expose code.
       return { records, localOnly: true };

@@ -42,7 +42,7 @@ function page(send: (message: { type: string; submissionIds?: string[] }) => Pro
     <a id="history-page-link"></a><p id="platform-description"></p><p id="platform-help"></p>
     <select id="selection"><option value="all" selected>all</option><option value="latest">latest</option></select>
     <span id="status"></span><progress id="task-progress"></progress><p id="task-stage"></p><p id="progress"></p><p id="task-time"></p>
-    <section id="candidates" hidden><p id="candidate-help"></p><div id="candidate-list"></div></section>
+    <button id="reconcile"></button><button id="verify-existing" hidden></button><button id="clear-reconciliation" hidden></button><p id="reconciliation-status"></p><p id="reconciliation-help" hidden></p><section id="candidates" hidden><p id="candidate-help"></p><div id="candidate-list"></div></section>
   </body>`);
   const scheduled: (() => void)[] = [];
   mountHistory(document, { send: message => send(message as { type: string; submissionIds?: string[] }),
@@ -434,4 +434,37 @@ test("first-item failure reports the failed phase without a redundant progress e
   assert.match(view.document.querySelector("#status")!.textContent!, /로컬 저장 요청이 거부/);
   assert.equal(view.document.querySelector("#task-stage")!.textContent, "");
   assert.equal(view.document.querySelector("#progress")!.textContent, "0/120건 처리했습니다. (0%)");
+});
+
+test('reconciliation excludes ambiguous identities and enables only explicit original verification', async () => {
+  const owned = { submissionId: 'OwnedSubmit', problemNumber: '123', title: 'Own', language: 'JAVA', solvedAt: '2026-01-02T03:04:05Z' };
+  const missing = { ...owned, submissionId: 'MissingSubmit', problemNumber: '124' };
+  const ambiguous = { ...owned, submissionId: 'AmbiguousSubmit', problemNumber: '125' };
+  const local = { captureId: '11111111-1111-4111-8111-111111111111', platform: 'SWEA', historicalSubmissionId: owned.submissionId, problemNumber: '123', language: 'JAVA', solvedAt: owned.solvedAt, sourceDigest: 'a'.repeat(64) };
+  const view = page(async message => {
+    if (message.type === 'LOCAL_HISTORY_IDS') return { submissionIds: [owned.submissionId] };
+    if (message.type === 'LOCAL_HISTORY_RECONCILIATION') return { local: [local, { ...local, historicalSubmissionId: ambiguous.submissionId, problemNumber: '999' }], remote: [local], localComplete: true, remoteComplete: true };
+    return { status: 'READY', candidates: [owned, missing, ambiguous], truncated: false };
+  });
+  await tick(); choose(view.document.querySelector<HTMLSelectElement>('#platform')!, 'SWEA'); await tick(); await tick();
+  emit(view.document.querySelector('#reconcile')!, 'click'); await tick(); await tick();
+  let rows = [...view.document.querySelectorAll<HTMLInputElement>('#candidate-list input')];
+  assert.equal(rows[0]!.disabled, true); assert.equal(rows[1]!.checked, true); assert.equal(rows[2]!.disabled, true);
+  emit(view.document.querySelector('#verify-existing')!, 'click');
+  rows = [...view.document.querySelectorAll<HTMLInputElement>('#candidate-list input')];
+  assert.equal(rows[0]!.disabled, false); assert.equal(rows[0]!.checked, true); assert.equal(rows[2]!.disabled, true);
+});
+test('reconciliation requests coalesce and stale results cannot replace a changed platform', async () => {
+  let resolve!: (value: unknown) => void; let calls = 0;
+  const view = page(async message => {
+    if (message.type === 'LOCAL_HISTORY_IDS') return { submissionIds: [] };
+    if (message.type === 'LOCAL_HISTORY_RECONCILIATION') { calls++; return new Promise(res => { resolve = res }); }
+    return ready;
+  });
+  await tick(); choose(view.document.querySelector<HTMLSelectElement>('#platform')!, 'SWEA'); await tick(); await tick();
+  emit(view.document.querySelector('#reconcile')!, 'click'); emit(view.document.querySelector('#reconcile')!, 'click');
+  assert.equal(calls, 1);
+  choose(view.document.querySelector<HTMLSelectElement>('#platform')!, 'PROGRAMMERS'); await tick();
+  resolve({ local: [], remote: [], localComplete: true, remoteComplete: true }); await tick();
+  assert.equal(view.document.querySelector('#reconciliation-status')!.textContent, '');
 });
