@@ -32,6 +32,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class GithubAppProviderTest {
+  private boolean reconciliation;
   private final Map<String,String> contentBodies=new HashMap<>();
   private final Map<String,Integer> contentCodes=new HashMap<>();
   private HttpServer server; private final List<Request> requests = new ArrayList<>();
@@ -357,6 +358,20 @@ class GithubAppProviderTest {
       .isEqualTo(GithubProvider.Outcome.UNKNOWN);
   }
 
+  @Test void reconciliationReadsOnlyOwnedPinnedFilesAndNeverMutatesRepository() throws Exception {
+    reconciliation=true; installationListBody="[{\"id\":44,\"account\":{\"id\":1,\"login\":\"owner\",\"type\":\"User\"},\"suspended_at\":null}]";
+    existing=true;existingBody=fileBody("class Solution {}");
+    assertThat(provider().compare(settings(),solution())).isEqualTo(GithubProvider.Comparison.MATCH);
+    assertThat(requests).noneMatch(request->request.method().equals("PATCH")||request.method().equals("PUT")||request.method().equals("POST")&&!request.path().endsWith("/access_tokens"));
+    assertThat(requests.stream().filter(request->request.path().contains("/contents/")).map(Request::query)).allMatch(query->query.equals("ref="+"a".repeat(40)));
+    requests.clear();existing=false;
+    assertThat(provider().compare(settings(),solution())).isEqualTo(GithubProvider.Comparison.MISSING);
+    assertThat(requests).noneMatch(request->request.path().contains("/git/blobs")||request.path().contains("/git/trees"));
+    installationListBody="[]";requests.clear();
+    assertThat(provider().compare(settings(),solution())).isEqualTo(GithubProvider.Comparison.UNAVAILABLE);
+    assertThat(requests).noneMatch(request->request.path().contains("/repos/"));
+  }
+
   private GithubAppProvider provider() throws Exception { return provider(pem()); }
   private GithubAppProvider provider(String privateKey) { return new GithubAppProvider("99",privateKey,"http://127.0.0.1:"+server.getAddress().getPort(),HttpClient.newHttpClient(),new ObjectMapper()); }
   private GithubAppProvider providerWithTimeout(long timeoutMs) throws Exception { return new GithubAppProvider("99",pem(),"http://127.0.0.1:"+server.getAddress().getPort(),HttpClient.newHttpClient(),new ObjectMapper(),timeoutMs); }
@@ -381,7 +396,7 @@ class GithubAppProviderTest {
   private static byte[] tagged(int tag,byte[] body) { byte[] length=length(body.length); byte[] result=new byte[1+length.length+body.length]; result[0]=(byte)tag;System.arraycopy(length,0,result,1,length.length);System.arraycopy(body,0,result,1+length.length,body.length);return result; }
   private static byte[] length(int value) { if(value<128)return new byte[]{(byte)value}; int count=0;for(int n=value;n>0;n>>>=8)count++;byte[] result=new byte[count+1];result[0]=(byte)(0x80|count);for(int i=count;i>0;i--){result[i]=(byte)value;value>>>=8;}return result; }
   private static byte[] join(byte[]... values) { int size=0;for(byte[] value:values)size+=value.length;byte[] result=new byte[size];int offset=0;for(byte[] value:values){System.arraycopy(value,0,result,offset,value.length);offset+=value.length;}return result; }
-  private void handle(HttpExchange x) throws IOException { String body=new String(x.getRequestBody().readAllBytes(),StandardCharsets.UTF_8); requests.add(new Request(x.getRequestMethod(),x.getRequestURI().getPath(),x.getRequestURI().getRawPath(),x.getRequestURI().getRawQuery(),x.getRequestHeaders().getFirst("Authorization"),body)); String path=x.getRequestURI().getPath(); if(emptyRepo){handleEmptyRepository(x,path);return;} if(dropFinal&&path.contains("/git/refs/")){x.close();return;} if(path.equals("/app/installations"))reply(x,installationListStatus,installationListBody); else if(path.endsWith("/access_tokens")){pauseIf(timeoutToken);reply(x,201,"{\"token\":\"installation-token\"}");} else if(path.contains("/git/ref/")){refRequests++;reply(x,transientRef?503:200,"{\"object\":{\"sha\":\""+(movedBeforePatch&&refRequests>1?"moved-head":"head-sha")+"\"}}");} else if(path.contains("/git/commits/head-sha"))reply(x,200,"{\"tree\":{\"sha\":\"tree-sha\"}}"); else if(contentCodes.containsKey(path))reply(x,contentCodes.get(path),contentBodies.getOrDefault(path,"{}")); else if(path.contains("/contents/")){boolean versioned=path.matches(".*_\\d{8}-\\d{9}_[A-Za-z0-9]{8}\\.[A-Za-z0-9]+$");reply(x,versioned?(versionedExisting?200:404):(existing?200:404),versioned?(versionedExisting?versionedExistingBody:"{}"): (existing?existingBody:"{}"));} else if(path.endsWith("/git/blobs")){pauseIf(timeoutBlob);reply(x,201,"{\"sha\":\"blob-sha\"}");} else if(path.endsWith("/git/trees"))reply(x,201,"{\"sha\":\"new-tree\"}"); else if(path.endsWith("/git/commits"))reply(x,201,"{\"sha\":\"new-commit\"}"); else if(path.contains("/git/refs/"))reply(x,finalStatus,"{}"); else reply(x,500,"{}"); }
+  private void handle(HttpExchange x) throws IOException { String body=new String(x.getRequestBody().readAllBytes(),StandardCharsets.UTF_8); requests.add(new Request(x.getRequestMethod(),x.getRequestURI().getPath(),x.getRequestURI().getRawPath(),x.getRequestURI().getRawQuery(),x.getRequestHeaders().getFirst("Authorization"),body)); String path=x.getRequestURI().getPath(); if(reconciliation&&path.equals("/installation/repositories")){reply(x,200,"{\"repositories\":[{\"id\":7,\"owner\":{\"login\":\"owner\"},\"name\":\"repo\",\"default_branch\":\"main\"}]}");return;} if(reconciliation&&path.contains("/git/ref/")){reply(x,200,"{\"ref\":\"refs/heads/main\",\"object\":{\"sha\":\""+"a".repeat(40)+"\"}}");return;} if(emptyRepo){handleEmptyRepository(x,path);return;} if(dropFinal&&path.contains("/git/refs/")){x.close();return;} if(path.equals("/app/installations"))reply(x,installationListStatus,installationListBody); else if(path.endsWith("/access_tokens")){pauseIf(timeoutToken);reply(x,201,"{\"token\":\"installation-token\"}");} else if(path.contains("/git/ref/")){refRequests++;reply(x,transientRef?503:200,"{\"object\":{\"sha\":\""+(movedBeforePatch&&refRequests>1?"moved-head":"head-sha")+"\"}}");} else if(path.contains("/git/commits/head-sha"))reply(x,200,"{\"tree\":{\"sha\":\"tree-sha\"}}"); else if(contentCodes.containsKey(path))reply(x,contentCodes.get(path),contentBodies.getOrDefault(path,"{}")); else if(path.contains("/contents/")){boolean versioned=path.matches(".*_\\d{8}-\\d{9}_[A-Za-z0-9]{8}\\.[A-Za-z0-9]+$");reply(x,versioned?(versionedExisting?200:404):(existing?200:404),versioned?(versionedExisting?versionedExistingBody:"{}"): (existing?existingBody:"{}"));} else if(path.endsWith("/git/blobs")){pauseIf(timeoutBlob);reply(x,201,"{\"sha\":\"blob-sha\"}");} else if(path.endsWith("/git/trees"))reply(x,201,"{\"sha\":\"new-tree\"}"); else if(path.endsWith("/git/commits"))reply(x,201,"{\"sha\":\"new-commit\"}"); else if(path.contains("/git/refs/"))reply(x,finalStatus,"{}"); else reply(x,500,"{}"); }
   private void handleEmptyRepository(HttpExchange x,String path)throws IOException{
     if(path.equals("/app/installations"))reply(x,200,"[{\"id\":44,\"account\":{\"id\":1,\"login\":\"owner\",\"type\":\"User\"},\"suspended_at\":null}]");
     else if(path.equals("/app/installations/44/access_tokens"))reply(x,201,"{\"token\":\"installation-token\"}");

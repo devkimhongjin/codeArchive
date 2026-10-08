@@ -43,7 +43,7 @@ export function HistoricalImportView({ extensionId, capability, supported = true
           if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) throw new Error('서버 제출 목록을 확인하지 못했습니다.')
           ids.forEach(id => known.add(`${platform}:${id}`))
         }
-        setSynced(known); setServerChecked(true); setSelected(local.filter(record => !known.has(historyKey(record))).map(historyKey))
+        setSynced(known); setServerChecked(true); setSelected(local.filter(record => (!known.has(historyKey(record)) || record.metadataPending === true)).map(historyKey))
       }
       if (active()) setMessage('')
     } catch (error) { if (active()) setMessage(error instanceof Error ? error.message : '로컬 기록을 불러오지 못했습니다.') }
@@ -59,7 +59,7 @@ export function HistoricalImportView({ extensionId, capability, supported = true
   useEffect(() => { onActivityChange?.(busy ? '과거 풀이 일괄 동기화 중' : null); return () => onActivityChange?.(null) }, [busy, onActivityChange])
   const sync = async () => {
     if (!user || mode !== 'live' || !capability || inFlight.current || loading) return
-    const chosen = records.filter(record => (filter === 'ALL' || record.platform === filter) && selected.includes(historyKey(record)) && !synced.has(historyKey(record)))
+    const chosen = records.filter(record => (filter === 'ALL' || record.platform === filter) && selected.includes(historyKey(record)) && (!synced.has(historyKey(record)) || record.metadataPending === true))
     if (!chosen.length) return
     const token = ++run.current, expected = context, initial = user
     const active = () => current(expected) && token === run.current
@@ -77,7 +77,7 @@ export function HistoricalImportView({ extensionId, capability, supported = true
         const serverIds = await getHistoricalSubmissionIds(initial.githubId, platform)
         if (!active()) return
         if (!Array.isArray(serverIds) || serverIds.some(id => typeof id !== 'string')) throw new Error('서버 제출 목록을 확인하지 못했습니다.')
-        const known = new Set(serverIds), platformRecords = chosen.filter(record => record.platform === platform)
+        const platformRecords = chosen.filter(record => record.platform === platform)
         for (let offset = 0; offset < platformRecords.length; offset += 50) {
           if (!active() || cancel.current) break
           await checkAccount()
@@ -91,22 +91,21 @@ export function HistoricalImportView({ extensionId, capability, supported = true
               !captures.every(capture => capture.historicalImport === true && capture.platform === platform &&
                 batch.some(record => record.captureId === capture.captureId && record.historicalSubmissionId === capture.historicalSubmissionId))) throw new Error('선택한 로컬 제출을 검증하지 못했습니다.')
           if (cancel.current) break
-          const upload = captures.filter(capture => !known.has(capture.historicalSubmissionId!))
-          let accepted = captures.filter(capture => known.has(capture.historicalSubmissionId!)).map(capture => capture.captureId)
-          if (upload.length) {
-            const response = await bulkUpload(upload, initial.githubId)
-            if (!active()) return
-            if (!Array.isArray(response.acceptedCaptureIds) || response.acceptedCaptureIds.some(id => !upload.some(capture => capture.captureId === id))) throw new Error('서버 수락 응답을 검증하지 못했습니다.')
-            accepted = [...new Set([...accepted, ...response.acceptedCaptureIds])]
-          }
+          // Native-id membership is not proof of this complete snapshot being accepted.
+          const upload = captures;
+          const response = await bulkUpload(upload, initial.githubId)
+          if (!active()) return
+          if (!Array.isArray(response.acceptedCaptureIds) || response.acceptedCaptureIds.some(id => !upload.some(capture => capture.captureId === id))) throw new Error('서버 수락 응답을 검증하지 못했습니다.')
+          const accepted = [...new Set(response.acceptedCaptureIds)]
           if (accepted.length) {
-            const ack = await requestBridge<{ ok?: boolean }>(extensionId, { type: 'ACK', capability, captureIds: accepted })
+            const ack = await requestBridge<{ ok?: boolean }>(extensionId, { type: 'ACK', capability, captureIds: accepted, captureRevisions: captures.filter(capture => accepted.includes(capture.captureId)).map(capture => ({ captureId: capture.captureId, revision: capture.metadataRevision ?? 0 })) })
             if (!active()) return
             if (ack.ok !== true) throw new Error('로컬 동기화 표시를 확인하지 못했습니다. 새로고침 후 서버 기록을 다시 확인해 주세요.')
           }
           const successful = new Set(accepted)
           captures.filter(capture => successful.has(capture.captureId)).forEach(capture => acknowledged.add(historyKey(capture as HistoricalRecord)))
           acceptedCount += accepted.length; failedCount += batch.length - accepted.length; done += batch.length
+          setRecords(previous => previous.map(record => acknowledged.has(historyKey(record)) ? { ...record, metadataPending: false } : record));
           setSynced(previous => new Set([...previous, ...acknowledged])); setSelected(previous => previous.filter(key => !acknowledged.has(key)))
           setProgress({ done, total: chosen.length }); setMessage(`서버 동기화 ${acceptedCount}건 · 실패 ${failedCount}건`)
         }
@@ -117,8 +116,8 @@ export function HistoricalImportView({ extensionId, capability, supported = true
     finally { if (active()) { inFlight.current = false; setBusy(false); if (acceptedCount) onImported() } }
   }
   const visible = records.filter(record => filter === 'ALL' || record.platform === filter)
-  const chosen = records.filter(record => (filter === 'ALL' || record.platform === filter) && selected.includes(historyKey(record)) && !synced.has(historyKey(record)))
-  const visiblePending = visible.filter(record => !synced.has(historyKey(record)))
+  const chosen = records.filter(record => (filter === 'ALL' || record.platform === filter) && selected.includes(historyKey(record)) && (!synced.has(historyKey(record)) || record.metadataPending === true))
+  const visiblePending = visible.filter(record => (!synced.has(historyKey(record)) || record.metadataPending === true))
   const openCollection = async () => {
     const expected = context
     try {
@@ -136,7 +135,7 @@ export function HistoricalImportView({ extensionId, capability, supported = true
     {!capability && <p>확장 프로그램을 연결해 주세요.</p>}{loading && <p role="status">로컬·서버 기록을 확인하고 있습니다.</p>}
     <p>로컬 문제 {historyProblemCount(visible)}건 · 제출 {visible.length}건 · {user && mode === 'live' && serverChecked ? `서버 동기화 확인 ${visible.filter(record => synced.has(historyKey(record))).length}건` : '서버 기록 미확인'}</p>
     <label><input type="checkbox" disabled={busy || loading || !visiblePending.length} checked={!!visiblePending.length && visiblePending.every(record => selected.includes(historyKey(record)))} onChange={event => setSelected(previous => event.target.checked ? [...new Set([...previous, ...visiblePending.map(historyKey)])] : previous.filter(key => !visiblePending.some(record => historyKey(record) === key)))} />현재 플랫폼 전체 선택</label>
-    <div className="historical-import-list">{visible.map(record => <label key={historyKey(record)}><input type="checkbox" checked={selected.includes(historyKey(record))} disabled={busy || loading || synced.has(historyKey(record))} onChange={event => setSelected(previous => event.target.checked ? [...previous, historyKey(record)] : previous.filter(key => key !== historyKey(record)))} /><span>{historyPlatformLabel[record.platform]} {record.problemNumber} · {record.title} · {record.language}</span><small>{synced.has(historyKey(record)) ? '서버 동기화 완료' : '로컬 보관'}</small></label>)}</div>
+    <div className="historical-import-list">{visible.map(record => <label key={historyKey(record)}><input type="checkbox" checked={selected.includes(historyKey(record))} disabled={busy || loading || (synced.has(historyKey(record)) && !record.metadataPending)} onChange={event => setSelected(previous => event.target.checked ? [...previous, historyKey(record)] : previous.filter(key => key !== historyKey(record)))} /><span>{historyPlatformLabel[record.platform]} {record.problemNumber} · {record.title} · {record.language}</span><small>{record.metadataPending ? '보강 정보 동기화 대기' : synced.has(historyKey(record)) ? '서버 동기화 완료' : '로컬 보관'}</small></label>)}</div>
     {records.length === 0 && !loading && capability && <p>이 브라우저에 저장된 과거 풀이가 없습니다.</p>}
     {user && mode === 'live' ? <div className="historical-import-actions"><button type="button" disabled={busy || loading || !capability || !chosen.length} onClick={() => void sync()}>선택한 {chosen.length}건 일괄 동기화</button>{busy && <button type="button" onClick={() => { cancel.current = true; setMessage('진행 중인 저장 확인 후 중단합니다.') }}>동기화 중단</button>}</div> : <p>서버 동기화는 CodeArchive 로그인 후 직접 실행할 수 있습니다.</p>}
     {progress.total > 0 && <div className="history-batch-progress"><progress aria-label="서버 동기화 진행률" max={progress.total} value={progress.done} /><span>{progress.done}/{progress.total}건 처리</span></div>}

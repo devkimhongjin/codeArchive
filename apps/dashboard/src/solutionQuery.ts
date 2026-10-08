@@ -1,3 +1,4 @@
+import { difficultyKey } from '../../../shared/difficulty'
 import type { Platform, Solution } from './types'
 import { canonicalLanguageKey } from '../../../shared/language'
 
@@ -7,6 +8,7 @@ export type SolutionQuery = {
   query: string
   platform: 'ALL' | Platform
   languageKey: string
+  difficulty?: string
   sort: SolutionSort
 }
 
@@ -39,6 +41,7 @@ export function filterAndSortSolutions(solutions: Solution[], options: SolutionQ
       return matchesQuery
         && (options.platform === 'ALL' || solution.platform === options.platform)
         && (options.languageKey === 'ALL' || languageKey === options.languageKey)
+        && (!options.difficulty || options.difficulty === 'ALL' || difficultyKey(solution.platform, solution.difficulty) === options.difficulty)
     })
     .sort((left, right) => {
       let compared = 0

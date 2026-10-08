@@ -4,6 +4,12 @@ import java.math.BigDecimal;
 
 /** JSON shape accepted from the extension/dashboard bulk sync. Dates remain strings so one bad item does not reject the batch. */
 public class CapturePayload {
+    private Boolean metadataPending;
+    public Boolean getMetadataPending() { return metadataPending; }
+    public void setMetadataPending(Boolean value) { metadataPending = value; }
+    private ProblemDifficulty difficulty;
+    public ProblemDifficulty getDifficulty() { return difficulty; }
+    public void setDifficulty(ProblemDifficulty value) { difficulty = value; }
     private String captureId;
     private String platform;
     private String problemNumber;

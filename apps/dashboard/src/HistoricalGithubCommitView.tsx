@@ -1,6 +1,6 @@
 import { useDesktopWork } from './DesktopActivity'
 import { useEffect, useRef, useState } from 'react'
-import { getAccountSettings, getHistoricalCommitCandidates, getMe, requestHistoricalCommitBatch } from './api'
+import { getAccountSettings, getHistoricalCommitCandidates, getMe, requestHistoricalCommitBatch, reconcileHistoricalCommit } from './api'
 import { gitPath } from './codeExport'
 import { HISTORY_PLATFORMS, historyPlatformLabel, historyProblemCount, isHistoricalRecord } from './historicalRecords'
 import type { AccountSettings, HistoricalCommitCandidate, HistoricalCommitState, Platform, User } from './types'
@@ -15,6 +15,7 @@ export function HistoricalGithubCommitView({ user, mode, revision = 0 }: { user:
   const [filter, setFilter] = useState<Platform | 'ALL'>('ALL'), [settings, setSettings] = useState<AccountSettings | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null), [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false), [loading, setLoading] = useState(false), [requested, setRequested] = useState<string[]>([])
+  const [recoverable, setRecoverable] = useState<string[]>([])
   const mounted = useRef(true), load = useRef(0), run = useRef(0), inFlight = useRef(false), cancel = useRef(false)
   const context = JSON.stringify({ id: user?.id, githubId: user?.githubId, mode })
   const currentContext = useRef(context); currentContext.current = context
@@ -42,7 +43,7 @@ export function HistoricalGithubCommitView({ user, mode, revision = 0 }: { user:
   useDesktopWork(busy || loading || pending)
   useEffect(() => {
     mounted.current = true; run.current += 1; load.current += 1; inFlight.current = false; cancel.current = true
-    setRecords([]); setSelected([]); setSettings(null); setPreview(null); setMessage(''); setBusy(false); setRequested([])
+    setRecords([]); setSelected([]); setSettings(null); setPreview(null); setMessage(''); setBusy(false); setRequested([]); setRecoverable([])
     void refresh(true)
     return () => { mounted.current = false; run.current += 1; load.current += 1; cancel.current = true }
   }, [context])
@@ -94,6 +95,25 @@ export function HistoricalGithubCommitView({ user, mode, revision = 0 }: { user:
     } catch (error) { if (active()) setMessage(`요청 ${accepted.length}건 확인 · ${error instanceof Error ? error.message : '요청 실패'}. 상태를 새로고침한 뒤 남은 제출을 다시 선택해 주세요.`) }
     finally { if (active()) { inFlight.current = false; setBusy(false); await refresh(false, true) } }
   }
+  const recover = async (captureId: string, retry = false) => {
+    if (!user || !settings || inFlight.current || mode !== 'live') return
+    const expected = context, token = ++run.current, initial = user, generation = settings.version
+    const active = () => current(expected) && token === run.current
+    inFlight.current = true; setBusy(true); setPreview(null)
+    try {
+      const confirmed = await getMe()
+      if (!active()) return
+      if (confirmed.id !== initial.id || confirmed.githubId !== initial.githubId) throw new Error('로그인 계정이 변경되었습니다.')
+      const result = await reconcileHistoricalCommit(initial.githubId, captureId, generation, retry)
+      if (!active()) return
+      const labels = { MATCH: '같은 출력 파일을 확인해 완료로 복구했습니다.', MISSING: '파일이 없습니다. 브랜치에 반영되지 않은 기록이 확인된 작업만 재시도할 수 있습니다.', CONFLICT: '대상 경로의 파일 내용이 다릅니다. 기존 파일은 변경하지 않았습니다.', UNAVAILABLE: 'GitHub 응답을 확인하지 못했습니다. 결과 확인 필요 상태를 유지합니다.', CONTEXT_UNAVAILABLE: '원래 작업의 계정·설정·출력 기록을 확인할 수 없습니다. 결과 확인 필요 상태를 유지합니다.' }
+      if (result.captureId !== captureId || !Object.prototype.hasOwnProperty.call(stateLabel, result.state) || !Object.prototype.hasOwnProperty.call(labels, result.comparison) || typeof result.retryAllowed !== 'boolean') throw new Error('대조 응답을 확인하지 못했습니다.')
+      setRecords(previous => previous.map(record => record.captureId === captureId ? { ...record, state: result.state } : record))
+      setRecoverable(previous => [...previous.filter(id => id !== captureId), ...(result.retryAllowed && result.state === 'UNKNOWN' ? [captureId] : [])])
+      setMessage(retry && result.state === 'PENDING' ? '대조 후 재시도를 요청했습니다.' : labels[result.comparison])
+    } catch (error) { if (active()) setMessage(error instanceof Error ? error.message : '대조에 실패했습니다.') }
+    finally { if (active()) { inFlight.current = false; setBusy(false) } }
+  }
   const visible = records.filter(record => filter === 'ALL' || record.platform === filter), available = visible.filter(selectable)
   const completed = records.filter(record => requested.includes(record.captureId) && record.state === 'SUCCEEDED').length
   return <section className="historical-import" aria-label="과거 풀이 GitHub 일괄 커밋">
@@ -103,7 +123,7 @@ export function HistoricalGithubCommitView({ user, mode, revision = 0 }: { user:
       {loading && <p role="status">서버 기록과 GitHub 설정을 확인하고 있습니다.</p>}
       <p>서버 문제 {historyProblemCount(visible)}건 · 제출 {visible.length}건 · 완료 {visible.filter(record => record.state === 'SUCCEEDED').length}건 · 대기/진행 {visible.filter(record => record.state === 'PENDING' || record.state === 'RUNNING').length}건 · 실패 {visible.filter(record => record.state === 'FAILED').length}건 · 결과 확인 필요 {visible.filter(record => record.state === 'UNKNOWN').length}건</p>
       <label><input type="checkbox" disabled={busy || loading || !available.length} checked={!!available.length && available.every(record => selected.includes(record.captureId))} onChange={event => { setPreview(null); setSelected(previous => event.target.checked ? [...new Set([...previous, ...available.map(record => record.captureId)])] : previous.filter(id => !available.some(record => record.captureId === id))) }} />현재 플랫폼 미요청·실패 제출 전체 선택</label>
-      <div className="historical-import-list">{visible.map(record => <label key={record.captureId}><input type="checkbox" disabled={busy || loading || !selectable(record)} checked={selected.includes(record.captureId)} onChange={event => { setPreview(null); setSelected(previous => event.target.checked ? [...previous, record.captureId] : previous.filter(id => id !== record.captureId)) }} /><span>{historyPlatformLabel[record.platform]} {record.problemNumber} · {record.title} · {record.language}</span><small>{stateLabel[record.state]}</small></label>)}</div>
+      <div className="historical-import-list">{visible.map(record => <div key={record.captureId}><label><input type="checkbox" disabled={busy || loading || !selectable(record)} checked={selected.includes(record.captureId)} onChange={event => { setPreview(null); setSelected(previous => event.target.checked ? [...previous, record.captureId] : previous.filter(id => id !== record.captureId)) }} /><span>{historyPlatformLabel[record.platform]} {record.problemNumber} · {record.title} · {record.language}</span><small>{stateLabel[record.state]}</small></label>{record.state === 'UNKNOWN' && <><button type="button" disabled={busy || loading || !settings} onClick={() => void recover(record.captureId)}>GitHub 결과 대조</button>{recoverable.includes(record.captureId) && <button type="button" disabled={busy || loading} onClick={() => void recover(record.captureId, true)}>대조 후 재시도 요청</button>}</>}</div>)}</div>
       {!loading && !records.length && <p>서버에 동기화된 과거 풀이가 없습니다.</p>}
       {!loading && !targetReady && <p>GitHub 탭에서 저장소·브랜치·저장 경로를 설정하고 저장해 주세요.</p>}
       {settings && targetReady && <p>대상: {settings.githubOwner}/{settings.githubRepository} · {settings.githubBranch} · {settings.githubRootPath || '저장소 루트'}</p>}

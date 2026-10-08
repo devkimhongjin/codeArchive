@@ -103,3 +103,37 @@ it('cancellation acknowledges in-flight success and prevents the next batch', as
   await act(async () => { resolve({ acceptedCaptureIds: captures.slice(0, 50).map(record => record.captureId), failures: [] }) })
   await screen.findByText('동기화 중단 · 문제 50건 · 제출 50건'); expect(mocks.upload).toHaveBeenCalledTimes(1)
 })
+
+it('uploads verified enrichment even when the native submission already exists remotely', async () => {
+  const record = { ...capture(1, 'SWEA'), metadataPending: true, metadataRevision: 1 }; setup([record]); mocks.ids.mockResolvedValue([record.historicalSubmissionId]);
+  render(<HistoricalImportView {...props} />); await start(1);
+  await screen.findByText('동기화 완료 · 문제 1건 · 제출 1건');
+  expect(mocks.upload.mock.calls[0][0][0].metadataPending).toBe(true);
+  expect(mocks.bridge.mock.calls.find(([,message]) => message.type === 'ACK')![1].captureRevisions).toEqual([{ captureId: record.captureId, revision: 1 }]);
+  expect(mocks.bridge.mock.calls.filter(([, message]) => message.type === 'ACK')).toHaveLength(1);
+});
+it('retains failed enrichment without acknowledging it as synchronized', async () => {
+  const record = { ...capture(1, 'SWEA'), metadataPending: true, metadataRevision: 1 }; setup([record]); mocks.ids.mockResolvedValue([record.historicalSubmissionId]);
+  mocks.upload.mockResolvedValue({ acceptedCaptureIds: [], failures: [] });
+  render(<HistoricalImportView {...props} />); await start(1);
+  await screen.findByText(/실패 1건/);
+  expect(mocks.bridge.mock.calls.filter(([, message]) => message.type === 'ACK')).toHaveLength(0);
+});
+
+it('does not ACK native-ID membership discovered after selection without bulk acceptance', async () => {
+  const record = capture(1, 'SWEA'); setup([record]);
+  let sweaReads = 0; mocks.ids.mockImplementation((_account, platform) => Promise.resolve(platform === 'SWEA' && ++sweaReads > 1 ? [record.historicalSubmissionId] : []));
+  mocks.upload.mockResolvedValue({ acceptedCaptureIds: [], failures: [] });
+  render(<HistoricalImportView {...props} />); await start(1);
+  await screen.findByText(/실패 1건/);
+  expect(mocks.upload).toHaveBeenCalledTimes(1);
+  expect(mocks.bridge.mock.calls.filter(([,message]) => message.type === 'ACK')).toHaveLength(0);
+});
+it('retains enrichment selection when the uploaded revision is stale at ACK time', async () => {
+  const record = { ...capture(1, 'SWEA'), metadataPending: true, metadataRevision: 1 }; setup([record]);
+  const original = mocks.bridge.getMockImplementation()!;
+  mocks.bridge.mockImplementation((id,message) => message.type === 'ACK' ? Promise.resolve({ error: 'STALE_CONFIGURATION' }) : original(id,message));
+  render(<HistoricalImportView {...props} />); await start(1);
+  await screen.findByText(/로컬 동기화 표시를 확인하지 못했습니다/);
+  expect(screen.getByRole('button', { name: '선택한 1건 일괄 동기화' })).toBeTruthy();
+});

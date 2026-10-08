@@ -1,3 +1,4 @@
+import { sweaDifficulty } from '../problemDifficulty';
 import type {
   EditorData,
   PerformanceData,
@@ -73,6 +74,7 @@ function detectProblem(document: Document, location: Location, resolvedProblemUr
   if (!problemUrl) problemUrl = canonicalProblemUrl;
 
   return {
+    ...(sweaDifficulty(document, match[1], problemUrl) ? { difficulty: sweaDifficulty(document, match[1], problemUrl) } : {}),
     problemNumber: match[1],
     title: normalizeText(match[2]),
     problemUrl

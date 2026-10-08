@@ -36,7 +36,7 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
-    private static final int LATEST_MIGRATION = 25;
+    private static final int LATEST_MIGRATION = 27;
 
     @Test
     void freshSchemaMigratesTwiceAndPassesHibernateValidation() throws Exception {
@@ -169,7 +169,7 @@ class PostgreSqlMigrationTest {
                 settings.setLong(1, userId); settings.executeUpdate();
                 publish.setLong(1, userId); publish.executeUpdate();
             }
-            assertEquals(2, database.flyway().migrate().migrationsExecuted);
+            assertEquals(LATEST_MIGRATION - 23, database.flyway().migrate().migrationsExecuted);
             assertEquals("all", database.scalar("SELECT community_duplicate_visibility FROM user_settings WHERE user_id = ?", userId));
             long solutionId = ((Number) database.scalar("SELECT id FROM solutions WHERE user_id = ? AND published_at IS NOT NULL", userId)).longValue();
             DriverManagerDataSource dataSource = new DriverManagerDataSource(database.url, database.user, database.password);
@@ -548,6 +548,10 @@ class PostgreSqlMigrationTest {
             assertEquals(1L, ((Number) scalar(
                     "SELECT COUNT(*) FROM pg_indexes "
                             + "WHERE schemaname = ? AND indexname = 'idx_solutions_community_owner'", schema)).longValue());
+            assertEquals("YES", nullable("solutions", "difficulty_label"));
+            assertEquals("YES", nullable("solutions", "difficulty_source_url"));
+            assertEquals("YES", nullable("github_commit_jobs", "recovery_context"));
+            assertEquals("YES", nullable("github_commit_jobs", "diagnostic"));
             assertEquals("YES", nullable("solutions", "memory_value"));
             assertEquals("YES", nullable("solutions", "memory_unit"));
             assertEquals("user_settings", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'user_settings'", schema));

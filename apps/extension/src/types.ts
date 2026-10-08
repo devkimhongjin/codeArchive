@@ -1,3 +1,4 @@
+import type { ProblemDifficulty } from '../../../shared/difficulty';
 import type { LightTheme, DarkTheme } from "../../../shared/codeThemes";
 import type { HeaderField } from "../../../shared/headerFields";
 
@@ -10,6 +11,7 @@ export type SyncState = "PENDING" | "SYNCED";
 export type MemoryUnit = "KB" | "KiB" | "MB" | "MiB" | "UNKNOWN";
 
 export interface Capture {
+  difficulty?: ProblemDifficulty;
   captureId: string;
   platform: Platform;
   problemNumber: string;
@@ -27,6 +29,10 @@ export interface Capture {
   memoryValue?: number;
   memoryUnit?: MemoryUnit;
   syncState: SyncState;
+  /** Verified metadata changed; historical records still require explicit sync. */
+  metadataPending?: boolean;
+  /** Monotonic metadata snapshot, incremented only by verified enrichment. */
+  metadataRevision?: number;
   syncedAt?: string;
   /** Device-only upload ownership. Legacy/unbound records require explicit sync. */
   syncAccountId?: string;
@@ -37,6 +43,7 @@ export interface Capture {
 }
 
 export interface CaptureDraft {
+  difficulty?: ProblemDifficulty;
   captureId?: string;
   platform: Platform;
   problemNumber: string;
@@ -57,6 +64,7 @@ export interface CaptureDraft {
 }
 
 export interface ProblemMetadata {
+  difficulty?: ProblemDifficulty;
   problemNumber: string;
   title: string;
   problemUrl: string;

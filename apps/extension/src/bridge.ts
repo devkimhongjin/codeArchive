@@ -35,7 +35,7 @@ export type DashboardMessage =
   | { type: "HISTORY_IMPORT"; capability: string; platform: "JUNGOL"; submissionIds: string[] }
   /** Reuse a durable relay after an MV3 service-worker restart without exposing its bearer secret. */
   | { type: "REUSE_RELAY"; capability: string; accountId: string; settingsVersion: number }
-  | { type: "ACK"; capability: string; captureIds: string[] }
+  | { type: "ACK"; capability: string; captureIds: string[]; captureRevisions?: Array<{ captureId: string; revision: number }> }
   | { type: "CONFIGURE_RELAY"; capability: string; relay: { endpoint: string; secret: string; accountId: string; generation: number } | null; accountId?: string; settingsVersion?: number; autoSyncEnabled?: boolean; githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; copyHeader?: boolean; downloadHeader?: boolean; copyHeaderFields?: HeaderField[]; downloadHeaderFields?: HeaderField[]; downloadFilenameTemplate?: string; gitPathTemplate?: string; name?: string | null; nickname?: string | null; lightTheme?: string; darkTheme?: string }
   | { type: "DISCONNECT"; capability: string };
 
@@ -71,6 +71,7 @@ interface Session {
   issuedAt: number;
   lastUsedAt: number;
   issuedCaptureIds: Set<string>;
+  issuedCaptureRevisions: Map<string, Set<number>>;
 }
 
 export interface DashboardBridgeOptions {
@@ -281,7 +282,11 @@ export class DashboardBridge {
       const rawLimit = object?.limit;
       const limit = typeof rawLimit === "number" && Number.isFinite(rawLimit) ? rawLimit : MAX_PENDING_PAGE_SIZE;
       const captures = await this.store.listPending(session.issuedCaptureIds, Math.min(MAX_PENDING_PAGE_SIZE, Math.max(1, Math.floor(limit))));
-      for (const capture of captures) session.issuedCaptureIds.add(capture.captureId);
+      for (const capture of captures) {
+        session.issuedCaptureIds.add(capture.captureId);
+        const revisions = session.issuedCaptureRevisions.get(capture.captureId) ?? new Set<number>();
+        revisions.add(capture.metadataRevision ?? 0); session.issuedCaptureRevisions.set(capture.captureId, revisions);
+      }
       const hasMore = captures.length === Math.min(MAX_PENDING_PAGE_SIZE, Math.max(1, Math.floor(limit))) && (await this.store.countPending()) > session.issuedCaptureIds.size;
       return { captures, hasMore };
     }
@@ -312,8 +317,8 @@ export class DashboardBridge {
       for (const platform of ["JUNGOL", "SWEA", "PROGRAMMERS"] as const) {
         const ids = await this.store.listHistoricalSubmissionIds(platform);
         const captures = await this.store.listHistoricalBySubmissionIds(platform, ids);
-        records.push(...captures.map(({ captureId, platform, historicalSubmissionId, problemNumber, title, language, solvedAt }) =>
-          ({ captureId, platform, historicalSubmissionId, problemNumber, title, language, solvedAt })));
+        records.push(...captures.map(({ captureId, platform, historicalSubmissionId, problemNumber, title, language, solvedAt, metadataPending }) =>
+          ({ captureId, platform, historicalSubmissionId, problemNumber, title, language, solvedAt, ...(metadataPending ? { metadataPending } : {}) })));
       }
       // Metadata reads never issue ACK authority or expose code.
       return { records, localOnly: true };
@@ -331,7 +336,11 @@ export class DashboardBridge {
       if ((platform !== "JUNGOL" && platform !== "SWEA" && platform !== "PROGRAMMERS") || !Array.isArray(ids) || ids.length < 1 || ids.length > MAX_PENDING_PAGE_SIZE ||
           ids.some(id => !isHistoricalSubmissionId(platform, id)) || new Set(ids).size !== ids.length) return { error: "BAD_REQUEST" };
       const captures = await this.store.listHistoricalBySubmissionIds(platform, ids as string[]);
-      for (const capture of captures) session.issuedCaptureIds.add(capture.captureId);
+      for (const capture of captures) {
+        session.issuedCaptureIds.add(capture.captureId);
+        const revisions = session.issuedCaptureRevisions.get(capture.captureId) ?? new Set<number>();
+        revisions.add(capture.metadataRevision ?? 0); session.issuedCaptureRevisions.set(capture.captureId, revisions);
+      }
       return { captures, totalCount: captures.length, localOnly: true };
     }
 
@@ -344,8 +353,17 @@ export class DashboardBridge {
       if (issued.length !== captureIds.length || issued.some((captureId) => !session.issuedCaptureIds.has(captureId))) {
         return { error: "BAD_REQUEST" };
       }
-      await this.store.markSynced(issued);
-      for (const captureId of new Set(issued)) session.issuedCaptureIds.delete(captureId);
+      const revisionValues = object?.captureRevisions;
+      if (revisionValues !== undefined && (!Array.isArray(revisionValues) || revisionValues.length !== issued.length)) return { error: "BAD_REQUEST" };
+      const revisions = new Map<string, number>();
+      for (const value of revisionValues ?? issued.map(captureId => ({ captureId, revision: 0 }))) {
+        if (!value || typeof value.captureId !== "string" || !issued.includes(value.captureId) || revisions.has(value.captureId) || !Number.isSafeInteger(value.revision) || value.revision < 0 || !session.issuedCaptureRevisions.get(value.captureId)?.has(value.revision)) return { error: "BAD_REQUEST" };
+        revisions.set(value.captureId, value.revision);
+      }
+      // Compare and mark in the same storage transaction. A newer enrichment stays pending.
+      const acknowledged = await this.store.markSynced(issued, revisions);
+      if (acknowledged.length !== new Set(issued).size) return { error: "STALE_CONFIGURATION" };
+      for (const captureId of new Set(issued)) { session.issuedCaptureIds.delete(captureId); session.issuedCaptureRevisions.delete(captureId); }
       return { ok: true };
     }
 
@@ -367,7 +385,8 @@ export class DashboardBridge {
       identity,
       issuedAt: now,
       lastUsedAt: now,
-      issuedCaptureIds: new Set()
+      issuedCaptureIds: new Set(),
+      issuedCaptureRevisions: new Map()
     };
     this.sessions.set(capability, session);
     return { capability, expiresAt: now + this.absoluteTtlMs, version: BUILD_METADATA.version, features: ["history-v1"] };

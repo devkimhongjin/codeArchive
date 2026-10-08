@@ -1,3 +1,4 @@
+import { sweaDifficulty } from './problemDifficulty';
 import { canonicalLanguageKey } from "../../../shared/language";
 import { createCapture } from "./capture";
 import { sweaDisplayedCodeLength } from "./adapters/sweaPerformance";
@@ -304,7 +305,7 @@ export async function hydrateSweaCandidateResult(candidate: SweaHistoryCandidate
   const problemUrl = new URL(candidate.solvingClub ? `${ORIGIN}/main/talk/solvingClub/problemView.do` : `${ORIGIN}/main/code/${candidate.userProblem ? "userProblem/userProblemDetail" : "problem/problemDetail"}.do`);
   problemUrl.searchParams.set("contestProbId", candidate.contestProbId);
   if (candidate.solvingClub) for (const [key, value] of Object.entries(candidate.solvingClub)) problemUrl.searchParams.set(key, value);
-  const capture = createCapture({ platform: "SWEA", problemNumber: candidate.problemNumber, title: candidate.title, problemUrl: problemUrl.href, language: candidate.language, sourceCode, result: "ACCEPTED", solvedAt: candidate.solvedAt, observedAt: new Date(), historicalImport: true, historicalSubmissionId: candidate.submissionId, ...(candidate.executionTime === undefined ? {} : { executionTime: candidate.executionTime }), ...(candidate.memoryValue === undefined ? {} : { memoryValue: candidate.memoryValue, memoryUnit: "KB" }) });
+  const capture = createCapture({ difficulty: sweaDifficulty(detail, candidate.problemNumber, problemUrl.href), platform: "SWEA", problemNumber: candidate.problemNumber, title: candidate.title, problemUrl: problemUrl.href, language: candidate.language, sourceCode, result: "ACCEPTED", solvedAt: candidate.solvedAt, observedAt: new Date(), historicalImport: true, historicalSubmissionId: candidate.submissionId, ...(candidate.executionTime === undefined ? {} : { executionTime: candidate.executionTime }), ...(candidate.memoryValue === undefined ? {} : { memoryValue: candidate.memoryValue, memoryUnit: "KB" }) });
   return capture ? { status: "DONE", capture } : { status: "SOURCE_UNAVAILABLE" };
 }
 

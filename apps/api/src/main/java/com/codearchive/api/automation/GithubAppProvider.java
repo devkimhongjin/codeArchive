@@ -403,6 +403,38 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
  private boolean branchExists(String githubId,long installation,long repository,String branch)throws Exception{for(int page=1;page<=100;page++){PageResult<BranchChoice> result=branchesPage(githubId,installation,repository,page);if(result.items().stream().anyMatch(value->value.name().equals(branch)))return true;if(!result.hasMore())break;}return false;}
  private void verifyInstallation(String githubId,long installation)throws Exception{if(installations(githubId).stream().noneMatch(x->x.id()==installation))throw new SecurityException("installation mismatch");}
  private static void checkPage(int p){if(p<1||p>100)throw new IllegalArgumentException("page");} private static boolean safe(String x){return x!=null&&x.matches("[A-Za-z0-9_.-]{1,100}");} private static boolean safePathSegment(String x){return safe(x)&&!x.equals(".")&&!x.equalsIgnoreCase(".git")&&!x.contains("..");} private static boolean safeGithubId(String x){return x!=null&&x.matches("[0-9]{1,20}");} private static boolean sameGithubId(String left,String right){try{return safeGithubId(left)&&safeGithubId(right)&&new BigInteger(left).equals(new BigInteger(right));}catch(NumberFormatException e){return false;}} private static boolean safeBranch(String x){return x!=null&&x.length()<=255&&!x.isBlank()&&!x.startsWith("-")&&!x.contains("..")&&!x.contains("@{")&&!x.chars().anyMatch(c->Character.isWhitespace(c)||c<32||"~^:?*[\\\\".indexOf(c)>=0);} private static boolean safePath(String x){if(x==null||x.length()>1024||x.startsWith("/")||x.contains("\\\\"))return false;return x.isBlank()||Arrays.stream(x.split("/",-1)).allMatch(GithubAppProvider::safePathSegment);}
+ @Override public String recoveryContext(UserSettings s,Solution solution) {
+  try {
+   if(s.getUser()==null||solution.getUser()==null||!Objects.equals(s.getUser().getGithubId(),solution.getUser().getGithubId())||!s.githubTargetConfigured())return null;
+   String context=json.writeValueAsString(List.of("recovery-v1",s.getUser().getGithubId(),s.getVersion(),s.getGithubInstallationId(),s.getGithubOwner(),s.getGithubRepository(),s.getGithubBranch(),solution.getCaptureId(),path(s,solution),path(s,solution,ZoneOffset.UTC),source(s,solution),source(s,solution,ZoneOffset.UTC)));
+   return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(context.getBytes(StandardCharsets.UTF_8)));
+  }catch(Exception ignored){return null;}
+ }
+ @Override public Comparison compare(UserSettings s,Solution solution) {
+  if(!browseReady()||recoveryContext(s,solution)==null)return Comparison.UNAVAILABLE;
+  try {
+   long installation=s.getGithubInstallationId();
+   findRepositoryId(s.getUser().getGithubId(),installation,s.getGithubOwner(),s.getGithubRepository());
+   String token=installationToken(installation),repo=repo(s);
+   Response ref=sendBoundedBlob(repo+"/git/ref/heads/"+segment(s.getGithubBranch()),token);
+   if(ref.code!=200)return Comparison.UNAVAILABLE;
+   JsonNode reference=json.readTree(ref.body);String head=reference.path("object").path("sha").asText();
+   if(!sha(head)||!("refs/heads/"+s.getGithubBranch()).equals(reference.path("ref").asText()))return Comparison.UNAVAILABLE;
+   String path=path(s,solution),legacyPath=path(s,solution,ZoneOffset.UTC),source=source(s,solution),legacy=source(s,solution,ZoneOffset.UTC);
+   Set<String> paths=new LinkedHashSet<>(List.of(path,versionedPath(path,solution),legacyPath,versionedPath(legacyPath,solution,ZoneOffset.UTC)));
+   boolean different=false;
+   for(String candidate:paths){
+    Response file=sendBoundedBlob(repo+"/contents/"+encodedPath(candidate)+"?ref="+segment(head),token);
+    if(file.code==404)continue;
+    if(file.code!=200)return Comparison.UNAVAILABLE;
+    ExistingFileState state=compatibleFileState(file,source,legacy);
+    if(state==ExistingFileState.IDENTICAL)return Comparison.MATCH;
+    if(state==ExistingFileState.CONFLICT)return Comparison.UNAVAILABLE;
+    different=true;
+   }
+   return different?Comparison.CONFLICT:Comparison.MISSING;
+  }catch(Exception ignored){return Comparison.UNAVAILABLE;}
+ }
  @Override public Result createOnly(UserSettings s,Solution solution,FinalWriteGuard finalWriteGuard){
   if(appId.isBlank()||key.isBlank()||s.getGithubInstallationId()==null)return fallback.createOnly(s,solution);
   final String path,source,legacyPath,legacySource; try { path=path(s,solution);source=source(s,solution);legacyPath=path(s,solution,ZoneOffset.UTC);legacySource=source(s,solution,ZoneOffset.UTC); } catch (IllegalArgumentException e) { return Result.failed("Unsafe Git path"); }
@@ -442,11 +474,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
     }
    }
    possibleWrite=true;
-   Response blob=send("POST",repo+"/git/blobs",token,json.writeValueAsString(Map.of("content",Base64.getEncoder().encodeToString(source.getBytes(StandardCharsets.UTF_8)),"encoding","base64"))); if(blob.code!=201)return Result.unknown("Blob creation was not confirmed");
+   Response blob=send("POST",repo+"/git/blobs",token,json.writeValueAsString(Map.of("content",Base64.getEncoder().encodeToString(source.getBytes(StandardCharsets.UTF_8)),"encoding","base64"))); if(blob.code!=201)return Result.unknown(Diagnostic.BLOB_UNCONFIRMED);
    String blobSha=json.readTree(blob.body).path("sha").asText();
-   Response newTree=send("POST",repo+"/git/trees",token,json.writeValueAsString(Map.of("base_tree",tree,"tree",List.of(Map.of("path",targetPath,"mode","100644","type","blob","sha",blobSha))))); if(newTree.code!=201)return Result.unknown("Tree creation was not confirmed");
+   Response newTree=send("POST",repo+"/git/trees",token,json.writeValueAsString(Map.of("base_tree",tree,"tree",List.of(Map.of("path",targetPath,"mode","100644","type","blob","sha",blobSha))))); if(newTree.code!=201)return Result.unknown(Diagnostic.TREE_UNCONFIRMED);
    String treeSha=json.readTree(newTree.body).path("sha").asText();
-   Response newCommit=send("POST",repo+"/git/commits",token,json.writeValueAsString(Map.of("message",commitMessage(s,solution),"tree",treeSha,"parents",List.of(head)))); if(newCommit.code!=201)return Result.unknown("Commit creation was not confirmed");
+   Response newCommit=send("POST",repo+"/git/commits",token,json.writeValueAsString(Map.of("message",commitMessage(s,solution),"tree",treeSha,"parents",List.of(head)))); if(newCommit.code!=201)return Result.unknown(Diagnostic.COMMIT_UNCONFIRMED);
    String commitSha=json.readTree(newCommit.body).path("sha").asText();
    // The durable worker re-reads consent/settings at the latest safe point.
    // Never expose a ref update once logout, target, or automation consent changed.
@@ -454,12 +486,12 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
    Response freshRef=send("GET",repo+"/git/ref/heads/"+segment(s.getGithubBranch()),token,null);
    if(freshRef.code!=200)return Result.unknown("Fresh branch reference was not confirmed");
    String freshHead=json.readTree(freshRef.body).path("object").path("sha").asText();
-   if(!head.equals(freshHead))return Result.unknown("Branch moved before final ref update");
+   if(!head.equals(freshHead))return Result.unknown(Diagnostic.BRANCH_CHANGED);
    // The ref GET itself is network I/O. Recheck consent in the tiny final
    // window before the visible mutation as logout/OFF may have happened there.
    if(!finalWriteGuard.stillAuthorized())return Result.failed("GitHub automation consent changed before final write");
    Response update=send("PATCH",repo+"/git/refs/heads/"+segment(s.getGithubBranch()),token,json.writeValueAsString(Map.of("sha",commitSha,"force",false)));
-   if(update.code==200)return Result.succeeded(); return Result.unknown("Final ref update was not confirmed");
+   if(update.code==200)return Result.succeeded(); return Result.unknown(Diagnostic.REF_UNCONFIRMED);
   } catch(Exception e){return possibleWrite?Result.unknown("GitHub mutation outcome is unknown"):Result.retryable("GitHub App request failed before final mutation");}
  }
  private Result createFirstSolution(UserSettings settings,Solution solution,FinalWriteGuard guard,String token,String repo,String path,String source){

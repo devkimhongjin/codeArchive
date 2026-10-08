@@ -25,6 +25,11 @@ public class Solution {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "difficulty_label", length = 10) private String difficultyLabel;
+    @Column(name = "difficulty_source_url", length = 2048) private String difficultySourceUrl;
+    public ProblemDifficulty getDifficulty() { return difficultyLabel == null || difficultySourceUrl == null ? null : new ProblemDifficulty(difficultyLabel, problemNumber, difficultySourceUrl); }
+    public void setDifficulty(ProblemDifficulty value) { if (value != null && difficultyLabel == null) { difficultyLabel = value.label(); difficultySourceUrl = value.sourceUrl(); } }
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "user_id", nullable = false)
     private AppUser user;
@@ -74,6 +79,12 @@ public class Solution {
 
     @Column(name = "memory_unit", length = 10)
     private String memoryUnit;
+
+    public void enrichVerifiedMetadata(BigDecimal execution, BigDecimal memory, String unit, ProblemDifficulty difficulty) {
+        if (executionTime == null && execution != null) executionTime = execution;
+        if (memoryValue == null && memory != null) setMemoryMeasurement(memory, unit);
+        setDifficulty(difficulty);
+    }
 
     /** Durable origin guard: historical rows must never create GitHub commit jobs. */
     @Column(name = "historical_import", nullable = false)

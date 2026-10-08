@@ -60,6 +60,19 @@ public class SolutionController {
         return ResponseEntity.ok(solutions);
     }
 
+    @GetMapping("/reconciliation-records")
+    public ResponseEntity<?> reconciliationRecords(Authentication authentication,
+            @RequestHeader(value = "X-CodeArchive-Account", required = false) String assertion,
+            @RequestParam String platform, @RequestParam(defaultValue = "0") long cursor) {
+        Optional<GithubIdentity> identity = GithubAuthentication.identity(authentication);
+        if (identity.isEmpty()) return ResponseEntity.status(401).body(new ApiError("Authentication is required"));
+        ResponseEntity<?> failure = validateAccountAssertion(identity.get().githubId(), assertion);
+        if (failure != null) return failure;
+        if (!("SWEA".equals(platform) || "PROGRAMMERS".equals(platform)) || cursor < 0)
+            return ResponseEntity.badRequest().body(new ApiError("Invalid reconciliation page"));
+        return ResponseEntity.ok(solutionService.reconciliationPage(identity.get().githubId(), Platform.valueOf(platform), cursor));
+    }
+
     @GetMapping("/historical-submission-ids")
     public ResponseEntity<?> historicalSubmissionIds(
             Authentication authentication,
@@ -234,6 +247,27 @@ public class SolutionController {
                     body.path("owner").asText(), body.path("repository").asText(), body.path("branch").asText()));
         } catch (CaptureValidationException | DataIntegrityViolationException exception) {
             return ResponseEntity.status(409).body(new ApiError("GitHub request conflicts with current settings or job state; refresh and retry"));
+        }
+    }
+
+    @PostMapping("/historical-github-reconcile")
+    public ResponseEntity<?> reconcileHistorical(@RequestBody JsonNode body, Authentication authentication,
+            @RequestHeader(value = "X-CodeArchive-Account", required = false) String assertion) {
+        Optional<GithubIdentity> identity = GithubAuthentication.identity(authentication);
+        if (identity.isEmpty()) return ResponseEntity.status(401).body(new ApiError("Authentication is required"));
+        ResponseEntity<?> failure = validateAccountAssertion(identity.get().githubId(), assertion);
+        if (failure != null) return failure;
+        if (body == null || !body.isObject() || !body.path("captureId").isTextual()
+                || !body.path("captureId").asText().matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+                || !body.path("settingsVersion").isIntegralNumber() || !body.path("retry").isBoolean())
+            return ResponseEntity.badRequest().body(new ApiError("Invalid reconciliation request"));
+        Optional<Solution> match = solutionService.listForUser(identity.get().githubId()).stream()
+                .filter(item -> item.isHistoricalImport() && body.path("captureId").asText().equals(item.getCaptureId())).findFirst();
+        if (match.isEmpty()) return ResponseEntity.status(404).body(new ApiError("Owned historical submission missing"));
+        try {
+            return ResponseEntity.ok(automation.reconcile(match.get(), body.path("settingsVersion").asLong(), body.path("retry").asBoolean()));
+        } catch (CaptureValidationException exception) {
+            return ResponseEntity.status(409).body(new ApiError(exception.getMessage()));
         }
     }
 

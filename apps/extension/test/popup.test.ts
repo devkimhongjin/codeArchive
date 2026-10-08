@@ -25,13 +25,50 @@ test('recent list includes only synced distinct problems and retains performance
   assert.equal(document.querySelector('.recent-title')?.getAttribute('href'), 'dashboard.html');
   assert.equal(document.querySelector('#recent-count')?.textContent, '3문제');
 });
-test('GitHub switch opens management without modifying the automation preference', async () => {
+test('GitHub switch opens management when no repository target is connected', async () => {
   const { document } = parseHTML(html); const opened: string[] = []; const patches: unknown[] = [];
   mountPopup(document, { load: async () => ({ settings: { githubAutoCommitEnabled: true, relay: { status: 'CONFIRMED' } } }), copy: async () => {}, openDashboard: view => { opened.push(view); }, updateSettings: async patch => { patches.push(patch); } }); await settle();
   const toggle = document.querySelector<HTMLInputElement>('#github-auto')!;
   assert.equal(toggle.checked, true); assert.equal(toggle.disabled, false);
   toggle.dispatchEvent(new document.defaultView!.Event('click', { cancelable: true }));
   assert.deepEqual(opened, ['github']); assert.deepEqual(patches, []);
+});
+
+test('connected GitHub switch saves directly and coalesces clicks until acknowledged', async () => {
+  const { document } = parseHTML(html); const opened: string[] = []; const commands: unknown[] = [];
+  let enabled = false; let resolve!: (value: { ok: boolean; relayReady: boolean }) => void;
+  mountPopup(document, { load: async () => ({ settings: { githubAutoCommitEnabled: enabled, githubTargetConfigured: true,
+    accountId: '9', accountSettingsVersion: 7, relay: { status: 'CONFIRMED' } } }), copy: async () => {}, openDashboard: view => opened.push(view),
+    updateGithubAutomation: command => { commands.push(command); return new Promise(done => { resolve = done; }); } });
+  await settle();
+  const toggle = document.querySelector<HTMLInputElement>('#github-auto')!;
+  const click = () => toggle.dispatchEvent(new document.defaultView!.Event('click', { cancelable: true }));
+  click(); click(); assert.equal(commands.length, 1); assert.equal(toggle.disabled, true);
+  assert.deepEqual(commands, [{ enabled: true, accountId: '9', settingsVersion: 7 }]); assert.deepEqual(opened, []);
+  enabled = true; resolve({ ok: true, relayReady: true }); await settle(); await settle();
+  assert.equal(toggle.checked, true); assert.equal(toggle.disabled, false); assert.equal(toggle.getAttribute('aria-checked'), 'true');
+});
+
+test('server-disconnected target redirects while failed saves retain the confirmed switch value', async () => {
+  const { document } = parseHTML(html); const opened: string[] = []; let needsTarget = true;
+  mountPopup(document, { load: async () => ({ settings: { githubAutoCommitEnabled: true, githubTargetConfigured: true,
+    accountId: '9', accountSettingsVersion: 7 } }), copy: async () => {}, openDashboard: view => opened.push(view),
+    updateGithubAutomation: async () => needsTarget ? { ok: false, needsTarget: true } : { ok: false, error: 'SETTINGS_CHANGED' } });
+  await settle(); const toggle = document.querySelector<HTMLInputElement>('#github-auto')!;
+  const click = () => toggle.dispatchEvent(new document.defaultView!.Event('click', { cancelable: true }));
+  click(); await settle(); await settle(); assert.deepEqual(opened, ['github']);
+  needsTarget = false; click(); await settle(); await settle();
+  assert.equal(toggle.checked, true); assert.deepEqual(opened, ['github']);
+  assert.match(document.querySelector('#error')!.textContent!, /설정이 변경/);
+});
+
+test('saved flag with failed relay renewal displays recovery guidance', async () => {
+  const { document } = parseHTML(html);
+  mountPopup(document, { load: async () => ({ settings: { githubAutoCommitEnabled: true, githubTargetConfigured: true,
+    accountId: '9', accountSettingsVersion: 7 } }), copy: async () => {},
+    updateGithubAutomation: async () => ({ ok: true, relayReady: false, error: 'RELAY_REFRESH_REQUIRED' }) });
+  await settle(); document.querySelector('#github-auto')!.dispatchEvent(new document.defaultView!.Event('click', { cancelable: true }));
+  await settle(); await settle(); assert.match(document.querySelector('#error')!.textContent!, /설정은 저장.*연결을 갱신/);
 });
 test('popup renders synced rows without waiting for remote commit status and refreshes on storage progress', async () => {
   const { document } = parseHTML(html); let refresh: (() => void) | undefined; let captures = [record('one')];

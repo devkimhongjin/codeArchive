@@ -11,6 +11,7 @@ import java.time.Instant;
 import org.springframework.data.repository.query.Param;
 
 public interface SolutionRepository extends JpaRepository<Solution, Long> {
+    List<Solution> findByUserIdAndPlatformAndIdGreaterThanOrderByIdAsc(Long userId, Platform platform, Long afterId, Pageable pageable);
     Optional<Solution> findByUserIdAndCaptureId(Long userId, String captureId);
     Optional<Solution> findByUserIdAndPlatformAndHistoricalSubmissionId(Long userId, Platform platform, String historicalSubmissionId);
 
