@@ -25,7 +25,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { ApiError, addGithubFile, bulkUpload, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories, getGithubTree, getGithubEmptyDefaultBranch, getGithubReadmePreview, initializeGithubReadme, previewGithubTreeOperation, commitGithubTreeOperation } from './api'
+import { ApiError, addGithubFile, bulkUpload, enableAccountAutomaticSync, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories, getGithubTree, getGithubEmptyDefaultBranch, getGithubReadmePreview, initializeGithubReadme, previewGithubTreeOperation, commitGithubTreeOperation } from './api'
 import { BridgeError, parseAckResponse, parseBridgeStatusResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
@@ -49,6 +49,8 @@ import { formatKstDate, formatKstDateTime } from '../../../shared/timePresentati
 import { readCommunityRoute, readView, urlForView, type CommunityRoute } from './communityRoute'
 import { CommunitySettings } from './CommunitySettings'
 import { CODE_THEME_MODE_KEY, isLightTheme, type CodeTheme, type CodeThemeMode } from '../../../shared/codeThemes'
+import { extensionRuntime, subscribeExtensionLogin } from './extensionEnvironment'
+import { ExtensionSetupStatus } from './ExtensionSetupStatus'
 
 const ARCHIVE_PAGE_SIZE = 20
 
@@ -244,7 +246,7 @@ function relayDeviceId() {
 }
 
 export default function App() {
-  const [githubInstallReturn] = useState(readGithubInstallReturn)
+  const [githubInstallReturn, setGithubInstallReturn] = useState(readGithubInstallReturn)
   const [view, setView] = useState<ViewName>(() => readGithubInstallReturn() ? 'github' : readView())
   const [communityRoute, setCommunityRoute] = useState<CommunityRoute>(readCommunityRoute)
   const [mode, setMode] = useState<'local' | 'live'>('local')
@@ -424,8 +426,8 @@ export default function App() {
   }
   useEffect(() => {
     const started = (event: Event) => showToast('info', (event as CustomEvent<string>).detail === 'install'
-      ? '웹브라우저에서 GitHub App 설치를 마친 뒤 PC 앱에서 연결 버튼을 다시 눌러 주세요.'
-      : '웹브라우저에서 로그인한 뒤 PC 앱 로그인을 승인해 주세요.')
+      ? '웹브라우저에서 GitHub App 설치를 마친 뒤 연결 버튼을 다시 눌러 주세요.'
+      : extensionRuntime() ? '새 탭에서 GitHub 로그인을 완료하면 이 화면으로 돌아옵니다.' : '웹브라우저에서 로그인한 뒤 PC 앱 로그인을 승인해 주세요.')
     const failed = (event: Event) => showToast('error', (event as CustomEvent<string | null>).detail || '웹 로그인을 완료하지 못했습니다. 다시 시도해 주세요.')
     window.addEventListener('codearchive-login-start', started)
     window.addEventListener('codearchive-login-error', failed)
@@ -492,7 +494,9 @@ export default function App() {
     const loadingFor = user
     const stillCurrent = () => active && generation === accountGeneration.current && userRef.current?.id === loadingFor.id
     settingsLoadedRef.current = null
-    void Promise.resolve(getAccountSettings(loadingFor.githubId)).then(serverResponse => {
+    void Promise.resolve(getAccountSettings(loadingFor.githubId)).then(async serverResponse => {
+      if (!stillCurrent()) return;
+      if (extensionRuntime() && !serverResponse.autoSyncEnabled) serverResponse = await enableAccountAutomaticSync(loadingFor.githubId);
       if (!stillCurrent()) return
       const server = { ...serverResponse, communityPublicByDefault: serverResponse.communityPublicByDefault ?? true, communityDuplicateVisibility: serverResponse.communityDuplicateVisibility ?? 'all', nickname: serverResponse.nickname?.trim() || loadingFor.githubLogin, githubCommitMessageTemplate: serverResponse.githubCommitMessageTemplate || DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, copyHeaderFields: normalizedHeaderFields(serverResponse.copyHeaderFields), downloadHeaderFields: normalizedHeaderFields(serverResponse.downloadHeaderFields), githubHeaderFields: normalizedHeaderFields(serverResponse.githubHeaderFields) }
       // One-way migration: old browser-only export choices only seed the first
@@ -680,6 +684,21 @@ export default function App() {
       if (requestIsCurrent(fence, accountGeneration.current, solutionOperation.current)) setLoading(false)
     }
   }
+
+  useEffect(() => subscribeExtensionLogin(returnQuery => {
+    if (returnQuery) {
+      const query = new URLSearchParams(returnQuery)
+      const url = new URL(window.location.href)
+      for (const key of ['githubInstall', 'installationId']) {
+        const value = query.get(key)
+        if (value) url.searchParams.set(key, value)
+      }
+      window.history.replaceState({}, '', url)
+      setGithubInstallReturn(readGithubInstallReturn())
+      setView('github')
+    }
+    void connectLive()
+  }), [])
 
   const resetBridge = async () => {
     // Invalidate an in-flight sync before asking the extension to disconnect.
@@ -1018,7 +1037,7 @@ export default function App() {
     const stillCurrent = () => generation === accountGeneration.current && userRef.current?.id === savingFor.id
     setSettingsBusy(true); setSettingsError(null)
     try {
-      const saved = await updateAccountSettings(savingDraft, savingFor.githubId)
+      const saved = await updateAccountSettings(extensionRuntime() ? { ...savingDraft, autoSyncEnabled: true } : savingDraft, savingFor.githubId)
       if (stillCurrent()) {
         relayHandoffOperation.current += 1
         accountSettingsRef.current = saved
@@ -1423,7 +1442,7 @@ export default function App() {
           onCodeThemeChange={theme => chooseCodeTheme(theme, true)}
         />}
         {view === 'guide' && (
-          <GuideView onSettings={() => changeView('settings')} onGithub={() => changeView('github')} />
+          <><ExtensionSetupStatus localReady={bridgeStatus === 'connected'} serverReady={Boolean(user) && mode === 'live'} /><GuideView onSettings={() => changeView('settings')} onGithub={() => changeView('github')} /></>
         )}
         {(view === 'settings' || view === 'github') && (
           <SettingsView key={user?.id ?? 'local'}
@@ -2109,7 +2128,7 @@ function SettingsView({
             {accountSettings.copyHeader && <HeaderFieldsPicker label="복사" fields={normalizedHeaderFields(accountSettings.copyHeaderFields)} solution={previewSolution} onChange={copyHeaderFields => updateAccountSettings({ ...accountSettings, copyHeaderFields })} />}
             <label><input type="checkbox" checked={accountSettings.downloadHeader} onChange={e => updateAccountSettings({ ...accountSettings, downloadHeader: e.target.checked })} /> 다운로드할 때 문제 정보 주석 포함</label>
             {accountSettings.downloadHeader && <HeaderFieldsPicker label="다운로드" fields={normalizedHeaderFields(accountSettings.downloadHeaderFields)} solution={previewSolution} onChange={downloadHeaderFields => updateAccountSettings({ ...accountSettings, downloadHeaderFields })} />}
-            <div className="setting-field"><TokenTemplateInput id="filename-template" label="다운로드 파일명" maxLength={160} tokens={FILENAME_TOKENS} value={accountSettings.downloadFilenameTemplate} onChange={downloadFilenameTemplate => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p></div><CodeThemePreview lightTheme={accountSettings.lightTheme} darkTheme={accountSettings.darkTheme} mode={codeThemeMode} onChange={onCodeThemeChange} /><label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label>{!gitPathHasIdentity && <p className="field-error" role="alert">GitHub 관리에서 저장 경로를 수정해야 설정을 저장할 수 있습니다.</p>}<button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy || targetBusy || !gitPathHasIdentity}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
+            <div className="setting-field"><TokenTemplateInput id="filename-template" label="다운로드 파일명" maxLength={160} tokens={FILENAME_TOKENS} value={accountSettings.downloadFilenameTemplate} onChange={downloadFilenameTemplate => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p></div><CodeThemePreview lightTheme={accountSettings.lightTheme} darkTheme={accountSettings.darkTheme} mode={codeThemeMode} onChange={onCodeThemeChange} />{!extensionRuntime() && <label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label>}{!gitPathHasIdentity && <p className="field-error" role="alert">GitHub 관리에서 저장 경로를 수정해야 설정을 저장할 수 있습니다.</p>}<button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy || targetBusy || !gitPathHasIdentity}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
           </article>}
           {section === 'github' && <article className="settings-card export-settings"><h2>GitHub 자동 커밋</h2>{settingsError && <p role="alert">{settingsError}</p>}<p>자동 커밋할 파일의 경로, 메시지와 주석을 지정합니다.</p>
             <label><input type="checkbox" checked={accountSettings.githubHeader} onChange={e => updateAccountSettings({ ...accountSettings, githubHeader: e.target.checked })} /> GitHub 커밋 시 문제 정보 주석 포함</label>

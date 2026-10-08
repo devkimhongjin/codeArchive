@@ -28,6 +28,8 @@ export interface Capture {
   memoryUnit?: MemoryUnit;
   syncState: SyncState;
   syncedAt?: string;
+  /** Device-only upload ownership. Legacy/unbound records require explicit sync. */
+  syncAccountId?: string;
   /** Imported from a verified earlier submission; never relayed or downloaded automatically. */
   historicalImport?: boolean;
   /** Site submission identity retained for historical local deduplication. */

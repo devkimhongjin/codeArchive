@@ -7,8 +7,21 @@ import { normalizedHeaderFields } from "../../../shared/headerFields";
 
 export type CapturePreview = Omit<Capture, "sourceCode">;
 
+export function bindAutomaticCapture(capture: Capture, settings: CaptureSettings): Capture {
+  const { syncAccountId: _untrustedOwner, ...record } = capture;
+  return { ...record, ...(settings.accountId ? { syncAccountId: settings.accountId } : {}) };
+}
+
+export function nextAutomaticCapture(captures: Capture[], settings: CaptureSettings): Capture | undefined {
+  const accountId = settings.accountId;
+  if (!accountId || !settings.autoSyncEnabled || settings.relay?.accountId !== accountId) return undefined;
+  return captures.filter(capture => capture.syncState === 'PENDING' && !capture.historicalImport && capture.syncAccountId === accountId)
+    .sort((left, right) => left.observedAt.localeCompare(right.observedAt))[0];
+}
+
 export interface PopupLocalState {
   pendingCount: number;
+  syncedProblemCount: number;
   settings: Awaited<ReturnType<CaptureStore["getSettings"]>>;
   recentCaptures: CapturePreview[];
 }
@@ -64,12 +77,21 @@ export async function loadPopupLocalState(
   const [pendingCount, settings, recentCaptures] = await Promise.all([
     store.countPending(),
     store.getSettings(),
-    store.listAll(3)
+    store.listAll()
   ]);
+  const problems = new Set<string>();
+  const synced = recentCaptures.filter(capture => capture.syncState === 'SYNCED' && (!capture.syncAccountId || capture.syncAccountId === settings.accountId))
+    .sort((left, right) => (right.syncedAt ?? right.observedAt).localeCompare(left.syncedAt ?? left.observedAt))
+    .filter(capture => {
+      const key = `${capture.platform}:${capture.problemNumber}`;
+      if (problems.has(key)) return false;
+      problems.add(key); return true;
+    });
   return {
     pendingCount,
+    syncedProblemCount: problems.size,
     settings,
-    recentCaptures: recentCaptures.map(({ sourceCode: _sourceCode, ...preview }) => preview)
+    recentCaptures: synced.slice(0, 3).map(({ sourceCode: _sourceCode, ...preview }) => preview)
   };
 }
 

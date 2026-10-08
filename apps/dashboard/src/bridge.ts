@@ -1,6 +1,7 @@
 import type { Capture } from './types'
 import { desktopApi } from './desktop'
 import { EXTENSION_ID } from './extensionConfig'
+import { extensionMessage, extensionRuntime } from './extensionEnvironment'
 
 export type RuntimeApi = {
   lastError?: { message?: string }
@@ -25,6 +26,10 @@ export function requestBridge<T extends object>(
   message: Record<string, unknown>,
   options: { runtime?: RuntimeApi; timeoutMs?: number } = {},
 ): Promise<T> {
+  if (!options.runtime && extensionRuntime()) {
+    if (extensionId !== extensionRuntime()!.id) return Promise.reject(new BridgeError('현재 확장 저장소만 사용할 수 있습니다.'))
+    return extensionMessage<T>({ type: 'DASHBOARD_REQUEST', message })
+  }
   const desktop = desktopApi()
   if (desktop && !options.runtime && extensionId !== EXTENSION_ID) return Promise.reject(new BridgeError('PC 앱 연결은 현재 CodeArchive 확장 ID만 지원합니다.'))
   if (desktop && !options.runtime) return desktop.requestBridge(message).then(response => {

@@ -5,6 +5,7 @@ import type { Platform } from "./types";
 import { BUILD_METADATA } from "../../../shared/buildMetadata";
 import { normalizedHeaderFields, type HeaderField } from "../../../shared/headerFields";
 import { isHistoricalSubmissionId } from "./historicalIdentity";
+import { dashboardSender, type DashboardPageSender } from './dashboardNavigation';
 
 export const DASHBOARD_ORIGIN = "https://codearchive-dashboard-beta.netlify.app";
 export const DASHBOARD_ORIGINS = [
@@ -156,12 +157,20 @@ export class DashboardBridge {
   }
 
   /** Only the paired extension-owned transport calls this; web callers cannot select its identity. */
+  async handleExtensionMessage(message: unknown, sender: DashboardPageSender, extensionId: string): Promise<BridgeResponse> {
+    if (!dashboardSender(sender, extensionId)) return { error: 'UNAUTHORIZED' };
+    const identity = senderIdentity(sender);
+    if (!identity) return { error: 'UNAUTHORIZED' };
+    return this.handleIdentifiedMessage(message, identity, true);
+  }
+
+  /** Legacy paired transport retained for desktop release compatibility. */
   async handleDesktopMessage(message: unknown, connectionId: string): Promise<BridgeResponse> {
     if (!/^[a-f0-9]{32}$/.test(connectionId)) return { error: "UNAUTHORIZED" };
     return this.handleIdentifiedMessage(message, { tabId: -1, frameId: 0, documentId: `desktop:${connectionId}` });
   }
 
-  private async handleIdentifiedMessage(message: unknown, identity: SenderIdentity): Promise<BridgeResponse> {
+  private async handleIdentifiedMessage(message: unknown, identity: SenderIdentity, ownDashboard = false): Promise<BridgeResponse> {
 
     const object = asObject(message);
     const type = object?.type;
@@ -283,8 +292,8 @@ export class DashboardBridge {
       // This path is deliberately read-only. It neither issues captures for
       // ACK nor invokes relay/upload code, so a signed-out dashboard cannot
       // turn a local preview into a remote write.
-      const captures = await this.store.listAll(Math.min(MAX_PENDING_PAGE_SIZE, Math.max(1, Math.floor(limit))));
-      return { captures, hasMore: captures.length === Math.min(MAX_PENDING_PAGE_SIZE, Math.max(1, Math.floor(limit))), localOnly: true };
+      const captures = await this.store.listAll(ownDashboard ? undefined : Math.min(MAX_PENDING_PAGE_SIZE, Math.max(1, Math.floor(limit))));
+      return { captures, hasMore: !ownDashboard && captures.length === Math.min(MAX_PENDING_PAGE_SIZE, Math.max(1, Math.floor(limit))), localOnly: true };
     }
 
     if (type === "GET_HISTORICAL_ARCHIVE") {

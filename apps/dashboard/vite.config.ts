@@ -8,6 +8,7 @@ export default defineConfig(({ mode }) => {
   const buildInfo = resolveBuildInfo({ env: { ...process.env, ...env }, cwd: process.cwd() })
 
   return {
+    base: mode === 'extension' ? './' : '/',
     plugins: [react()],
     define: buildDefines(buildInfo),
     server: {

@@ -59,6 +59,10 @@ public class UserSettings {
     public Long getGithubInstallationId() { return githubInstallationId; } public String getGithubOwner() { return githubOwner; } public String getGithubRepository() { return githubRepository; }
     public String getGithubBranch() { return githubBranch; } public String getGithubRootPath() { return githubRootPath; } public Instant getAutomationEnabledAt() { return automationEnabledAt; } public AppUser getUser() { return user; }
     public boolean githubTargetConfigured() { return githubInstallationId != null && nonBlank(githubOwner) && nonBlank(githubRepository) && nonBlank(githubBranch); }
+    public void enableAutomaticSync() {
+        if (!autoSyncEnabled && githubAutoCommitEnabled) automationEnabledAt = Instant.now();
+        autoSyncEnabled = true;
+    }
     public void apply(SettingsRequest r) {
         boolean automationWasEnabled = autoSyncEnabled && githubAutoCommitEnabled;
         // Changing a destination or path changes the meaning of queued source.

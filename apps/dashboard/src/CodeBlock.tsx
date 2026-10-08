@@ -8,11 +8,11 @@ import { isDarkTheme, isLightTheme, type CodeTheme, type CodeThemeMode } from '.
 let highlighter: ReturnType<typeof loadHighlighter> | undefined
 async function loadHighlighter() {
   const { createHighlighterCore } = await import('shiki/core')
-  const { createOnigurumaEngine } = await import('shiki/engine/oniguruma')
+  const { createJavaScriptRegexEngine } = await import('shiki/engine/javascript')
   return createHighlighterCore({
     themes: [],
     langs: [import('shiki/langs/java.mjs'), import('shiki/langs/python.mjs'), import('shiki/langs/cpp.mjs'), import('shiki/langs/c.mjs'), import('shiki/langs/javascript.mjs'), import('shiki/langs/typescript.mjs'), import('shiki/langs/kotlin.mjs'), import('shiki/langs/csharp.mjs'), import('shiki/langs/sql.mjs'), import('shiki/langs/go.mjs'), import('shiki/langs/rust.mjs'), import('shiki/langs/ruby.mjs'), import('shiki/langs/swift.mjs'), import('shiki/langs/scala.mjs')],
-    engine: createOnigurumaEngine(import('shiki/wasm')),
+    engine: createJavaScriptRegexEngine(),
   })
 }
 export function highlightLanguage(language: string) {

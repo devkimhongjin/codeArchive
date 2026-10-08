@@ -3,6 +3,7 @@ node_modules/
 
 # Build
 dist/
+dist-extension/
 apps/desktop/renderer/
 apps/desktop/bundled-extension/
 coverage/

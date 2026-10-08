@@ -176,6 +176,9 @@ export async function bulkUpload(captures: Capture[], expectedGithubId: string):
 }
 
 export async function getAccountSettings(expectedGithubId: string): Promise<AccountSettings> { return requestJson<AccountSettings>('/api/settings', { headers: expectedGithubIdHeaders(expectedGithubId) }) }
+export async function enableAccountAutomaticSync(expectedGithubId: string): Promise<AccountSettings> {
+  return requestJson<AccountSettings>('/api/settings/automatic-sync', { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId) })
+}
 export async function updateAccountSettings(settings: AccountSettings, expectedGithubId: string): Promise<AccountSettings> {
   return requestJson<AccountSettings>('/api/settings', { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify(settings) })
 }

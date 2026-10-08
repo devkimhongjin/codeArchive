@@ -87,6 +87,7 @@ function sortNewestFirst(left: Capture, right: Capture): number {
 }
 
 function hasSameSubmittedCode(left: Capture, right: Capture): boolean {
+  if (left.syncAccountId !== right.syncAccountId) return false;
   // A historical submission has its own site identity. The "all submissions"
   // choice must retain two accepted attempts even when they contain the same code.
   if ((left.historicalImport === true && left.historicalSubmissionId) ||

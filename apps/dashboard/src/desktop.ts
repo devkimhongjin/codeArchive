@@ -1,3 +1,4 @@
+import { extensionApiUrl, extensionRuntime } from './extensionEnvironment'
 export type DesktopStatus = { version: string; connected: boolean; autostart: boolean; packaged: boolean; autoUpdate: boolean; update: { state: string; version: string | null; message: string } }
 export type DesktopApi = {
   getSetup(): Promise<{ extensionPath: string; extensionVersion: string | null; available: boolean; completed: boolean }>
@@ -17,6 +18,7 @@ export type DesktopApi = {
 }
 export function desktopApi(): DesktopApi | undefined { return typeof window === 'undefined' ? undefined : (window as Window & { codeArchiveDesktop?: DesktopApi }).codeArchiveDesktop }
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  if (extensionRuntime()) return fetch(extensionApiUrl(path), { ...init, credentials: 'include' })
   const desktop = desktopApi()
   if (!desktop) return fetch(path, init)
   const headers: Record<string, string> = {}
