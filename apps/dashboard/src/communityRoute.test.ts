@@ -28,3 +28,11 @@ it('keeps an exact Jungol problem in a shared community link', () => {
   expect(route.platform).toBe('JUNGOL')
   expect(urlForView('community', route, new URL('https://example.test/'))).toBe('/?view=community&platform=JUNGOL&problemNumber=1520')
 })
+
+it('preserves server sorting through links and removes it on other views', () => {
+  const route = readCommunityRoute('?view=community&platform=SWEA&problemNumber=1234&sort=likes&page=2')
+  expect(route.sort).toBe('likes')
+  expect(urlForView('community', route, new URL('https://example.test/'))).toContain('sort=likes&page=2')
+  expect(urlForView('settings', route, new URL('https://example.test/?sort=likes'))).toBe('/?view=settings')
+  expect(readCommunityRoute('?sort=source_code').sort).toBeUndefined()
+})

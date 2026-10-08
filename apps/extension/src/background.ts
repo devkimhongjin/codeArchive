@@ -1,3 +1,4 @@
+import { isLightTheme, isDarkTheme } from "../../../shared/codeThemes";
 import { isCaptureRecord, isUuid } from "./capture";
 import { DashboardBridge } from "./bridge";
 import { DesktopConnection } from './desktopConnection';
@@ -622,9 +623,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 
   if (object.type === "UPDATE_ARCHIVE_THEMES") {
     if (!isArchivePageSender(sender) || typeof object.lightTheme !== "string" || typeof object.darkTheme !== "string") { sendResponse({ ok: false, error: "UNAUTHORIZED" }); return false; }
-    const light = ["github-light", "vitesse-light", "catppuccin-latte", "solarized-light", "one-light"];
-    const dark = ["github-dark", "vitesse-dark", "catppuccin-mocha", "dracula", "one-dark-pro"];
-    if (!light.includes(object.lightTheme) || !dark.includes(object.darkTheme)) { sendResponse({ ok: false, error: "BAD_REQUEST" }); return false; }
+    if (!isLightTheme(object.lightTheme) || !isDarkTheme(object.darkTheme)) { sendResponse({ ok: false, error: "BAD_REQUEST" }); return false; }
     void store.mutateSettings(current => ({ ...current, lightTheme: object.lightTheme as never, darkTheme: object.darkTheme as never }))
       .then(settings => sendResponse({ ok: true, settings }))
       .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));

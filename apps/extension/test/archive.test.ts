@@ -108,7 +108,7 @@ test('the single top theme selector highlights the selected solution only', asyn
   });
   await settle();
   const select = document.querySelector<HTMLSelectElement>('#archive-code-theme')!;
-  assert.equal(select.querySelectorAll('option').length, 10);
+  assert.equal(select.querySelectorAll('option').length, 65);
   assert.deepEqual(Array.from(select.querySelectorAll('optgroup')).map(group => group.label), ['밝은 테마', '어두운 테마']);
   choose(document, select, 'solarized-light');
   assert.deepEqual(updates, [['solarized-light', 'github-dark']]);

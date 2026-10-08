@@ -18,11 +18,13 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class SolutionService {
 
+    private final com.codearchive.api.community.CommunityPublicationPolicy publication;
     private final UserRepository userRepository;
     private final SolutionRepository solutionRepository;
     private final UserSettingsRepository settingsRepository;
 
-    public SolutionService(UserRepository userRepository, SolutionRepository solutionRepository, UserSettingsRepository settingsRepository) {
+    public SolutionService(UserRepository userRepository, SolutionRepository solutionRepository, UserSettingsRepository settingsRepository, com.codearchive.api.community.CommunityPublicationPolicy publication) {
+        this.publication = publication;
         this.userRepository = userRepository;
         this.solutionRepository = solutionRepository;
         this.settingsRepository = settingsRepository;
@@ -34,6 +36,7 @@ public class SolutionService {
         AppUser user = userRepository.findByGithubId(githubId)
                 .orElseThrow(() -> new CaptureValidationException("Authenticated user no longer exists"));
 
+        userRepository.lockForCommunityLimit(user.getId()).orElseThrow();
         Optional<Solution> existing = solutionRepository.findByUserIdAndCaptureId(user.getId(), capture.captureId());
         if (existing.isPresent()) {
             Solution solution = existing.get();
@@ -75,7 +78,9 @@ public class SolutionService {
         boolean publish = settingsRepository.findByUserId(user.getId())
                 .map(com.codearchive.api.settings.UserSettings::isCommunityPublicByDefault).orElse(true);
         solution.setPublished(publish, Instant.now());
-        return solutionRepository.saveAndFlush(solution);
+        solutionRepository.saveAndFlush(solution);
+        if (publish) publication.applyProblem(user.getId(), solution.getPlatform(), solution.getProblemNumber(), settingsRepository.findByUserId(user.getId()).map(com.codearchive.api.settings.UserSettings::getCommunityDuplicateVisibility).orElse("all"));
+        return solution;
     }
 
     @Transactional(readOnly = true)

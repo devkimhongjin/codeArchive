@@ -33,12 +33,13 @@ class SettingsGithubTargetValidationTest {
     setId(user, 77L);
     UserSettings current = new UserSettings(user);
     when(users.findByGithubId("123")).thenReturn(Optional.of(user));
+    when(users.lockForCommunityLimit(77L)).thenReturn(Optional.of(user));
     when(settings.findByUserId(77L)).thenReturn(Optional.of(current));
     when(provider.repositoriesPage("123", 44L, 1)).thenReturn(new GithubAppProvider.PageResult<>(List.of(
         new GithubAppProvider.RepositoryChoice(7L, "owner", "repo", "owner/repo", true, "release/v1")), false));
     doNothing().when(provider).validateTarget(eq("123"), eq(44L), eq(7L), eq("release/v1"), eq("src"));
 
-    SettingsController controller = new SettingsController(users, settings, grants, provider, "1", "key", "app");
+    SettingsController controller = new SettingsController(org.mockito.Mockito.mock(com.codearchive.api.community.CommunityPublicationPolicy.class), users, settings, grants, provider, "1", "key", "app");
     var response = controller.put(github("123", "CHANGED-LOGIN"), "123", request());
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -55,8 +56,9 @@ class SettingsGithubTargetValidationTest {
     AppUser user = AppUser.fromGithub("123", "account", "Name", null);
     setId(user, 77L);
     when(users.findByGithubId("123")).thenReturn(Optional.of(user));
+    when(users.lockForCommunityLimit(77L)).thenReturn(Optional.of(user));
 
-    SettingsController controller = new SettingsController(users, settings, grants, provider, "1", "key", "app");
+    SettingsController controller = new SettingsController(org.mockito.Mockito.mock(com.codearchive.api.community.CommunityPublicationPolicy.class), users, settings, grants, provider, "1", "key", "app");
     var response = controller.put(github("123", "account"), "456", request());
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
@@ -72,8 +74,9 @@ class SettingsGithubTargetValidationTest {
     AppUser user = AppUser.fromGithub("123", "account", "Name", null);
     setId(user, 77L);
     when(users.findByGithubId("123")).thenReturn(Optional.of(user));
+    when(users.lockForCommunityLimit(77L)).thenReturn(Optional.of(user));
     when(settings.findByUserId(77L)).thenReturn(Optional.of(new UserSettings(user)));
-    SettingsController controller = new SettingsController(users, settings, grants, provider, "1", "key", "app");
+    SettingsController controller = new SettingsController(org.mockito.Mockito.mock(com.codearchive.api.community.CommunityPublicationPolicy.class), users, settings, grants, provider, "1", "key", "app");
     SettingsRequest invalid = new SettingsRequest(0, "Name", "nick", false, false, false, "{number}", "archive/{number}", "Add {platform} {number} solution",
         "github-light", "github-dark", false, false, null, null, null, null, null);
 

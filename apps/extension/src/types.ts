@@ -1,3 +1,4 @@
+import type { LightTheme, DarkTheme } from "../../../shared/codeThemes";
 import type { HeaderField } from "../../../shared/headerFields";
 
 export type Platform = "SWEA" | "PROGRAMMERS" | "JUNGOL";
@@ -121,8 +122,8 @@ export interface CaptureSettings {
   accountId?: string;
   /** Monotonic server settings version; used only to reject stale bridge configuration. */
   accountSettingsVersion?: number;
-  lightTheme?: "github-light" | "vitesse-light" | "catppuccin-latte" | "solarized-light" | "one-light";
-  darkTheme?: "github-dark" | "vitesse-dark" | "catppuccin-mocha" | "dracula" | "one-dark-pro";
+  lightTheme?: LightTheme;
+  darkTheme?: DarkTheme;
 }
 
 export const DEFAULT_CAPTURE_SETTINGS: CaptureSettings = {
