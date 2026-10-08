@@ -209,7 +209,7 @@ public class GithubAutomationService {
     }
 
     private ProcessResult complete(Long id, GithubProvider.Result outcome) {
-        GithubCommitJob job = jobs.findById(id).orElse(null);
+        GithubCommitJob job = jobs.findByIdForClaim(id).orElse(null);
         if (job == null || job.getState() != CommitJobState.RUNNING) {
             return ProcessResult.IGNORED;
         }
