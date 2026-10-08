@@ -52,6 +52,7 @@ import { HistoricalGithubCommitView } from './HistoricalGithubCommitView'
 import { formatKstDate, formatKstDateTime } from '../../../shared/timePresentation'
 import { readCommunityRoute, readView, urlForView, type CommunityRoute } from './communityRoute'
 import { CommunitySettings } from './CommunitySettings'
+import { SupportView } from './SupportView'
 import { CODE_THEME_MODE_KEY, isLightTheme, type CodeTheme, type CodeThemeMode } from '../../../shared/codeThemes'
 import { extensionRuntime, subscribeExtensionLogin } from './extensionEnvironment'
 
@@ -1306,6 +1307,9 @@ export default function App() {
             <button className={view === 'community' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('community')}>
               커뮤니티
             </button>
+            <button className={view === 'support' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('support')}>
+              문의·오류 제보
+            </button>
             <button className={view === 'settings' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('settings')}>
               설정
             </button>
@@ -1448,6 +1452,7 @@ export default function App() {
           codeThemeMode={codeThemeMode}
           onCodeThemeChange={theme => chooseCodeTheme(theme, true)}
         />}
+        {view === 'support' && <SupportView key={`${user?.githubId ?? 'signed-out'}:${mode}`} user={user} mode={mode} onLogin={() => navigateSameTab(GITHUB_LOGIN_URL)} onAuthInvalid={() => { if (user?.githubId) invalidateCommunityAuth(user.githubId) }} />}
         {(view === 'settings' || view === 'github') && (
           <SettingsView key={user?.id ?? 'local'}
             section={view}

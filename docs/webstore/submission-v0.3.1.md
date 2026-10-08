@@ -23,7 +23,7 @@ SWEA, 프로그래머스, 정올에서 제출한 본인 정답 풀이를 CodeArc
 
 ## 개인정보·권한 입력
 
-[권한별 사용 이유](../extension-webstore.md#권한-설명-초안)와 [개인정보 안내 초안](../extension-privacy.md)을 기준으로 작성합니다. 공개 정책 URL 후보는 master의 개인정보 문서이나, 보관·삭제·비공개 문의 절차를 확정하기 전 최종 정책으로 등록하지 않습니다.
+[권한별 사용 이유](../extension-webstore.md#권한-설명-초안)와 [개인정보 안내](../extension-privacy.md)을 기준으로 작성합니다. master 승격 후 정책 참조 URL은 `https://github.com/devkimhongjin/codeArchive/blob/master/docs/extension-privacy.md`입니다. 대시보드 비공개 문의와 종료 후 90일 lazy 삭제는 구현했으며, 백업 보관 기간은 확인하지 않았습니다. 실제 스토어 개인정보 입력란 등록과 공개 접근 확인은 출시 전에 수행합니다.
 
 - 코드 원문·댓글 등 사용자 제공 콘텐츠와 문제·언어·제출 시각·성능 정보, 계정 식별 정보와 닉네임, 인증 연결 정보를 다룹니다.
 - 전체 웹 탐색 이력이나 다른 사이트 문서, 비밀번호 입력란을 수집하지 않습니다. 브라우저 쿠키 값을 확장이 읽지 않습니다.
@@ -49,8 +49,8 @@ Google 공식 [이미지 안내](https://developer.chrome.com/docs/webstore/imag
 | 스토어 ID 로그인 반환/API CORS | 미검증, 실제 ID 발급 후 확인 |
 | 최종 ZIP 자동 동기화·커밋·작업 복구 | 실브라우저 사용자 검증 필요 |
 | 작은 홍보 이미지·실제 화면 캡처 | 준비 필요 |
-| 보관 기간·삭제 요청·비공개 문의 절차 | 운영자 확정 필요 |
-| 최종 정책 URL·데이터 고지 | 정책 확정 후 공개 접근 확인·등록 |
+| 보관 기간·삭제 요청·비공개 문의 절차 | 대시보드 비공개 문의와 종료 후 90일 lazy 삭제 구현. 백업 보관 기간은 미확인 |
+| 최종 정책 URL·데이터 고지 | master 승격 후 공개 접근 확인 및 스토어 등록 필요 |
 | 웹스토어 업로드/심사 요청 | 미실행 |
 
 공식 참고: [게시 절차](https://developer.chrome.com/docs/webstore/publish), [개인정보 입력](https://developer.chrome.com/docs/webstore/cws-dashboard-privacy), [최소 권한](https://developer.chrome.com/docs/webstore/program-policies/permissions).
