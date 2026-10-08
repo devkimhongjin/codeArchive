@@ -36,7 +36,7 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
-    private static final int LATEST_MIGRATION = 27;
+    private static final int LATEST_MIGRATION = 28;
 
     @Test
     void freshSchemaMigratesTwiceAndPassesHibernateValidation() throws Exception {
@@ -257,7 +257,7 @@ class PostgreSqlMigrationTest {
         LocalContainerEntityManagerFactoryBean entityManagerFactory =
                 new LocalContainerEntityManagerFactoryBean();
         entityManagerFactory.setDataSource(dataSource);
-        entityManagerFactory.setPackagesToScan("com.codearchive.api.auth", "com.codearchive.api.solution", "com.codearchive.api.settings", "com.codearchive.api.relay", "com.codearchive.api.automation", "com.codearchive.api.community");
+        entityManagerFactory.setPackagesToScan("com.codearchive.api.auth", "com.codearchive.api.solution", "com.codearchive.api.settings", "com.codearchive.api.relay", "com.codearchive.api.automation", "com.codearchive.api.community", "com.codearchive.api.support");
         JpaVendorAdapter vendorAdapter = new HibernateJpaVendorAdapter();
         entityManagerFactory.setJpaVendorAdapter(vendorAdapter);
         Properties properties = new Properties();
@@ -566,6 +566,23 @@ class PostgreSqlMigrationTest {
                 assertEquals("NO", nullable(table, "user_id"));
             }
             assertEquals("NO", nullable("community_comments", "body"));
+            for (String table : new String[] {"support_inquiries", "support_messages"}) {
+                assertEquals(table, scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = ?", schema, table));
+            }
+            assertEquals("NO", nullable("support_inquiries", "owner_id"));
+            assertEquals("NO", nullable("support_inquiries", "version"));
+            assertEquals("NO", nullable("support_messages", "inquiry_id"));
+            assertEquals("NO", nullable("support_messages", "author_id"));
+            assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = ? AND c.conname = 'ck_support_inquiries_category'", schema)).longValue());
+            assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = ? AND c.conname = 'ck_support_messages_author_role'", schema)).longValue());
+            assertEquals("c", scalar("SELECT c.confdeltype FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = ? AND c.conrelid = (? || '.support_messages')::regclass AND c.contype = 'f' AND c.confrelid = (? || '.support_inquiries')::regclass", schema, schema, schema));
+            try (Connection connection = connection(); Statement statement = connection.createStatement()) {
+                ResultSet user = statement.executeQuery("INSERT INTO users(email, password_hash, created_at) VALUES ('support-fixture@example.test', 'fixture', now()) RETURNING id"); user.next(); long userId = user.getLong(1);
+                ResultSet inquiry = statement.executeQuery("INSERT INTO support_inquiries(owner_id, category, title, status, created_at, updated_at, version) VALUES (" + userId + ", 'BUG', 'fixture', 'CLOSED', now(), now(), 0) RETURNING id"); inquiry.next(); long inquiryId = inquiry.getLong(1);
+                statement.executeUpdate("INSERT INTO support_messages(inquiry_id, author_id, author_role, body, created_at) VALUES (" + inquiryId + ", " + userId + ", 'USER', 'fixture', now())");
+                statement.executeUpdate("DELETE FROM support_inquiries WHERE id = " + inquiryId);
+                assertEquals(0L, ((Number) scalar("SELECT COUNT(*) FROM support_messages WHERE inquiry_id = ?", inquiryId)).longValue());
+            }
             assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = ? AND c.conname = 'uk_community_like'", schema)).longValue());
             assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = ? AND c.conname = 'ck_community_duplicate_visibility'", schema)).longValue());
             assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = ? AND indexname = 'idx_community_comments_solution'", schema)).longValue());

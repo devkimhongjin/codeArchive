@@ -2,6 +2,7 @@ import { GITHUB_LOGIN_URL, type AccountSettings, type AuthProviders, type BulkRe
 
 export { GITHUB_LOGIN_URL } from './types'
 import { apiFetch } from './desktop'
+import type { SupportAccess, SupportInquiry, SupportPage, SupportStatus, SupportCategory } from './supportTypes'
 
 export class ApiError extends Error {
   status: number
@@ -169,6 +170,17 @@ export const editCommunityComment = (expectedGithubId: string, id: number, comme
 export const deleteCommunityComment = (expectedGithubId: string, id: number, commentId: number) => requestJson<{ saved: boolean }>(`/api/community/solutions/${id}/comments/${commentId}`, { method: 'DELETE', headers: expectedGithubIdHeaders(expectedGithubId) })
 export const setCommunityVisibility = (expectedGithubId: string, id: number, visibility: 'private' | 'published') => requestJson<{ visibility: 'private' | 'published'; publishedAt: string | null }>(`/api/community/solutions/${id}/visibility`, { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ visibility }) })
 export const publishAllCommunitySolutions = (expectedGithubId: string) => requestJson<{ changedSubmissions: number; publishedProblems: number; publishedSubmissions: number }>('/api/community/solutions/publish-all', { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ visibility: 'published' }) })
+export const getSupportAccess = (expectedGithubId: string) => requestJson<SupportAccess>('/api/support/access', { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const getSupportTickets = (expectedGithubId: string, page = 0) => requestJson<SupportPage>(`/api/support/tickets?page=${page}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const getSupportTicket = (expectedGithubId: string, id: number) => requestJson<SupportInquiry>(`/api/support/tickets/${id}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const createSupportTicket = (expectedGithubId: string, request: { category: SupportCategory; title: string; body: string }) => requestJson<SupportInquiry>('/api/support/tickets', { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify(request) })
+export const replySupportTicket = (expectedGithubId: string, id: number, body: string) => requestJson<SupportInquiry>(`/api/support/tickets/${id}/messages`, { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ body }) })
+export const closeSupportTicket = (expectedGithubId: string, id: number) => requestJson<SupportInquiry>(`/api/support/tickets/${id}/close`, { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId) })
+export const deleteSupportTicket = (expectedGithubId: string, id: number) => requestJson<void>(`/api/support/tickets/${id}`, { method: 'DELETE', headers: expectedGithubIdHeaders(expectedGithubId) })
+export const getSupportAdminTickets = (expectedGithubId: string, page = 0) => requestJson<SupportPage>(`/api/support/admin/tickets?page=${page}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const getSupportAdminTicket = (expectedGithubId: string, id: number) => requestJson<SupportInquiry>(`/api/support/admin/tickets/${id}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const replySupportAdminTicket = (expectedGithubId: string, id: number, body: string, close = false) => requestJson<SupportInquiry>(`/api/support/admin/tickets/${id}/messages`, { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ body, close }) })
+export const setSupportAdminStatus = (expectedGithubId: string, id: number, status: SupportStatus) => requestJson<SupportInquiry>(`/api/support/admin/tickets/${id}/status`, { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ status }) })
 
 export async function bulkUpload(captures: Capture[], expectedGithubId: string): Promise<BulkResponse> {
   return requestJson<BulkResponse>('/api/solutions/bulk', {
