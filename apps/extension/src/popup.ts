@@ -15,5 +15,6 @@ mountPopup(document, {
   downloadCapture: (captureId) => chrome.runtime.sendMessage({ type: 'DOWNLOAD_RECENT_CAPTURE', captureId }),
   loadGithubStatuses: (captureIds) => chrome.runtime.sendMessage({ type: 'GET_GITHUB_COMMIT_STATUSES', captureIds }),
   updateSettings: (patch) => chrome.runtime.sendMessage({ type: 'UPDATE_SETTINGS', patch }),
+  updateGithubAutomation: request => chrome.runtime.sendMessage({ type: 'SET_GITHUB_AUTOMATION', ...request }),
   retryRelay: () => chrome.runtime.sendMessage({ type: 'RETRY_RELAY' })
 });

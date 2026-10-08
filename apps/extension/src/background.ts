@@ -1,4 +1,5 @@
 import { isLightTheme, isDarkTheme } from "../../../shared/codeThemes";
+import { setPopupGithubAutomation } from './popupGithubAutomation';
 import { isCaptureRecord, isUuid } from "./capture";
 import { DashboardBridge } from "./bridge";
 import { DASHBOARD_LOGIN_ROUTE_KEY, dashboardSender, dashboardExternalUrl, dashboardLoginReturn, dashboardReturnQuery } from './dashboardNavigation';
@@ -203,6 +204,7 @@ type InternalMessage =
   | { type: "STORE_HISTORICAL_CAPTURE"; capture: unknown }
   | { type: "SET_SUBMISSION_PROGRESS"; attemptId: unknown; platform?: unknown; problemNumber?: unknown; title?: unknown; phase: unknown }
   | { type: "GET_POPUP_STATE" }
+  | { type: "SET_GITHUB_AUTOMATION"; enabled: boolean; accountId: string; settingsVersion: number }
   | { type: "RETRY_RELAY" }
   | { type: "GET_GITHUB_COMMIT_STATUSES"; captureIds: unknown }
   | { type: "COPY_RECENT_CAPTURE"; captureId: string }
@@ -411,6 +413,16 @@ function isHistoryPageSender(sender: chrome.runtime.MessageSender): boolean {
   catch { return false; }
 }
 
+let popupGithubBusy = false;
+async function popupRelayDeviceId(): Promise<string> {
+  const key = 'codearchive-popup-relay-device-id';
+  const saved = (await chrome.storage.local.get(key))[key];
+  if (typeof saved === 'string' && /^[A-Za-z0-9_-]{16,100}$/.test(saved)) return saved;
+  const deviceId = crypto.randomUUID();
+  await chrome.storage.local.set({ [key]: deviceId });
+  return deviceId;
+}
+
 function senderUrl(sender: chrome.runtime.MessageSender): URL | null {
   if (typeof sender.url !== "string") return null;
   try { return new URL(sender.url); } catch { return null; }
@@ -540,6 +552,25 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   if (object.type === "OPEN_LOCAL_HISTORY") {
     if (!isPopupSender(sender) && !isArchivePageSender(sender)) { sendResponse({ ok: false, error: "UNAUTHORIZED" }); return false; }
     void openHistoryPage().then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false, error: "OPEN_FAILED" }));
+    return true;
+  }
+
+  if (object.type === 'SET_GITHUB_AUTOMATION') {
+    if (!isPopupSender(sender) || sender.id !== chrome.runtime.id || (sender.frameId !== undefined && sender.frameId !== 0)) {
+      sendResponse({ ok: false, error: 'UNAUTHORIZED' }); return false;
+    }
+    if (typeof object.enabled !== 'boolean' || typeof object.accountId !== 'string' || !/^\d{1,40}$/.test(object.accountId) ||
+      !Number.isSafeInteger(object.settingsVersion) || (object.settingsVersion as number) < 0) {
+      sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false;
+    }
+    if (popupGithubBusy) { sendResponse({ ok: false, error: 'BUSY' }); return false; }
+    popupGithubBusy = true;
+    void popupRelayDeviceId().then(deviceId => setPopupGithubAutomation(store, {
+      enabled: object.enabled as boolean, accountId: object.accountId as string, settingsVersion: object.settingsVersion as number,
+    }, deviceId)).then(result => {
+      if (result.ok && result.relayReady) void requestRelayDrain();
+      sendResponse(result);
+    }).catch(() => sendResponse({ ok: false, error: 'STORAGE_ERROR' })).finally(() => { popupGithubBusy = false; });
     return true;
   }
 

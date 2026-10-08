@@ -3,6 +3,7 @@ import type { GithubCommitStatus } from './relay';
 import { canonicalLanguageDisplayName } from '../../../shared/language';
 import { formatCaptureMemory, formatExecutionTime, formatSolutionTime } from './capturePresentation';
 import { buildLabel, updatedLabel } from '../../../shared/buildMetadata';
+import type { GithubToggleRequest, GithubToggleResult } from './popupGithubAutomation';
 type Preview = Omit<Capture, 'sourceCode'> & { githubCommitStatus?: GithubCommitStatus };
 interface PopupServices {
   load: () => Promise<unknown>;
@@ -13,6 +14,7 @@ interface PopupServices {
   downloadCapture?: (captureId: string) => Promise<{ ok?: boolean }>;
   loadGithubStatuses?: (captureIds: string[]) => Promise<{ statuses?: Record<string, GithubCommitStatus> }>;
   updateSettings?: (patch: Record<string, boolean>) => Promise<unknown>;
+  updateGithubAutomation?: (request: GithubToggleRequest) => Promise<GithubToggleResult>;
   retryRelay?: () => Promise<unknown>;
 }
 function asSynced(value: unknown): value is Preview {
@@ -52,35 +54,63 @@ export function mountPopup(document: Document, services: PopupServices): void {
   const githubAuto = document.querySelector<HTMLInputElement>('#github-auto')!;
   const automationStatus = document.querySelector<HTMLElement>('#automation-status')!;
   const retryRelay = document.querySelector<HTMLButtonElement>('#retry-relay')!;
-  let loading = false, retrying = false, reloadPending = false, generation = 0;
+  let loading = false, retrying = false, reloadPending = false, generation = 0, githubBusy = false;
+  let githubState: { githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; accountId?: string; accountSettingsVersion?: number } | undefined;
+  let toggleNotice = '';
   async function load(): Promise<void> {
+    if (githubBusy) { reloadPending = true; return; }
     if (loading) { reloadPending = true; return; }
     loading = true; const currentGeneration = ++generation;
     error.hidden = true; recentError.hidden = true; recentCard.setAttribute('aria-busy', 'true');
     try {
-      const state = await services.load() as { settings?: { githubAutoCommitEnabled?: boolean; relay?: { status?: string } }; recentCaptures?: unknown; error?: unknown } | null;
+      const state = await services.load() as { settings?: NonNullable<typeof githubState> & { relay?: { status?: string } }; recentCaptures?: unknown; error?: unknown } | null;
       if (!state?.settings || state.error) throw new Error('Invalid state');
       const seen = new Set<string>();
       const captures = (Array.isArray(state.recentCaptures) ? state.recentCaptures : []).filter(asSynced)
         .filter(capture => { const key = `${capture.platform}:${capture.problemNumber}`; if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, 3);
       githubAuto.checked = state.settings.githubAutoCommitEnabled === true; githubAuto.setAttribute('aria-checked', String(githubAuto.checked));
+      githubState = state.settings;
+      githubAuto.disabled = false;
       const relayStatus = state.settings.relay?.status;
       automationStatus.textContent = relayStatus === 'CONFIRMED' ? '자동 동기화 중' : relayStatus === 'OFFLINE' ? '오프라인' : relayStatus === 'RELAY_ERROR' ? '동기화 오류' : '대시보드 로그인 필요';
       retryRelay.hidden = !services.retryRelay || (relayStatus !== 'OFFLINE' && relayStatus !== 'RELAY_ERROR');
+      if (toggleNotice) { error.hidden = false; error.textContent = toggleNotice; }
       recentCount.textContent = captures.length ? `${captures.length}문제` : '없음'; renderRecent(document, recentList, recentEmpty, captures);
       if (captures.length && services.loadGithubStatuses) void services.loadGithubStatuses(captures.map(capture => capture.captureId)).then(response => {
         if (currentGeneration !== generation || !response?.statuses) return;
         renderRecent(document, recentList, recentEmpty, captures.map(capture => ({ ...capture, githubCommitStatus: response.statuses![capture.captureId] ?? capture.githubCommitStatus })));
       }).catch(() => undefined);
     } catch {
+      githubState = undefined; githubAuto.disabled = true;
       error.hidden = false; recentError.hidden = false; automationStatus.textContent = '확인 필요'; retryRelay.hidden = true;
+      error.textContent = '동기화 상태를 불러오지 못했어요. 팝업을 다시 열어 주세요.';
       recentList.replaceChildren(); recentCount.textContent = '확인 실패'; recentEmpty.hidden = true;
     } finally {
       loading = false; recentCard.setAttribute('aria-busy', 'false');
       if (reloadPending) { reloadPending = false; queueMicrotask(() => void load()); }
     }
   }
-  githubAuto.addEventListener('click', event => { event.preventDefault(); services.openDashboard?.('github'); });
+  githubAuto.addEventListener('click', event => {
+    event.preventDefault();
+    if (githubBusy || loading || !githubState) return;
+    if (!githubState.githubTargetConfigured || !githubState.accountId || !Number.isSafeInteger(githubState.accountSettingsVersion)) {
+      services.openDashboard?.('github'); return;
+    }
+    if (!services.updateGithubAutomation) return;
+    const command: GithubToggleRequest = { enabled: !githubState.githubAutoCommitEnabled,
+      accountId: githubState.accountId, settingsVersion: githubState.accountSettingsVersion! };
+    githubBusy = true; githubAuto.disabled = true; toggleNotice = ''; error.hidden = true;
+    automationStatus.textContent = 'GitHub 설정 저장 중…';
+    void services.updateGithubAutomation(command).then(result => {
+      if (result.needsTarget) { services.openDashboard?.('github'); return; }
+      if (!result.ok) toggleNotice = result.error === 'ACCOUNT_CHANGED' ? '계정이 변경됐어요. 대시보드에서 현재 계정을 확인해 주세요.' :
+        result.error === 'SETTINGS_CHANGED' ? '설정이 변경됐어요. 대시보드에서 최신 설정을 확인해 주세요.' :
+        result.error === 'SAVE_UNCONFIRMED' ? '저장 결과를 확인하지 못했어요. 다시 누르기 전에 대시보드에서 확인해 주세요.' :
+        'GitHub 설정을 저장하지 못했어요. 대시보드에서 연결 상태를 확인해 주세요.';
+      else if (!result.relayReady) toggleNotice = 'GitHub 설정은 저장됐어요. 대시보드를 열어 자동 동기화 연결을 갱신해 주세요.';
+    }).catch(() => { toggleNotice = '저장 결과를 확인하지 못했어요. 다시 누르기 전에 대시보드에서 확인해 주세요.'; })
+      .finally(() => { githubBusy = false; void load(); });
+  });
   services.subscribeProgress?.(() => void load());
   retryRelay.addEventListener('click', () => {
     if (retrying || !services.retryRelay) return;
