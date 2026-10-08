@@ -203,6 +203,9 @@ public class SecurityConfig {
                 .map(String::trim)
                 .filter(origin -> !origin.isEmpty())
                 .collect(Collectors.toList());
+        // The pinned extension's bundled management page uses Chrome's HttpOnly
+        // session. Ordinary endpoints still require session auth, CSRF and account assertions.
+        if (!origins.contains(EXTENSION_ORIGIN)) origins.add(EXTENSION_ORIGIN);
         configuration.setAllowedOrigins(origins);
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList(
@@ -212,7 +215,7 @@ public class SecurityConfig {
 
         // The service worker sends only bearer-authenticated relay requests. Keep
         // its privileged Origin and Authorization header scoped to relay routes;
-        // ordinary dashboard endpoints retain the narrower session/CSRF policy.
+        // ordinary endpoints retain session/CSRF policy and never accept relay bearer grants.
         CorsConfiguration relayConfiguration = new CorsConfiguration(configuration);
         List<String> relayOrigins = new ArrayList<>(origins);
         if (!relayOrigins.contains(EXTENSION_ORIGIN)) relayOrigins.add(EXTENSION_ORIGIN);

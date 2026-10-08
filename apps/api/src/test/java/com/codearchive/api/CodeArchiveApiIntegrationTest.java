@@ -826,6 +826,63 @@ class CodeArchiveApiIntegrationTest {
                         new GithubIdentity(id, login, name, email)));
     }
 
+
+    @Test
+    void reconciliationPagesAreBoundedPrivateAndAccountPinned() throws Exception {
+        AppUser owner = githubAccountService.upsert(principal("921", "reconcile-owner", "Owner", null));
+        AppUser other = githubAccountService.upsert(principal("922", "reconcile-other", "Other", null));
+        for (int i = 0; i < 53; i++) {
+            AppUser account = i == 52 ? other : owner;
+            solutionRepository.saveAndFlush(new com.codearchive.api.solution.Solution(account, UUID.randomUUID().toString(),
+                    com.codearchive.api.solution.Platform.SWEA, "1234", "Test", "https://swexpertacademy.com/problem/1234",
+                    "JAVA", "java", "private source", "ACCEPTED", java.time.Instant.parse("2026-01-02T03:04:05Z"),
+                    java.time.Instant.parse("2026-01-02T03:04:05Z"), null, null));
+        }
+        var first = mockMvc.perform(get("/api/solutions/reconciliation-records?platform=SWEA&cursor=0")
+                        .with(githubLogin("921", "reconcile-owner", "Owner", null)).header("X-CodeArchive-Account", "921"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.records", hasSize(50)))
+                .andExpect(jsonPath("$.hasMore", is(true))).andExpect(jsonPath("$.records[0].sourceCode").doesNotExist())
+                .andExpect(jsonPath("$.records[0].sourceDigest").isString()).andReturn();
+        var firstJson = objectMapper.readTree(first.getResponse().getContentAsString());
+        org.assertj.core.api.Assertions.assertThat(first.getResponse().getContentAsString()).doesNotContain("private source");
+        mockMvc.perform(get("/api/solutions/reconciliation-records?platform=SWEA&cursor=" + firstJson.get("cursor").asLong())
+                        .with(githubLogin("921", "reconcile-owner", "Owner", null)).header("X-CodeArchive-Account", "921"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.records", hasSize(2))).andExpect(jsonPath("$.hasMore", is(false)));
+        mockMvc.perform(get("/api/solutions/reconciliation-records?platform=SWEA")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/solutions/reconciliation-records?platform=SWEA")
+                        .with(githubLogin("921", "reconcile-owner", "Owner", null)).header("X-CodeArchive-Account", "922"))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void enrichmentPreservesKnownMetadataAndRejectsCoreMismatch() throws Exception {
+        AppUser owner = githubAccountService.upsert(principal("923", "enrich-owner", "Owner", null));
+        var payload = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(capture(UUID.randomUUID().toString(), "class Main {}"));
+        payload.put("problemUrl", "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=OwnProblem");
+        payload.put("historicalImport", true); payload.put("historicalSubmissionId", "OwnSubmission");
+        uploadFixture("923", "enrich-owner", payload).andExpect(jsonPath("$.acceptedCaptureIds", hasSize(1)));
+        payload.put("metadataPending", true); payload.put("executionTime", 999); payload.put("memoryUsage", 999);
+        payload.set("difficulty", objectMapper.createObjectNode().put("label", "D3").put("problemNumber", "1234").put("sourceUrl", payload.get("problemUrl").asText()));
+        uploadFixture("923", "enrich-owner", payload).andExpect(jsonPath("$.acceptedCaptureIds", hasSize(1)));
+        var saved = solutionRepository.findByUserIdOrderBySolvedAtDesc(owner.getId()).get(0);
+        org.assertj.core.api.Assertions.assertThat(saved.getExecutionTime()).isEqualByComparingTo("1.25");
+        org.assertj.core.api.Assertions.assertThat(saved.getMemoryUsage()).isEqualByComparingTo("64");
+        org.assertj.core.api.Assertions.assertThat(saved.getDifficulty().label()).isEqualTo("D3");
+        payload.put("captureId", UUID.randomUUID().toString());
+        uploadFixture("923", "enrich-owner", payload).andExpect(jsonPath("$.acceptedCaptureIds", hasSize(1)));
+        payload.put("solvedAt", "2026-01-02T03:04:06Z");
+        uploadFixture("923", "enrich-owner", payload).andExpect(jsonPath("$.acceptedCaptureIds", hasSize(0)));
+        payload.put("sourceCode", "class Wrong {}");
+        uploadFixture("923", "enrich-owner", payload).andExpect(jsonPath("$.acceptedCaptureIds", hasSize(0)));
+        org.assertj.core.api.Assertions.assertThat(solutionRepository.findByUserIdOrderBySolvedAtDesc(owner.getId())).hasSize(1);
+    }
+
+    private org.springframework.test.web.servlet.ResultActions uploadFixture(String id, String login, com.fasterxml.jackson.databind.node.ObjectNode payload) throws Exception {
+        return mockMvc.perform(post("/api/solutions/bulk").with(csrf().asHeader()).with(githubLogin(id, login, "Owner", null))
+                .contentType("application/json").content(objectMapper.createObjectNode().set("captures", objectMapper.createArrayNode().add(payload)).toString()))
+                .andExpect(status().isOk());
+    }
+
     private OAuth2User principal(String id, String login, String name, String email) {
         Map<String, Object> attributes = new HashMap<>();
         attributes.put("id", id);

@@ -19,6 +19,22 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class GithubAutomationServiceTest {
+  @Test void extensionSyncActivationExcludesCapturesFromTheOffIntervalAndIsIdempotent() throws Exception {
+    var jobs = mock(GithubCommitJobRepository.class); var settingsRepo = mock(UserSettingsRepository.class);
+    AppUser user = AppUser.fromGithub("1", "owner", "Owner", null); set(user, "id", 1L);
+    UserSettings current = settings(user, 3, Instant.EPOCH); set(current, "autoSyncEnabled", false);
+    current.enableAutomaticSync();
+    Instant boundary = current.getAutomationEnabledAt();
+    assertThat(boundary).isAfter(Instant.EPOCH);
+    assertThat(current.isGithubAutoCommitEnabled()).isTrue();
+    current.enableAutomaticSync(); assertThat(current.getAutomationEnabledAt()).isEqualTo(boundary);
+    when(settingsRepo.findByUserId(1L)).thenReturn(Optional.of(current));
+    var service = new GithubAutomationService(jobs, settingsRepo, mock(SolutionRepository.class), mock(GithubProvider.class));
+    service.consider(user, solution(user, "off-interval", boundary.minusSeconds(1)));
+    verify(jobs, never()).save(any());
+    service.consider(user, solution(user, "after-activation", boundary));
+    verify(jobs).save(any(GithubCommitJob.class));
+  }
   @Test void historicalOriginBlocksNewAndPreviouslyQueuedCommitJobs() throws Exception {
     GithubCommitJobRepository jobs=mock(GithubCommitJobRepository.class); UserSettingsRepository settingsRepo=mock(UserSettingsRepository.class); SolutionRepository solutions=mock(SolutionRepository.class); GithubProvider provider=mock(GithubProvider.class);
     AppUser user=AppUser.fromGithub("1","owner","Owner",null); set(user,"id",1L);
@@ -100,7 +116,7 @@ class GithubAutomationServiceTest {
     AppUser user=AppUser.fromGithub("1","owner","Owner",null); set(user,"id",1L); UserSettings current=settings(user,1,Instant.EPOCH); Solution capture=solution(user,"capture",Instant.now()); GithubCommitJob job=new GithubCommitJob(user,"capture",1); set(job,"id",11L);
     when(jobs.findByIdForClaim(11L)).thenReturn(Optional.of(job)); when(jobs.findById(11L)).thenReturn(Optional.of(job)); when(settingsRepo.findByUserId(1L)).thenReturn(Optional.of(current)); when(solutions.findByUserIdAndCaptureId(1L,"capture")).thenReturn(Optional.of(capture)); when(provider.createOnly(eq(current),eq(capture),any())).thenReturn(GithubProvider.Result.succeeded());
     GithubAutomationService service=new GithubAutomationService(jobs,settingsRepo,solutions,provider); service.process(11L); service.process(11L);
-    verify(jobs,times(2)).findByIdForClaim(11L); verify(provider,times(1)).createOnly(eq(current),eq(capture),any()); assertThat(job.getState()).isEqualTo(CommitJobState.SUCCEEDED);
+    verify(jobs,times(3)).findByIdForClaim(11L); verify(provider,times(1)).createOnly(eq(current),eq(capture),any()); assertThat(job.getState()).isEqualTo(CommitJobState.SUCCEEDED);
   }
 
   @Test void finalWriteGuardRechecksSettingsAfterTheDurableClaim() throws Exception {

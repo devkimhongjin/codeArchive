@@ -1,3 +1,4 @@
+import { bundledThemes } from "shiki/themes"
 import { useEffect, useState } from 'react'
 import type { ThemedToken } from 'shiki'
 import { describeLanguage } from '../../../shared/language'
@@ -7,11 +8,11 @@ import { isDarkTheme, isLightTheme, type CodeTheme, type CodeThemeMode } from '.
 let highlighter: ReturnType<typeof loadHighlighter> | undefined
 async function loadHighlighter() {
   const { createHighlighterCore } = await import('shiki/core')
-  const { createOnigurumaEngine } = await import('shiki/engine/oniguruma')
+  const { createJavaScriptRegexEngine } = await import('shiki/engine/javascript')
   return createHighlighterCore({
-    themes: [import('shiki/themes/github-light.mjs'), import('shiki/themes/vitesse-light.mjs'), import('shiki/themes/catppuccin-latte.mjs'), import('shiki/themes/solarized-light.mjs'), import('shiki/themes/one-light.mjs'), import('shiki/themes/github-dark.mjs'), import('shiki/themes/vitesse-dark.mjs'), import('shiki/themes/catppuccin-mocha.mjs'), import('shiki/themes/dracula.mjs'), import('shiki/themes/one-dark-pro.mjs')],
+    themes: [],
     langs: [import('shiki/langs/java.mjs'), import('shiki/langs/python.mjs'), import('shiki/langs/cpp.mjs'), import('shiki/langs/c.mjs'), import('shiki/langs/javascript.mjs'), import('shiki/langs/typescript.mjs'), import('shiki/langs/kotlin.mjs'), import('shiki/langs/csharp.mjs'), import('shiki/langs/sql.mjs'), import('shiki/langs/go.mjs'), import('shiki/langs/rust.mjs'), import('shiki/langs/ruby.mjs'), import('shiki/langs/swift.mjs'), import('shiki/langs/scala.mjs')],
-    engine: createOnigurumaEngine(import('shiki/wasm')),
+    engine: createJavaScriptRegexEngine(),
   })
 }
 export function highlightLanguage(language: string) {
@@ -34,7 +35,8 @@ export function CodeBlock({ code, language, lightTheme = 'github-light', darkThe
   useEffect(() => {
     let active = true
     highlighter ??= loadHighlighter().catch(error => { highlighter = undefined; throw error })
-    void highlighter.then(engine => {
+    void highlighter.then(async engine => {
+      if (!engine.getLoadedThemes().includes(theme)) await engine.loadTheme(bundledThemes[theme]())
       const tokens = engine.codeToTokens(code, { lang: highlightLanguage(language), theme }).tokens
       const palette = engine.getTheme(theme) as { fg?: string; bg?: string }
       if (active) setResult({ code, language, theme, tokens, foreground: palette.fg, background: palette.bg })

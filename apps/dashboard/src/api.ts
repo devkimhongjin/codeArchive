@@ -2,6 +2,7 @@ import { GITHUB_LOGIN_URL, type AccountSettings, type AuthProviders, type BulkRe
 
 export { GITHUB_LOGIN_URL } from './types'
 import { apiFetch } from './desktop'
+import type { SupportAccess, SupportInquiry, SupportPage, SupportStatus, SupportCategory } from './supportTypes'
 
 export class ApiError extends Error {
   status: number
@@ -145,22 +146,41 @@ export async function getHistoricalGithubStatus(expectedGithubId: string): Promi
 }
 
 export const getHistoricalCommitCandidates = (githubId: string) => requestJson<import('./types').HistoricalCommitCandidate[]>(
-  '/api/solutions/historical-github-candidates', { headers: accountAssertionHeaders(githubId) })
+    '/api/solutions/historical-github-candidates', { headers: accountAssertionHeaders(githubId) })
+export type GithubRecoveryResult = { captureId: string; state: import('./types').HistoricalCommitState; comparison: 'MATCH' | 'MISSING' | 'CONFLICT' | 'UNAVAILABLE' | 'CONTEXT_UNAVAILABLE'; diagnostic: string; retryAllowed: boolean }
+export const reconcileHistoricalCommit = (githubId: string, captureId: string, settingsVersion: number, retry = false) => requestJson<GithubRecoveryResult>(
+  '/api/solutions/historical-github-reconcile', { method: 'POST', headers: accountAssertionHeaders(githubId), body: JSON.stringify({ captureId, settingsVersion, retry }) })
 export const requestHistoricalCommitBatch = (githubId: string, request: {
   captureIds: string[]; settingsVersion: number; installationId: number; owner: string; repository: string; branch: string
 }) => requestJson<Record<string, import('./types').HistoricalCommitState>>('/api/solutions/historical-github-batch', {
   method: 'POST', headers: accountAssertionHeaders(githubId), body: JSON.stringify(request),
 })
 
-export function getCommunitySolutions(expectedGithubId: string, platform: Platform, problemNumber: string, languageKey: string, page: number): Promise<CommunityPage> {
-  const query = new URLSearchParams({ platform, problemNumber, page: String(page), size: '20' })
+export function getCommunitySolutions(expectedGithubId: string, platform: Platform, problemNumber: string, languageKey: string, page: number, sort: import('./types').CommunitySort = 'submitted'): Promise<CommunityPage> {
+  const query = new URLSearchParams({ platform, problemNumber, page: String(page), size: '20', sort })
   if (languageKey) query.set('languageKey', languageKey)
   return requestJson<CommunityPage>(`/api/community/solutions?${query}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
 }
 
 export const getCommunityDetail = (expectedGithubId: string, id: number) => requestJson<CommunityDetail>(`/api/community/solutions/${id}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const setCommunityLike = (expectedGithubId: string, id: number, liked: boolean) => requestJson<import('./types').CommunityStats>(`/api/community/solutions/${id}/like`, { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ liked }) })
+export const getCommunityComments = (expectedGithubId: string, id: number, page: number) => requestJson<import('./types').CommunityCommentPage>(`/api/community/solutions/${id}/comments?page=${page}&size=20`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const addCommunityComment = (expectedGithubId: string, id: number, body: string) => requestJson<{ saved: boolean }>(`/api/community/solutions/${id}/comments`, { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ body }) })
+export const editCommunityComment = (expectedGithubId: string, id: number, commentId: number, body: string) => requestJson<{ saved: boolean }>(`/api/community/solutions/${id}/comments/${commentId}`, { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ body }) })
+export const deleteCommunityComment = (expectedGithubId: string, id: number, commentId: number) => requestJson<{ saved: boolean }>(`/api/community/solutions/${id}/comments/${commentId}`, { method: 'DELETE', headers: expectedGithubIdHeaders(expectedGithubId) })
 export const setCommunityVisibility = (expectedGithubId: string, id: number, visibility: 'private' | 'published') => requestJson<{ visibility: 'private' | 'published'; publishedAt: string | null }>(`/api/community/solutions/${id}/visibility`, { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ visibility }) })
 export const publishAllCommunitySolutions = (expectedGithubId: string) => requestJson<{ changedSubmissions: number; publishedProblems: number; publishedSubmissions: number }>('/api/community/solutions/publish-all', { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ visibility: 'published' }) })
+export const getSupportAccess = (expectedGithubId: string) => requestJson<SupportAccess>('/api/support/access', { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const getSupportTickets = (expectedGithubId: string, page = 0) => requestJson<SupportPage>(`/api/support/tickets?page=${page}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const getSupportTicket = (expectedGithubId: string, id: number) => requestJson<SupportInquiry>(`/api/support/tickets/${id}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const createSupportTicket = (expectedGithubId: string, request: { category: SupportCategory; title: string; body: string }) => requestJson<SupportInquiry>('/api/support/tickets', { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify(request) })
+export const replySupportTicket = (expectedGithubId: string, id: number, body: string) => requestJson<SupportInquiry>(`/api/support/tickets/${id}/messages`, { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ body }) })
+export const closeSupportTicket = (expectedGithubId: string, id: number) => requestJson<SupportInquiry>(`/api/support/tickets/${id}/close`, { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId) })
+export const deleteSupportTicket = (expectedGithubId: string, id: number) => requestJson<void>(`/api/support/tickets/${id}`, { method: 'DELETE', headers: expectedGithubIdHeaders(expectedGithubId) })
+export const getSupportAdminTickets = (expectedGithubId: string, page = 0) => requestJson<SupportPage>(`/api/support/admin/tickets?page=${page}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const getSupportAdminTicket = (expectedGithubId: string, id: number) => requestJson<SupportInquiry>(`/api/support/admin/tickets/${id}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const replySupportAdminTicket = (expectedGithubId: string, id: number, body: string, close = false) => requestJson<SupportInquiry>(`/api/support/admin/tickets/${id}/messages`, { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ body, close }) })
+export const setSupportAdminStatus = (expectedGithubId: string, id: number, status: SupportStatus) => requestJson<SupportInquiry>(`/api/support/admin/tickets/${id}/status`, { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ status }) })
 
 export async function bulkUpload(captures: Capture[], expectedGithubId: string): Promise<BulkResponse> {
   return requestJson<BulkResponse>('/api/solutions/bulk', {
@@ -171,6 +191,9 @@ export async function bulkUpload(captures: Capture[], expectedGithubId: string):
 }
 
 export async function getAccountSettings(expectedGithubId: string): Promise<AccountSettings> { return requestJson<AccountSettings>('/api/settings', { headers: expectedGithubIdHeaders(expectedGithubId) }) }
+export async function enableAccountAutomaticSync(expectedGithubId: string): Promise<AccountSettings> {
+  return requestJson<AccountSettings>('/api/settings/automatic-sync', { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId) })
+}
 export async function updateAccountSettings(settings: AccountSettings, expectedGithubId: string): Promise<AccountSettings> {
   return requestJson<AccountSettings>('/api/settings', { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify(settings) })
 }

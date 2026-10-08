@@ -362,7 +362,7 @@ test("historical Jungol submission ID is retained and deduplicated even when sou
       assert.deepEqual(await store.putCapture(first), { created: true });
       assert.deepEqual(await store.putCapture({ ...first,
         captureId: "22222222-2222-4222-8222-222222222222",
-        sourceCode: "different source" }), { created: false });
+        sourceCode: "different source" }), { created: false, reconciliation: "ambiguous" });
       assert.deepEqual(await store.putCapture({ ...first,
         captureId: "33333333-3333-4333-8333-333333333333",
         historicalSubmissionId: "12346", sourceCode: "different source" }), { created: true });

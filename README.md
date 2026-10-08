@@ -1,78 +1,58 @@
 # CodeArchive
 
-CodeArchive는 SWEA·Programmers·Jungol에서 통과한 알고리즘 풀이를 브라우저에 먼저 보관하고, 개인 대시보드와 GitHub 저장소로 연결하는 풀이 아카이브입니다. 제출한 코드를 다시 복사해 파일을 만들고 커밋하는 반복 작업을 줄이면서, 서버 연결이 끊겨도 로컬 풀이를 남기는 데 초점을 맞춥니다.
+CodeArchive는 SWEA·프로그래머스·정올의 본인 정답 풀이를 기록하고, 확장에 포함된 대시보드에서 조회·동기화·GitHub 기록을 관리하는 Chrome 확장입니다. 별도 PC 앱 없이 Chrome 안에서 사용합니다.
 
-[PC 앱 릴리스](https://github.com/devkimhongjin/codeArchive/releases/tag/desktop-v0.1.2) · [웹 대시보드](https://codearchive-dashboard-beta.netlify.app) · [Issue](https://github.com/devkimhongjin/codeArchive/issues) · [확장 배포 이력](https://github.com/devkimhongjin/codeArchive/releases)
+[웹스토어 준비 안내](docs/extension-webstore.md) · [Issue](https://github.com/devkimhongjin/codeArchive/issues) · [기존 릴리스](https://github.com/devkimhongjin/codeArchive/releases)
 
-## Windows PC 앱 설치
+## Chrome 확장 설치와 업데이트
 
-[CodeArchive Desktop v0.1.2 릴리스](https://github.com/devkimhongjin/codeArchive/releases/tag/desktop-v0.1.2)에서 [CodeArchive-Setup-0.1.2.exe](https://github.com/devkimhongjin/codeArchive/releases/download/desktop-v0.1.2/CodeArchive-Setup-0.1.2.exe)를 내려받아 설치합니다. Chrome 확장 v0.3.1도 설치 파일에 포함되어 있습니다.
+현재는 **Chrome 웹스토어 제출 준비** 단계이며, 스토어 설치 링크는 아직 없습니다. `master`에서 만든 제출용 ZIP은 스토어 심사용 패키지이며, 스토어 게시·심사가 완료됐다는 의미는 아닙니다.
 
-1. 설치 완료 화면에서 **바탕 화면에 바로가기 만들기**, **시작 메뉴에 바로가기 만들기**, 앱 실행 여부를 선택합니다.
-2. 앱 첫 실행의 **Chrome 확장 설치·연결** 안내에서 확장 폴더 경로를 복사합니다. 기본 설치 위치는 `%LOCALAPPDATA%\Programs\CodeArchive\resources\extension`이며, 다른 위치에 설치했다면 앱에 표시된 경로를 사용합니다.
-3. Chrome 주소창에 `chrome://extensions`를 입력하고 **개발자 모드 → 압축해제된 확장 프로그램을 로드합니다**에서 해당 폴더를 선택합니다.
-4. 안내의 **연결 코드 발급**을 누르고 확장 팝업의 **PC 앱 연결**에 6자리 코드를 입력합니다. 코드는 2분 동안 한 번만 사용할 수 있습니다. 연결 후 **설정 완료**를 누릅니다. 이후에는 앱과 확장이 자동 재연결됩니다. 나중에 다시 연결하려면 **설정 → PC 앱 설정 → 확장 연결 코드 발급**을 사용합니다.
-5. 연결 후 확장의 **대시보드 열기**로 PC 앱을 열 수 있습니다. 브라우저에 앱 열기 확인이 나타나면 수락합니다.
+로컬 검증:
 
-포함된 확장 파일만으로 Chrome에 자동 등록되거나 연결 승인이 이루어지지는 않습니다. 로컬 수집에는 CodeArchive 계정 로그인이 필요하지 않으며, 풀이 수집은 Chrome 확장에서 진행합니다. 과거 풀이 수집 중에는 수집 화면과 원본 사이트 창을 모두 열어 두세요.
+1. `npm run setup`, `npm run build`로 빌드합니다.
+2. `chrome://extensions`에서 개발자 모드를 켜고 **압축해제된 확장 프로그램을 로드합니다**로 `apps/extension/dist`를 선택합니다.
+3. 확장 팝업의 **대시보드 열기**를 누릅니다. 대시보드는 확장 전용 탭에서 열립니다.
+4. 대시보드에서 GitHub 로그인 후 신규 정답의 자동 동기화를 확인합니다. GitHub App 저장소 연결은 로그인과 별도이며, 자동 커밋은 팝업 또는 대시보드에서 ON/OFF할 수 있습니다. 처음에는 대시보드에서 저장소를 연결합니다.
+5. **과거 풀이 관리**에서 플랫폼·같은 문제 제출 기준을 선택해 수집합니다. 수집 화면과 원본 사이트 창을 모두 열어 두세요. 수집 완료 후 선택한 제출 중 원본 확인·저장에 성공한 항목의 일괄 동기화 또는 GitHub 커밋을 실행합니다. GitHub 작업은 미동기화 항목 동기화 후 저장소·브랜치·경로 확인으로 이어집니다.
 
-### 기존 확장 사용자의 업데이트
+기존 사용자는 **확장을 삭제하지 말고 기존에 로드한 폴더에 빌드 파일을 갱신한 뒤 새로고침(↻)** 하세요. 열린 관리 화면과 문제 탭도 코드를 확인한 뒤 새로고침합니다. 확장 삭제는 Chrome 프로필의 풀이 기록을 지울 수 있습니다.
 
-**기존 확장을 삭제하지 마세요.** 삭제하면 Chrome에 보관한 로컬 풀이가 사라질 수 있습니다. 현재 확장을 불러온 폴더에 새 앱의 `resources/extension` 파일을 덮어쓴 뒤 `chrome://extensions`에서 CodeArchive의 **새로고침(↻)**을 누릅니다. 같은 확장을 중복 등록하지 않습니다.
+이 사용 환경의 기존 폴더는 `%LOCALAPPDATA%\Programs\CodeArchive\resources\extension`입니다. 로컬 `apps/extension/build.local.json`에 `installedExtensionDir`을 지정하면 정규 빌드가 백업 후 그 폴더에 적용합니다. 개발자 개인 경로는 Git에 추가하지 않습니다. 웹스토어 ID가 기존 로컬 ID와 같거나 데이터가 자동 이전된다고 가정하지 않습니다.
 
-앱에 포함된 `resources/extension` 폴더를 직접 등록했다면 앱 업데이트가 그 폴더의 파일도 갱신합니다. Chrome에서는 별도로 확장을 새로고침해야 합니다. 이전의 다른 폴더를 사용 중이라면 앱 업데이트 후 포함된 파일을 기존 폴더에 복사하고 새로고침합니다.
-
-### 로그인과 서버 기능
-
-앱에서 **GitHub 로그인**을 누르면 기본 웹브라우저의 GitHub 인증으로 이동합니다. GitHub의 **Sign in with Google**도 사용할 수 있습니다. 인증 후 브라우저의 **CodeArchive 열기**를 수락하면 앱으로 돌아와 로그인됩니다. 자동 이동이 차단되면 완료 화면의 앱 열기 버튼을 사용합니다.
-
-PC 앱 로그인은 브라우저 세션과 별도로 유지되어 Chrome을 종료해도 서버 풀이 목록을 사용할 수 있습니다. 사이트 풀이 수집에는 Chrome이 필요합니다. 서버 동기화와 GitHub 커밋은 앱에서 설정한 계정·저장 위치로 실행하며, GitHub App의 저장소 접근 승인은 로그인과 별도입니다. **과거 풀이 관리** 탭에서 일괄 동기화와 일괄 GitHub 커밋을 각각 실행할 수 있습니다.
-
-### PC 앱 업데이트와 자동 시작
-
-- 앱에 현재 PC 앱 버전이 표시됩니다. **설정 → PC 앱 설정**에서 업데이트를 직접 확인하고 다운로드·적용할 수 있습니다.
-- v0.1.2부터 새 버전을 감지하면 업데이트 팝업이 나타납니다. 적용 후 앱이 다시 실행됩니다.
-- **자동 업데이트**는 기본으로 꺼져 있습니다. 설정에서 켜면 앱이 트레이에 있고 진행 중인 작업이나 입력한 내용이 없을 때 업데이트를 적용합니다. 입력한 내용이 있으면 앱을 다시 실행할 때까지 자동 적용을 보류합니다. 작업과 저장을 마친 뒤 직접 업데이트할 수도 있습니다.
-- **Windows 로그인 시 자동 시작**도 설정에서 선택할 수 있으며 기본으로 꺼져 있습니다. 앱 창을 닫으면 트레이에 남고, 트레이 메뉴의 **종료**로 완전히 종료합니다.
-
-공개 릴리스는 `master` 소스를 기준으로 발행하며, 앱은 업데이트 정보의 고정 공개키 서명과 설치 파일의 SHA256을 확인합니다. 상세 내용은 [PC 앱 설치·연결·업데이트 문서](docs/desktop-app.md)를 참고하세요. 실제 설치·업데이트 확인 상태는 [#386](https://github.com/devkimhongjin/codeArchive/issues/386), 설치 완료 화면의 사용자 확인은 [#379](https://github.com/devkimhongjin/codeArchive/issues/379)에 기록합니다.
+이전 PC 앱 릴리스는 변경하지 않았습니다. 해당 버전의 설치 안내는 [기존 PC 앱 문서](docs/desktop-app.md)를 참고하세요. 신규 구조는 확장 단독이며 Windows 설치 파일 작업을 진행하지 않습니다.
 
 ## 현재 기능
 
 | 영역 | 구현 범위 |
 | --- | --- |
 | 풀이 수집 | SWEA·Programmers·Jungol의 제출 시도와 성공 결과를 연결하고, 제출한 코드·문제·언어·시각을 저장 |
-| 로컬 아카이브 | IndexedDB 보관, 최근 풀이와 전체 코드 조회, 복사·다운로드, 선택적 자동 다운로드 |
+| 내부 보관·내보내기 | 동기화 재시도용 IndexedDB, 최근 동기화된 문제와 전체 코드 조회, 복사·다운로드 |
 | 대시보드 | 문제별 제출 묶음, 검색·언어/플랫폼 필터·정렬, 코드 강조, 테마·파일명·주석 설정 |
-| 계정·동기화 | GitHub 로그인, 사용자별 서버 저장, 수동 동기화와 동의 기반 자동 Relay |
+| 계정·동기화 | GitHub 로그인, 사용자별 서버 저장, 신규 정답 자동 동기화, 과거 선택 제출 일괄 동기화 |
 | GitHub 연동 | 개인 계정의 App 설치·저장소·브랜치·폴더 선택, 경로/커밋 메시지 설정, 자동 커밋과 작업 상태 |
 | 저장소 관리 | 파일/폴더 트리 조회, 빈 저장소 초기화, 파일·폴더 추가, 이동·삭제 미리보기와 별도 커밋 확인 |
 | 커뮤니티 | 본인 풀이를 공개한 문제에 한해 다른 공개 풀이 탐색. 신규 풀이 기본 공개·비공개를 계정 설정에서 선택 |
+| 문의·오류 제보 | 인증된 개인 문의, 본인 문의 조회·후속 답변·종료·삭제와 검증된 관리자 답변. [보관·권한 안내](docs/support-inquiries.md) |
 
-로그인 없이도 확장 프로그램의 로컬 저장·코드 조회·다운로드를 사용할 수 있습니다. 대시보드가 서버에 연결되지 않은 경우에도 허용된 확장 프로그램에서 로컬 기록을 읽습니다.
+과거 풀이 수집은 로그인 없이 시작할 수 있습니다. 서버 목록·동기화·커뮤니티·GitHub 기능에는 로그인이 필요합니다. Chrome을 완전히 종료하면 확장 작업은 실행되지 않습니다.
 
 ### 플랫폼별 확인 범위
 
-- **SWEA:** 수집과 선택적 실행 시간·메모리 보충을 구현했습니다. 기존 [실브라우저 검증 기록](docs/auto-connect-deployment-review.md)에는 PASS → 로컬 → 서버 저장과 재동기화 시 중복 없음이 남아 있습니다.
-- **Programmers:** 현재 제출의 새 정답창과 코드 스냅샷을 연결하는 adapter를 구현했습니다. 실사이트 후속 확인은 [#314](https://github.com/devkimhongjin/codeArchive/issues/314)에 기록합니다.
-- **Jungol:** 원격에는 제출 요청과 계정별 제출 내역을 대조하는 adapter가 들어 있습니다. [#319](https://github.com/devkimhongjin/codeArchive/pull/319)의 병합 시점에는 로컬 수집까지 확인하고, 원격 동기화·커밋은 [#311](https://github.com/devkimhongjin/codeArchive/issues/311)에 남겼습니다.
-
-9월 28일에는 사이트 UI·SPA 이동 대응을 포함한 **후속 로컬 빌드**에서 Jungol·Programmers의 저장 → 자동 동기화 → GitHub 커밋을 사용자가 확인한 기록이 있습니다([Jungol 확인](https://github.com/devkimhongjin/codeArchive/issues/311#issuecomment-5862723794), [Programmers 확인](https://github.com/devkimhongjin/codeArchive/issues/314#issuecomment-5863053296)). 이는 위 원격 기준 커밋이나 배포용 ZIP을 검증했다는 뜻이 아닙니다. 통합·배포 현황과 ZIP 설치 확인은 [#282](https://github.com/devkimhongjin/codeArchive/issues/282)를 함께 확인하세요.
+SWEA·프로그래머스·정올의 과거 수집 결과는 사용자 확인 기록이 있습니다. 최종 웹스토어 ZIP의 신규 정답 자동 동기화·팝업 상태·작업 복구와 스토어 ID의 로그인 검증은 [#400](https://github.com/devkimhongjin/codeArchive/issues/400)에 남깁니다. 단위 테스트 통과를 실브라우저 확인으로 기록하지 않습니다.
 
 ## 데이터 흐름
 
 ```text
-사이트 제출 → 현재 시도의 통과 결과 확인 → Extension IndexedDB
-  ├─ 로컬 조회·복사·다운로드
-  ├─ 수동: Dashboard → 인증된 API 저장 → 저장된 항목만 ACK
-  └─ 자동: 동의한 Relay → API 저장 → 영속 GitHub 작업 → Worker → GitHub
+사이트의 본인 정답 확인 → Extension 내부 보관 → 인증된 API 자동 동기화
+  ├─ 확장 대시보드 조회·복사·다운로드·로컬 정적 분석
+  ├─ 과거 수집: 선택한 원본 검증 → 완료 후 일괄 동기화 / GitHub 확인
+  └─ GitHub 자동 커밋 ON: API 영속 작업 → Worker → 선택 저장소
 ```
 
-자동 동기화는 대시보드에서 로그인한 뒤 설정을 저장하고 Relay 연결을 마쳐야 동작합니다. 유효한 Relay와 자동 동기화 설정이 있으면 대시보드를 닫아도 확장 프로그램이 전송을 이어갑니다. 연결 실패·인증 만료 때는 로컬 기록을 보존하며 재연결 또는 재시도가 필요합니다.
+신규 정답 자동 동기화는 항상 활성화되며 별도 OFF 설정이 없습니다. 로그인·계정 연결이 필요하고, 전송 실패 시 내부 기록을 보존해 재시도합니다. GitHub 자동 커밋은 별도 ON/OFF 설정이며, 저장소가 연결된 경우 팝업에서 바로 변경할 수 있습니다.
 
-**GitHub 로그인과 저장소 커밋 권한은 별도입니다.** 자동 커밋에는 서버의 GitHub App 설정, 본인 계정의 App 설치, 저장 위치 선택, 자동 동기화와 자동 커밋 동의가 필요합니다. 자동화 동의 이후 수집한 풀이를 대상으로 하며, 기존 기록을 일괄 커밋하지 않습니다.
-
-동일한 경로에 같은 내용이 있으면 중복 커밋을 만들지 않습니다. 내용이 다르면 제출을 구분하는 새 경로에 보관합니다. 커밋 결과를 확정할 수 없는 작업은 `UNKNOWN`으로 남기고 자동으로 재시도하지 않습니다. 팝업의 로컬 저장·서버 동기화·GitHub 커밋 상태는 서로 구분됩니다.
+GitHub 로그인과 저장소 커밋 권한은 별도입니다. 자동 커밋에는 본인 GitHub App 설치와 저장 위치 선택이 필요합니다. 과거 수집 기록은 명시적인 일괄 작업으로 처리합니다. 결과를 확정할 수 없는 `UNKNOWN` 커밋은 자동 재시도하지 않고 결과 대조 후 처리합니다.
 
 ## 구성
 
@@ -127,7 +107,7 @@ GitHub 자동 커밋 개발에는 별도로 `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE
 2. Chrome의 `chrome://extensions`에서 개발자 모드를 켭니다.
 3. **압축해제된 확장 프로그램을 로드합니다**로 `apps/extension/dist`를 선택합니다.
 4. 고정 ID `oohlcmihldmfninmdcmanddfmhoonmdl`을 확인하고 문제 페이지를 새로 엽니다.
-5. 대시보드에서 확장 연결을 확인합니다. 서버 저장에는 GitHub 로그인 후 **지금 동기화**를 사용하거나 자동 동기화를 설정합니다.
+5. 확장 팝업의 **대시보드 열기**로 로그인합니다. 신규 정답은 자동 동기화하고, 과거 수집 기록은 완료 후 일괄 작업으로 동기화합니다.
 
 베타 ZIP의 체크섬 확인·설치·기록을 보존하는 업데이트 방법은 [확장 배포 안내](docs/extension-beta-distribution.md)를 참고하세요. 기존 확장 프로그램을 삭제하면 로컬 기록이 사라질 수 있으므로, 업데이트할 때는 같은 폴더의 파일을 교체하고 **새로고침**합니다. 이전 개발 ID의 기록은 모두 옮기기 전에 해당 확장을 삭제하지 않습니다.
 

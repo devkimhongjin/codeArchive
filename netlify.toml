@@ -1,9 +1,11 @@
 [build]
+  # Web deployments are suspended; keep the existing API proxy deployment.
+  ignore = "exit 0"
   command = "npm --prefix apps/dashboard ci && npm --prefix apps/dashboard run build"
   publish = "apps/dashboard/dist"
 
 [build.environment]
-  NODE_VERSION = "22.12.0"
+  NODE_VERSION = "24.18.0"
 
 [[redirects]]
   from = "/api/*"

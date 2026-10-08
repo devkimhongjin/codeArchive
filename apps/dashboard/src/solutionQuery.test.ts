@@ -14,6 +14,11 @@ const values = [
 ]
 
 describe('solution query', () => {
+  it('filters difficulty by site-local labels and keeps unknown values separate', () => {
+    const known = { ...values[0], difficulty: { label: 'D3', problemNumber: '10', sourceUrl: 'https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=VerifiedKey' } }
+    expect(filterAndSortSolutions([known, values[1]], { query: '', platform: 'ALL', languageKey: 'ALL', sort: 'latest', difficulty: 'SWEA:D3' }).map(item => item.captureId)).toEqual(['b'])
+    expect(filterAndSortSolutions([known, values[1]], { query: '', platform: 'ALL', languageKey: 'ALL', sort: 'latest', difficulty: 'UNKNOWN' }).map(item => item.captureId)).toEqual(['a'])
+  })
   it('combines query, platform and canonical language filters', () => {
     expect(filterAndSortSolutions(values, { query: '문제', platform: 'SWEA', languageKey: 'java', sort: 'latest' }).map(x => x.captureId)).toEqual(['a', 'b'])
   })

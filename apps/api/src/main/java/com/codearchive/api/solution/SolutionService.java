@@ -18,11 +18,13 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class SolutionService {
 
+    private final com.codearchive.api.community.CommunityPublicationPolicy publication;
     private final UserRepository userRepository;
     private final SolutionRepository solutionRepository;
     private final UserSettingsRepository settingsRepository;
 
-    public SolutionService(UserRepository userRepository, SolutionRepository solutionRepository, UserSettingsRepository settingsRepository) {
+    public SolutionService(UserRepository userRepository, SolutionRepository solutionRepository, UserSettingsRepository settingsRepository, com.codearchive.api.community.CommunityPublicationPolicy publication) {
+        this.publication = publication;
         this.userRepository = userRepository;
         this.solutionRepository = solutionRepository;
         this.settingsRepository = settingsRepository;
@@ -34,20 +36,22 @@ public class SolutionService {
         AppUser user = userRepository.findByGithubId(githubId)
                 .orElseThrow(() -> new CaptureValidationException("Authenticated user no longer exists"));
 
+        userRepository.lockForCommunityLimit(user.getId()).orElseThrow();
         Optional<Solution> existing = solutionRepository.findByUserIdAndCaptureId(user.getId(), capture.captureId());
         if (existing.isPresent()) {
             Solution solution = existing.get();
             if (!sameCoreData(solution, capture)) {
                 throw new CaptureValidationException("captureId already exists with different solution data");
             }
-            BigDecimal executionTime = capture.executionTime() == null
+            BigDecimal executionTime = capture.executionTime() == null || Boolean.TRUE.equals(payload.getMetadataPending()) && solution.getExecutionTime() != null
                     ? solution.getExecutionTime() : capture.executionTime();
-            BigDecimal memoryUsage = capture.memoryUsage() == null
+            BigDecimal memoryUsage = capture.memoryUsage() == null || Boolean.TRUE.equals(payload.getMetadataPending()) && solution.getMemoryUsage() != null
                     ? solution.getMemoryUsage() : capture.memoryUsage();
             solution.update(capture.platform(), capture.problemNumber(), capture.title(), capture.problemUrl(),
                     capture.language(), capture.languageKey(), capture.sourceCode(), capture.result(), capture.observedAt(),
                     capture.solvedAt(), executionTime, memoryUsage);
-            if (capture.memoryValue() != null) solution.setMemoryMeasurement(capture.memoryValue(), capture.memoryUnit());
+            if (capture.memoryValue() != null && (!Boolean.TRUE.equals(payload.getMetadataPending()) || solution.getMemoryValue() == null)) solution.setMemoryMeasurement(capture.memoryValue(), capture.memoryUnit());
+            solution.setDifficulty(capture.difficulty());
             return solutionRepository.saveAndFlush(solution);
         }
 
@@ -59,9 +63,11 @@ public class SolutionService {
                 if (!solution.isHistoricalImport()
                         || !solution.getProblemNumber().equals(capture.problemNumber())
                         || !solution.getLanguageKey().equals(capture.languageKey())
-                        || !solution.getSourceCode().equals(capture.sourceCode())) {
+                        || !solution.getSourceCode().equals(capture.sourceCode())
+                        || !solution.getSolvedAt().equals(capture.solvedAt())) {
                     throw new CaptureValidationException("historicalSubmissionId already exists with different solution data");
                 }
+                solution.enrichVerifiedMetadata(capture.executionTime(), capture.memoryValue(), capture.memoryUnit(), capture.difficulty());
                 return solution;
             }
         }
@@ -69,13 +75,25 @@ public class SolutionService {
         Solution solution = new Solution(user, capture.captureId(), capture.platform(), capture.problemNumber(),
                 capture.title(), capture.problemUrl(), capture.language(), capture.languageKey(), capture.sourceCode(), capture.result(),
                 capture.observedAt(), capture.solvedAt(), capture.executionTime(), capture.memoryUsage());
+        solution.setDifficulty(capture.difficulty());
         solution.setHistoricalImport(capture.historicalImport());
         solution.setHistoricalSubmissionId(capture.historicalSubmissionId());
         solution.setMemoryMeasurement(capture.memoryValue(), capture.memoryUnit());
         boolean publish = settingsRepository.findByUserId(user.getId())
                 .map(com.codearchive.api.settings.UserSettings::isCommunityPublicByDefault).orElse(true);
         solution.setPublished(publish, Instant.now());
-        return solutionRepository.saveAndFlush(solution);
+        solutionRepository.saveAndFlush(solution);
+        if (publish) publication.applyProblem(user.getId(), solution.getPlatform(), solution.getProblemNumber(), settingsRepository.findByUserId(user.getId()).map(com.codearchive.api.settings.UserSettings::getCommunityDuplicateVisibility).orElse("all"));
+        return solution;
+    }
+
+    public record ReconciliationPage(List<ReconciliationRecord> records, long cursor, boolean hasMore) { }
+    @Transactional(readOnly = true)
+    public ReconciliationPage reconciliationPage(String githubId, Platform platform, long cursor) {
+        AppUser user = userRepository.findByGithubId(githubId).orElseThrow(() -> new CaptureValidationException("Authenticated user no longer exists"));
+        var found = solutionRepository.findByUserIdAndPlatformAndIdGreaterThanOrderByIdAsc(user.getId(), platform, cursor, org.springframework.data.domain.PageRequest.of(0, 51));
+        var records = found.stream().limit(50).map(ReconciliationRecord::from).toList();
+        return new ReconciliationPage(records, records.isEmpty() ? cursor : records.get(records.size() - 1).recordId(), found.size() > 50);
     }
 
     @Transactional(readOnly = true)
@@ -146,7 +164,8 @@ public class SolutionService {
 
         return new NormalizedCapture(captureId, platform, problemNumber, title, problemUrl, language, languageKey, sourceCode,
                 result, observedAt, solvedAt, payload.getExecutionTime(), payload.getMemoryUsage(), payload.getMemoryValue(), memoryUnit,
-                Boolean.TRUE.equals(payload.getHistoricalImport()), historicalSubmissionId);
+                Boolean.TRUE.equals(payload.getHistoricalImport()), historicalSubmissionId,
+                ProblemDifficulty.validated(platform, problemNumber, problemUrl, payload.getDifficulty()));
     }
 
     private String required(String value, String field, int maxLength) {
@@ -253,6 +272,6 @@ public class SolutionService {
                                      String problemUrl, String language, String languageKey, String sourceCode, String result,
                                      Instant observedAt, Instant solvedAt, BigDecimal executionTime,
                                      BigDecimal memoryUsage, BigDecimal memoryValue, String memoryUnit,
-                                     boolean historicalImport, String historicalSubmissionId) {
+                                     boolean historicalImport, String historicalSubmissionId, ProblemDifficulty difficulty) {
     }
 }

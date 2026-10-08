@@ -1,3 +1,4 @@
+import type { ProblemDifficulty } from '../../../shared/difficulty';
 import { createAdapter } from "./adapters";
 import { collectAcceptedCaptureAttempt, createCapture, isCaptureRecord } from "./capture";
 import { CAPTURE_RESULT, type Capture, type PlatformAdapter } from "./types";
@@ -696,9 +697,9 @@ function startSweaImport(document: Document, location: Location, ids: unknown): 
       return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId };
     }
     const capture = hydrated.capture;
-    try { const response = await chrome.runtime.sendMessage({ type: "STORE_HISTORICAL_CAPTURE", capture }); if (!(response as { ok?: boolean })?.ok) throw new HistoricalImportFailure("STORE_REJECTED"); return { saved: (response as { created?: boolean }).created ? 1 : 0, duplicate: (response as { created?: boolean }).created ? 0 : 1, skipped: 0 }; }
+    try { const response = await chrome.runtime.sendMessage({ type: "STORE_HISTORICAL_CAPTURE", capture }); if (!(response as { ok?: boolean })?.ok) throw new HistoricalImportFailure("STORE_REJECTED"); if ((response as { reconciliation?: string }).reconciliation === "ambiguous") return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId }; return { saved: (response as { created?: boolean }).created ? 1 : 0, duplicate: (response as { created?: boolean }).created ? 0 : 1, skipped: 0 }; }
     catch (error) { if (error instanceof HistoricalImportFailure) throw error; throw new HistoricalImportFailure("STORE_FAILED"); }
-  }, (candidate, result) => { if (result.saved + result.duplicate > 0) completedProblems.add(`SWEA:${candidate.problemNumber}`); });
+  }, (candidate, result) => { if (result.saved + result.duplicate > 0) completedProblems.add(`SWEA:${candidate.problemNumber}`); }, candidate => candidate.submissionId);
   void controller.settled().then(() => {
     if (generation !== sweaGeneration || sweaController !== controller || !controller.state) return;
     const timingSample = timingSampleFromCompletedTask(controller.state, "SWEA");
@@ -709,7 +710,7 @@ function startSweaImport(document: Document, location: Location, ids: unknown): 
   return sweaStatus();
 }
 
-type ProgrammersLocalCandidate = { submissionId: string; problemNumber: string; title: string; language: string; createdAt: string; lessonUrl: string; order: number };
+type ProgrammersLocalCandidate = { difficulty?: ProblemDifficulty; submissionId: string; problemNumber: string; title: string; language: string; createdAt: string; lessonUrl: string; order: number };
 type ProgrammersLocalState = { status: string; candidates?: ProgrammersLocalCandidate[]; truncated?: false; skipped?: number;
   unsupportedProblemNumbers?: string[];
   progress?: ExternalHistoryScanProgress; completed?: number; total?: number; saved?: number; duplicate?: number; problemCount?: number;
@@ -779,7 +780,7 @@ function startProgrammersScan(document: Document, location: Location): Programme
   programmersLocalController = null; programmersLocalSourceUrl = location.href; programmersLocalAccountId = null;
   programmersLocalState = { status: "SCANNING", startedAt: Date.now(), progress: programmersProgress(0, 0, 0) };
   void (async () => {
-    const lessons: Array<{ problemNumber: string; title: string; lessonUrl: string; order: number }> = [];
+    const lessons: Array<{ difficulty?: ProblemDifficulty; problemNumber: string; title: string; lessonUrl: string; order: number }> = [];
     const seenLessons = new Set<string>();
     let current: ReturnType<typeof readProgrammersSolvedListingPage> = initial;
     if (current.page !== 1) {
@@ -823,7 +824,7 @@ function startProgrammersScan(document: Document, location: Location): Programme
       accountId ??= parsed.accountId;
       if (parsed.accountId !== accountId) throw new HistoricalImportFailure("DETAIL_UNVERIFIED");
       if ((response as { result?: { status?: string } }).result?.status === "UNSUPPORTED_HISTORY") unsupportedProblemNumbers.push(lesson.problemNumber);
-      for (const candidate of parsed.candidates) candidates.push({ ...candidate, title: lesson.title, lessonUrl: lesson.lessonUrl, order: lesson.order });
+      for (const candidate of parsed.candidates) candidates.push({ ...candidate, difficulty: lesson.difficulty, title: lesson.title, lessonUrl: lesson.lessonUrl, order: lesson.order });
       programmersLocalState = { ...programmersLocalState, progress: programmersProgress(Math.ceil(initial.total / 20), lesson.order + 1, lessons.length) };
     }
     if (generation !== programmersLocalGeneration) return;
@@ -864,16 +865,17 @@ function startProgrammersImport(document: Document, location: Location, ids: unk
     }
     if (result?.status !== "DONE") return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId };
     if (result.accountId !== programmersLocalAccountId || !isCaptureRecord(result.capture)) { controller.cancel(); return { saved: 0, duplicate: 0, skipped: 0 }; }
-    const capture = result.capture;
+    const capture = { ...result.capture, ...(candidate.difficulty ? { difficulty: candidate.difficulty } : {}) };
     if (capture.platform !== "PROGRAMMERS" || capture.historicalImport !== true || capture.historicalSubmissionId !== candidate.submissionId ||
         capture.problemNumber !== candidate.problemNumber || normalizedProgrammersTitle(capture.title) !== candidate.title || capture.language !== candidate.language ||
         capture.solvedAt !== new Date(candidate.createdAt).toISOString()) { controller.cancel(); return { saved: 0, duplicate: 0, skipped: 0 }; }
     try {
-      const stored = await chrome.runtime.sendMessage({ type: "STORE_HISTORICAL_CAPTURE", capture }) as { ok?: unknown; created?: unknown };
+      const stored = await chrome.runtime.sendMessage({ type: "STORE_HISTORICAL_CAPTURE", capture }) as { ok?: unknown; created?: unknown; reconciliation?: string };
       if (stored?.ok !== true) throw new HistoricalImportFailure("STORE_REJECTED");
+      if (stored.reconciliation === "ambiguous") return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId };
       return { saved: stored.created === true ? 1 : 0, duplicate: stored.created === true ? 0 : 1, skipped: 0 };
     } catch (error) { if (error instanceof HistoricalImportFailure) throw error; throw new HistoricalImportFailure("STORE_FAILED"); }
-  }, (candidate, result) => { if (result.saved + result.duplicate) completedProblems.add(`PROGRAMMERS:${candidate.problemNumber}`); });
+  }, (candidate, result) => { if (result.saved + result.duplicate) completedProblems.add(`PROGRAMMERS:${candidate.problemNumber}`); }, candidate => candidate.submissionId);
   programmersLocalState = { status: "IMPORTING", startedAt: Date.now(), unsupportedProblemNumbers };
   void controller.settled().then(() => {
     if (generation !== programmersLocalGeneration || programmersLocalController !== controller || !controller.state) return;
@@ -1068,7 +1070,7 @@ function startLocalJungolImport(document: Document, location: Location, ids: unk
     return result;
   }, (candidate, result) => {
     if (result.saved + result.duplicate > 0) completedProblemKeys.add(`JUNGOL:${candidate.problemNumber}`);
-  });
+  }, candidate => candidate.submissionId);
   void controller.settled().then(() => {
     if (jungolLocalTask !== task || jungolImportOwner !== task || !controller.state) return;
     const timingSample = timingSampleFromCompletedTask(controller.state);

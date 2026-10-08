@@ -1,13 +1,13 @@
-import type { Platform, ViewName } from './types'
+import type { Platform, ViewName, CommunitySort } from './types'
 
-export type CommunityRoute = { platform: Platform; problemNumber: string; languageKey: string; page: number; detailId: number | null }
+export type CommunityRoute = { platform: Platform; problemNumber: string; languageKey: string; page: number; detailId: number | null; sort?: CommunitySort }
 export const EMPTY_COMMUNITY_ROUTE: CommunityRoute = { platform: 'SWEA', problemNumber: '', languageKey: '', page: 0, detailId: null }
 
-const routeKeys = ['view', 'platform', 'problemNumber', 'languageKey', 'page', 'solution'] as const
+const routeKeys = ['view', 'platform', 'problemNumber', 'languageKey', 'page', 'solution', 'sort'] as const
 
 export function readView(search = window.location.search): ViewName {
   const view = new URLSearchParams(search).get('view')
-  return view === 'history' || view === 'community' || view === 'guide' || view === 'settings' || view === 'github' ? view : 'solutions'
+  return view === 'history' || view === 'community' || view === 'support' || view === 'settings' || view === 'github' ? view : 'solutions'
 }
 
 export function readCommunityRoute(search = window.location.search): CommunityRoute {
@@ -19,6 +19,7 @@ export function readCommunityRoute(search = window.location.search): CommunityRo
   const rawPage = params.get('page') ?? '0'
   const rawDetail = params.get('solution') ?? ''
   return {
+    ...(params.get('sort') === 'execution' || params.get('sort') === 'memory' || params.get('sort') === 'likes' ? { sort: params.get('sort') as CommunitySort } : {}),
     platform,
     problemNumber: /^[A-Za-z0-9_-]{1,100}$/.test(problem) ? problem : '',
     languageKey: /^[a-z0-9:._-]{1,100}$/.test(language) ? language : '',
@@ -36,6 +37,7 @@ export function urlForView(view: ViewName, route: CommunityRoute, location: { hr
       url.searchParams.set('platform', route.platform)
       url.searchParams.set('problemNumber', route.problemNumber)
       if (route.languageKey) url.searchParams.set('languageKey', route.languageKey)
+      if (route.sort && route.sort !== 'submitted') url.searchParams.set('sort', route.sort)
       if (route.page) url.searchParams.set('page', String(route.page))
       if (route.detailId) url.searchParams.set('solution', String(route.detailId))
     }

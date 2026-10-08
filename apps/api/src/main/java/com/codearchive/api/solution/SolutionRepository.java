@@ -11,6 +11,7 @@ import java.time.Instant;
 import org.springframework.data.repository.query.Param;
 
 public interface SolutionRepository extends JpaRepository<Solution, Long> {
+    List<Solution> findByUserIdAndPlatformAndIdGreaterThanOrderByIdAsc(Long userId, Platform platform, Long afterId, Pageable pageable);
     Optional<Solution> findByUserIdAndCaptureId(Long userId, String captureId);
     Optional<Solution> findByUserIdAndPlatformAndHistoricalSubmissionId(Long userId, Platform platform, String historicalSubmissionId);
 
@@ -18,6 +19,7 @@ public interface SolutionRepository extends JpaRepository<Solution, Long> {
     List<String> findHistoricalSubmissionIds(@Param("userId") Long userId, @Param("platform") Platform platform);
 
     List<Solution> findByUserIdOrderBySolvedAtDesc(Long userId);
+    List<Solution> findByUserIdAndPlatformAndProblemNumberAndPublishedAtIsNotNull(Long userId, Platform platform, String problemNumber);
 
     Optional<Solution> findByIdAndUserId(Long id, Long userId);
 
@@ -60,10 +62,10 @@ public interface SolutionRepository extends JpaRepository<Solution, Long> {
 
     @Query("""
             select s from Solution s
-            where s.id = :id and s.publishedAt is not null and s.user.id <> :viewerId
+            where s.id = :id and s.publishedAt is not null and s.result = 'ACCEPTED'
               and exists (select own.id from Solution own
                           where own.user.id = :viewerId and own.platform = s.platform
-                            and own.problemNumber = s.problemNumber and own.publishedAt is not null)
+                            and own.problemNumber = s.problemNumber and own.publishedAt is not null and own.result = 'ACCEPTED')
             """)
     Optional<Solution> findSharedDetail(@Param("viewerId") Long viewerId, @Param("id") Long id);
 }

@@ -1,3 +1,5 @@
+import type { ProblemDifficulty } from '../../../shared/difficulty';
+import type { LightTheme, DarkTheme } from "../../../shared/codeThemes";
 import type { HeaderField } from "../../../shared/headerFields";
 
 export type Platform = "SWEA" | "PROGRAMMERS" | "JUNGOL";
@@ -9,6 +11,7 @@ export type SyncState = "PENDING" | "SYNCED";
 export type MemoryUnit = "KB" | "KiB" | "MB" | "MiB" | "UNKNOWN";
 
 export interface Capture {
+  difficulty?: ProblemDifficulty;
   captureId: string;
   platform: Platform;
   problemNumber: string;
@@ -26,7 +29,13 @@ export interface Capture {
   memoryValue?: number;
   memoryUnit?: MemoryUnit;
   syncState: SyncState;
+  /** Verified metadata changed; historical records still require explicit sync. */
+  metadataPending?: boolean;
+  /** Monotonic metadata snapshot, incremented only by verified enrichment. */
+  metadataRevision?: number;
   syncedAt?: string;
+  /** Device-only upload ownership. Legacy/unbound records require explicit sync. */
+  syncAccountId?: string;
   /** Imported from a verified earlier submission; never relayed or downloaded automatically. */
   historicalImport?: boolean;
   /** Site submission identity retained for historical local deduplication. */
@@ -34,6 +43,7 @@ export interface Capture {
 }
 
 export interface CaptureDraft {
+  difficulty?: ProblemDifficulty;
   captureId?: string;
   platform: Platform;
   problemNumber: string;
@@ -54,6 +64,7 @@ export interface CaptureDraft {
 }
 
 export interface ProblemMetadata {
+  difficulty?: ProblemDifficulty;
   problemNumber: string;
   title: string;
   problemUrl: string;
@@ -121,8 +132,8 @@ export interface CaptureSettings {
   accountId?: string;
   /** Monotonic server settings version; used only to reject stale bridge configuration. */
   accountSettingsVersion?: number;
-  lightTheme?: "github-light" | "vitesse-light" | "catppuccin-latte" | "solarized-light" | "one-light";
-  darkTheme?: "github-dark" | "vitesse-dark" | "catppuccin-mocha" | "dracula" | "one-dark-pro";
+  lightTheme?: LightTheme;
+  darkTheme?: DarkTheme;
 }
 
 export const DEFAULT_CAPTURE_SETTINGS: CaptureSettings = {

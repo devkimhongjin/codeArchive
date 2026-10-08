@@ -42,7 +42,8 @@ export async function relayCapture(
   let endpoint: URL; try { endpoint = new URL(relay.endpoint, "https://codearchive-dashboard-beta.netlify.app"); } catch { return "RELAY_ERROR"; }
   if (!(["https://codearchive-dashboard-beta.netlify.app", "http://localhost:5173"] as string[]).includes(endpoint.origin) || !endpoint.pathname.startsWith("/api/relay/")) return "RELAY_ERROR";
   try {
-    const response = await fetchWithTimeout(fetcher, endpoint, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${relay.secret}` }, body: JSON.stringify(capture) }, timeoutMs);
+    const { syncAccountId: _deviceOwner, ...payload } = capture;
+    const response = await fetchWithTimeout(fetcher, endpoint, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${relay.secret}` }, body: JSON.stringify(payload) }, timeoutMs);
     if (response.status === 401) return "AUTH_EXPIRED";
     return response.ok ? "ACK" : "RELAY_ERROR";
   } catch { return "OFFLINE"; }

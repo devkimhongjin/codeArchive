@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.codearchive.api.community.CommunityStore;
+import com.codearchive.api.solution.Platform;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -23,6 +25,7 @@ import org.flywaydb.core.api.output.MigrateResult;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.orm.jpa.JpaVendorAdapter;
 import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
 import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
@@ -33,7 +36,7 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
-    private static final int LATEST_MIGRATION = 23;
+    private static final int LATEST_MIGRATION = 28;
 
     @Test
     void freshSchemaMigratesTwiceAndPassesHibernateValidation() throws Exception {
@@ -100,6 +103,7 @@ class PostgreSqlMigrationTest {
             }
             assertEquals(LATEST_MIGRATION - 20, database.flyway().migrate().migrationsExecuted);
             assertEquals(true, database.scalar("SELECT community_public_by_default FROM user_settings WHERE user_id = ?", userId));
+            assertEquals("all", database.scalar("SELECT community_duplicate_visibility FROM user_settings WHERE user_id = ?", userId));
             assertEquals(4L, ((Number) database.scalar("SELECT version FROM user_settings WHERE user_id = ?", userId)).longValue());
             assertEquals("Existing profile", database.scalar("SELECT display_name FROM user_settings WHERE user_id = ?", userId));
             assertEquals(1L, ((Number) database.scalar("SELECT COUNT(*) FROM solutions WHERE user_id = ? AND published_at IS NULL", userId)).longValue());
@@ -117,7 +121,7 @@ class PostgreSqlMigrationTest {
                 statement.execute("INSERT INTO desktop_login_requests(id, challenge, client_key, expires_at, bound) VALUES ('" + "a".repeat(64)
                         + "', '" + "b".repeat(43) + "', '" + "c".repeat(64) + "', CURRENT_TIMESTAMP + INTERVAL '5 minutes', TRUE)");
             }
-            assertEquals(1, database.flyway().migrate().migrationsExecuted);
+            assertEquals(LATEST_MIGRATION - 22, database.flyway().migrate().migrationsExecuted);
             assertEquals(false, database.scalar("SELECT callback_required FROM desktop_login_requests WHERE id = ?", "a".repeat(64)));
             org.junit.jupiter.api.Assertions.assertNull(database.scalar("SELECT callback_code_hash FROM desktop_login_requests WHERE id = ?", "a".repeat(64)));
             assertEquals(true, database.scalar("SELECT bound FROM desktop_login_requests WHERE id = ?", "a".repeat(64)));
@@ -149,6 +153,46 @@ class PostgreSqlMigrationTest {
         } finally {
             database.drop();
         }
+    }
+
+    @Test
+    void communityUpgradePreservesVisibilityAndSupportsNativeQueries() throws Exception {
+        TestDatabase database = TestDatabase.create();
+        try {
+            database.flyway(MigrationVersion.fromVersion("2")).migrate();
+            long userId = database.insertGithubRows();
+            database.flyway(MigrationVersion.fromVersion("23")).migrate();
+            try (Connection connection = database.connection(); PreparedStatement settings = connection.prepareStatement(
+                    "INSERT INTO user_settings(user_id, nickname) VALUES (?, '풀이작성자')");
+                    PreparedStatement publish = connection.prepareStatement(
+                    "UPDATE solutions SET published_at = CURRENT_TIMESTAMP, memory_value = 64, memory_unit = 'KiB' WHERE user_id = ?")) {
+                settings.setLong(1, userId); settings.executeUpdate();
+                publish.setLong(1, userId); publish.executeUpdate();
+            }
+            assertEquals(LATEST_MIGRATION - 23, database.flyway().migrate().migrationsExecuted);
+            assertEquals("all", database.scalar("SELECT community_duplicate_visibility FROM user_settings WHERE user_id = ?", userId));
+            long solutionId = ((Number) database.scalar("SELECT id FROM solutions WHERE user_id = ? AND published_at IS NOT NULL", userId)).longValue();
+            DriverManagerDataSource dataSource = new DriverManagerDataSource(database.url, database.user, database.password);
+            CommunityStore store = new CommunityStore(new NamedParameterJdbcTemplate(dataSource), database.schema);
+            for (String sort : new String[] {"submitted", "execution", "memory", "likes"}) {
+                var page = store.list(userId, Platform.SWEA, "1234", null, sort, 0, 20);
+                assertEquals(1, page.items().size());
+                assertTrue(page.items().get(0).mine());
+                assertEquals("풀이작성자", page.items().get(0).author().nickname());
+                assertEquals(13, page.items().get(0).codeLength());
+            }
+            assertEquals(1, store.like(userId, solutionId, true).likeCount());
+            assertEquals(1, store.like(userId, solutionId, true).likeCount());
+            store.comment(userId, solutionId, null, "댓글", false);
+            var comment = store.comments(userId, solutionId, 0, 20).items().get(0);
+            store.comment(userId, solutionId, comment.id(), "수정", false);
+            assertEquals("수정", store.comments(userId, solutionId, 0, 20).items().get(0).body());
+            store.comment(userId, solutionId, comment.id(), null, true);
+            assertEquals(0, store.stats(userId, solutionId).commentCount());
+            assertEquals(0, store.like(userId, solutionId, false).likeCount());
+            database.assertFinalSchema();
+            validateWithHibernate(database);
+        } finally { database.drop(); }
     }
 
     @Test
@@ -213,7 +257,7 @@ class PostgreSqlMigrationTest {
         LocalContainerEntityManagerFactoryBean entityManagerFactory =
                 new LocalContainerEntityManagerFactoryBean();
         entityManagerFactory.setDataSource(dataSource);
-        entityManagerFactory.setPackagesToScan("com.codearchive.api.auth", "com.codearchive.api.solution", "com.codearchive.api.settings", "com.codearchive.api.relay", "com.codearchive.api.automation", "com.codearchive.api.community");
+        entityManagerFactory.setPackagesToScan("com.codearchive.api.auth", "com.codearchive.api.solution", "com.codearchive.api.settings", "com.codearchive.api.relay", "com.codearchive.api.automation", "com.codearchive.api.community", "com.codearchive.api.support");
         JpaVendorAdapter vendorAdapter = new HibernateJpaVendorAdapter();
         entityManagerFactory.setJpaVendorAdapter(vendorAdapter);
         Properties properties = new Properties();
@@ -504,12 +548,44 @@ class PostgreSqlMigrationTest {
             assertEquals(1L, ((Number) scalar(
                     "SELECT COUNT(*) FROM pg_indexes "
                             + "WHERE schemaname = ? AND indexname = 'idx_solutions_community_owner'", schema)).longValue());
+            assertEquals("YES", nullable("solutions", "difficulty_label"));
+            assertEquals("YES", nullable("solutions", "difficulty_source_url"));
+            assertEquals("YES", nullable("github_commit_jobs", "recovery_context"));
+            assertEquals("YES", nullable("github_commit_jobs", "diagnostic"));
             assertEquals("YES", nullable("solutions", "memory_value"));
             assertEquals("YES", nullable("solutions", "memory_unit"));
             assertEquals("user_settings", scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = 'user_settings'", schema));
             assertEquals("NO", nullable("user_settings", "github_commit_message_template"));
             assertEquals("NO", nullable("user_settings", "github_header"));
             assertEquals("NO", nullable("user_settings", "community_public_by_default"));
+            assertEquals("NO", nullable("user_settings", "community_duplicate_visibility"));
+            assertEquals("'all'::character varying", scalar("SELECT column_default FROM information_schema.columns WHERE table_schema = ? AND table_name = 'user_settings' AND column_name = 'community_duplicate_visibility'", schema));
+            for (String table : new String[] {"community_likes", "community_comments"}) {
+                assertEquals(table, scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = ?", schema, table));
+                assertEquals("NO", nullable(table, "solution_id"));
+                assertEquals("NO", nullable(table, "user_id"));
+            }
+            assertEquals("NO", nullable("community_comments", "body"));
+            for (String table : new String[] {"support_inquiries", "support_messages"}) {
+                assertEquals(table, scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = ?", schema, table));
+            }
+            assertEquals("NO", nullable("support_inquiries", "owner_id"));
+            assertEquals("NO", nullable("support_inquiries", "version"));
+            assertEquals("NO", nullable("support_messages", "inquiry_id"));
+            assertEquals("NO", nullable("support_messages", "author_id"));
+            assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = ? AND c.conname = 'ck_support_inquiries_category'", schema)).longValue());
+            assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = ? AND c.conname = 'ck_support_messages_author_role'", schema)).longValue());
+            assertEquals("c", scalar("SELECT c.confdeltype FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = ? AND c.conrelid = (? || '.support_messages')::regclass AND c.contype = 'f' AND c.confrelid = (? || '.support_inquiries')::regclass", schema, schema, schema));
+            try (Connection connection = connection(); Statement statement = connection.createStatement()) {
+                ResultSet user = statement.executeQuery("INSERT INTO users(email, password_hash, created_at) VALUES ('support-fixture@example.test', 'fixture', now()) RETURNING id"); user.next(); long userId = user.getLong(1);
+                ResultSet inquiry = statement.executeQuery("INSERT INTO support_inquiries(owner_id, category, title, status, created_at, updated_at, version) VALUES (" + userId + ", 'BUG', 'fixture', 'CLOSED', now(), now(), 0) RETURNING id"); inquiry.next(); long inquiryId = inquiry.getLong(1);
+                statement.executeUpdate("INSERT INTO support_messages(inquiry_id, author_id, author_role, body, created_at) VALUES (" + inquiryId + ", " + userId + ", 'USER', 'fixture', now())");
+                statement.executeUpdate("DELETE FROM support_inquiries WHERE id = " + inquiryId);
+                assertEquals(0L, ((Number) scalar("SELECT COUNT(*) FROM support_messages WHERE inquiry_id = ?", inquiryId)).longValue());
+            }
+            assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = ? AND c.conname = 'uk_community_like'", schema)).longValue());
+            assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = ? AND c.conname = 'ck_community_duplicate_visibility'", schema)).longValue());
+            assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = ? AND indexname = 'idx_community_comments_solution'", schema)).longValue());
             assertEquals("true", scalar("SELECT column_default FROM information_schema.columns WHERE table_schema = ? AND table_name = 'user_settings' AND column_name = 'community_public_by_default'", schema));
             for (String column : new String[] {"copy_header_fields", "download_header_fields", "github_header_fields"}) {
                 assertEquals("NO", nullable("user_settings", column));

@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { parseHTML } from "linkedom";
 import { mountHistory } from "../src/history";
+import { HISTORICAL_COLLECTION_REQUEST, isTrustedHistoricalCollectionRequest, type HistoricalCollectionNotice } from '../../../shared/historicalCollectionScope';
 
 const candidate = { submissionId: "101", problemNumber: "1000", title: "테스트", executionTime: 1, memoryValue: 2 };
 const ready = { status: "READY", candidates: [candidate], truncated: false };
@@ -35,20 +36,32 @@ function choose(select: HTMLSelectElement, value: string) {
 }
 
 function page(send: (message: { type: string; submissionIds?: string[] }) => Promise<unknown>,
-  options: { now?: () => number; readTiming?: () => Promise<unknown> } = {}) {
+  options: { now?: () => number; readTiming?: () => Promise<unknown>; onCollectionNotice?: (notice: HistoricalCollectionNotice) => void; subscribeCollectionRequest?: (publish: () => void) => void } = {}) {
   const { document } = parseHTML(`<!doctype html><body>
     <button id="scan"></button><button id="cancel" hidden></button><button id="import"></button>
     <select id="platform"><option value="JUNGOL" selected>JUNGOL</option><option value="SWEA">SWEA</option><option value="PROGRAMMERS">PROGRAMMERS</option></select>
     <a id="history-page-link"></a><p id="platform-description"></p><p id="platform-help"></p>
     <select id="selection"><option value="all" selected>all</option><option value="latest">latest</option></select>
     <span id="status"></span><progress id="task-progress"></progress><p id="task-stage"></p><p id="progress"></p><p id="task-time"></p>
-    <section id="candidates" hidden><p id="candidate-help"></p><div id="candidate-list"></div></section>
+    <button id="reconcile"></button><button id="verify-existing" hidden></button><button id="clear-reconciliation" hidden></button><p id="reconciliation-status"></p><p id="reconciliation-help" hidden></p><section id="candidates" hidden><p id="candidate-help"></p><div id="candidate-list"></div></section>
   </body>`);
   const scheduled: (() => void)[] = [];
   mountHistory(document, { send: message => send(message as { type: string; submissionIds?: string[] }),
     schedule: work => { scheduled.push(work); return scheduled.length; }, ...options });
   return { document, scheduled };
 }
+test('completed storage receipts expose only successful selected IDs and a new scan clears them', async () => {
+  const notices: HistoricalCollectionNotice[] = []
+  let state: unknown = { status: 'DONE', startedAt: 123, completed: 2, total: 2, storedSubmissionIds: ['101'], failedSubmissionIds: ['102'] }
+  const view = page(async message => message.type === 'LOCAL_HISTORY_IDS' ? { submissionIds: ['101'] } : state,
+    { onCollectionNotice: notice => notices.push(notice) })
+  await tick(); await tick()
+  assert.deepEqual(notices.at(-1)?.scope, { batchId: 'JUNGOL:123', platform: 'JUNGOL', submissionIds: ['101'] })
+  state = { status: 'SCANNING' }
+  view.document.querySelector<HTMLButtonElement>('#scan')!.click()
+  await tick(); await tick()
+  assert.equal(notices.at(-1)?.scope, null)
+})
 
 test("history view opens from local status without a CodeArchive login and disables stale controls while active", async () => {
   const calls: string[] = [];
@@ -434,4 +447,87 @@ test("first-item failure reports the failed phase without a redundant progress e
   assert.match(view.document.querySelector("#status")!.textContent!, /로컬 저장 요청이 거부/);
   assert.equal(view.document.querySelector("#task-stage")!.textContent, "");
   assert.equal(view.document.querySelector("#progress")!.textContent, "0/120건 처리했습니다. (0%)");
+});
+
+test('reconciliation excludes ambiguous identities and enables only explicit original verification', async () => {
+  const owned = { submissionId: 'OwnedSubmit', problemNumber: '123', title: 'Own', language: 'JAVA', solvedAt: '2026-01-02T03:04:05Z' };
+  const missing = { ...owned, submissionId: 'MissingSubmit', problemNumber: '124' };
+  const ambiguous = { ...owned, submissionId: 'AmbiguousSubmit', problemNumber: '125' };
+  const local = { captureId: '11111111-1111-4111-8111-111111111111', platform: 'SWEA', historicalSubmissionId: owned.submissionId, problemNumber: '123', language: 'JAVA', solvedAt: owned.solvedAt, sourceDigest: 'a'.repeat(64) };
+  const view = page(async message => {
+    if (message.type === 'LOCAL_HISTORY_IDS') return { submissionIds: [owned.submissionId] };
+    if (message.type === 'LOCAL_HISTORY_RECONCILIATION') return { local: [local, { ...local, historicalSubmissionId: ambiguous.submissionId, problemNumber: '999' }], remote: [local], localComplete: true, remoteComplete: true };
+    return { status: 'READY', candidates: [owned, missing, ambiguous], truncated: false };
+  });
+  await tick(); choose(view.document.querySelector<HTMLSelectElement>('#platform')!, 'SWEA'); await tick(); await tick();
+  emit(view.document.querySelector('#reconcile')!, 'click'); await tick(); await tick();
+  let rows = [...view.document.querySelectorAll<HTMLInputElement>('#candidate-list input')];
+  assert.equal(rows[0]!.disabled, true); assert.equal(rows[1]!.checked, true); assert.equal(rows[2]!.disabled, true);
+  emit(view.document.querySelector('#verify-existing')!, 'click');
+  rows = [...view.document.querySelectorAll<HTMLInputElement>('#candidate-list input')];
+  assert.equal(rows[0]!.disabled, false); assert.equal(rows[0]!.checked, true); assert.equal(rows[2]!.disabled, true);
+});
+test('reconciliation requests coalesce and stale results cannot replace a changed platform', async () => {
+  let resolve!: (value: unknown) => void; let calls = 0;
+  const view = page(async message => {
+    if (message.type === 'LOCAL_HISTORY_IDS') return { submissionIds: [] };
+    if (message.type === 'LOCAL_HISTORY_RECONCILIATION') { calls++; return new Promise(res => { resolve = res }); }
+    return ready;
+  });
+  await tick(); choose(view.document.querySelector<HTMLSelectElement>('#platform')!, 'SWEA'); await tick(); await tick();
+  emit(view.document.querySelector('#reconcile')!, 'click'); emit(view.document.querySelector('#reconcile')!, 'click');
+  assert.equal(calls, 1);
+  choose(view.document.querySelector<HTMLSelectElement>('#platform')!, 'PROGRAMMERS'); await tick();
+  resolve({ local: [], remote: [], localComplete: true, remoteComplete: true }); await tick();
+  assert.equal(view.document.querySelector('#reconciliation-status')!.textContent, '');
+});
+
+for (const phase of ['LOCAL_HISTORY_IDS', 'LOCAL_HISTORY_SCAN_START']) {
+  test(`new scan immediately clears the completed batch while ${phase} is deferred or rejected`, async () => {
+    const notices: HistoricalCollectionNotice[] = [];
+    const done = { status: 'DONE', startedAt: 123, completed: 1, total: 1, storedSubmissionIds: ['101'] };
+    let scanning = false, reject!: (error: Error) => void;
+    const view = page(async message => {
+      if (scanning && message.type === phase) return new Promise((_resolve, fail) => { reject = fail; });
+      return message.type === 'LOCAL_HISTORY_IDS' ? { submissionIds: [] } : done;
+    }, { onCollectionNotice: notice => notices.push(notice) });
+    await tick(); await tick();
+    assert.notEqual(notices.at(-1)?.scope, null);
+    scanning = true;
+    view.document.querySelector<HTMLButtonElement>('#scan')!.click();
+    assert.equal(notices.at(-1)?.scope, null);
+    await tick(); reject(new Error('Unavailable')); await tick();
+    assert.equal(notices.at(-1)?.scope, null);
+    assert.equal(view.document.querySelector<HTMLButtonElement>('#scan')!.disabled, false);
+  });
+}
+test('a new scan ignores a delayed previous DONE status response', async () => {
+  const notices: HistoricalCollectionNotice[] = [];
+  let resolve!: (state: unknown) => void;
+  const view = page(async message => {
+    if (message.type === 'LOCAL_HISTORY_IDS') return { submissionIds: [] };
+    if (message.type === 'LOCAL_HISTORY_STATUS') return new Promise(done => { resolve = done; });
+    return { status: 'SCANNING' };
+  }, { onCollectionNotice: notice => notices.push(notice) });
+  await tick();
+  view.document.querySelector<HTMLButtonElement>('#scan')!.click(); await tick();
+  resolve({ status: 'DONE', startedAt: 123, completed: 1, total: 1, storedSubmissionIds: ['101'] }); await tick();
+  assert.equal(notices.at(-1)?.scope, null);
+  assert.equal(view.document.querySelector<HTMLButtonElement>('#scan')!.disabled, true);
+});
+test('late parent snapshot requests replay terminal receipts and reject untrusted requests', async () => {
+  const notices: HistoricalCollectionNotice[] = [];
+  let publish!: () => void;
+  page(async message => message.type === 'LOCAL_HISTORY_IDS' ? { submissionIds: [] } :
+    { status: 'DONE', startedAt: 123, completed: 1, total: 1, storedSubmissionIds: ['101'] },
+    { onCollectionNotice: notice => notices.push(notice), subscribeCollectionRequest: callback => { publish = callback; } });
+  await tick(); await tick();
+  const receipt = notices.at(-1); notices.length = 0;
+  const parent = {}, origin = 'chrome-extension://fixture';
+  const request = { source: parent, origin, data: { type: HISTORICAL_COLLECTION_REQUEST } };
+  assert.equal(isTrustedHistoricalCollectionRequest({ ...request, source: {} }, parent, origin), false);
+  assert.equal(isTrustedHistoricalCollectionRequest({ ...request, origin: 'https://other.test' }, parent, origin), false);
+  assert.equal(isTrustedHistoricalCollectionRequest({ ...request, data: { type: 'OTHER' } }, parent, origin), false);
+  if (isTrustedHistoricalCollectionRequest(request, parent, origin)) publish();
+  assert.deepEqual(notices, [receipt]);
 });

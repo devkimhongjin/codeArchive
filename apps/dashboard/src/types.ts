@@ -1,9 +1,10 @@
+import type { ProblemDifficulty } from '../../../shared/difficulty'
 import type { LightTheme, DarkTheme } from '../../../shared/codeThemes'
 import type { HeaderField } from '../../../shared/headerFields'
 
 export type Platform = 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'
 
-export type ViewName = 'solutions' | 'history' | 'community' | 'guide' | 'settings' | 'github'
+export type ViewName = 'solutions' | 'history' | 'community' | 'support' | 'settings' | 'github'
 
 export type User = {
   id: number
@@ -26,6 +27,7 @@ export type AuthProviders = {
 }
 
 export type Solution = {
+  difficulty?: ProblemDifficulty
   id?: number
   captureId: string
   platform: Platform
@@ -42,14 +44,20 @@ export type Solution = {
   memoryUsage?: number | string
   memoryValue?: number | string
   memoryUnit?: 'KB' | 'KiB' | 'MB' | 'MiB' | 'UNKNOWN' | string
+  metadataPending?: boolean; metadataRevision?: number
   historicalImport?: boolean
   historicalSubmissionId?: string
   visibility?: 'private' | 'published'
   publishedAt?: string | null
 }
 
-export type CommunityAuthor = { name: string; nickname: string | null; avatarUrl: string | null }
-export type CommunitySummary = { id: number; platform: Platform; problemNumber: string; title: string; language: string; languageKey: string; solvedAt: string | null; publishedAt: string; author: CommunityAuthor }
+export type CommunityAuthor = { nickname: string | null }
+export type CommunitySort = 'submitted' | 'execution' | 'memory' | 'likes'
+export type CommunityDuplicateVisibility = 'all' | 'execution' | 'memory' | 'length'
+export type CommunityStats = { likeCount: number; commentCount: number; liked: boolean }
+export type CommunityComment = { id: number; body: string; createdAt: string; updatedAt: string; author: CommunityAuthor; mine: boolean }
+export type CommunityCommentPage = { items: CommunityComment[]; page: number; size: number; total: number; hasMore: boolean }
+export type CommunitySummary = { id: number; platform: Platform; problemNumber: string; title: string; language: string; languageKey: string; solvedAt: string | null; publishedAt: string; author: CommunityAuthor; executionTime?: number | string | null; memoryValue?: number | string | null; memoryUnit?: string | null; codeLength?: number; mine?: boolean; likeCount?: number; commentCount?: number; liked?: boolean }
 export type CommunityDetail = CommunitySummary & { problemUrl: string; sourceCode: string; executionTime: number | string | null; memoryValue: number | string | null; memoryUnit: string | null }
 export type CommunityPage = { items: CommunitySummary[]; page: number; size: number; total: number; hasMore: boolean }
 
@@ -63,7 +71,7 @@ export type BulkResponse = {
 }
 
 export type ExtensionCapability = string
-export type HistoricalRecord = Pick<Solution, 'captureId' | 'platform' | 'problemNumber' | 'title' | 'language' | 'solvedAt'> & { historicalSubmissionId: string }
+export type HistoricalRecord = Pick<Solution, 'captureId' | 'platform' | 'problemNumber' | 'title' | 'language' | 'solvedAt' | 'metadataPending'> & { historicalSubmissionId: string }
 export type HistoricalCommitState = 'NONE' | 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN'
 export type HistoricalCommitCandidate = HistoricalRecord & { state: HistoricalCommitState }
 
@@ -94,6 +102,7 @@ export type AccountSettings = {
   darkTheme: DarkTheme
   autoSyncEnabled: boolean
   communityPublicByDefault?: boolean
+  communityDuplicateVisibility?: CommunityDuplicateVisibility
   githubAutoCommitEnabled: boolean
   githubTargetConfigured: boolean
   githubStatus: 'AVAILABLE' | 'TARGET_MISSING' | string

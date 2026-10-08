@@ -1,4 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { normalizeDifficulty, difficultyKey } from '../../../shared/difficulty'
+import { StaticAnalysisPanel } from './StaticAnalysisPanel'
+import { CodeThemePreview } from './CodeThemePreview'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { HistoricalCollectionScope } from '../../../shared/historicalCollectionScope'
 import { DesktopSettings } from './DesktopSettings'
 import { useDesktopWork, markDesktopDraft } from './DesktopActivity'
 import { DesktopStatusProvider, DesktopVersion, DesktopUpdateNotice } from './DesktopStatus'
@@ -24,7 +28,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { ApiError, addGithubFile, bulkUpload, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories, getGithubTree, getGithubEmptyDefaultBranch, getGithubReadmePreview, initializeGithubReadme, previewGithubTreeOperation, commitGithubTreeOperation } from './api'
+import { ApiError, addGithubFile, bulkUpload, enableAccountAutomaticSync, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories, getGithubTree, getGithubEmptyDefaultBranch, getGithubReadmePreview, initializeGithubReadme, previewGithubTreeOperation, commitGithubTreeOperation } from './api'
 import { BridgeError, parseAckResponse, parseBridgeStatusResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
@@ -39,15 +43,18 @@ import './styles.css'
 import { canonicalLanguageDisplayName, canonicalLanguageKey } from '../../../shared/language'
 import { filterAndSortSolutions, groupSolutions, type SolutionGroup, type SolutionSort } from './solutionQuery'
 import { BUILD_METADATA, buildLabel, updatedLabel } from '../../../shared/buildMetadata'
-import { EXTENSION_RELEASE, fetchLatestExtensionRelease, isVersionAtLeast, type ExtensionReleaseInfo } from './extensionRelease'
+import { EXTENSION_RELEASE, isVersionAtLeast } from './extensionRelease'
 import { formatExecutionTime, formatMemory } from './performancePresentation'
 import { CommunityView } from './CommunityView'
 import { HistoricalImportView } from './HistoricalImportView'
+import { HistoricalCollectionView } from './HistoricalCollectionView'
 import { HistoricalGithubCommitView } from './HistoricalGithubCommitView'
 import { formatKstDate, formatKstDateTime } from '../../../shared/timePresentation'
 import { readCommunityRoute, readView, urlForView, type CommunityRoute } from './communityRoute'
 import { CommunitySettings } from './CommunitySettings'
+import { SupportView } from './SupportView'
 import { CODE_THEME_MODE_KEY, isLightTheme, type CodeTheme, type CodeThemeMode } from '../../../shared/codeThemes'
+import { extensionRuntime, subscribeExtensionLogin } from './extensionEnvironment'
 
 const ARCHIVE_PAGE_SIZE = 20
 
@@ -127,6 +134,7 @@ function normalizeSolution(value: unknown, index = 0): Solution {
   const rawVisibility = read('visibility')
   return {
     id,
+    difficulty: normalizeDifficulty(platform, String(read('problemNumber', 'problem_number') ?? ''), String(read('problemUrl', 'problem_url') ?? ''), raw.difficulty),
     captureId: String(read('captureId', 'capture_id') ?? `remote-${index}`),
     platform,
     problemNumber: String(read('problemNumber', 'problem_number') ?? '—'),
@@ -184,7 +192,7 @@ function readLocalThemes(): Pick<AccountSettings, 'lightTheme' | 'darkTheme'> {
 function persistLocalThemes(settings: Pick<AccountSettings, 'lightTheme' | 'darkTheme'>) {
   try { localStorage.setItem(LOCAL_THEME_KEY, JSON.stringify(settings)) } catch { /* Preview remains usable. */ }
 }
-const defaultAccountSettings = (): AccountSettings => ({ version: 0, name: null, nickname: null, copyHeader: false, downloadHeader: false, githubHeader: false, copyHeaderFields: [...DEFAULT_HEADER_FIELDS], downloadHeaderFields: [...DEFAULT_HEADER_FIELDS], githubHeaderFields: [...DEFAULT_HEADER_FIELDS], downloadFilenameTemplate: DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, gitPathTemplate: DEFAULT_GIT_PATH_TEMPLATE, githubCommitMessageTemplate: DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, ...readLocalThemes(), autoSyncEnabled: false, communityPublicByDefault: true, githubAutoCommitEnabled: false, githubTargetConfigured: false, githubStatus: 'TARGET_MISSING', githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null })
+const defaultAccountSettings = (): AccountSettings => ({ version: 0, name: null, nickname: null, copyHeader: false, downloadHeader: false, githubHeader: false, copyHeaderFields: [...DEFAULT_HEADER_FIELDS], downloadHeaderFields: [...DEFAULT_HEADER_FIELDS], githubHeaderFields: [...DEFAULT_HEADER_FIELDS], downloadFilenameTemplate: DEFAULT_DOWNLOAD_FILENAME_TEMPLATE, gitPathTemplate: DEFAULT_GIT_PATH_TEMPLATE, githubCommitMessageTemplate: DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, ...readLocalThemes(), autoSyncEnabled: false, communityPublicByDefault: true, communityDuplicateVisibility: 'all', githubAutoCommitEnabled: false, githubTargetConfigured: false, githubStatus: 'TARGET_MISSING', githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null })
 
 function savedGithubTarget(settings: AccountSettings): GithubSavedTarget | null {
   return settings.githubTargetConfigured && settings.githubInstallationId && settings.githubOwner && settings.githubRepository && settings.githubBranch
@@ -243,7 +251,7 @@ function relayDeviceId() {
 }
 
 export default function App() {
-  const [githubInstallReturn] = useState(readGithubInstallReturn)
+  const [githubInstallReturn, setGithubInstallReturn] = useState(readGithubInstallReturn)
   const [view, setView] = useState<ViewName>(() => readGithubInstallReturn() ? 'github' : readView())
   const [communityRoute, setCommunityRoute] = useState<CommunityRoute>(readCommunityRoute)
   const [mode, setMode] = useState<'local' | 'live'>('local')
@@ -262,6 +270,7 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [platformFilter, setPlatformFilter] = useState<'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'>('ALL')
   const [languageFilter, setLanguageFilter] = useState('ALL')
+  const [difficultyFilter, setDifficultyFilter] = useState('ALL')
   const [solutionSort, setSolutionSort] = useState<SolutionSort>('latest')
   const [solutionPage, setSolutionPage] = useState(1)
   const [loading, setLoading] = useState(false)
@@ -281,7 +290,13 @@ export default function App() {
   const [bridgeCapability, setBridgeCapability] = useState<string | null>(null)
   const [extensionVersion, setExtensionVersion] = useState<string | null>(null)
   const [historySupported, setHistorySupported] = useState(false)
-  const [historicalAction, setHistoricalAction] = useState<'sync' | 'commit'>('sync')
+  const [historicalScope, setHistoricalScope] = useState<HistoricalCollectionScope | null>(null)
+  const [historicalCommitPreview, setHistoricalCommitPreview] = useState(0)
+  const [historicalSyncBusy, setHistoricalSyncBusy] = useState(false)
+  const [historicalCommitBusy, setHistoricalCommitBusy] = useState(false)
+  const receiveHistoricalScope = useCallback((scope: HistoricalCollectionScope | null) => {
+    setHistoricalScope(scope); setHistoricalCommitPreview(0)
+  }, [])
   const [historicalOpened, setHistoricalOpened] = useState(() => readView() === 'history')
   const [historicalRevision, setHistoricalRevision] = useState(0)
   const [pendingCount, setPendingCount] = useState<number | null>(null)
@@ -423,8 +438,8 @@ export default function App() {
   }
   useEffect(() => {
     const started = (event: Event) => showToast('info', (event as CustomEvent<string>).detail === 'install'
-      ? '웹브라우저에서 GitHub App 설치를 마친 뒤 PC 앱에서 연결 버튼을 다시 눌러 주세요.'
-      : '웹브라우저에서 로그인한 뒤 PC 앱 로그인을 승인해 주세요.')
+      ? '웹브라우저에서 GitHub App 설치를 마친 뒤 연결 버튼을 다시 눌러 주세요.'
+      : extensionRuntime() ? '새 탭에서 GitHub 로그인을 완료하면 이 화면으로 돌아옵니다.' : '웹브라우저에서 로그인한 뒤 PC 앱 로그인을 승인해 주세요.')
     const failed = (event: Event) => showToast('error', (event as CustomEvent<string | null>).detail || '웹 로그인을 완료하지 못했습니다. 다시 시도해 주세요.')
     window.addEventListener('codearchive-login-start', started)
     window.addEventListener('codearchive-login-error', failed)
@@ -491,9 +506,11 @@ export default function App() {
     const loadingFor = user
     const stillCurrent = () => active && generation === accountGeneration.current && userRef.current?.id === loadingFor.id
     settingsLoadedRef.current = null
-    void Promise.resolve(getAccountSettings(loadingFor.githubId)).then(serverResponse => {
+    void Promise.resolve(getAccountSettings(loadingFor.githubId)).then(async serverResponse => {
+      if (!stillCurrent()) return;
+      if (extensionRuntime() && !serverResponse.autoSyncEnabled) serverResponse = await enableAccountAutomaticSync(loadingFor.githubId);
       if (!stillCurrent()) return
-      const server = { ...serverResponse, communityPublicByDefault: serverResponse.communityPublicByDefault ?? true, nickname: serverResponse.nickname?.trim() || loadingFor.githubLogin, githubCommitMessageTemplate: serverResponse.githubCommitMessageTemplate || DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, copyHeaderFields: normalizedHeaderFields(serverResponse.copyHeaderFields), downloadHeaderFields: normalizedHeaderFields(serverResponse.downloadHeaderFields), githubHeaderFields: normalizedHeaderFields(serverResponse.githubHeaderFields) }
+      const server = { ...serverResponse, communityPublicByDefault: serverResponse.communityPublicByDefault ?? true, communityDuplicateVisibility: serverResponse.communityDuplicateVisibility ?? 'all', nickname: serverResponse.nickname?.trim() || loadingFor.githubLogin, githubCommitMessageTemplate: serverResponse.githubCommitMessageTemplate || DEFAULT_GITHUB_COMMIT_MESSAGE_TEMPLATE, copyHeaderFields: normalizedHeaderFields(serverResponse.copyHeaderFields), downloadHeaderFields: normalizedHeaderFields(serverResponse.downloadHeaderFields), githubHeaderFields: normalizedHeaderFields(serverResponse.githubHeaderFields) }
       // One-way migration: old browser-only export choices only seed the first
       // server version, and never overwrite an existing account preference.
       const migrated = server.version === 0 && !server.copyHeader && !server.downloadHeader && server.downloadFilenameTemplate === '{platform}-{number}-{title}'
@@ -552,8 +569,8 @@ export default function App() {
   }, [solutions])
 
   const filteredSolutions = useMemo(() => {
-    return filterAndSortSolutions(solutions, { query, platform: platformFilter, languageKey: languageFilter, sort: solutionSort })
-  }, [languageFilter, platformFilter, query, solutionSort, solutions])
+    return filterAndSortSolutions(solutions, { query, platform: platformFilter, languageKey: languageFilter, difficulty: difficultyFilter, sort: solutionSort })
+  }, [difficultyFilter, languageFilter, platformFilter, query, solutionSort, solutions])
 
   const solutionGroups = useMemo(() => groupSolutions(filteredSolutions), [filteredSolutions])
   const solutionPageCount = Math.max(1, Math.ceil(solutionGroups.length / ARCHIVE_PAGE_SIZE))
@@ -589,7 +606,7 @@ export default function App() {
   useEffect(() => {
     const restoreRoute = (event: PopStateEvent) => {
       const savedView = event.state?.codeArchiveView
-      setView(savedView === 'guide' || savedView === 'settings' || savedView === 'github' ? savedView : readView())
+      setView(savedView === 'guide' ? 'solutions' : savedView === 'settings' || savedView === 'github' ? savedView : readView())
       setCommunityRoute(readCommunityRoute())
     }
     window.addEventListener('popstate', restoreRoute)
@@ -679,6 +696,21 @@ export default function App() {
       if (requestIsCurrent(fence, accountGeneration.current, solutionOperation.current)) setLoading(false)
     }
   }
+
+  useEffect(() => subscribeExtensionLogin(returnQuery => {
+    if (returnQuery) {
+      const query = new URLSearchParams(returnQuery)
+      const url = new URL(window.location.href)
+      for (const key of ['githubInstall', 'installationId']) {
+        const value = query.get(key)
+        if (value) url.searchParams.set(key, value)
+      }
+      window.history.replaceState({}, '', url)
+      setGithubInstallReturn(readGithubInstallReturn())
+      setView('github')
+    }
+    void connectLive()
+  }), [])
 
   const resetBridge = async () => {
     // Invalidate an in-flight sync before asking the extension to disconnect.
@@ -1017,7 +1049,7 @@ export default function App() {
     const stillCurrent = () => generation === accountGeneration.current && userRef.current?.id === savingFor.id
     setSettingsBusy(true); setSettingsError(null)
     try {
-      const saved = await updateAccountSettings(savingDraft, savingFor.githubId)
+      const saved = await updateAccountSettings(extensionRuntime() ? { ...savingDraft, autoSyncEnabled: true } : savingDraft, savingFor.githubId)
       if (stillCurrent()) {
         relayHandoffOperation.current += 1
         accountSettingsRef.current = saved
@@ -1027,6 +1059,9 @@ export default function App() {
         setSavedTarget(savedGithubTarget(saved))
         updateExportSettings({ copyHeader: saved.copyHeader, downloadHeader: saved.downloadHeader, copyHeaderFields: normalizedHeaderFields(saved.copyHeaderFields), downloadHeaderFields: normalizedHeaderFields(saved.downloadHeaderFields), filenameTemplate: saved.downloadFilenameTemplate, gitPathTemplate: saved.gitPathTemplate })
         await configureRelay(saved, savingFor, generation)
+        if (stillCurrent() && modeRef.current === 'live') {
+          await refreshSolutions(generation, savingFor.githubId).catch(() => { if (stillCurrent()) showToast('info', '설정은 저장됐습니다. 풀이 목록을 새로고침해 주세요.') })
+        }
         if (stillCurrent()) showToast('success', '계정 설정을 저장했습니다.')
       }
     } catch (error) {
@@ -1272,8 +1307,8 @@ export default function App() {
             <button className={view === 'community' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('community')}>
               커뮤니티
             </button>
-            <button className={view === 'guide' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('guide')}>
-              연동 가이드
+            <button className={view === 'support' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('support')}>
+              문의·오류 제보
             </button>
             <button className={view === 'settings' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('settings')}>
               설정
@@ -1325,7 +1360,7 @@ export default function App() {
           <div className="connection-actions">
             {mode === 'local' && !user && <button className="banner-action" onClick={() => navigateSameTab(GITHUB_LOGIN_URL)}>GitHub로 로그인 <Icon name="github" size={14} /></button>}
             {mode === 'local' && <button className="banner-secondary" onClick={() => void connectLive()} disabled={loading}><Icon name="refresh" size={14} /> 서버 연결 새로고침</button>}
-            {extensionUpdateRequired && <button className="banner-secondary update-extension" onClick={() => changeView('guide')}>확장 업데이트</button>}
+            {extensionUpdateRequired && <a className="banner-secondary update-extension" href={EXTENSION_RELEASE.releaseHistoryUrl} target="_blank" rel="noopener noreferrer">확장 업데이트</a>}
             {bridgeStatus === 'disconnected' && <button className="banner-secondary" onClick={() => void connectBridge()} disabled={loading}>확장 재연결</button>}
             {mode === 'live' && user && <button className="server-refresh" onClick={() => void refreshSolutions(undefined, user.githubId)} disabled={loading} title="서버 아카이브 목록을 다시 읽습니다."><Icon name="refresh" size={14} /> 서버 목록 새로고침</button>}
           </div>
@@ -1349,6 +1384,8 @@ export default function App() {
             query={query}
             platformFilter={platformFilter}
             languageFilter={languageFilter}
+            difficultyFilter={difficultyFilter}
+            setDifficultyFilter={value => { setDifficultyFilter(value); setSolutionPage(1) }}
             languages={languages}
             solutionSort={solutionSort}
             loading={loading}
@@ -1370,19 +1407,16 @@ export default function App() {
         <section hidden={view !== 'history'} className="history-management" aria-label="과거 풀이 관리">
           <div className="page-heading">
             <h1>과거 풀이 관리</h1>
-            <p>확장 프로그램에서 수집한 풀이는 이 브라우저에 보관됩니다. 서버와 GitHub에 저장하려면 아래 작업을 직접 실행해 주세요.</p>
+            <p>사이트별 과거 풀이를 수집하고, 서버 동기화와 GitHub 커밋을 순서대로 진행하세요.</p>
           </div>
           <div className="history-storage-guide">
             <h2>저장 안내</h2>
-            <p><strong>일괄 동기화</strong>는 선택한 로컬 풀이를 대시보드 서버에 저장합니다. <strong>일괄 GitHub 커밋</strong>은 서버에 저장한 풀이를 연결된 저장소에 커밋합니다.</p>
-            <p>사이트별로 동기화를 마친 뒤 모아서 커밋할 수 있습니다. 로그인 후 실행할 수 있으며, 로컬 기록은 그대로 유지됩니다.</p>
-          </div>
-          <div className="history-work-actions" role="group" aria-label="과거 풀이 작업">
-            <button type="button" className={historicalAction === 'sync' ? 'history-work-button active' : 'history-work-button'} aria-pressed={historicalAction === 'sync'} onClick={() => setHistoricalAction('sync')}><Icon name="sync" size={17} /> 일괄 동기화</button>
-            <button type="button" className={historicalAction === 'commit' ? 'history-work-button active' : 'history-work-button'} aria-pressed={historicalAction === 'commit'} onClick={() => setHistoricalAction('commit')}><Icon name="github" size={17} /> 일괄 GitHub 커밋</button>
+            <p><strong>과거 풀이 수집</strong>은 본인 제출의 원본을 확인해 이 브라우저에 저장합니다. <strong>일괄 동기화</strong>는 선택한 풀이를 서버에 저장하고, <strong>일괄 GitHub 커밋</strong>은 서버 풀이를 연결된 저장소에 커밋합니다.</p>
+            <p>수집은 로그인 없이 가능합니다. 수집 완료 후 원본 확인을 마친 선택 제출만 일괄 동기화·GitHub 커밋할 수 있으며, 서버 작업에는 로그인이 필요합니다.</p>
           </div>
           {historicalOpened && <>
-          <div hidden={historicalAction !== 'sync'}><HistoricalImportView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} user={user} mode={mode} onImported={() => {
+          <HistoricalCollectionView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} disabled={historicalSyncBusy || historicalCommitBusy} onSelectionChange={receiveHistoricalScope} />
+          <div hidden={!historicalScope}>{historicalScope && <HistoricalImportView selectionScope={historicalScope} onBusyChange={setHistoricalSyncBusy} onCommitReady={() => setHistoricalCommitPreview(value => value + 1)} extensionId={extensionId} capability={bridgeCapability} supported={historySupported} user={user} mode={mode} onImported={() => {
             setHistoricalRevision(value => value + 1)
             if (modeRef.current === 'live' && userRef.current) {
               void refreshSolutions(accountGeneration.current, userRef.current.githubId).catch(() => undefined)
@@ -1399,8 +1433,8 @@ export default function App() {
                     response.localOnly !== true || !Array.isArray(response.captures)) return
                 setSolutions(response.captures.map(normalizeSolution))
               }).catch(() => undefined)
-          }} /></div>
-          <div hidden={historicalAction !== 'commit'}><HistoricalGithubCommitView user={user} mode={mode} revision={historicalRevision} /></div>
+          }} />}</div>
+          <div hidden={!historicalScope || !historicalCommitPreview}>{historicalScope && historicalCommitPreview > 0 && <HistoricalGithubCommitView selectionScope={historicalScope} previewRequest={historicalCommitPreview} onBusyChange={setHistoricalCommitBusy} user={user} mode={mode} revision={historicalRevision} />}</div>
           </>}
         </section>
         {view === 'community' && <CommunityView
@@ -1410,15 +1444,15 @@ export default function App() {
           route={communityRoute}
           onRouteChange={changeCommunityRoute}
           onReturnToArchive={returnToArchive}
-          onVisibilityChanged={(expectedGithubId, id, visibility, publishedAt) => { if (userRef.current?.githubId === expectedGithubId && modeRef.current === 'live') setSolutions(current => current.map(solution => solution.id === id ? { ...solution, visibility, publishedAt } : solution)) }}
+          onVisibilityChanged={(expectedGithubId, id, visibility, publishedAt) => { if (userRef.current?.githubId === expectedGithubId && modeRef.current === 'live') { setSolutions(current => current.map(solution => solution.id === id ? { ...solution, visibility, publishedAt } : solution)); void refreshSolutions(accountGeneration.current, expectedGithubId).catch(() => showToast('info', '공개 설정은 저장됐습니다. 풀이 목록을 새로고침해 주세요.')) } }}
           onAuthInvalid={invalidateCommunityAuth}
           onLogin={() => navigateSameTab(GITHUB_LOGIN_URL)}
           lightTheme={accountSettings.lightTheme}
           darkTheme={accountSettings.darkTheme}
+          codeThemeMode={codeThemeMode}
+          onCodeThemeChange={theme => chooseCodeTheme(theme, true)}
         />}
-        {view === 'guide' && (
-          <GuideView onSettings={() => changeView('settings')} onGithub={() => changeView('github')} />
-        )}
+        {view === 'support' && <SupportView key={`${user?.githubId ?? 'signed-out'}:${mode}`} user={user} mode={mode} onLogin={() => navigateSameTab(GITHUB_LOGIN_URL)} onAuthInvalid={() => { if (user?.githubId) invalidateCommunityAuth(user.githubId) }} />}
         {(view === 'settings' || view === 'github') && (
           <SettingsView key={user?.id ?? 'local'}
             section={view}
@@ -1472,6 +1506,8 @@ function SolutionsView({
   query,
   platformFilter,
   languageFilter,
+  difficultyFilter,
+  setDifficultyFilter,
   languages,
   solutionSort,
   loading,
@@ -1502,6 +1538,8 @@ function SolutionsView({
   query: string
   platformFilter: 'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'
   languageFilter: string
+  difficultyFilter: string
+  setDifficultyFilter: (value: string) => void
   languages: Array<{ key: string; label: string }>
   solutionSort: SolutionSort
   loading: boolean
@@ -1522,7 +1560,7 @@ function SolutionsView({
   const listRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = 0
-  }, [page, query, platformFilter, languageFilter, solutionSort])
+  }, [page, query, platformFilter, languageFilter, difficultyFilter, solutionSort])
   return (
     <section className="solutions-layout" aria-label="풀이 아카이브">
       <div className="solutions-heading">
@@ -1550,8 +1588,9 @@ function SolutionsView({
         <select value={languageFilter} onChange={(event) => setLanguageFilter(event.target.value)} aria-label="언어 필터">
           {languages.map((language) => <option key={language.key} value={language.key}>{language.label}</option>)}
         </select>
+        <select aria-label="난이도 필터" value={difficultyFilter} onChange={event => setDifficultyFilter(event.target.value)}><option value="ALL">모든 난이도</option><option value="UNKNOWN">미확인</option>{[...new Set(solutions.filter(item => item.difficulty).map(item => difficultyKey(item.platform, item.difficulty)))].sort().map(key => <option key={key} value={key}>{key.replace(':', ' ')}</option>)}</select>
         <label className="archive-theme-picker">코드 보기 테마 <CodeThemeSelect value={codeThemeMode === 'dark' ? darkTheme : lightTheme} onChange={onCodeThemeChange} /></label>
-        {(query || platformFilter !== 'ALL' || languageFilter !== 'ALL') && <button className="filter-reset" onClick={() => { setQuery(''); setPlatformFilter('ALL'); setLanguageFilter('ALL') }}><Icon name="close" size={13} /> 필터 초기화</button>}
+        {(query || platformFilter !== 'ALL' || languageFilter !== 'ALL' || difficultyFilter !== 'ALL') && <button className="filter-reset" onClick={() => { setQuery(''); setPlatformFilter('ALL'); setLanguageFilter('ALL'); setDifficultyFilter('ALL') }}><Icon name="close" size={13} /> 필터 초기화</button>}
       </div>
 
       <div className="content-grid">
@@ -1591,7 +1630,7 @@ function SolutionGroupRow({ group, selected, onSelect, onOtherSolutions }: { gro
       <span className={`platform-logo ${group.platform === 'SWEA' ? 'swea' : group.platform === 'JUNGOL' ? 'jungol' : 'programmers'}`}>{group.platform === 'SWEA' ? 'S' : group.platform === 'JUNGOL' ? 'J' : 'P'}</span>
       <span className="solution-row-main">
         <span className="solution-row-top"><span className="solution-platform">{group.platform}</span><span className="solution-result">풀이 {group.submissions.length}개</span></span>
-        <span className="solution-title">{group.title}</span>
+        <span className="solution-title">{group.title}</span><small>{group.submissions.find(item => item.difficulty)?.difficulty?.label ?? '난이도 미확인'}</small>
         <span className="solution-row-bottom"><span>#{group.problemNumber}</span><span className="row-divider" /><span>{languageLabels}</span><span className="row-time"><Icon name="clock" size={12} /> {formatDate(latest.solvedAt ?? latest.observedAt)}</span></span>
       </span>
       <Icon name="chevron" size={17} />
@@ -1610,7 +1649,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
             <div className="detail-heading-main">
               <div className="detail-breadcrumb"><span>{solution.platform}</span><Icon name="chevron" size={12} /><span>#{solution.problemNumber}</span></div>
               <h2>{solution.title}</h2>
-              <div className="detail-subline"><span>{canonicalLanguageDisplayName(solution.language)}</span><span className="row-divider" /><span>풀이 시간 {formatObservedTime(solution.solvedAt ?? solution.observedAt)}</span></div>
+              <div className="detail-subline"><span>{solution.difficulty?.label ?? '난이도 미확인'}</span><span>{canonicalLanguageDisplayName(solution.language)}</span><span className="row-divider" /><span>풀이 시간 {formatObservedTime(solution.solvedAt ?? solution.observedAt)}</span></div>
             </div>
             <div className="detail-heading-actions"><button type="button" className="problem-link" onClick={() => onOtherSolutions(solution.platform, solution.problemNumber)}>다른 풀이 보기</button><a className="problem-link" href={solution.problemUrl} target="_blank" rel="noreferrer">문제 보기 <Icon name="external" size={14} /></a></div>
           </div>
@@ -1622,6 +1661,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
           {group && group.submissions.length > 1 && <label className="submission-picker">제출 기록<select aria-label="제출 기록" value={solution.captureId} onChange={(event) => onSelectSubmission(event.target.value)}>{group.submissions.map((submission, index) => <option key={submission.captureId} value={submission.captureId}>{index + 1}. {formatObservedTime(submission.solvedAt ?? submission.observedAt)} · {canonicalLanguageDisplayName(submission.language)}</option>)}</select></label>}
           <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
           <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} activeMode={codeThemeMode} />
+          <StaticAnalysisPanel captureId={solution.captureId} language={solution.language} source={solution.sourceCode} />
           <div className="detail-note"><Icon name="spark" size={14} /><span>{solution.historicalImport ? mode === 'live' ? '과거 풀이를 명시적으로 서버에 동기화한 기록입니다. 자동 GitHub 커밋은 실행되지 않습니다.' : '이 브라우저에 보관한 과거 풀이입니다. 과거 풀이 관리 탭에서 서버 동기화와 GitHub 커밋을 요청할 수 있습니다.' : mode === 'local' ? '이 브라우저의 로컬 기록입니다. 로그인 후 명시적으로 동기화할 수 있습니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
         </>
       )}
@@ -1640,67 +1680,6 @@ function ListSkeleton() {
 
 function EmptyList({ mode }: { mode: 'local' | 'live' }) {
   return <div className="empty-list"><div className="empty-list-icon"><Icon name="search" size={20} /></div><strong>{mode === 'live' ? '아직 저장된 풀이가 없습니다.' : '이 브라우저에 저장된 풀이가 없습니다.'}</strong><span>{mode === 'live' ? '확장 프로그램을 연결해 첫 풀이를 가져와 보세요.' : '확장 프로그램에서 통과한 풀이를 저장하거나 로그인 후 수동 동기화를 해보세요.'}</span></div>
-}
-
-function GuideView({ onSettings, onGithub }: { onSettings: () => void; onGithub: () => void }) {
-  const [latestRelease, setLatestRelease] = useState<ExtensionReleaseInfo | null>(null)
-  const [releaseState, setReleaseState] = useState<'loading' | 'ready' | 'unavailable'>('loading')
-  useEffect(() => {
-    let active = true
-    void fetchLatestExtensionRelease()
-      .then((metadata) => { if (active) { setLatestRelease(metadata); setReleaseState('ready') } })
-      .catch(() => { if (active) setReleaseState('unavailable') })
-    return () => { active = false }
-  }, [])
-  const dashboardCompatible = latestRelease
-    ? isVersionAtLeast(BUILD_METADATA.version, latestRelease.compatibility.minimumDashboardVersion)
-    : false
-  return (
-    <section className="guide-page">
-      <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> GET STARTED / BRIDGE</p><h1>연동 가이드</h1><p>설치부터 첫 PASS 저장, 자동 동기화와 GitHub 커밋 확인까지 순서대로 진행합니다.</p></div>
-      <div className="guide-grid">
-        <article className="guide-card guide-hero"><div className="guide-hero-icon"><Icon name="link" size={25} /></div><div><span className="card-kicker">CODEARCHIVE BRIDGE</span><h2>PASS 한 번으로 저장 흐름을 확인하세요</h2><p>풀이는 먼저 브라우저에 저장됩니다. 자동 동기화를 켜면 대시보드를 닫아도 릴레이가 대기 중인 풀이를 서버로 전송하고, 설정에 따라 GitHub 커밋까지 요청합니다.</p></div><button className="primary-button" onClick={onSettings}>설정 열기 <Icon name="chevron" size={14} /></button></article>
-        <article className="guide-card extension-release-card">
-          <div className="release-heading"><div><span className="card-kicker">BETA DISTRIBUTION</span><h2>검증된 확장 프로그램 받기</h2></div><span className={`release-state is-${releaseState}`}>{releaseState === 'loading' ? '확인 중' : releaseState === 'ready' ? `v${latestRelease?.version}` : '릴리스 준비 중'}</span></div>
-          <p>Chrome Web Store 출시 전에는 ZIP을 내려받아 개발자 모드에서 직접 로드합니다. 웹사이트가 확장을 자동 설치하거나 업데이트할 수는 없습니다.</p>
-          {latestRelease && <dl className="release-meta"><div><dt>업데이트</dt><dd>{latestRelease.releasedAt}</dd></div><div><dt>Chrome</dt><dd>v{latestRelease.minimumChromeVersion}+</dd></div><div><dt>확장 ID</dt><dd>{latestRelease.extensionId}</dd></div></dl>}
-          {latestRelease && <div className="release-checksum"><span>SHA-256</span><code>{latestRelease.artifact.sha256}</code></div>}
-          {latestRelease && !dashboardCompatible && <p className="release-warning">이 대시보드 버전과 호환되지 않습니다. 대시보드를 먼저 업데이트해 주세요.</p>}
-          <div className="release-actions">
-            {releaseState === 'ready' && dashboardCompatible && latestRelease
-              ? <a className="primary-button" href={latestRelease.downloadUrl}>확장 ZIP 다운로드 <Icon name="download" size={14} /></a>
-              : <span className="primary-button is-disabled" aria-disabled="true">{releaseState === 'loading' ? '릴리스 확인 중…' : '다운로드 준비 중'}</span>}
-            <a className="ghost-button" href={latestRelease?.releasePageUrl ?? EXTENSION_RELEASE.releaseHistoryUrl} target="_blank" rel="noreferrer">{latestRelease ? '릴리스 상세' : '모든 릴리스'} <Icon name="external" size={13} /></a>
-            {latestRelease && <a className="text-button checksum-link" href={latestRelease.checksumUrl}>체크섬 파일</a>}
-          </div>
-        </article>
-        <GuideStep number="01" title="확장 프로그램 설치" text="ZIP을 압축 해제하고 Chrome 우측 상단의 확장 프로그램 → 확장 프로그램 관리로 이동합니다. 개발자 모드를 켠 뒤 압축 해제한 폴더를 끌어다 놓으세요." action="chrome://extensions" />
-        <GuideStep number="02" title="첫 PASS를 로컬에 저장" text="지원 사이트에서 정답 제출을 완료하세요. 대시보드 연결 여부와 관계없이 먼저 로컬 저장이 완료되고, 자동 다운로드를 켰다면 파일도 내려받습니다." action="확장 프로그램 열기" />
-        <GuideStep number="03" title="GitHub 로그인 · 자동 연결" text="확장 프로그램에서 대시보드를 열고 GitHub로 로그인하세요. 설치된 CodeArchive가 자동으로 연결되므로 확장 ID를 복사하거나 붙여 넣지 않습니다." action="연결 상태 확인" onAction={onSettings} />
-        <GuideStep number="04" title="자동 동기화 설정" text="설정에서 자동 동기화를 켜고 저장하세요. 릴레이가 연결 확인됨 상태가 되면 로컬 대기 풀이를 전송하며, 대시보드를 닫은 뒤의 새 PASS도 계속 처리합니다." action="자동화 설정" onAction={onSettings} />
-        <GuideStep number="05" title="GitHub App · 저장 위치 선택" text="GitHub 관리에서 연결 및 저장 위치 선택을 누르면 필요한 경우 GitHub App 설치 화면으로 이동합니다. 설치 계정, 저장소, 브랜치와 폴더를 선택한 뒤 GitHub 자동 커밋을 켜세요." action="GitHub 관리" onAction={onGithub} />
-        <GuideStep number="06" title="저장 결과 확인" text="확장 프로그램의 최근 저장한 풀이에서 동기화 대기·동기화됨과 GitHub 완료·커밋 대기·커밋 중·커밋 실패·커밋 확인 필요·자동 커밋 안 함 상태를 확인하세요. 대시보드의 동기화 숫자는 아직 서버로 보내지 않은 로컬 풀이 수입니다." action="대시보드 확인" />
-      </div>
-      <div className="guide-update-note"><Icon name="check" size={18} /><div><strong>업데이트할 때 로컬 풀이를 유지하려면</strong><p>확장을 삭제하지 말고 기존 압축 해제 폴더의 파일을 새 ZIP 내용으로 교체한 뒤 확장 관리 화면에서 ‘새로고침’을 누르세요. 고정된 확장 ID가 유지되므로 IndexedDB 로컬 기록도 그대로 사용합니다.</p></div></div>
-      <section className="guide-recovery" aria-labelledby="guide-recovery-title">
-        <h2 id="guide-recovery-title" className="guide-recovery-title">연결 상태별 복구 방법</h2>
-        <article className="guide-card"><span className="card-kicker">PENDING</span><h2>확인 대기</h2><p>릴레이 정보가 아직 확인되지 않았습니다. 대시보드를 열어 확장 연결을 확인하고 설정 저장이 끝날 때까지 기다리세요.</p></article>
-        <article className="guide-card"><span className="card-kicker">SETUP</span><h2>릴레이 설정 필요</h2><p>GitHub 저장 대상은 있지만 자동 전송 릴레이가 없습니다. 대시보드 설정에서 자동 동기화를 켜고 설정을 다시 저장하세요.</p></article>
-        <article className="guide-card"><span className="card-kicker">RELAY</span><h2>릴레이 오류 · 오프라인</h2><p>로컬 저장은 유지됩니다. 네트워크를 확인하고 확장 프로그램의 <strong>연결 재시도</strong>를 누르세요. 연결되면 자동화 ON/OFF 설정에 따라 대기 중인 풀이가 처리됩니다.</p></article>
-        <article className="guide-card"><span className="card-kicker">AUTH</span><h2>인증 만료</h2><p>대시보드를 열어 GitHub에 다시 로그인하고 이 브라우저를 다시 연결하세요. 인증이 복구되기 전에는 자동 동기화와 GitHub 자동 커밋이 일시 중지됩니다.</p></article>
-        <article className="guide-card"><span className="card-kicker">EXTENSION</span><h2>확장 프로그램 연결 끊김</h2><p>대시보드 상단의 <strong>확장 재연결</strong>을 누르세요. 계속 연결되지 않으면 확장이 활성화됐는지 확인하고 확장 관리 화면에서 새로고침하세요.</p></article>
-        <article className="guide-card"><span className="card-kicker">GITHUB APP</span><h2>대상 필요 · 권한 미설치</h2><p>GitHub 관리의 <strong>GitHub 연결 및 저장 위치 선택</strong>에서 App 설치를 완료하고 저장소·브랜치·폴더를 다시 선택하세요.</p></article>
-        <article className="guide-card"><span className="card-kicker">REVOKING</span><h2>서버 폐기 대기</h2><p>자동 전송은 이미 중지된 상태입니다. 네트워크가 복구되면 서버의 릴레이 권한 폐기를 완료하므로 로컬 풀이를 삭제하거나 다시 설치하지 마세요.</p></article>
-        <article className="guide-card"><span className="card-kicker">COMMIT</span><h2>커밋 실패 · 확인 필요</h2><p>최근 저장한 풀이의 상태를 확인하고 GitHub 관리에서 저장 대상을 다시 검증하세요. 확인 필요 상태에서는 중복 커밋을 피하기 위해 자동 재시도하지 않습니다.</p></article>
-        <article className="guide-card"><span className="card-kicker">COMMIT OFF</span><h2>자동 커밋 안 함</h2><p>해당 풀이에는 GitHub 커밋이 요청되지 않았다는 뜻이며 오류가 아닙니다. 이후 풀이부터 커밋하려면 대시보드에서 저장 대상을 선택하고 GitHub 자동 커밋을 켜세요.</p></article>
-      </section>
-      <div className="guide-contract"><div className="contract-icon"><Icon name="spark" size={18} /></div><div><strong>저장 순서를 기억하세요</strong><p>PASS → 로컬 저장 → 릴레이 자동 동기화 → GitHub 자동 커밋</p></div><span className="contract-badge">LOCAL FIRST</span></div>
-    </section>
-  )
-}
-
-function GuideStep({ number, title, text, action, onAction }: { number: string; title: string; text: string; action: string; onAction?: () => void }) {
-  return <article className="guide-card guide-step"><span className="step-number">{number}</span><div className="step-copy"><h2>{title}</h2><p>{text}</p>{onAction ? <button className="text-button" onClick={onAction}>{action} <Icon name="chevron" size={13} /></button> : <code>{action}</code>}</div></article>
 }
 
 function TokenTemplateInput({ id, label, value, tokens, maxLength, onChange }: { id: string; label: string; value: string; tokens: readonly string[]; maxLength: number; onChange: (value: string) => void }) {
@@ -2095,7 +2074,7 @@ function SettingsView({
       <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> WORKSPACE / {section === 'github' ? 'GITHUB' : 'SETTINGS'}</p><h1>{section === 'github' ? 'GitHub 관리' : '설정'}</h1><p>{section === 'github' ? '저장소와 자동 커밋을 관리합니다.' : '프로필, 코드 저장 및 자동 동기화를 관리합니다.'}</p></div>
       {section === 'github' && user && savedTarget && <GithubRepositoryBrowser githubId={user.githubId} target={savedTarget} lightTheme={accountSettings.lightTheme} darkTheme={accountSettings.darkTheme} codeThemeMode={codeThemeMode} onExpectedAccountChange={onExpectedAccountChange} />}
       {section === 'settings' && <DesktopSettings />}
-      {section === 'settings' && <CommunitySettings user={user} ready={accountSettingsReady} publicByDefault={accountSettings.communityPublicByDefault ?? true} onChange={communityPublicByDefault => updateAccountSettings({ ...accountSettings, communityPublicByDefault })} onSave={onSaveSettings} saving={settingsBusy} onPublished={onCommunityPublished} onAuthInvalid={onExpectedAccountChange} />}
+      {section === 'settings' && <CommunitySettings user={user} ready={accountSettingsReady} duplicateVisibility={accountSettings.communityDuplicateVisibility ?? 'all'} onDuplicateChange={communityDuplicateVisibility => updateAccountSettings({ ...accountSettings, communityDuplicateVisibility })} publicByDefault={accountSettings.communityPublicByDefault ?? true} onChange={communityPublicByDefault => updateAccountSettings({ ...accountSettings, communityPublicByDefault })} onSave={onSaveSettings} saving={settingsBusy} onPublished={onCommunityPublished} onAuthInvalid={onExpectedAccountChange} />}
       <div className={`settings-layout ${section === 'github' ? 'is-github-management' : ''}`}>
         <div className="settings-column">
           {section === 'settings' && <article className="settings-card export-settings"><h2>계정 · 코드 저장</h2>{settingsError && <p role="alert">{settingsError}</p>}<div className="setting-field"><label htmlFor="profile-name">이름</label><input id="profile-name" value={accountSettings.name ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, name: e.target.value || null })} /><label htmlFor="profile-nickname">닉네임</label><input id="profile-nickname" value={accountSettings.nickname ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, nickname: e.target.value || null })} /></div><p>문제 정보 주석을 추가합니다. 원본 코드는 유지합니다.</p>
@@ -2103,7 +2082,7 @@ function SettingsView({
             {accountSettings.copyHeader && <HeaderFieldsPicker label="복사" fields={normalizedHeaderFields(accountSettings.copyHeaderFields)} solution={previewSolution} onChange={copyHeaderFields => updateAccountSettings({ ...accountSettings, copyHeaderFields })} />}
             <label><input type="checkbox" checked={accountSettings.downloadHeader} onChange={e => updateAccountSettings({ ...accountSettings, downloadHeader: e.target.checked })} /> 다운로드할 때 문제 정보 주석 포함</label>
             {accountSettings.downloadHeader && <HeaderFieldsPicker label="다운로드" fields={normalizedHeaderFields(accountSettings.downloadHeaderFields)} solution={previewSolution} onChange={downloadHeaderFields => updateAccountSettings({ ...accountSettings, downloadHeaderFields })} />}
-            <div className="setting-field"><TokenTemplateInput id="filename-template" label="다운로드 파일명" maxLength={160} tokens={FILENAME_TOKENS} value={accountSettings.downloadFilenameTemplate} onChange={downloadFilenameTemplate => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p><label htmlFor="settings-code-theme">코드 보기 테마</label><CodeThemeSelect id="settings-code-theme" value={codeThemeMode === 'dark' ? accountSettings.darkTheme : accountSettings.lightTheme} onChange={onCodeThemeChange} /></div><label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label>{!gitPathHasIdentity && <p className="field-error" role="alert">GitHub 관리에서 저장 경로를 수정해야 설정을 저장할 수 있습니다.</p>}<button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy || targetBusy || !gitPathHasIdentity}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
+            <div className="setting-field"><TokenTemplateInput id="filename-template" label="다운로드 파일명" maxLength={160} tokens={FILENAME_TOKENS} value={accountSettings.downloadFilenameTemplate} onChange={downloadFilenameTemplate => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p></div><CodeThemePreview lightTheme={accountSettings.lightTheme} darkTheme={accountSettings.darkTheme} mode={codeThemeMode} onChange={onCodeThemeChange} />{!extensionRuntime() && <label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label>}{!gitPathHasIdentity && <p className="field-error" role="alert">GitHub 관리에서 저장 경로를 수정해야 설정을 저장할 수 있습니다.</p>}<button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy || targetBusy || !gitPathHasIdentity}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
           </article>}
           {section === 'github' && <article className="settings-card export-settings"><h2>GitHub 자동 커밋</h2>{settingsError && <p role="alert">{settingsError}</p>}<p>자동 커밋할 파일의 경로, 메시지와 주석을 지정합니다.</p>
             <label><input type="checkbox" checked={accountSettings.githubHeader} onChange={e => updateAccountSettings({ ...accountSettings, githubHeader: e.target.checked })} /> GitHub 커밋 시 문제 정보 주석 포함</label>
@@ -2169,7 +2148,7 @@ function SettingsView({
             {targetBusy && <div className="github-target-overlay" role="status" aria-live="assertive"><Icon name="sync" size={20} /><strong>{targetLoadingText}</strong><span>GitHub에서 안전하게 확인하고 있습니다.</span></div>}
           </article>}
         </div>
-        {section === 'settings' && <aside className="settings-sidebar"><article className="account-card"><span className="card-kicker">ACCOUNT</span>{user ? <><div className="account-large"><ProfileAvatar user={user} large /><div><strong>{displayUser(user)}</strong><span>@{user.githubLogin} · CodeArchive 계정</span></div></div><button className="wide-ghost-button" onClick={onLogout}><Icon name="logout" size={14} /> 로그아웃</button></> : <><div className="account-logged-out"><div className="logged-out-icon"><Icon name="user" size={18} /></div><strong>로그인이 필요합니다</strong><span>내 풀이를 저장하고 동기화하세요.</span></div><button className="primary-button wide" onClick={onLogin}>GitHub로 로그인 <Icon name="github" size={14} /></button></>}</article><article className="privacy-card"><Icon name="check" size={16} /><div><strong>데이터를 직접 통제하세요</strong><p>자동 동기화를 켜면 새 캡처가 안전한 릴레이로 전송됩니다. 끄면 수동 동기화만 사용합니다.</p></div></article></aside>}
+        {section === 'settings' && <aside className="settings-sidebar"><article className="account-card"><span className="card-kicker">ACCOUNT</span>{user ? <><div className="account-large"><ProfileAvatar user={user} large /><div><strong>{displayUser(user)}</strong><span>@{user.githubLogin} · CodeArchive 계정</span></div></div><button className="wide-ghost-button" onClick={onLogout}><Icon name="logout" size={14} /> 로그아웃</button></> : <><div className="account-logged-out"><div className="logged-out-icon"><Icon name="user" size={18} /></div><strong>로그인이 필요합니다</strong><span>내 풀이를 저장하고 동기화하세요.</span></div><button className="primary-button wide" onClick={onLogin}>GitHub로 로그인 <Icon name="github" size={14} /></button></>}</article><article className="privacy-card"><Icon name="check" size={16} /><div><strong>데이터를 직접 통제하세요</strong><p>로그인 후 새 정답 제출은 자동 동기화됩니다. 과거에 수집한 풀이는 일괄 동기화 탭에서 직접 전송합니다.</p></div></article></aside>}
       </div>
     </section>
   )

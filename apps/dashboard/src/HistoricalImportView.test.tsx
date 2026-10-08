@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { HistoricalImportView, selectHistoricalSubmissionIds } from './HistoricalImportView'
+import { HistoricalCollectionView } from './HistoricalCollectionView'
 import type { Capture, Platform } from './types'
 
 const mocks = vi.hoisted(() => ({ bridge: vi.fn(), me: vi.fn(), ids: vi.fn(), upload: vi.fn() }))
@@ -31,12 +32,46 @@ it('preserves deterministic same-problem selection', () => {
   const rows = [{ submissionId: '3', problemNumber: '1', executionTime: 30 }, { submissionId: '2', problemNumber: '1', executionTime: 10 }]
   expect(selectHistoricalSubmissionIds(rows, 'fastest')).toEqual(['2'])
 })
+
+it('syncs exactly the completed collection scope and opens commit confirmation only after acceptance', async () => {
+  const chosen = capture(2, 'SWEA'), outside = capture(3, 'PROGRAMMERS')
+  setup([capture(1), chosen, outside])
+  const onCommitReady = vi.fn()
+  render(<HistoricalImportView {...props} selectionScope={{ batchId: 'SWEA:123', platform: 'SWEA', submissionIds: [chosen.historicalSubmissionId!] }} onCommitReady={onCommitReady} />)
+  await waitFor(() => expect((screen.getByRole('button', { name: '일괄 GitHub 커밋' }) as HTMLButtonElement).disabled).toBe(false))
+  fireEvent.click(screen.getByRole('button', { name: '일괄 GitHub 커밋' }))
+  await waitFor(() => expect(onCommitReady).toHaveBeenCalledOnce())
+  expect(mocks.upload.mock.calls[0][0].map((record: Capture) => record.captureId)).toEqual([chosen.captureId])
+  expect(screen.queryByText(/문제3/)).toBeNull()
+})
+
+it('does not advance to GitHub when any selected upload is rejected', async () => {
+  const chosen = capture(1)
+  setup([chosen]); mocks.upload.mockResolvedValue({ acceptedCaptureIds: [], failures: [] })
+  const onCommitReady = vi.fn()
+  render(<HistoricalImportView {...props} selectionScope={{ batchId: 'JUNGOL:123', platform: 'JUNGOL', submissionIds: ['1'] }} onCommitReady={onCommitReady} />)
+  await waitFor(() => expect((screen.getByRole('button', { name: '일괄 GitHub 커밋' }) as HTMLButtonElement).disabled).toBe(false))
+  fireEvent.click(screen.getByRole('button', { name: '일괄 GitHub 커밋' }))
+  await screen.findByText(/실패 1건/)
+  expect(onCommitReady).not.toHaveBeenCalled()
+})
+it('reuses confirmed server submissions for the scoped commit without reuploading them', async () => {
+  setup([capture(1)]); mocks.ids.mockImplementation((_account, platform) => Promise.resolve(platform === 'JUNGOL' ? ['1'] : []))
+  const onCommitReady = vi.fn()
+  render(<HistoricalImportView {...props} selectionScope={{ batchId: 'JUNGOL:123', platform: 'JUNGOL', submissionIds: ['1'] }} onCommitReady={onCommitReady} />)
+  await waitFor(() => expect((screen.getByRole('button', { name: '일괄 GitHub 커밋' }) as HTMLButtonElement).disabled).toBe(false))
+  fireEvent.click(screen.getByRole('button', { name: '일괄 GitHub 커밋' }))
+  await waitFor(() => expect(onCommitReady).toHaveBeenCalledOnce())
+  expect(mocks.upload).not.toHaveBeenCalled()
+  expect(mocks.me).toHaveBeenCalled()
+})
 it('lists all platforms without login and does not expose code or upload', async () => {
   setup([capture(1), capture(2, 'SWEA'), capture(3, 'PROGRAMMERS')])
   render(<HistoricalImportView {...props} user={null} mode="local" />)
   expect(await screen.findByText('로컬 문제 3건 · 제출 3건 · 서버 기록 미확인')).toBeTruthy()
   expect(screen.queryByText('private source')).toBeNull(); expect(mocks.ids).not.toHaveBeenCalled(); expect(mocks.upload).not.toHaveBeenCalled()
-  fireEvent.click(screen.getByRole('button', { name: '과거 풀이 수집 열기' }))
+  render(<HistoricalCollectionView extensionId="extension" capability="cap" supported />)
+  fireEvent.click(screen.getByRole('button', { name: '수집 화면 열기' }))
   await waitFor(() => expect(mocks.bridge).toHaveBeenCalledWith('extension', { type: 'OPEN_HISTORY', capability: 'cap' }))
 })
 it('syncs all three platforms and ACKs only server accepted captures', async () => {
@@ -103,3 +138,37 @@ it('cancellation acknowledges in-flight success and prevents the next batch', as
   await act(async () => { resolve({ acceptedCaptureIds: captures.slice(0, 50).map(record => record.captureId), failures: [] }) })
   await screen.findByText('동기화 중단 · 문제 50건 · 제출 50건'); expect(mocks.upload).toHaveBeenCalledTimes(1)
 })
+
+it('uploads verified enrichment even when the native submission already exists remotely', async () => {
+  const record = { ...capture(1, 'SWEA'), metadataPending: true, metadataRevision: 1 }; setup([record]); mocks.ids.mockResolvedValue([record.historicalSubmissionId]);
+  render(<HistoricalImportView {...props} />); await start(1);
+  await screen.findByText('동기화 완료 · 문제 1건 · 제출 1건');
+  expect(mocks.upload.mock.calls[0][0][0].metadataPending).toBe(true);
+  expect(mocks.bridge.mock.calls.find(([,message]) => message.type === 'ACK')![1].captureRevisions).toEqual([{ captureId: record.captureId, revision: 1 }]);
+  expect(mocks.bridge.mock.calls.filter(([, message]) => message.type === 'ACK')).toHaveLength(1);
+});
+it('retains failed enrichment without acknowledging it as synchronized', async () => {
+  const record = { ...capture(1, 'SWEA'), metadataPending: true, metadataRevision: 1 }; setup([record]); mocks.ids.mockResolvedValue([record.historicalSubmissionId]);
+  mocks.upload.mockResolvedValue({ acceptedCaptureIds: [], failures: [] });
+  render(<HistoricalImportView {...props} />); await start(1);
+  await screen.findByText(/실패 1건/);
+  expect(mocks.bridge.mock.calls.filter(([, message]) => message.type === 'ACK')).toHaveLength(0);
+});
+
+it('does not ACK native-ID membership discovered after selection without bulk acceptance', async () => {
+  const record = capture(1, 'SWEA'); setup([record]);
+  let sweaReads = 0; mocks.ids.mockImplementation((_account, platform) => Promise.resolve(platform === 'SWEA' && ++sweaReads > 1 ? [record.historicalSubmissionId] : []));
+  mocks.upload.mockResolvedValue({ acceptedCaptureIds: [], failures: [] });
+  render(<HistoricalImportView {...props} />); await start(1);
+  await screen.findByText(/실패 1건/);
+  expect(mocks.upload).toHaveBeenCalledTimes(1);
+  expect(mocks.bridge.mock.calls.filter(([,message]) => message.type === 'ACK')).toHaveLength(0);
+});
+it('retains enrichment selection when the uploaded revision is stale at ACK time', async () => {
+  const record = { ...capture(1, 'SWEA'), metadataPending: true, metadataRevision: 1 }; setup([record]);
+  const original = mocks.bridge.getMockImplementation()!;
+  mocks.bridge.mockImplementation((id,message) => message.type === 'ACK' ? Promise.resolve({ error: 'STALE_CONFIGURATION' }) : original(id,message));
+  render(<HistoricalImportView {...props} />); await start(1);
+  await screen.findByText(/로컬 동기화 표시를 확인하지 못했습니다/);
+  expect(screen.getByRole('button', { name: '선택한 1건 일괄 동기화' })).toBeTruthy();
+});

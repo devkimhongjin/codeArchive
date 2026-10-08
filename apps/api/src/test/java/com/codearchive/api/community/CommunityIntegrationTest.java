@@ -49,7 +49,10 @@ class CommunityIntegrationTest {
     @Autowired com.codearchive.api.solution.SolutionService captureService;
     @Autowired com.fasterxml.jackson.databind.ObjectMapper mapper;
 
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
+    @org.junit.jupiter.api.AfterEach void cleanInteractions() { jdbc.update("delete from community_comments"); jdbc.update("delete from community_likes"); }
     @BeforeEach void clear() {
+        cleanInteractions();
         commitJobs.deleteAll();
         relayGrants.deleteAll();
         requestLimits.deleteAll();
@@ -114,9 +117,10 @@ class CommunityIntegrationTest {
         mvc.perform(get("/api/community/solutions").with(login("2002"))
                 .header("X-CodeArchive-Github-Id", "2002")
                 .param("platform", "SWEA").param("problemNumber", "1234").param("languageKey", "java"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.total", is(1)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.total", is(2)))
                 .andExpect(jsonPath("$.items[0].sourceCode").doesNotExist())
-                .andExpect(jsonPath("$.items[0].author.name", is("CodeArchive 사용자")))
+                .andExpect(jsonPath("$.items[0].author.name").doesNotExist())
+                .andExpect(jsonPath("$.items[0].author.nickname", is("닉네임 미설정")))
                 .andExpect(jsonPath("$.items[0].author.githubId").doesNotExist());
         mvc.perform(get("/api/community/solutions/{id}", aliceJava.getId()).with(login("2002"))
                 .header("X-CodeArchive-Github-Id", "2002"))
@@ -136,7 +140,7 @@ class CommunityIntegrationTest {
         mvc.perform(get("/api/community/solutions").with(login("2002"))
                 .header("X-CodeArchive-Github-Id", "2002")
                 .param("platform", "SWEA").param("problemNumber", "1234"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.total", is(0)));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.total", is(1)));
 
         unpublish("2002", bobOwn);
         mvc.perform(get("/api/community/solutions").with(login("2002"))
@@ -157,7 +161,7 @@ class CommunityIntegrationTest {
                 .header("X-CodeArchive-Github-Id", "3003")
                 .param("platform", "PROGRAMMERS").param("problemNumber", "42")
                 .param("page", "0").param("size", "1"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.total", is(2)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.total", is(3)))
                 .andExpect(jsonPath("$.hasMore", is(true))).andExpect(jsonPath("$.items.length()", is(1)));
         mvc.perform(get("/api/community/solutions").with(login("3003"))
                 .header("X-CodeArchive-Github-Id", "3003")
@@ -198,6 +202,137 @@ class CommunityIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON).content("{\"visibility\":\"published\"}"))
                 .andExpect(status().isTooManyRequests());
         org.assertj.core.api.Assertions.assertThat(solutions.findById(answer.getId()).orElseThrow().getPublishedAt()).isNull();
+    }
+
+    @Autowired CommunityService community;
+
+    @Test void summarySortsAcrossPageBoundariesNormalizesUnitsAndIncludesOwnWithoutIdentityLeak() throws Exception {
+        AppUser alice = account("8001"), bob = account("8002");
+        Solution own = measured(alice, "1", "한", "2026-01-03T00:00:00Z", "5", "2", "KB");
+        Solution first = measured(bob, "1", "A", "2026-01-01T00:00:00Z", "1", "1", "KB");
+        Solution second = measured(bob, "1", "B", "2026-01-02T00:00:00Z", "1", "1", "KiB");
+        Solution missing = measured(bob, "1", "C", "2026-01-04T00:00:00Z", null, "1", "UNKNOWN");
+        for (var item : java.util.List.of(own, first, second, missing)) { item.setPublished(true, Instant.now()); solutions.saveAndFlush(item); }
+        var submitted = community.list(alice.getId(), Platform.SWEA, "1", null, "submitted", 0, 20);
+        org.assertj.core.api.Assertions.assertThat(submitted.items()).extracting(CommunityService.SharedSummary::id)
+            .containsExactly(missing.getId(), own.getId(), second.getId(), first.getId());
+        var execution = community.list(alice.getId(), Platform.SWEA, "1", null, "execution", 0, 2);
+        org.assertj.core.api.Assertions.assertThat(execution.items()).extracting(CommunityService.SharedSummary::id)
+            .containsExactly(second.getId(), first.getId());
+        org.assertj.core.api.Assertions.assertThat(execution.total()).isEqualTo(4);
+        org.assertj.core.api.Assertions.assertThat(community.list(alice.getId(), Platform.SWEA, "1", null, "execution", 1, 2).items())
+            .extracting(CommunityService.SharedSummary::id).containsExactly(own.getId(), missing.getId());
+        var memory = community.list(alice.getId(), Platform.SWEA, "1", "java", "memory", 0, 20);
+        org.assertj.core.api.Assertions.assertThat(memory.items()).extracting(CommunityService.SharedSummary::id)
+            .containsExactly(first.getId(), second.getId(), own.getId(), missing.getId());
+        org.assertj.core.api.Assertions.assertThat(memory.items().get(2).mine()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(memory.items().get(2).codeLength()).isEqualTo(3);
+        mvc.perform(get("/api/community/solutions/{id}", own.getId()).with(login("8001"))
+            .header("X-CodeArchive-Github-Id", "8001")).andExpect(status().isOk())
+            .andExpect(jsonPath("$.mine", is(true))).andExpect(jsonPath("$.author.name").doesNotExist())
+            .andExpect(jsonPath("$.author.githubLogin").doesNotExist());
+        mvc.perform(get("/api/community/solutions").with(login("8001")).header("X-CodeArchive-Github-Id", "8001")
+            .param("platform", "SWEA").param("problemNumber", "1").param("sort", "source_code"))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test void likesAreIdempotentEvenForConcurrentRequestsAndRevocationHidesCounts() throws Exception {
+        AppUser alice = account("8101"), bob = account("8102");
+        Solution target = solution(alice, Platform.SWEA, "1", "Java", "A");
+        Solution own = solution(bob, Platform.SWEA, "1", "Java", "B");
+        publish("8101", target); publish("8102", own);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var one = pool.submit(() -> community.like(bob.getId(), target.getId(), true));
+            var two = pool.submit(() -> community.like(bob.getId(), target.getId(), true));
+            org.assertj.core.api.Assertions.assertThat(one.get(10, java.util.concurrent.TimeUnit.SECONDS).likeCount()).isEqualTo(1);
+            org.assertj.core.api.Assertions.assertThat(two.get(10, java.util.concurrent.TimeUnit.SECONDS).likeCount()).isEqualTo(1);
+        } finally { pool.shutdownNow(); }
+        org.assertj.core.api.Assertions.assertThat(community.list(bob.getId(), Platform.SWEA, "1", null, "likes", 0, 1).items().get(0).id())
+            .isEqualTo(target.getId());
+        mvc.perform(put("/api/community/solutions/{id}/like", target.getId()).with(login("8102"))
+            .header("X-CodeArchive-Github-Id", "8102").contentType(MediaType.APPLICATION_JSON).content("{\"liked\":false}"))
+            .andExpect(status().isForbidden());
+        mvc.perform(put("/api/community/solutions/{id}/like", target.getId()).with(login("8102")).with(csrf().asHeader())
+            .header("X-CodeArchive-Github-Id", "999").contentType(MediaType.APPLICATION_JSON).content("{\"liked\":false}"))
+            .andExpect(status().isConflict());
+        org.assertj.core.api.Assertions.assertThat(community.like(bob.getId(), target.getId(), false).likeCount()).isZero();
+        org.assertj.core.api.Assertions.assertThat(community.like(bob.getId(), target.getId(), false).likeCount()).isZero();
+        unpublish("8102", own);
+        mvc.perform(get("/api/community/solutions/{id}/comments", target.getId()).with(login("8102"))
+            .header("X-CodeArchive-Github-Id", "8102")).andExpect(status().isNotFound());
+        mvc.perform(put("/api/community/solutions/{id}/like", target.getId()).with(login("8102")).with(csrf().asHeader())
+            .header("X-CodeArchive-Github-Id", "8102").contentType(MediaType.APPLICATION_JSON).content("{\"liked\":true}"))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test void commentsAreBoundedPaginatedAndOnlyAuthorCanChangeWhilePublic() throws Exception {
+        AppUser alice = account("8201"), bob = account("8202");
+        Solution target = solution(alice, Platform.SWEA, "1", "Java", "A");
+        Solution own = solution(bob, Platform.SWEA, "1", "Java", "B");
+        publish("8201", target); publish("8202", own);
+        mvc.perform(post("/api/community/solutions/{id}/comments", target.getId()).with(login("8202")).with(csrf().asHeader())
+            .header("X-CodeArchive-Github-Id", "8202").contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"<script>alert(1)</script>\"}"))
+            .andExpect(status().isOk());
+        var comments = community.comments(bob.getId(), target.getId(), 0, 1);
+        long comment = comments.items().get(0).id();
+        org.assertj.core.api.Assertions.assertThat(comments.items().get(0).body()).isEqualTo("<script>alert(1)</script>");
+        org.assertj.core.api.Assertions.assertThat(comments.items().get(0).mine()).isTrue();
+        mvc.perform(put("/api/community/solutions/{id}/comments/{comment}", target.getId(), comment).with(login("8201")).with(csrf().asHeader())
+            .header("X-CodeArchive-Github-Id", "8201").contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"tamper\"}"))
+            .andExpect(status().isNotFound());
+        community.comment(bob.getId(), target.getId(), comment, "edited", false);
+        community.comment(bob.getId(), target.getId(), null, "second", false);
+        org.assertj.core.api.Assertions.assertThat(community.comments(alice.getId(), target.getId(), 0, 1).hasMore()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(community.comments(alice.getId(), target.getId(), 1, 1).items().get(0).mine()).isFalse();
+        mvc.perform(post("/api/community/solutions/{id}/comments", target.getId()).with(login("8202")).with(csrf().asHeader())
+            .header("X-CodeArchive-Github-Id", "8202").contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of("body", "x".repeat(2001)))))
+            .andExpect(status().isBadRequest());
+        community.comment(bob.getId(), target.getId(), comment, null, true);
+        org.assertj.core.api.Assertions.assertThat(community.comments(bob.getId(), target.getId(), 0, 20).total()).isEqualTo(1);
+        unpublish("8201", target);
+        mvc.perform(get("/api/community/solutions/{id}/comments", target.getId()).with(login("8202"))
+            .header("X-CodeArchive-Github-Id", "8202")).andExpect(status().isNotFound());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> community.comment(bob.getId(), target.getId(), null, "hidden", false))
+            .isInstanceOf(java.util.NoSuchElementException.class);
+    }
+
+    @Test void duplicatePublicationSettingReconcilesExistingAndNewCapturesAndPreservesOlderClients() throws Exception {
+        AppUser owner = account("8301"), other = account("8302");
+        Solution slow = measured(owner, "1234", "x", "2026-01-03T00:00:00Z", "20", "1", "MiB");
+        Solution fast = measured(owner, "1234", "longer", "2026-01-02T00:00:00Z", "5", "1", "MB");
+        Solution unknown = measured(owner, "1234", "?", "2026-01-04T00:00:00Z", null, "1", "UNKNOWN");
+        Solution otherPrivate = solution(other, Platform.SWEA, "1234", "Java", "private");
+        policy("8301", "execution");
+        org.assertj.core.api.Assertions.assertThat(solutions.findPublishedProblemsForOwner(owner.getId())).hasSize(1);
+        org.assertj.core.api.Assertions.assertThat(solutions.findById(fast.getId()).orElseThrow().isPublished()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(solutions.findById(slow.getId()).orElseThrow().isPublished()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(solutions.findById(unknown.getId()).orElseThrow().isPublished()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(solutions.findById(otherPrivate.getId()).orElseThrow().isPublished()).isFalse();
+        var next = capture(false); next.setExecutionTime(new java.math.BigDecimal("1"));
+        Solution newest = captureService.upsert("8301", next);
+        org.assertj.core.api.Assertions.assertThat(newest.isPublished()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(solutions.findById(fast.getId()).orElseThrow().isPublished()).isFalse();
+        var older = setting("8301"); older.remove("communityDuplicateVisibility");
+        saveSetting("8301", older).andExpect(status().isOk()).andExpect(jsonPath("$.communityDuplicateVisibility", is("execution")));
+        policy("8301", "memory");
+        org.assertj.core.api.Assertions.assertThat(solutions.findById(fast.getId()).orElseThrow().isPublished()).isTrue();
+        policy("8301", "length");
+        org.assertj.core.api.Assertions.assertThat(solutions.findById(unknown.getId()).orElseThrow().isPublished()).isTrue();
+        policy("8301", "all");
+        org.assertj.core.api.Assertions.assertThat(solutions.countByUserIdAndResultAndPublishedAtIsNotNull(owner.getId(), "ACCEPTED")).isEqualTo(4);
+        var invalid = setting("8301"); invalid.put("communityDuplicateVisibility", "id");
+        saveSetting("8301", invalid).andExpect(status().isBadRequest());
+    }
+    private void policy(String account, String policy) throws Exception {
+        var request = setting(account); request.put("communityDuplicateVisibility", policy);
+        saveSetting(account, request).andExpect(status().isOk()).andExpect(jsonPath("$.communityDuplicateVisibility", is(policy)));
+    }
+    private Solution measured(AppUser owner, String problem, String source, String time, String execution, String memory, String unit) {
+        var solution = new Solution(owner, UUID.randomUUID().toString(), Platform.SWEA, problem, "Synthetic", "https://example.test/problem",
+            "Java", source, "ACCEPTED", Instant.parse(time), Instant.parse(time), execution == null ? null : new java.math.BigDecimal(execution), null);
+        solution.setMemoryMeasurement(memory == null ? null : new java.math.BigDecimal(memory), unit);
+        return solutions.saveAndFlush(solution);
     }
 
     private AppUser account(String id) {

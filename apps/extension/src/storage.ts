@@ -1,3 +1,4 @@
+import { normalizeDifficulty } from '../../../shared/difficulty';
 import { DEFAULT_CAPTURE_SETTINGS, type Capture, type CaptureSettings, type Platform, type SyncState } from "./types";
 import type { SweaProblemContext } from "./sweaProblemContext";
 import { canonicalLanguageKey } from "../../../shared/language";
@@ -12,8 +13,20 @@ export const SWEA_PROBLEM_CONTEXT_STORE_NAME = "sweaProblemContexts";
 const CAPTURE_IDENTITY_INDEX_NAME = "byProblemLanguage";
 const SETTINGS_KEY = "settings";
 
+export type CaptureWriteResult = { created: boolean; reconciliation?: "matched" | "enrichment_available" | "ambiguous"; captureId?: string };
+function verifiedHistoricalEnrichment(existing: Capture, incoming: Capture): { result: CaptureWriteResult; capture?: Capture } {
+  if (existing.platform !== incoming.platform || existing.problemNumber !== incoming.problemNumber || canonicalLanguageKey(existing.language) !== canonicalLanguageKey(incoming.language) || existing.solvedAt !== incoming.solvedAt || existing.sourceCode !== incoming.sourceCode) return { result: { created: false, reconciliation: "ambiguous" } };
+  const patch: Partial<Capture> = {};
+  if (existing.executionTime === undefined && incoming.executionTime !== undefined) patch.executionTime = incoming.executionTime;
+  if (existing.memoryValue === undefined && incoming.memoryValue !== undefined) { patch.memoryValue = incoming.memoryValue; patch.memoryUnit = incoming.memoryUnit; }
+  const difficulty = normalizeDifficulty(existing.platform, existing.problemNumber, existing.problemUrl, incoming.difficulty);
+  if (!existing.difficulty && difficulty) patch.difficulty = difficulty;
+  if (!Object.keys(patch).length) return { result: { created: false } };
+  return { result: { created: false, reconciliation: "enrichment_available", captureId: existing.captureId }, capture: { ...existing, ...patch, syncState: "PENDING", metadataPending: true, metadataRevision: (existing.metadataRevision ?? 0) + 1 } };
+}
+
 export interface CaptureStore {
-  putCapture(capture: Capture): Promise<{ created: boolean }>;
+  putCapture(capture: Capture): Promise<CaptureWriteResult>;
   /** Returns retained captures, newest first. A limit is useful for small UI previews. */
   listAll(limit?: number): Promise<Capture[]>;
   /** Historical imports are kept separate from the normal recent-capture preview. */
@@ -24,7 +37,7 @@ export interface CaptureStore {
   getCapture(captureId: string): Promise<Capture | null>;
   listPending(excludedCaptureIds?: Iterable<string>, limit?: number): Promise<Capture[]>;
   countPending(): Promise<number>;
-  markSynced(captureIds: Iterable<string>): Promise<string[]>;
+  markSynced(captureIds: Iterable<string>, expectedRevisions?: ReadonlyMap<string, number>): Promise<string[]>;
   getSettings(): Promise<CaptureSettings>;
   updateSettings(patch: Partial<CaptureSettings>): Promise<CaptureSettings>;
   /** Serialized atomic read/modify/write for settings-bearing background work. */
@@ -87,6 +100,7 @@ function sortNewestFirst(left: Capture, right: Capture): number {
 }
 
 function hasSameSubmittedCode(left: Capture, right: Capture): boolean {
+  if (left.syncAccountId !== right.syncAccountId) return false;
   // A historical submission has its own site identity. The "all submissions"
   // choice must retain two accepted attempts even when they contain the same code.
   if ((left.historicalImport === true && left.historicalSubmissionId) ||
@@ -164,7 +178,7 @@ export class IndexedDbCaptureStore implements CaptureStore {
     this.indexedDb = indexedDb;
   }
 
-  async putCapture(capture: Capture): Promise<{ created: boolean }> {
+  async putCapture(capture: Capture): Promise<CaptureWriteResult> {
     const database = await this.open();
     const transaction = database.transaction(CAPTURE_STORE_NAME, "readwrite");
     const store = transaction.objectStore(CAPTURE_STORE_NAME);
@@ -177,6 +191,12 @@ export class IndexedDbCaptureStore implements CaptureStore {
     // labels, so scan retained local records to prevent Java/JAVA aliases from
     // bypassing identical-code suppression.
     const retained = await requestResult(store.getAll());
+    const sameHistorical = (retained as StoredCapture[]).filter(stored => hasSameHistoricalSubmission(stored, capture));
+    if (sameHistorical.length) {
+      const enrichment = sameHistorical.length === 1 ? verifiedHistoricalEnrichment(sameHistorical[0]!, capture) : { result: { created: false, reconciliation: "ambiguous" as const } };
+      if (enrichment.capture) { store.put(enrichment.capture); await transactionComplete(transaction); } else transaction.abort();
+      return enrichment.result;
+    }
     if ((retained as StoredCapture[]).some(stored =>
       hasSameHistoricalSubmission(stored, capture) || hasSameSubmittedCode(stored, capture))) {
       transaction.abort();
@@ -254,7 +274,7 @@ export class IndexedDbCaptureStore implements CaptureStore {
     return (values as StoredCapture[]).filter(capture => capture.historicalImport !== true).length;
   }
 
-  async markSynced(captureIds: Iterable<string>): Promise<string[]> {
+  async markSynced(captureIds: Iterable<string>, expectedRevisions?: ReadonlyMap<string, number>): Promise<string[]> {
     const ids = [...new Set(captureIds)];
     if (ids.length === 0) return [];
     const database = await this.open();
@@ -263,10 +283,11 @@ export class IndexedDbCaptureStore implements CaptureStore {
     const synced: string[] = [];
     for (const captureId of ids) {
       const existing = (await requestResult(store.get(captureId))) as StoredCapture | undefined;
-      if (!existing || existing.syncState !== "PENDING") continue;
+      if (!existing || expectedRevisions && expectedRevisions.get(captureId) !== (existing.metadataRevision ?? 0)) continue;
+      if (existing.syncState !== "PENDING") { if (expectedRevisions && existing.syncState === "SYNCED") synced.push(captureId); continue; }
       const updated: StoredCapture = {
         ...existing,
-        syncState: "SYNCED",
+        syncState: "SYNCED", metadataPending: false,
         syncedAt: new Date().toISOString()
       };
       store.put(updated);
@@ -376,8 +397,14 @@ export class MemoryCaptureStore implements CaptureStore {
   private settings: CaptureSettings = { ...DEFAULT_CAPTURE_SETTINGS };
   private settingsSerial: Promise<void> = Promise.resolve();
 
-  async putCapture(capture: Capture): Promise<{ created: boolean }> {
+  async putCapture(capture: Capture): Promise<CaptureWriteResult> {
     if (this.captures.has(capture.captureId)) return { created: false };
+    const sameHistorical = [...this.captures.values()].filter(stored => hasSameHistoricalSubmission(stored, capture));
+    if (sameHistorical.length) {
+      const enrichment = sameHistorical.length === 1 ? verifiedHistoricalEnrichment(sameHistorical[0]!, capture) : { result: { created: false, reconciliation: "ambiguous" as const } };
+      if (enrichment.capture) this.captures.set(enrichment.capture.captureId, structuredClone(enrichment.capture));
+      return enrichment.result;
+    }
     if ([...this.captures.values()].some(stored =>
       hasSameHistoricalSubmission(stored, capture) || hasSameSubmittedCode(stored, capture))) return { created: false };
     this.captures.set(capture.captureId, structuredClone(capture));
@@ -426,12 +453,14 @@ export class MemoryCaptureStore implements CaptureStore {
     return [...this.captures.values()].filter((capture) => capture.syncState === "PENDING" && capture.historicalImport !== true).length;
   }
 
-  async markSynced(captureIds: Iterable<string>): Promise<string[]> {
+  async markSynced(captureIds: Iterable<string>, expectedRevisions?: ReadonlyMap<string, number>): Promise<string[]> {
     const synced: string[] = [];
     for (const captureId of new Set(captureIds)) {
       const capture = this.captures.get(captureId);
-      if (!capture || capture.syncState !== "PENDING") continue;
+      if (!capture || expectedRevisions && expectedRevisions.get(captureId) !== (capture.metadataRevision ?? 0)) continue;
+      if (capture.syncState !== "PENDING") { if (expectedRevisions && capture.syncState === "SYNCED") synced.push(captureId); continue; }
       capture.syncState = "SYNCED";
+      capture.metadataPending = false;
       capture.syncedAt = new Date().toISOString();
       synced.push(captureId);
     }

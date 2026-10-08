@@ -374,3 +374,22 @@ test("older same-account bridge configuration cannot overwrite a newer relay set
   assert.equal(settings.accountSettingsVersion, 8); assert.equal(settings.autoSyncEnabled, true); assert.equal(settings.relay?.secret, "new-secret");
   assert.equal(configuredCount, 1);
 });
+
+test('ACK is bound to the issued metadata revision even if a newer snapshot is issued before ACK', async () => {
+  const store = new MemoryCaptureStore();
+  const base = createCapture({ captureId: '11111111-1111-4111-8111-111111111111', platform: 'SWEA', problemNumber: '123', title: 'Test', problemUrl: 'https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=OwnProblem', language: 'JAVA', sourceCode: 'class Main {}', result: 'ACCEPTED', solvedAt: '2026-01-02T03:04:05Z', historicalImport: true, historicalSubmissionId: 'OwnSubmission' })!;
+  await store.putCapture(base);
+  const bridge = new DashboardBridge(store); const session = await bridge.handleMessage({ type: 'CONNECT' }, sender());
+  assert.ok('capability' in session); const capability = session.capability;
+  const issue = () => bridge.handleMessage({ type: 'GET_HISTORICAL_BY_SUBMISSION_IDS', capability, platform: 'SWEA', submissionIds: ['OwnSubmission'] }, sender());
+  await issue();
+  await store.putCapture({ ...base, captureId: crypto.randomUUID(), executionTime: 10 });
+  await issue();
+  const ack = (revision?: number) => bridge.handleMessage({ type: 'ACK', capability, captureIds: [base.captureId], ...(revision === undefined ? {} : { captureRevisions: [{ captureId: base.captureId, revision }] }) }, sender());
+  assert.deepEqual(await ack(0), { error: 'STALE_CONFIGURATION' });
+  assert.deepEqual(await ack(), { error: 'STALE_CONFIGURATION' });
+  assert.deepEqual(await ack(2), { error: 'BAD_REQUEST' });
+  assert.equal((await store.getCapture(base.captureId))!.metadataPending, true);
+  assert.deepEqual(await ack(1), { ok: true });
+  assert.equal((await store.getCapture(base.captureId))!.syncState, 'SYNCED');
+});

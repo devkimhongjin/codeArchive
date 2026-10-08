@@ -4,6 +4,6 @@ public interface GithubCommitJobRepository extends JpaRepository<GithubCommitJob
  Optional<GithubCommitJob> findByUserIdAndCaptureId(Long userId,String captureId);
  List<GithubCommitJob> findByUserIdAndCaptureIdIn(Long userId,Collection<String> captureIds);
  List<GithubCommitJob> findTop25ByStateOrderByCreatedAtAsc(CommitJobState state);
- List<GithubCommitJob> findTop25ByStateAndUpdatedAtBeforeOrderByCreatedAtAsc(CommitJobState state,Instant cutoff);
+ @Lock(LockModeType.PESSIMISTIC_WRITE) List<GithubCommitJob> findTop25ByStateAndUpdatedAtBeforeOrderByCreatedAtAsc(CommitJobState state,Instant cutoff);
  @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select job from GithubCommitJob job where job.id=?1") Optional<GithubCommitJob> findByIdForClaim(Long id);
 }

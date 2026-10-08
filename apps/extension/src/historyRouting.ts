@@ -3,6 +3,20 @@ import { isJungolHistoryPath, isJungolHistorySenderUrl } from "./historicalJungo
 
 export type LocalHistoryCommand = "LOCAL_HISTORY_SCAN_START" | "LOCAL_HISTORY_STATUS" | "LOCAL_HISTORY_IMPORT_START" | "LOCAL_HISTORY_CANCEL";
 
+/** Only the packaged history page, top-level or inside our dashboard, owns local collection. */
+export function isLocalHistoryPageSender(sender: { id?: string; frameId?: number; url?: string; tab?: { id?: number; url?: string } }, extensionId: string): boolean {
+  if (sender.id !== extensionId || !Number.isInteger(sender.frameId) || sender.frameId! < 0 || !sender.url) return false;
+  const ownPage = (value: string, path: string) => {
+    const url = new URL(value);
+    return url.protocol === 'chrome-extension:' && url.hostname === extensionId && url.pathname === path;
+  };
+  try {
+    if (!ownPage(sender.url, '/history.html')) return false;
+    if (sender.frameId === 0) return true;
+    return Number.isInteger(sender.tab?.id) && sender.tab!.id! >= 0 && !!sender.tab?.url && ownPage(sender.tab.url, '/dashboard.html');
+  } catch { return false; }
+}
+
 export function historyPlatformForUrl(value: string | URL): Platform | null {
   try {
     const url = value instanceof URL ? value : new URL(value);

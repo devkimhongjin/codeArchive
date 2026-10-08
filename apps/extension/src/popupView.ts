@@ -1,290 +1,166 @@
-import type { Capture } from "./types";
-import type { GithubCommitStatus } from "./relay";
-import { canonicalLanguageDisplayName } from "../../../shared/language";
-import { formatCaptureMemory, formatExecutionTime, formatSolutionTime } from "./capturePresentation";
-import { buildLabel, updatedLabel } from "../../../shared/buildMetadata";
-import { activeSubmissionProgress, type SubmissionProgress } from "./submissionProgress";
-
-type CapturePreview = Omit<Capture, "sourceCode"> & { githubCommitStatus?: GithubCommitStatus };
-
+import type { Capture } from './types';
+import type { GithubCommitStatus } from './relay';
+import { canonicalLanguageDisplayName } from '../../../shared/language';
+import { formatCaptureMemory, formatExecutionTime, formatSolutionTime } from './capturePresentation';
+import { buildLabel, updatedLabel } from '../../../shared/buildMetadata';
+import type { GithubToggleRequest, GithubToggleResult } from './popupGithubAutomation';
+type Preview = Omit<Capture, 'sourceCode'> & { githubCommitStatus?: GithubCommitStatus };
 interface PopupServices {
   load: () => Promise<unknown>;
   subscribeProgress?: (refresh: () => void) => void;
+  openDashboard?: (view: 'github') => void;
   copy: (text: string) => Promise<void>;
   copyCapture?: (captureId: string) => Promise<{ ok?: boolean; text?: string }>;
   downloadCapture?: (captureId: string) => Promise<{ ok?: boolean }>;
   loadGithubStatuses?: (captureIds: string[]) => Promise<{ statuses?: Record<string, GithubCommitStatus> }>;
   updateSettings?: (patch: Record<string, boolean>) => Promise<unknown>;
+  updateGithubAutomation?: (request: GithubToggleRequest) => Promise<GithubToggleResult>;
   retryRelay?: () => Promise<unknown>;
 }
-
-function asDisplayCapture(value: unknown): CapturePreview | null {
-  if (!value || typeof value !== "object") return null;
-  const candidate = value as Partial<Capture>;
-  if (
-    typeof candidate.captureId !== "string" ||
-    typeof candidate.platform !== "string" ||
-    (candidate.platform !== "SWEA" && candidate.platform !== "PROGRAMMERS" && candidate.platform !== "JUNGOL") ||
-    typeof candidate.problemNumber !== "string" ||
-    typeof candidate.title !== "string" ||
-    typeof candidate.problemUrl !== "string" ||
-    typeof candidate.language !== "string" ||
-    candidate.result !== "ACCEPTED" ||
-    (candidate.syncState !== "PENDING" && candidate.syncState !== "SYNCED") ||
-    typeof candidate.observedAt !== "string" ||
-    Number.isNaN(Date.parse(candidate.observedAt))
-  ) {
-    return null;
-  }
-  const githubCommitStatus = (value as { githubCommitStatus?: unknown }).githubCommitStatus;
-  if (githubCommitStatus !== undefined && !["NOT_REQUESTED", "PENDING", "RUNNING", "SUCCEEDED", "FAILED", "UNKNOWN"].includes(String(githubCommitStatus))) return null;
-  return candidate as CapturePreview;
+function asSynced(value: unknown): value is Preview {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Partial<Capture>;
+  return typeof item.captureId === 'string' && ['JUNGOL', 'SWEA', 'PROGRAMMERS'].includes(item.platform ?? '') &&
+    typeof item.problemNumber === 'string' && typeof item.title === 'string' && typeof item.language === 'string' &&
+    item.result === 'ACCEPTED' && item.syncState === 'SYNCED' && typeof item.observedAt === 'string' && !Number.isNaN(Date.parse(item.observedAt));
 }
-
-function appendCaptureTitle(document: Document, item: HTMLElement, capture: CapturePreview): void {
-  const title = document.createElement("a");
-  title.className = "recent-title";
-  title.href = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(capture.captureId)
-    ? `archive.html#${encodeURIComponent(capture.captureId)}`
-    : "archive.html";
-  title.target = "_blank";
-  title.rel = "noopener noreferrer";
-  title.textContent = `#${capture.problemNumber} · ${capture.title}`;
-  item.append(title);
-}
-
-function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement, captures: CapturePreview[], progress: SubmissionProgress[], services: PopupServices): void {
-  list.replaceChildren();
-  const entries = [
-    ...progress.map(item => ({ kind: "progress" as const, item })),
-    ...captures.map(item => ({ kind: "capture" as const, item }))
-  ].slice(0, 3);
-  empty.hidden = entries.length !== 0;
-  for (const entry of entries) {
-    if (entry.kind === "progress") {
-      const item = document.createElement("article");
-      item.className = "recent-item recent-progress";
-      item.setAttribute("aria-live", "polite");
-      const heading = document.createElement("div"); heading.className = "recent-item-heading";
-      const platform = document.createElement("span"); platform.className = "platform-label"; platform.textContent = entry.item.platform;
-      const phase = document.createElement("span"); phase.className = "sync-label progress-label";
-      phase.textContent = entry.item.phase === "SAVING" ? "저장 중" : "수집 중";
-      heading.append(platform, phase);
-      const title = document.createElement("p"); title.className = "recent-title";
-      title.textContent = `#${entry.item.problemNumber} · ${entry.item.title}`;
-      const help = document.createElement("p"); help.className = "recent-meta";
-      help.textContent = "판정과 로컬 저장을 확인하고 있어요.";
-      item.append(heading, title, help);
-      list.append(item);
-      continue;
+function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement, captures: Preview[]) {
+  list.replaceChildren(); empty.hidden = captures.length !== 0;
+  for (const capture of captures) {
+    const item = document.createElement('article'); item.className = 'recent-item';
+    const heading = document.createElement('div'); heading.className = 'recent-item-heading';
+    const platform = document.createElement('span'); platform.className = 'platform-label'; platform.textContent = capture.platform;
+    const sync = document.createElement('span'); sync.className = 'sync-label'; sync.textContent = '동기화됨'; heading.append(platform, sync);
+    const commit = capture.githubCommitStatus;
+    if (commit && ['NOT_REQUESTED', 'PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'UNKNOWN'].includes(commit)) {
+      const github = document.createElement('span'); github.className = `github-label github-${commit.toLowerCase()}`;
+      github.textContent = commit === 'SUCCEEDED' ? 'GitHub 완료' : commit === 'PENDING' ? '커밋 대기' : commit === 'RUNNING' ? '커밋 중' : commit === 'FAILED' ? '커밋 실패' : commit === 'UNKNOWN' ? '커밋 확인 필요' : '자동 커밋 안 함'; heading.append(github);
     }
-    const capture = entry.item;
-    const item = document.createElement("article");
-    item.className = "recent-item";
-
-    const heading = document.createElement("div");
-    heading.className = "recent-item-heading";
-    const platform = document.createElement("span");
-    platform.className = "platform-label";
-    platform.textContent = capture.platform;
-    const sync = document.createElement("span");
-    sync.className = "sync-label";
-    sync.textContent = capture.historicalImport === true ? capture.syncState === "SYNCED" ? "과거 풀이 · 서버 동기화됨" : "과거 풀이 · 로컬만" : capture.syncState === "SYNCED" ? "동기화됨" : "동기화 대기";
-    heading.append(platform, sync);
-    if (capture.githubCommitStatus) {
-      const github = document.createElement("span");
-      github.className = `github-label github-${capture.githubCommitStatus.toLowerCase()}`;
-      github.textContent = capture.githubCommitStatus === "SUCCEEDED" ? "GitHub 완료"
-        : capture.githubCommitStatus === "PENDING" ? "커밋 대기"
-          : capture.githubCommitStatus === "RUNNING" ? "커밋 중"
-            : capture.githubCommitStatus === "FAILED" ? "커밋 실패"
-              : capture.githubCommitStatus === "UNKNOWN" ? "커밋 확인 필요"
-                : "자동 커밋 안 함";
-      heading.append(github);
-    }
-    item.append(heading);
-
-    appendCaptureTitle(document, item, capture);
-    const metadata = document.createElement("p");
-    metadata.className = "recent-meta";
-    metadata.textContent = `${canonicalLanguageDisplayName(capture.language)} · 풀이 시간 ${formatSolutionTime(capture.solvedAt ?? capture.observedAt)}`;
-    item.append(metadata);
-    const performance = document.createElement("p");
-    performance.className = "recent-performance";
-    performance.textContent = `실행 시간 ${formatExecutionTime(capture.executionTime)} · 메모리 ${formatCaptureMemory(capture)}`;
-    item.append(performance);
-    const actions = document.createElement("div");
-    actions.className = "recent-actions";
-    const copy = document.createElement("button"); copy.type = "button"; copy.textContent = "복사"; copy.setAttribute("aria-label", `${capture.title} 코드 복사`);
-    copy.addEventListener("click", () => void services.copyCapture?.(capture.captureId).then(async response => {
-      if (response?.ok && typeof response.text === "string") { await services.copy(response.text); copy.textContent = "복사됨"; setTimeout(() => { copy.textContent = "복사"; }, 1200); }
-    }));
-    const download = document.createElement("button"); download.type = "button"; download.textContent = "다운로드"; download.setAttribute("aria-label", `${capture.title} 코드 다운로드`);
-    download.addEventListener("click", () => void services.downloadCapture?.(capture.captureId).then(response => {
-      if (response?.ok) { download.textContent = "완료"; setTimeout(() => { download.textContent = "다운로드"; }, 1200); }
-    }));
-    actions.append(copy, download); item.append(actions);
-    list.append(item);
+    const title = document.createElement('a'); title.className = 'recent-title'; title.href = 'dashboard.html'; title.target = '_blank'; title.rel = 'noopener noreferrer'; title.textContent = `#${capture.problemNumber} · ${capture.title}`;
+    const meta = document.createElement('p'); meta.className = 'recent-meta'; meta.textContent = `${canonicalLanguageDisplayName(capture.language)} · 풀이 시간 ${formatSolutionTime(capture.solvedAt ?? capture.observedAt)}`;
+    const performance = document.createElement('p'); performance.className = 'recent-performance'; performance.textContent = `실행 시간 ${formatExecutionTime(capture.executionTime)} · 메모리 ${formatCaptureMemory(capture)}`;
+    item.append(heading, title, meta, performance); list.append(item);
   }
 }
-
 export function mountPopup(document: Document, services: PopupServices): void {
-  const build = document.querySelector<HTMLElement>("#build-label");
-  const updated = document.querySelector<HTMLElement>("#updated-label");
-  if (build) build.textContent = buildLabel();
-  if (updated) updated.textContent = updatedLabel();
-  const count = document.querySelector<HTMLElement>("#pending-count")!;
-  const status = document.querySelector<HTMLElement>("#status")!;
-  const description = document.querySelector<HTMLElement>("#capture-description")!;
-  const error = document.querySelector<HTMLElement>("#error")!;
-  const card = document.querySelector<HTMLElement>("#capture-card")!;
-  const refresh = document.querySelector<HTMLButtonElement>("#refresh")!;
-  const recentCard = document.querySelector<HTMLElement>("#recent-card")!;
-  const recentCount = document.querySelector<HTMLElement>("#recent-count")!;
-  const recentList = document.querySelector<HTMLElement>("#recent-list")!;
-  const recentEmpty = document.querySelector<HTMLElement>("#recent-empty")!;
-  const recentError = document.querySelector<HTMLElement>("#recent-error")!;
-  const autoDownload = document.querySelector<HTMLInputElement>("#auto-download");
-  const autoSync = document.querySelector<HTMLInputElement>("#auto-sync");
-  const githubAuto = document.querySelector<HTMLInputElement>("#github-auto");
-  const automationStatus = document.querySelector<HTMLElement>("#automation-status");
-  const automationHelp = document.querySelector<HTMLElement>("#automation-help");
-  const retryRelay = document.querySelector<HTMLButtonElement>("#retry-relay");
-  let loading = false;
-  let retrying = false;
-  let loadGeneration = 0;
-  let reloadPending = false;
-
-  function resetRecent(): void {
-    recentList.replaceChildren();
-    recentCount.textContent = "확인 중";
-    recentEmpty.hidden = true;
-    recentError.hidden = true;
-    recentCard.setAttribute("aria-busy", "true");
-  }
-
-  async function load(): Promise<void> {
-    if (loading) return;
-    loading = true;
-    const generation = ++loadGeneration;
-    refresh.disabled = true;
-    error.hidden = true;
-    count.textContent = "—";
-    status.textContent = "확인 중";
-    description.textContent = "이 브라우저에 저장된 풀이를 확인하고 있어요.";
-    card.setAttribute("aria-busy", "true");
-    resetRecent();
+  const build = document.querySelector<HTMLElement>('#build-label'); if (build) build.textContent = buildLabel();
+  const updated = document.querySelector<HTMLElement>('#updated-label'); if (updated) updated.textContent = updatedLabel();
+  const error = document.querySelector<HTMLElement>('#error')!;
+  const recentCard = document.querySelector<HTMLElement>('#recent-card')!;
+  const recentCount = document.querySelector<HTMLElement>('#recent-count')!;
+  const recentList = document.querySelector<HTMLElement>('#recent-list')!;
+  const recentEmpty = document.querySelector<HTMLElement>('#recent-empty')!;
+  const recentError = document.querySelector<HTMLElement>('#recent-error')!;
+  const githubAuto = document.querySelector<HTMLInputElement>('#github-auto')!;
+  const automationStatus = document.querySelector<HTMLElement>('#automation-status')!;
+  const retryRelay = document.querySelector<HTMLButtonElement>('#retry-relay')!;
+  let loading = false, retrying = false, reloadPending = false, githubBusy = false;
+  let localReady = false;
+  let githubState: { githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; accountId?: string; accountSettingsVersion?: number } | undefined;
+  let toggleNotice = '';
+  let statusAccount: string | undefined;
+  let knownStatuses = new Map<string, GithubCommitStatus>();
+  let recentRenderKey: string | undefined;
+  let visibleCaptures: Preview[] = [];
+  let statusContext = '', statusEpoch = 0, statusInFlight = false, statusRefreshPending = false;
+  const showRecent = (captures: Preview[]) => {
+    const key = JSON.stringify(captures);
+    if (key === recentRenderKey) return;
+    recentRenderKey = key;
+    renderRecent(document, recentList, recentEmpty, captures);
+  };
+  const showCurrentRecent = () => showRecent(visibleCaptures.map(capture => ({ ...capture, githubCommitStatus: knownStatuses.get(capture.captureId) })));
+  async function refreshStatuses(): Promise<void> {
+    if (!services.loadGithubStatuses || !visibleCaptures.length || !localReady || githubBusy) return;
+    if (statusInFlight) { statusRefreshPending = true; return; }
+    const epoch = statusEpoch, ids = visibleCaptures.map(capture => capture.captureId);
+    statusInFlight = true;
     try {
-      const state = await services.load() as {
-        pendingCount?: unknown;
-        settings?: unknown;
-        recentCaptures?: unknown;
-        error?: unknown;
-      } | null;
-      if (!state || state.error || !state.settings || typeof state.pendingCount !== "number" || !Number.isSafeInteger(state.pendingCount) || state.pendingCount < 0) throw new Error("Invalid state");
-      const recentCaptures = Array.isArray(state.recentCaptures)
-        ? state.recentCaptures.map(asDisplayCapture).filter((capture): capture is CapturePreview => capture !== null).slice(0, 3)
-        : [];
-      const submissionProgress = activeSubmissionProgress((state as { submissionProgress?: unknown }).submissionProgress);
-      const visibleProgress = submissionProgress.filter(item => !recentCaptures.some(capture =>
-        capture.platform === item.platform && capture.problemNumber === item.problemNumber && Date.parse(capture.observedAt) >= item.startedAt
-      ));
-      count.textContent = String(state.pendingCount);
-      const settings = state.settings as { autoDownloadEnabled?: boolean; autoSyncEnabled?: boolean; githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; relay?: { status?: string } };
-      if (autoDownload) {
-        autoDownload.checked = settings.autoDownloadEnabled === true;
-        autoDownload.setAttribute("aria-checked", String(autoDownload.checked));
+      const response = await services.loadGithubStatuses(ids);
+      if (epoch !== statusEpoch || !response?.statuses) return;
+      for (const id of ids) {
+        const status = response.statuses[id];
+        if (typeof status === 'string' && ['NOT_REQUESTED', 'PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'UNKNOWN'].includes(status)) knownStatuses.set(id, status);
       }
-      if (autoSync && githubAuto && automationStatus && automationHelp) {
-        const relayStatus = settings.relay?.status;
-        const relayOperational = relayStatus === "CONFIRMED";
-        const relayRetryable = settings.autoSyncEnabled === true && (relayStatus === "OFFLINE" || relayStatus === "RELAY_ERROR");
-        autoSync.checked = settings.autoSyncEnabled === true && relayOperational;
-        githubAuto.checked = settings.githubAutoCommitEnabled === true && relayOperational;
-        autoSync.setAttribute("aria-checked", String(autoSync.checked)); githubAuto.setAttribute("aria-checked", String(githubAuto.checked));
-        // ON grants are dashboard-confirmed. The popup can only turn an
-        // existing confirmed setting OFF, never pretend an ON was accepted.
-        autoSync.disabled = settings.autoSyncEnabled !== true || !relayOperational;
-        githubAuto.disabled = true;
-        autoSync.title = settings.autoSyncEnabled === true && !relayOperational ? "설정은 ON이지만 릴레이 연결 복구 전까지 일시 중지됩니다." : "";
-        githubAuto.title = settings.githubAutoCommitEnabled === true && !relayOperational ? "설정은 ON이지만 릴레이 연결 복구 전까지 일시 중지됩니다." : "GitHub 자동 커밋은 대시보드에서만 변경할 수 있습니다.";
-        automationStatus.textContent = relayStatus === "PENDING" ? "확인 대기" : relayStatus === "OFFLINE" ? "오프라인" : relayStatus === "AUTH_EXPIRED" ? "인증 만료" : relayStatus === "RELAY_ERROR" ? "릴레이 오류" : relayStatus === "REVOCATION_PENDING" ? "서버 폐기 대기" : relayStatus === "CONFIRMED" ? "연결 확인됨" : settings.githubTargetConfigured ? "릴레이 설정 필요" : "대상 필요";
-        automationHelp.textContent = relayStatus === "REVOCATION_PENDING" ? "자동 전송은 이미 중지했습니다. 네트워크가 복구되면 서버의 릴레이 권한을 폐기합니다." : relayStatus === "CONFIRMED" ? "자동 동기화는 여기서 끌 수 있습니다. GitHub 자동 커밋은 대시보드에서 변경합니다." : relayRetryable ? "자동화 설정은 유지됩니다. 연결을 재시도하면 대기 중인 풀이를 즉시 전송합니다." : relayStatus === "AUTH_EXPIRED" ? "인증이 만료됐습니다. 대시보드를 열어 이 브라우저를 다시 연결해 주세요." : settings.githubTargetConfigured ? "자동 동기화를 켜거나 GitHub 자동 커밋을 바꾸려면 대시보드에서 이 브라우저를 확인하세요." : "GitHub 자동 커밋에는 대시보드에서 저장소 대상을 지정해야 합니다.";
-        if (retryRelay) {
-          retryRelay.hidden = !relayRetryable || !services.retryRelay;
-          retryRelay.disabled = retrying;
-        }
-      }
-      status.textContent = "로컬 보관";
-      description.textContent = state.pendingCount
-        ? "통과한 풀이가 기다리고 있어요. 대시보드로 가져가세요."
-        : recentCaptures.length
-          ? "대기 중인 풀이는 없어요. 저장한 풀이는 아래에서 확인하세요."
-          : visibleProgress.length
-            ? "제출 결과를 확인하고 있어요. 저장되면 아래 기록으로 바뀝니다."
-            : "아직 저장된 풀이가 없어요. 첫 통과 풀이를 모아보세요.";
-      recentCount.textContent = visibleProgress.length
-        ? `${recentCaptures.length}개 저장 · ${visibleProgress.length}개 처리 중`
-        : recentCaptures.length ? `${recentCaptures.length}개` : "없음";
-      renderRecent(document, recentList, recentEmpty, recentCaptures, visibleProgress, services);
-      const syncedIds = recentCaptures.filter(capture => capture.syncState === "SYNCED").map(capture => capture.captureId);
-      if (syncedIds.length && services.loadGithubStatuses) {
-        // Remote enrichment is intentionally detached from the local render.
-        // A sleeping or offline API cannot hide locally persisted captures.
-        void services.loadGithubStatuses(syncedIds).then(response => {
-          if (generation !== loadGeneration) return;
-          const statuses = response?.statuses;
-          if (!statuses || typeof statuses !== "object") return;
-          renderRecent(document, recentList, recentEmpty, recentCaptures.map(capture => ({
-            ...capture,
-            ...(statuses[capture.captureId] ? { githubCommitStatus: statuses[capture.captureId] } : {})
-          })), visibleProgress, services);
-        }).catch(() => undefined);
-      }
-    } catch {
-      count.textContent = "—";
-      status.textContent = "확인 필요";
-      description.textContent = "저장된 풀이 수를 확인할 수 없어요.";
-      error.hidden = false;
-      recentError.hidden = false;
-      recentCard.setAttribute("aria-busy", "false");
-    } finally {
-      loading = false;
-      refresh.disabled = false;
-      card.setAttribute("aria-busy", "false");
-      recentCard.setAttribute("aria-busy", "false");
-      if (reloadPending) {
-        reloadPending = false;
-        queueMicrotask(() => void load());
-      }
+      showCurrentRecent();
+    } catch { /* Missing remote evidence retains the last confirmed display. */ }
+    finally {
+      statusInFlight = false;
+      if (statusRefreshPending) { statusRefreshPending = false; void refreshStatuses(); }
     }
   }
-
-  services.subscribeProgress?.(() => {
-    if (loading) reloadPending = true;
-    else void load();
+  async function load(): Promise<void> {
+    if (githubBusy) { reloadPending = true; return; }
+    if (loading) { reloadPending = true; return; }
+    loading = true; localReady = false;
+    error.hidden = true; recentError.hidden = true; recentCard.setAttribute('aria-busy', 'true');
+    try {
+      const state = await services.load() as { settings?: NonNullable<typeof githubState> & { relay?: { status?: string } }; recentCaptures?: unknown; error?: unknown } | null;
+      if (!state?.settings || state.error) throw new Error('Invalid state');
+      if (statusAccount !== state.settings.accountId) {
+        knownStatuses.clear(); statusAccount = state.settings.accountId;
+      }
+      const seen = new Set<string>();
+      const captures = (Array.isArray(state.recentCaptures) ? state.recentCaptures : []).filter(asSynced)
+        .filter(capture => { const key = `${capture.platform}:${capture.problemNumber}`; if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, 3);
+      // A replacement submission must never inherit the previous problem's status.
+      knownStatuses = new Map(captures.flatMap(capture => {
+        const status = knownStatuses.get(capture.captureId) ?? capture.githubCommitStatus;
+        return status ? [[capture.captureId, status] as const] : [];
+      }));
+      visibleCaptures = captures;
+      const nextStatusContext = JSON.stringify([state.settings.accountId, state.settings.accountSettingsVersion, captures.map(capture => capture.captureId)]);
+      if (nextStatusContext !== statusContext) { statusContext = nextStatusContext; statusEpoch++; }
+      githubAuto.checked = state.settings.githubAutoCommitEnabled === true; githubAuto.setAttribute('aria-checked', String(githubAuto.checked));
+      githubState = state.settings;
+      localReady = true;
+      githubAuto.disabled = false;
+      const relayStatus = state.settings.relay?.status;
+      automationStatus.textContent = relayStatus === 'CONFIRMED' ? '자동 동기화 중' : relayStatus === 'OFFLINE' ? '오프라인' : relayStatus === 'RELAY_ERROR' ? '동기화 오류' : '대시보드 로그인 필요';
+      retryRelay.hidden = !services.retryRelay || (relayStatus !== 'OFFLINE' && relayStatus !== 'RELAY_ERROR');
+      if (toggleNotice) { error.hidden = false; error.textContent = toggleNotice; }
+      recentCount.textContent = captures.length ? `${captures.length}문제` : '없음'; showCurrentRecent();
+      // Remote polling coalesces independently: local captures and controls stay responsive.
+      void refreshStatuses();
+    } catch {
+      githubState = undefined; githubAuto.disabled = true;
+      localReady = false;
+      knownStatuses.clear(); statusAccount = undefined; recentRenderKey = undefined;
+      visibleCaptures = []; statusEpoch++; statusContext = '';
+      error.hidden = false; recentError.hidden = false; automationStatus.textContent = '확인 필요'; retryRelay.hidden = true;
+      error.textContent = '동기화 상태를 불러오지 못했어요. 팝업을 다시 열어 주세요.';
+      recentList.replaceChildren(); recentCount.textContent = '확인 실패'; recentEmpty.hidden = true;
+    } finally {
+      loading = false; recentCard.setAttribute('aria-busy', 'false');
+      if (reloadPending) { reloadPending = false; queueMicrotask(() => void load()); }
+    }
+  }
+  githubAuto.addEventListener('click', event => {
+    event.preventDefault();
+    if (githubBusy || !localReady || !githubState) return;
+    if (!githubState.githubTargetConfigured || !githubState.accountId || !Number.isSafeInteger(githubState.accountSettingsVersion)) {
+      services.openDashboard?.('github'); return;
+    }
+    if (!services.updateGithubAutomation) return;
+    const command: GithubToggleRequest = { enabled: !githubState.githubAutoCommitEnabled,
+      accountId: githubState.accountId, settingsVersion: githubState.accountSettingsVersion! };
+    githubBusy = true; statusEpoch++; githubAuto.disabled = true; toggleNotice = ''; error.hidden = true;
+    automationStatus.textContent = 'GitHub 설정 저장 중…';
+    void services.updateGithubAutomation(command).then(result => {
+      if (result.needsTarget) { services.openDashboard?.('github'); return; }
+      if (!result.ok) toggleNotice = result.error === 'ACCOUNT_CHANGED' ? '계정이 변경됐어요. 대시보드에서 현재 계정을 확인해 주세요.' :
+        result.error === 'SETTINGS_CHANGED' ? '설정이 변경됐어요. 대시보드에서 최신 설정을 확인해 주세요.' :
+        result.error === 'SAVE_UNCONFIRMED' ? '저장 결과를 확인하지 못했어요. 다시 누르기 전에 대시보드에서 확인해 주세요.' :
+        'GitHub 설정을 저장하지 못했어요. 대시보드에서 연결 상태를 확인해 주세요.';
+      else if (!result.relayReady) toggleNotice = 'GitHub 설정은 저장됐어요. 대시보드를 열어 자동 동기화 연결을 갱신해 주세요.';
+    }).catch(() => { toggleNotice = '저장 결과를 확인하지 못했어요. 다시 누르기 전에 대시보드에서 확인해 주세요.'; })
+      .finally(() => { githubBusy = false; void load(); });
   });
-
-  refresh.addEventListener("click", () => void load());
-  retryRelay?.addEventListener("click", () => {
+  services.subscribeProgress?.(() => void load());
+  retryRelay.addEventListener('click', () => {
     if (retrying || !services.retryRelay) return;
-    retrying = true;
-    retryRelay.disabled = true;
-    retryRelay.textContent = "재시도 중…";
-    void services.retryRelay()
-      .catch(() => undefined)
-      .then(() => load())
-      .finally(() => {
-        retrying = false;
-        retryRelay.disabled = false;
-        retryRelay.textContent = "연결 재시도";
-      });
+    retrying = true; retryRelay.disabled = true; retryRelay.textContent = '재시도 중…';
+    void services.retryRelay().catch(() => undefined).then(() => load()).finally(() => { retrying = false; retryRelay.disabled = false; retryRelay.textContent = '연결 재시도'; });
   });
-  const updateAutomation = (patch: Record<string, boolean>) => {
-    if (!services.updateSettings) return;
-    void services.updateSettings(patch).then(() => void load()).catch(() => void load());
-  };
-  autoDownload?.addEventListener("change", () => { autoDownload.setAttribute("aria-checked", String(autoDownload.checked)); updateAutomation({ autoDownloadEnabled: autoDownload.checked }); });
-  autoSync?.addEventListener("change", () => { autoSync.setAttribute("aria-checked", String(autoSync.checked)); updateAutomation({ autoSyncEnabled: autoSync.checked }); });
   void load();
 }

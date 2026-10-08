@@ -6,15 +6,17 @@ import { ApiError } from './api'
 import type { AccountSettings } from './types'
 
 const mocks = vi.hoisted(() => ({
-  markDraft: vi.fn(), me: vi.fn(), list: vi.fn(), settings: vi.fn(), save: vi.fn(), grant: vi.fn(), revoke: vi.fn(), logout: vi.fn(), bridge: vi.fn(), installations: vi.fn(), startInstallation: vi.fn(), repositories: vi.fn(), branches: vi.fn(), directories: vi.fn(), tree: vi.fn(), addFile: vi.fn(), previewTreeOperation: vi.fn(), commitTreeOperation: vi.fn(), emptyBranch: vi.fn(), readmePreview: vi.fn(), initializeReadme: vi.fn(), navigate: vi.fn(),
+  extension: false, enableAutomaticSync: vi.fn(), markDraft: vi.fn(), me: vi.fn(), list: vi.fn(), settings: vi.fn(), save: vi.fn(), grant: vi.fn(), revoke: vi.fn(), logout: vi.fn(), bridge: vi.fn(), installations: vi.fn(), startInstallation: vi.fn(), repositories: vi.fn(), branches: vi.fn(), directories: vi.fn(), tree: vi.fn(), addFile: vi.fn(), previewTreeOperation: vi.fn(), commitTreeOperation: vi.fn(), emptyBranch: vi.fn(), readmePreview: vi.fn(), initializeReadme: vi.fn(), navigate: vi.fn(),
 }))
 
+vi.mock('./extensionEnvironment', async original => ({ ...await original<typeof import('./extensionEnvironment')>(), extensionRuntime: () => mocks.extension ? { id: 'oohlcmihldmfninmdcmanddfmhoonmdl' } : undefined }))
 vi.mock('./DesktopActivity', async (original) => ({ ...await original<typeof import('./DesktopActivity')>(), markDesktopDraft: mocks.markDraft }))
 vi.mock('./api', async (original) => ({
   ...await original<typeof import('./api')>(),
   getMe: mocks.me,
   getSolutions: mocks.list,
   getAccountSettings: mocks.settings,
+  enableAccountAutomaticSync: mocks.enableAutomaticSync,
   updateAccountSettings: mocks.save,
   issueRelayGrant: mocks.grant,
   revokeRelayGrant: mocks.revoke,
@@ -50,7 +52,7 @@ async function openGithub() {
 }
 
 beforeEach(() => { mocks.emptyBranch.mockResolvedValue({ defaultBranch: 'main' }); mocks.readmePreview.mockResolvedValue({ content: '# CodeArchive\n\n풀이를 자동으로 보관합니다.' }); mocks.initializeReadme.mockResolvedValue({ defaultBranch: 'main' }); mocks.installations.mockResolvedValue([{ id: 77, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue({ items: [{ id: 7, owner: 'codearchive', name: 'solutions', fullName: 'codearchive/solutions', privateRepository: true, defaultBranch: 'main' }], hasMore: false }); mocks.branches.mockResolvedValue({ items: [{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }], hasMore: false }); mocks.tree.mockImplementation((_githubId: string, _installation: number, _repository: number, _branch: string, path = '') => Promise.resolve({ path, headSha: 'a'.repeat(40), items: path ? [] : [{ name: 'src', path: 'src', type: 'tree', size: 0 }], page: 1, hasMore: false, truncated: false })) })
-afterEach(() => { cleanup(); localStorage.clear(); window.history.replaceState({}, '', '/'); vi.clearAllMocks() })
+afterEach(() => { mocks.extension = false; cleanup(); localStorage.clear(); window.history.replaceState({}, '', '/'); vi.clearAllMocks() })
 
 it('starts GitHub OAuth in the same tab on the first logged-out click', async () => {
   mocks.me.mockRejectedValue(new ApiError('Authentication is required', 401))
@@ -477,7 +479,10 @@ it('loads the authenticated account draft and renders every required theme choic
   expect((screen.getByLabelText('복사할 때 문제 정보 주석 포함') as HTMLInputElement).checked).toBe(true)
   expect((screen.getByLabelText('다운로드할 때 문제 정보 주석 포함') as HTMLInputElement).checked).toBe(false)
   const themeSelect = screen.getByLabelText('코드 보기 테마')
-  expect(themeSelect.querySelectorAll('option')).toHaveLength(10)
+  expect(themeSelect.querySelectorAll('option')).toHaveLength(65)
+  const preview = screen.getByRole('region', { name: '코드 테마 미리보기' })
+  fireEvent.change(themeSelect, { target: { value: 'nord' } })
+  await waitFor(() => expect(preview.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe('nord'))
   expect([...themeSelect.querySelectorAll('optgroup')].map(group => group.label)).toEqual(['밝은 테마', '어두운 테마'])
   expect(screen.queryByText(/UPCOMING/i)).toBeNull()
   expect(screen.queryByText('Chrome 확장 프로그램 연결')).toBeNull()
@@ -847,3 +852,17 @@ it('checkbox and template-token mutations explicitly protect unsaved account dra
   fireEvent.click(within(screen.getByLabelText('Git 경로 토큰')).getByRole('button', { name: '{capture_ID}' }))
   expect(mocks.markDraft.mock.calls.length).toBe(before + 1)
 })
+
+it('extension mode enables sync without overwriting GitHub consent and hides the automatic sync toggle', async () => {
+  mocks.extension = true;
+  const off = { ...settings, autoSyncEnabled: false, githubAutoCommitEnabled: false };
+  const enabled = { ...off, version: 5, autoSyncEnabled: true };
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue(off);
+  mocks.enableAutomaticSync.mockResolvedValue(enabled);
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT' ? Promise.resolve({ capability: 'extension-auto' }) : message.type === 'REUSE_RELAY' ? Promise.resolve({ reused: true }) : Promise.resolve({ ok: true }));
+  await openSettings();
+  expect(mocks.enableAutomaticSync).toHaveBeenCalledWith(user.githubId);
+  expect(screen.queryByLabelText('자동 동기화')).toBeNull();
+  await waitFor(() => expect(bridgeMessages('REUSE_RELAY').slice(-1)[0][1]).toEqual(expect.objectContaining({ settingsVersion: 5 })));
+  expect(mocks.save).not.toHaveBeenCalled();
+});
