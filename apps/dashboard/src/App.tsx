@@ -1,7 +1,8 @@
 import { normalizeDifficulty, difficultyKey } from '../../../shared/difficulty'
 import { StaticAnalysisPanel } from './StaticAnalysisPanel'
 import { CodeThemePreview } from './CodeThemePreview'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { HistoricalCollectionScope } from '../../../shared/historicalCollectionScope'
 import { DesktopSettings } from './DesktopSettings'
 import { useDesktopWork, markDesktopDraft } from './DesktopActivity'
 import { DesktopStatusProvider, DesktopVersion, DesktopUpdateNotice } from './DesktopStatus'
@@ -288,7 +289,13 @@ export default function App() {
   const [bridgeCapability, setBridgeCapability] = useState<string | null>(null)
   const [extensionVersion, setExtensionVersion] = useState<string | null>(null)
   const [historySupported, setHistorySupported] = useState(false)
-  const [historicalAction, setHistoricalAction] = useState<'collect' | 'sync' | 'commit'>('collect')
+  const [historicalScope, setHistoricalScope] = useState<HistoricalCollectionScope | null>(null)
+  const [historicalCommitPreview, setHistoricalCommitPreview] = useState(0)
+  const [historicalSyncBusy, setHistoricalSyncBusy] = useState(false)
+  const [historicalCommitBusy, setHistoricalCommitBusy] = useState(false)
+  const receiveHistoricalScope = useCallback((scope: HistoricalCollectionScope | null) => {
+    setHistoricalScope(scope); setHistoricalCommitPreview(0)
+  }, [])
   const [historicalOpened, setHistoricalOpened] = useState(() => readView() === 'history')
   const [historicalRevision, setHistoricalRevision] = useState(0)
   const [pendingCount, setPendingCount] = useState<number | null>(null)
@@ -1401,16 +1408,11 @@ export default function App() {
           <div className="history-storage-guide">
             <h2>저장 안내</h2>
             <p><strong>과거 풀이 수집</strong>은 본인 제출의 원본을 확인해 이 브라우저에 저장합니다. <strong>일괄 동기화</strong>는 선택한 풀이를 서버에 저장하고, <strong>일괄 GitHub 커밋</strong>은 서버 풀이를 연결된 저장소에 커밋합니다.</p>
-            <p>수집은 로그인 없이 가능합니다. 서버 동기화와 GitHub 커밋은 로그인 후 실행하며, 사이트별로 동기화를 마친 뒤 모아서 커밋할 수 있습니다.</p>
-          </div>
-          <div className="history-work-actions" role="group" aria-label="과거 풀이 작업">
-            <button type="button" className={historicalAction === 'collect' ? 'history-work-button active' : 'history-work-button'} aria-pressed={historicalAction === 'collect'} onClick={() => setHistoricalAction('collect')}><Icon name="download" size={17} /> 과거 풀이 수집</button>
-            <button type="button" className={historicalAction === 'sync' ? 'history-work-button active' : 'history-work-button'} aria-pressed={historicalAction === 'sync'} onClick={() => setHistoricalAction('sync')}><Icon name="sync" size={17} /> 일괄 동기화</button>
-            <button type="button" className={historicalAction === 'commit' ? 'history-work-button active' : 'history-work-button'} aria-pressed={historicalAction === 'commit'} onClick={() => setHistoricalAction('commit')}><Icon name="github" size={17} /> 일괄 GitHub 커밋</button>
+            <p>수집은 로그인 없이 가능합니다. 수집 완료 후 원본 확인을 마친 선택 제출만 일괄 동기화·GitHub 커밋할 수 있으며, 서버 작업에는 로그인이 필요합니다.</p>
           </div>
           {historicalOpened && <>
-          <div hidden={historicalAction !== 'collect'}><HistoricalCollectionView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} /></div>
-          <div hidden={historicalAction !== 'sync'}><HistoricalImportView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} user={user} mode={mode} onImported={() => {
+          <HistoricalCollectionView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} disabled={historicalSyncBusy || historicalCommitBusy} onSelectionChange={receiveHistoricalScope} />
+          <div hidden={!historicalScope}>{historicalScope && <HistoricalImportView selectionScope={historicalScope} onBusyChange={setHistoricalSyncBusy} onCommitReady={() => setHistoricalCommitPreview(value => value + 1)} extensionId={extensionId} capability={bridgeCapability} supported={historySupported} user={user} mode={mode} onImported={() => {
             setHistoricalRevision(value => value + 1)
             if (modeRef.current === 'live' && userRef.current) {
               void refreshSolutions(accountGeneration.current, userRef.current.githubId).catch(() => undefined)
@@ -1427,8 +1429,8 @@ export default function App() {
                     response.localOnly !== true || !Array.isArray(response.captures)) return
                 setSolutions(response.captures.map(normalizeSolution))
               }).catch(() => undefined)
-          }} /></div>
-          <div hidden={historicalAction !== 'commit'}><HistoricalGithubCommitView user={user} mode={mode} revision={historicalRevision} /></div>
+          }} />}</div>
+          <div hidden={!historicalScope || !historicalCommitPreview}>{historicalScope && historicalCommitPreview > 0 && <HistoricalGithubCommitView selectionScope={historicalScope} previewRequest={historicalCommitPreview} onBusyChange={setHistoricalCommitBusy} user={user} mode={mode} revision={historicalRevision} />}</div>
           </>}
         </section>
         {view === 'community' && <CommunityView

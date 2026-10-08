@@ -5,6 +5,8 @@ export type HistoricalImportState = {
   startedAt?: number; endedAt?: number; lastProgressAt?: number;
   failureReason?: HistoricalImportFailureReason;
   failedSubmissionIds?: string[];
+  /** Exactly the selected submissions whose verified store step succeeded. */
+  storedSubmissionIds?: string[];
 };
 
 export type HistoricalImportFailureReason = "LIST_CHANGED" | "DETAIL_NOT_FOUND" | "DETAIL_UNVERIFIED" |
@@ -25,11 +27,13 @@ export class HistoricalTaskController<T> {
   constructor(private readonly now: () => number = () => Date.now()) {}
 
   start(items: T[], run: (item: T, mayStore: () => boolean) => Promise<HistoricalImportResult>,
-    onItemSettled?: (item: T, result: HistoricalImportResult) => void): boolean {
+    onItemSettled?: (item: T, result: HistoricalImportResult) => void,
+    submissionId?: (item: T) => string): boolean {
     if (this.active || items.length < 1) return false;
     this.cancelling = false;
     const startedAt = this.now();
-    this.state = { status: "IMPORTING", completed: 0, total: items.length, saved: 0, duplicate: 0, skipped: 0, startedAt, lastProgressAt: startedAt };
+    this.state = { status: "IMPORTING", completed: 0, total: items.length, saved: 0, duplicate: 0, skipped: 0, startedAt, lastProgressAt: startedAt,
+      ...(submissionId ? { storedSubmissionIds: [] } : {}) };
     this.active = (async () => {
       for (const item of items) {
         if (this.cancelling) break;
@@ -38,6 +42,8 @@ export class HistoricalTaskController<T> {
         onItemSettled?.(item, result);
         this.state = { ...this.state!, completed: this.state!.completed + 1, saved: this.state!.saved + result.saved,
           duplicate: this.state!.duplicate + result.duplicate, skipped: this.state!.skipped + result.skipped,
+          ...(submissionId && result.saved + result.duplicate > 0 && result.skipped === 0 && !result.failedSubmissionId
+            ? { storedSubmissionIds: [...new Set([...(this.state!.storedSubmissionIds ?? []), submissionId(item)])] } : {}),
           ...(result.failedSubmissionId ? { failedSubmissionIds: [...(this.state!.failedSubmissionIds ?? []), result.failedSubmissionId] } : {}),
           status: this.cancelling ? "CANCELLING" : "IMPORTING", lastProgressAt: this.now() };
         if (this.cancelling) break;

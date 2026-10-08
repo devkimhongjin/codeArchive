@@ -32,6 +32,39 @@ it('preserves deterministic same-problem selection', () => {
   const rows = [{ submissionId: '3', problemNumber: '1', executionTime: 30 }, { submissionId: '2', problemNumber: '1', executionTime: 10 }]
   expect(selectHistoricalSubmissionIds(rows, 'fastest')).toEqual(['2'])
 })
+
+it('syncs exactly the completed collection scope and opens commit confirmation only after acceptance', async () => {
+  const chosen = capture(2, 'SWEA'), outside = capture(3, 'PROGRAMMERS')
+  setup([capture(1), chosen, outside])
+  const onCommitReady = vi.fn()
+  render(<HistoricalImportView {...props} selectionScope={{ batchId: 'SWEA:123', platform: 'SWEA', submissionIds: [chosen.historicalSubmissionId!] }} onCommitReady={onCommitReady} />)
+  await waitFor(() => expect((screen.getByRole('button', { name: '일괄 GitHub 커밋' }) as HTMLButtonElement).disabled).toBe(false))
+  fireEvent.click(screen.getByRole('button', { name: '일괄 GitHub 커밋' }))
+  await waitFor(() => expect(onCommitReady).toHaveBeenCalledOnce())
+  expect(mocks.upload.mock.calls[0][0].map((record: Capture) => record.captureId)).toEqual([chosen.captureId])
+  expect(screen.queryByText(/문제3/)).toBeNull()
+})
+
+it('does not advance to GitHub when any selected upload is rejected', async () => {
+  const chosen = capture(1)
+  setup([chosen]); mocks.upload.mockResolvedValue({ acceptedCaptureIds: [], failures: [] })
+  const onCommitReady = vi.fn()
+  render(<HistoricalImportView {...props} selectionScope={{ batchId: 'JUNGOL:123', platform: 'JUNGOL', submissionIds: ['1'] }} onCommitReady={onCommitReady} />)
+  await waitFor(() => expect((screen.getByRole('button', { name: '일괄 GitHub 커밋' }) as HTMLButtonElement).disabled).toBe(false))
+  fireEvent.click(screen.getByRole('button', { name: '일괄 GitHub 커밋' }))
+  await screen.findByText(/실패 1건/)
+  expect(onCommitReady).not.toHaveBeenCalled()
+})
+it('reuses confirmed server submissions for the scoped commit without reuploading them', async () => {
+  setup([capture(1)]); mocks.ids.mockImplementation((_account, platform) => Promise.resolve(platform === 'JUNGOL' ? ['1'] : []))
+  const onCommitReady = vi.fn()
+  render(<HistoricalImportView {...props} selectionScope={{ batchId: 'JUNGOL:123', platform: 'JUNGOL', submissionIds: ['1'] }} onCommitReady={onCommitReady} />)
+  await waitFor(() => expect((screen.getByRole('button', { name: '일괄 GitHub 커밋' }) as HTMLButtonElement).disabled).toBe(false))
+  fireEvent.click(screen.getByRole('button', { name: '일괄 GitHub 커밋' }))
+  await waitFor(() => expect(onCommitReady).toHaveBeenCalledOnce())
+  expect(mocks.upload).not.toHaveBeenCalled()
+  expect(mocks.me).toHaveBeenCalled()
+})
 it('lists all platforms without login and does not expose code or upload', async () => {
   setup([capture(1), capture(2, 'SWEA'), capture(3, 'PROGRAMMERS')])
   render(<HistoricalImportView {...props} user={null} mode="local" />)
