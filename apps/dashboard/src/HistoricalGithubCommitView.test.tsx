@@ -4,8 +4,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { HistoricalGithubCommitView } from './HistoricalGithubCommitView'
 import type { AccountSettings, HistoricalCommitCandidate } from './types'
 
-const mocks = vi.hoisted(() => ({ candidates: vi.fn(), settings: vi.fn(), me: vi.fn(), commit: vi.fn() }))
-vi.mock('./api', () => ({ getHistoricalCommitCandidates: mocks.candidates, getAccountSettings: mocks.settings, getMe: mocks.me, requestHistoricalCommitBatch: mocks.commit }))
+const mocks = vi.hoisted(() => ({ candidates: vi.fn(), settings: vi.fn(), me: vi.fn(), commit: vi.fn(), reconcile: vi.fn() }))
+vi.mock('./api', () => ({ getHistoricalCommitCandidates: mocks.candidates, getAccountSettings: mocks.settings, getMe: mocks.me, requestHistoricalCommitBatch: mocks.commit, reconcileHistoricalCommit: mocks.reconcile }))
 const user = { id: 1, githubId: 'g', githubLogin: 'account' }
 const settings = { version: 7, githubTargetConfigured: true, githubInstallationId: 77, githubOwner: 'owner', githubRepository: 'archive', githubBranch: 'main', githubRootPath: 'solutions', gitPathTemplate: '{platform}/{number}/{capture_ID}', githubAutoCommitEnabled: false } as AccountSettings
 const record = (index: number, state: HistoricalCommitCandidate['state'] = 'NONE'): HistoricalCommitCandidate => ({ captureId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, platform: index % 2 ? 'SWEA' : 'PROGRAMMERS', historicalSubmissionId: `site-${index}`, problemNumber: String(index), title: `문제${index}`, language: 'Java', state })
@@ -15,6 +15,25 @@ async function preview(count = 2) {
   await waitFor(() => expect((screen.getByRole('button', { name: `선택한 ${count}건 커밋 대상 확인` }) as HTMLButtonElement).disabled).toBe(false))
   fireEvent.click(screen.getByRole('button', { name: `선택한 ${count}건 커밋 대상 확인` }))
 }
+it('requires a read comparison before allowing explicit uncertain-job retry', async () => {
+  mocks.candidates.mockResolvedValue([record(1, 'UNKNOWN')])
+  mocks.reconcile.mockResolvedValueOnce({ captureId: record(1).captureId, state: 'UNKNOWN', comparison: 'MISSING', diagnostic: 'BLOB_UNCONFIRMED', retryAllowed: true })
+    .mockResolvedValueOnce({ captureId: record(1).captureId, state: 'PENDING', comparison: 'MISSING', diagnostic: 'BLOB_UNCONFIRMED', retryAllowed: false })
+  render(<HistoricalGithubCommitView user={user} mode="live" />)
+  fireEvent.click(await screen.findByRole('button', { name: 'GitHub 결과 대조' }))
+  fireEvent.click(await screen.findByRole('button', { name: '대조 후 재시도 요청' }))
+  await screen.findByText('대조 후 재시도를 요청했습니다.')
+  expect(mocks.reconcile.mock.calls).toEqual([['g', record(1).captureId, 7, false], ['g', record(1).captureId, 7, true]])
+  expect(mocks.commit).not.toHaveBeenCalled()
+})
+it('keeps an unverifiable legacy job uncertain without a retry button', async () => {
+  mocks.candidates.mockResolvedValue([record(1, 'UNKNOWN')])
+  mocks.reconcile.mockResolvedValue({ captureId: record(1).captureId, state: 'UNKNOWN', comparison: 'CONTEXT_UNAVAILABLE', diagnostic: 'UNSPECIFIED', retryAllowed: false })
+  render(<HistoricalGithubCommitView user={user} mode="live" />)
+  fireEvent.click(await screen.findByRole('button', { name: 'GitHub 결과 대조' }))
+  await screen.findByText(/원래 작업의 계정·설정·출력 기록/)
+  expect(screen.queryByRole('button', { name: '대조 후 재시도 요청' })).toBeNull()
+})
 it('requires login without loading server records', () => {
   render(<HistoricalGithubCommitView user={null} mode="local" />); expect(mocks.candidates).not.toHaveBeenCalled(); expect(mocks.commit).not.toHaveBeenCalled()
 })

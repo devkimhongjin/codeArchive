@@ -147,6 +147,51 @@ public class GithubAutomationService {
         return result;
     }
 
+    public record RecoveryResult(String captureId, String state, String comparison, String diagnostic, boolean retryAllowed) { }
+
+    /** Repository reads happen outside the transaction; revalidate under a fresh job lock. */
+    public RecoveryResult reconcile(Solution solution, long settingsVersion, boolean retry) {
+        AppUser user = solution.getUser();
+        GithubCommitJob initial = inTransaction(() -> jobs.findByUserIdAndCaptureId(user.getId(), solution.getCaptureId()).orElse(null));
+        if (initial == null || initial.getState() != CommitJobState.UNKNOWN)
+            throw new CaptureValidationException("Only uncertain jobs can be reconciled");
+        UserSettings snapshot = settings.findByUserId(user.getId()).orElse(null);
+        if (!recoveryAuthorized(initial, snapshot, solution, settingsVersion))
+            return recovery(initial, "CONTEXT_UNAVAILABLE", false);
+        GithubProvider.Comparison comparison;
+        try { comparison = provider.compare(snapshot, solution); }
+        catch (RuntimeException ignored) { comparison = GithubProvider.Comparison.UNAVAILABLE; }
+        final GithubProvider.Comparison observed = comparison == null ? GithubProvider.Comparison.UNAVAILABLE : comparison;
+        return inTransaction(() -> {
+            GithubCommitJob locked = jobs.findByIdForClaim(initial.getId()).orElseThrow(() -> new CaptureValidationException("Job missing"));
+            UserSettings current = settings.findByUserId(user.getId()).orElse(null);
+            if (locked.getState() != CommitJobState.UNKNOWN || !recoveryAuthorized(locked, current, solution, settingsVersion))
+                throw new CaptureValidationException("Job or settings changed during comparison");
+            boolean allowed = observed == GithubProvider.Comparison.MISSING && locked.getDiagnostic().safeBeforeRef()
+                    && locked.getOrigin() == CommitJobOrigin.HISTORICAL_MANUAL;
+            if (observed == GithubProvider.Comparison.MATCH) {
+                locked.terminal(CommitJobState.SUCCEEDED);
+                locked.recordDiagnostic(GithubProvider.Diagnostic.OK);
+                jobs.saveAndFlush(locked);
+            } else if (retry) {
+                if (!allowed) throw new CaptureValidationException("Uncertain visible write cannot be retried");
+                locked.retryVerifiedUnknown(); jobs.saveAndFlush(locked); scheduleDeliveryAfterCommit(locked.getId());
+            }
+            return recovery(locked, observed.name(), allowed && !retry);
+        });
+    }
+
+    private boolean recoveryAuthorized(GithubCommitJob job, UserSettings current, Solution solution, long version) {
+        if (current == null || current.getVersion() != version || job.getSettingsGeneration() != version
+                || !current.githubTargetConfigured() || job.getRecoveryContext() == null) return false;
+        String context = provider.recoveryContext(current, solution);
+        return context != null && java.security.MessageDigest.isEqual(job.getRecoveryContext().getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+                context.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+    }
+    private RecoveryResult recovery(GithubCommitJob job, String comparison, boolean retryAllowed) {
+        return new RecoveryResult(job.getCaptureId(), job.getState().name(), comparison, job.getDiagnostic().name(), retryAllowed);
+    }
+
     public ProcessResult process(Long id) {
         Claim claim = inTransaction(() -> claim(id));
         if (claim == null) {
@@ -157,7 +202,7 @@ public class GithubAutomationService {
             outcome = provider.createOnly(claim.settings(), claim.solution(), () -> finalWriteAuthorized(claim));
         } catch (RuntimeException ignored) {
             // A provider exception after a durable claim is ambiguous, never retryable.
-            outcome = GithubProvider.Result.unknown("Provider threw after durable claim");
+            outcome = GithubProvider.Result.unknown(GithubProvider.Diagnostic.PROVIDER_EXCEPTION);
         }
         GithubProvider.Result finalOutcome = outcome;
         return inTransaction(() -> complete(id, finalOutcome));
@@ -169,6 +214,7 @@ public class GithubAutomationService {
             return ProcessResult.IGNORED;
         }
         ProcessResult result = ProcessResult.COMPLETED;
+        job.recordDiagnostic(outcome.diagnostic()); // Never persist provider details or response bodies.
         switch (outcome.outcome()) {
             case SUCCEEDED -> job.terminal(CommitJobState.SUCCEEDED);
             case UNKNOWN -> job.terminal(CommitJobState.UNKNOWN);
@@ -191,6 +237,7 @@ public class GithubAutomationService {
         inTransaction(() -> {
             jobs.findTop25ByStateAndUpdatedAtBeforeOrderByCreatedAtAsc(CommitJobState.RUNNING, staleBefore)
                     .forEach(job -> {
+                        job.recordDiagnostic(GithubProvider.Diagnostic.LEASE_EXPIRED);
                         job.terminal(CommitJobState.UNKNOWN);
                         jobs.saveAndFlush(job);
                     });
@@ -216,6 +263,7 @@ public class GithubAutomationService {
             jobs.saveAndFlush(job);
             return null;
         }
+        job.recordContext(provider.recoveryContext(current, solution));
         job.start();
         jobs.saveAndFlush(job);
         return new Claim(current, solution, job.getOrigin());
