@@ -169,7 +169,7 @@ class PostgreSqlMigrationTest {
                 settings.setLong(1, userId); settings.executeUpdate();
                 publish.setLong(1, userId); publish.executeUpdate();
             }
-            assertEquals(2, database.flyway().migrate().migrationsExecuted);
+            assertEquals(LATEST_MIGRATION - 23, database.flyway().migrate().migrationsExecuted);
             assertEquals("all", database.scalar("SELECT community_duplicate_visibility FROM user_settings WHERE user_id = ?", userId));
             long solutionId = ((Number) database.scalar("SELECT id FROM solutions WHERE user_id = ? AND published_at IS NOT NULL", userId)).longValue();
             DriverManagerDataSource dataSource = new DriverManagerDataSource(database.url, database.user, database.password);
