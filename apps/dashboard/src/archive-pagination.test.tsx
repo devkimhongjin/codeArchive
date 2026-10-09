@@ -32,6 +32,17 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); localStorage.clear(); window.history.replaceState({}, '', '/'); vi.resetAllMocks() })
 
+it('shows the archive and export controls without the removed analysis feature', async () => {
+  await openArchive()
+  expect(screen.getByRole('region', { name: '소스 코드' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: /^복사$/ })).toBeTruthy()
+  expect(screen.getByRole('button', { name: /^다운로드$/ })).toBeTruthy()
+  expect(screen.getByRole('combobox', { name: '코드 보기 테마' })).toBeTruthy()
+  expect(screen.queryByRole('region', { name: '로컬 정적 분석' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '기본 정적 검사' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '분석 캐시 지우기' })).toBeNull()
+})
+
 it('pages 20 problem groups, keeps duplicate submissions together and selects the visible detail', async () => {
   await openArchive()
   expect(rows()).toHaveLength(20)
