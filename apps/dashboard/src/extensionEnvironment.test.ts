@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { extensionApiUrl, extensionRuntime, subscribeExtensionLogin } from './extensionEnvironment'
+import { extensionApiUrl, extensionRuntime, openExtensionExternal, subscribeExtensionLogin } from './extensionEnvironment'
 import { apiFetch } from './desktop'
 import { requestBridge } from './bridge'
 import { navigateSameTab } from './navigation'
@@ -35,23 +35,42 @@ it('uses the internal capability bridge and rejects another extension storage id
 it('opens provider flow through the worker without navigating away from the management page', async () => {
   const { runtime, location, dispatchEvent } = fixture()
   navigateSameTab('/api/oauth2/authorization/github')
-  expect(runtime.sendMessage.mock.calls[0]?.[0]).toEqual({ type: 'DASHBOARD_OPEN_EXTERNAL', url: '/api/oauth2/authorization/github' })
+  expect(runtime.sendMessage.mock.calls[0]?.[0]).toEqual({ type: 'DASHBOARD_OPEN_EXTERNAL', url: '/api/oauth2/authorization/github', loginNonce: expect.any(String) })
   expect(location.assign).not.toHaveBeenCalled()
   expect(dispatchEvent).toHaveBeenCalled()
 })
-it('refreshes only a completed login and reports failure without restarting OAuth', () => {
+it('refreshes only the initiating login document after a matching nonce', async () => {
   const { runtime, dispatchEvent } = fixture()
   const completed = vi.fn()
   const dispose = subscribeExtensionLogin(completed)
-  const listener = runtime.onMessage.addListener.mock.calls[0]![0] as (value: unknown, sender: { id?: string; tab?: unknown }) => void
-  listener({ type: 'DASHBOARD_LOGIN_COMPLETE' }, { id: 'other' })
-  listener({ type: 'DASHBOARD_LOGIN_COMPLETE' }, { id, tab: { id: 3 } })
-  listener({ type: 'unrelated' }, { id })
-  listener({ type: 'DASHBOARD_LOGIN_FAILED' }, { id })
+  await openExtensionExternal('/api/oauth2/authorization/github')
+  const loginNonce = (runtime.sendMessage.mock.calls[0]![0] as { loginNonce: string }).loginNonce
+  const listener = runtime.onMessage.addListener.mock.calls[0]![0] as (value: unknown, sender: { id?: string; tab?: unknown }, respond: (response: unknown) => void) => void
+  const respond = vi.fn(), message = { type: 'DASHBOARD_LOGIN_COMPLETE', loginNonce }
+  listener(message, { id: 'other' }, respond)
+  listener(message, { id, tab: { id: 3 } }, respond)
+  listener({ type: 'unrelated', loginNonce }, { id }, respond)
+  listener({ ...message, loginNonce: 'different' }, { id }, respond)
   expect(completed).not.toHaveBeenCalled()
-  expect(dispatchEvent).toHaveBeenCalled()
-  listener({ type: 'DASHBOARD_LOGIN_COMPLETE', returnQuery: 'githubInstall=success&installationId=12' }, { id })
+  expect(respond).not.toHaveBeenCalled()
+  listener({ ...message, returnQuery: 'githubInstall=success&installationId=12' }, { id }, respond)
   expect(completed).toHaveBeenCalledWith('githubInstall=success&installationId=12')
+  expect(respond).toHaveBeenCalledWith({ ready: true, loginNonce })
+  listener(message, { id }, respond)
+  expect(completed).toHaveBeenCalledTimes(1)
+  await openExtensionExternal('/api/oauth2/authorization/github')
+  const failedNonce = (runtime.sendMessage.mock.calls[1]![0] as { loginNonce: string }).loginNonce
+  listener({ type: 'DASHBOARD_LOGIN_FAILED', loginNonce: failedNonce }, { id }, respond)
+  expect(dispatchEvent).toHaveBeenCalled()
   dispose()
   expect(runtime.onMessage.removeListener).toHaveBeenCalledWith(listener)
+})
+it('cannot acknowledge a return after the initiating document unmounts', async () => {
+  const { runtime } = fixture(), completed = vi.fn(), respond = vi.fn()
+  const dispose = subscribeExtensionLogin(completed)
+  await openExtensionExternal('/api/oauth2/authorization/github')
+  const loginNonce = (runtime.sendMessage.mock.calls[0]![0] as { loginNonce: string }).loginNonce
+  const listener = runtime.onMessage.addListener.mock.calls[0]![0] as (message: unknown, sender: { id: string }, respond: (response: unknown) => void) => void
+  dispose(); listener({ type: 'DASHBOARD_LOGIN_COMPLETE', loginNonce }, { id }, respond)
+  expect(respond).not.toHaveBeenCalled(); expect(completed).not.toHaveBeenCalled()
 })

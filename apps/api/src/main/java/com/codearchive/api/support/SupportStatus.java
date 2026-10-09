@@ -1,3 +1,4 @@
 package com.codearchive.api.support;
 
-public enum SupportStatus { OPEN, ANSWERED, CLOSED }
+// CLOSED remains readable for legacy rows, but is no longer an allowed mutation.
+public enum SupportStatus { OPEN, IN_REVIEW, ANSWERED, CLOSED }

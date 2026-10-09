@@ -45,6 +45,14 @@ async function openSettings(name = '홍길동') {
   await screen.findByDisplayValue(name)
 }
 
+it('places 문의·오류 제보 last in the main navigation', () => {
+  mocks.me.mockImplementationOnce(() => new Promise(() => {}))
+  render(<App />)
+  const navigation = screen.getByRole('navigation', { name: '주 메뉴' })
+  const buttons = within(navigation).getAllByRole('button')
+  expect(buttons[buttons.length - 1].textContent).toContain('문의·오류 제보')
+})
+
 async function openGithub() {
   await openSettings()
   fireEvent.click(screen.getByRole('button', { name: 'GitHub 관리' }))
