@@ -56,7 +56,7 @@ CI도 준비 명령을 실행하며, 웹스토어에 업로드하거나 자동 �
 
 ## 개인정보 안내
 
-[데이터 처리 안내](extension-privacy.md)에 수집 항목, 자동 동기화, 커뮤니티 공개와 GitHub 전송을 정리했습니다. 인증된 대시보드의 비공개 문의는 데이터 접근·정정·삭제 요청 채널이며, 종료한 지 90일이 지난 문의는 다음 문의 기능 접근 때 삭제됩니다. 백업 보관 기간은 확인하지 않았습니다. master 승격 후 정책 참조 URL은 `https://github.com/devkimhongjin/codeArchive/blob/master/docs/extension-privacy.md`이며, 실제 스토어 개인정보 입력란 등록과 공개 접근 확인은 출시 전에 수행합니다. GitHub 문서가 존재한다는 이유만으로 스토어의 모든 개인정보 항목이 충족된다고 판단하지 않습니다.
+[데이터 처리 안내](extension-privacy.md)에 수집 항목, 자동 동기화, 커뮤니티 공개와 GitHub 전송을 정리했습니다. 인증된 비공개 문의는 데이터 접근·정정·삭제 요청 채널이며 접수됨·확인중·답변완료로 관리합니다. 임의 종료·삭제와 90일 자동 삭제를 제거했고 실제 정책 반영에는 API/V29 적용이 필요합니다. 백업 보관 기간은 확인하지 않았습니다. 정책 참조 URL은 `https://github.com/devkimhongjin/codeArchive/blob/master/docs/extension-privacy.md`이며, 실제 스토어 개인정보 입력란 등록과 공개 접근 확인은 출시 전에 수행합니다. GitHub 문서가 존재한다는 이유만으로 스토어의 모든 개인정보 항목이 충족된다고 판단하지 않습니다.
 
 ## 실제 ID와 출시 검증
 
@@ -79,10 +79,11 @@ CI도 준비 명령을 실행하며, 웹스토어에 업로드하거나 자동 �
 - [웹스토어 공개 키와 개발용 확장 ID](https://developer.chrome.com/docs/extensions/reference/manifest/key)
 - [Manifest V3 원격 코드 제한](https://developer.chrome.com/docs/extensions/develop/migrate/remote-hosted-code)
 
-## 제출 자료와 확인 상태 (v0.3.1)
+## 제출 자료와 확인 상태 (v0.3.2)
 
-- [릴리스 노트](releases/extension-v0.3.1.md)
-- [스토어 입력 초안·검증 절차](webstore/submission-v0.3.1.md)
+- [릴리스 노트](releases/extension-v0.3.2.md)
+- [스토어 입력 초안·검증 절차](webstore/submission-v0.3.2.md)
+- [배포 순서·승인 경계·롤백](releases/deployment-v0.3.2.md)
 - [개인정보 안내 초안](extension-privacy.md)
 - 저장소의 `master`로 승격한 뒤 release build로 ZIP과 체크섬을 생성합니다. ZIP의 출처 SHA와 검증 결과는 준비 폴더의 별도 기록에 남깁니다.
 - 아이콘 `apps/extension/icons/icon-128.png`은 포함합니다. 홍보 이미지와 실제 화면 캡처는 스토어 등록 전에 준비합니다.

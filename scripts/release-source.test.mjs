@@ -4,7 +4,18 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { masterReleaseSource } from './release-source.mjs';
+import { developPromotionSource, masterReleaseSource } from './release-source.mjs';
+
+test('master promotion accepts only the same repository develop branch', () => {
+  const env = { GITHUB_EVENT_NAME: 'pull_request', PROMOTION_REPOSITORY: 'devkimhongjin/codeArchive', PROMOTION_HEAD_REPOSITORY: 'devkimhongjin/codeArchive', PROMOTION_BASE_REPOSITORY: 'devkimhongjin/codeArchive', PROMOTION_HEAD_REF: 'develop', PROMOTION_BASE_REF: 'master' };
+  assert.deepEqual(developPromotionSource(env), { repository: 'devkimhongjin/codeArchive', head: 'develop', base: 'master' });
+  for (const altered of [
+    { PROMOTION_HEAD_REPOSITORY: 'fork/codeArchive' }, { PROMOTION_BASE_REPOSITORY: 'other/codeArchive' },
+    { PROMOTION_HEAD_REF: 'codex/feature' }, { PROMOTION_HEAD_REF: 'Develop' }, { PROMOTION_BASE_REF: 'develop' },
+    { GITHUB_EVENT_NAME: 'push' }, { PROMOTION_REPOSITORY: undefined }, { PROMOTION_HEAD_REPOSITORY: undefined }
+  ]) assert.throws(() => developPromotionSource({ ...env, ...altered }), /same-repository/);
+  assert.throws(() => developPromotionSource({}), /same-repository/);
+});
 
 test('only master dispatches and tags on its first-parent history may release', t => {
   const cwd = mkdtempSync(join(tmpdir(), 'codearchive-release-source-'));
