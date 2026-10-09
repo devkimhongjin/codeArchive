@@ -19,4 +19,5 @@ public class SupportMessage {
     }
     public Long getId() { return id; } public SupportAuthorRole getAuthorRole() { return authorRole; }
     public String getBody() { return body; } public Instant getCreatedAt() { return createdAt; }
+    void updateAnswer(String body) { this.body = body; }
 }

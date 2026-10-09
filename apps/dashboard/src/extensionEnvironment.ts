@@ -4,7 +4,7 @@ type ExtensionRuntime = {
   id?: string
   lastError?: { message?: string }
   sendMessage(message: unknown, callback: (response: unknown) => void): unknown
-  onMessage?: { addListener(listener: (message: unknown, sender: { id?: string; tab?: unknown }) => void): void; removeListener(listener: (message: unknown, sender: { id?: string; tab?: unknown }) => void): void }
+  onMessage?: { addListener(listener: (message: unknown, sender: { id?: string; tab?: unknown }, respond: (response: unknown) => void) => void): void; removeListener(listener: (message: unknown, sender: { id?: string; tab?: unknown }, respond: (response: unknown) => void) => void): void }
 }
 type ExtensionWindow = Window & { chrome?: { runtime?: ExtensionRuntime } }
 export function extensionRuntime(): ExtensionRuntime | undefined {
@@ -33,18 +33,25 @@ export function extensionMessage<T>(message: unknown): Promise<T> {
     }) } catch (error) { clearTimeout(timer); reject(error) }
   })
 }
-export function openExtensionExternal(url: string): Promise<unknown> {
-  return extensionMessage({ type: 'DASHBOARD_OPEN_EXTERNAL', url })
+let pendingLoginNonce: string | null = null
+export async function openExtensionExternal(url: string): Promise<unknown> {
+  const loginNonce = crypto.randomUUID()
+  pendingLoginNonce = loginNonce
+  try { return await extensionMessage({ type: 'DASHBOARD_OPEN_EXTERNAL', url, loginNonce }) }
+  catch (error) { if (pendingLoginNonce === loginNonce) pendingLoginNonce = null; throw error }
 }
 export function subscribeExtensionLogin(onComplete: (returnQuery: string) => void): () => void {
   const runtime = extensionRuntime()
-  const listener = (message: unknown, sender: { id?: string; tab?: unknown }) => {
+  const listener = (message: unknown, sender: { id?: string; tab?: unknown }, respond: (response: unknown) => void) => {
     if (sender?.id !== runtime?.id || sender.tab) return
     if (!message || typeof message !== 'object') return
-    const value = message as { type?: string; returnQuery?: string }
+    const value = message as { type?: string; returnQuery?: string; loginNonce?: string }
+    if (!['DASHBOARD_LOGIN_COMPLETE', 'DASHBOARD_LOGIN_FAILED'].includes(value.type ?? '') || !pendingLoginNonce || value.loginNonce !== pendingLoginNonce) return
+    pendingLoginNonce = null
+    respond({ ready: true, loginNonce: value.loginNonce })
     if (value.type === 'DASHBOARD_LOGIN_COMPLETE') onComplete(typeof value.returnQuery === 'string' ? value.returnQuery : '')
     if (value.type === 'DASHBOARD_LOGIN_FAILED') window.dispatchEvent(new CustomEvent('codearchive-login-error', { detail: 'GitHub 로그인을 완료하지 못했습니다. 다시 시도해 주세요.' }))
   }
   runtime?.onMessage?.addListener(listener)
-  return () => runtime?.onMessage?.removeListener(listener)
+  return () => { pendingLoginNonce = null; runtime?.onMessage?.removeListener(listener) }
 }

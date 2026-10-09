@@ -25,7 +25,8 @@ public class SupportInquiry {
     public SupportCategory getCategory() { return category; } public String getTitle() { return title; }
     public SupportStatus getStatus() { return status; } public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; } public Instant getClosedAt() { return closedAt; }
-    void replyByOwner(Instant now) { status = SupportStatus.OPEN; closedAt = null; updatedAt = now; }
-    void replyByAdmin(boolean close, Instant now) { status = close ? SupportStatus.CLOSED : SupportStatus.ANSWERED; closedAt = close ? now : null; updatedAt = now; }
-    void setStatus(SupportStatus next, Instant now) { status = next; closedAt = next == SupportStatus.CLOSED ? now : null; updatedAt = now; }
+    void setStatus(SupportStatus next, Instant now) {
+        if (next == null || next == SupportStatus.CLOSED) throw new IllegalArgumentException("Unsupported inquiry status");
+        status = next; closedAt = null; updatedAt = now;
+    }
 }

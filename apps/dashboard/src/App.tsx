@@ -1307,14 +1307,14 @@ export default function App() {
             <button className={view === 'community' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('community')}>
               커뮤니티
             </button>
-            <button className={view === 'support' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('support')}>
-              문의·오류 제보
-            </button>
             <button className={view === 'settings' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('settings')}>
               설정
             </button>
             <button className={view === 'github' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('github')}>
               GitHub 관리
+            </button>
+            <button className={view === 'support' ? 'nav-item active' : 'nav-item'} onClick={() => changeView('support')}>
+              문의·오류 제보
             </button>
           </nav>
           <div className="topbar-actions">
