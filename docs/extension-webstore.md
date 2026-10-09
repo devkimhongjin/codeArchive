@@ -28,6 +28,8 @@ node scripts/extension-store-package.mjs prepare apps/extension/dist output/chro
 
 manifest의 버전·공개 키·로컬 ID 계약, 권한·사이트 범위, manifest와 HTML이 참조하는 로컬 파일을 검사합니다. 예상 밖 파일, 심볼릭 링크, 누락 파일, HTML 인라인 스크립트·이벤트 처리와 원격 script/link를 거부합니다. ZIP은 파일 순서와 타임스탬프를 고정합니다. 이 검사는 JavaScript 전체의 의미 분석이나 실제 Chrome 검증을 대신하지 않습니다. 실제 ZIP에 포함된 의존 코드도 원격 실행 코드가 없는지 검토해야 합니다.
 
+제출 manifest에서는 개발용 `key`를 제거합니다(#420). 원본 manifest의 공개 키와 로컬 ID는 변환 전에 검증하고 그대로 보존하며, `package-report.json`의 `localExtensionId`는 원본에서 계산합니다. 제출 ZIP에 개발용 키나 동일 ID를 강제로 넣지 않습니다. 실제 Item ID/공개 키를 확인한 뒤 API 허용 origin과 로컬 데이터 이전을 별도 검증합니다. 키 없는 제출 manifest는 개발 빌드 입력으로 재사용하지 않습니다.
+
 `netlify.toml`의 `build.ignore = "exit 0"`으로 저장소 변경에 따른 웹 빌드를 중지합니다. 기존에 게시된 API 프록시는 사용하며, 이 작업에서 새 Netlify 배포를 실행하지 않습니다.
 
 CI도 준비 명령을 실행하며, 웹스토어에 업로드하거나 자동 게시하지 않습니다. 기존 GitHub 릴리스 워크플로의 master 제한은 유지합니다.
