@@ -61,6 +61,9 @@ export function prepareManifest(original) {
   manifest.host_permissions = manifest.host_permissions.filter(value => value !== developmentHost && value !== retiredReleaseHost);
   manifest.externally_connectable.matches = external;
   manifest.content_security_policy = { extension_pages: extensionCsp };
+  // Validate the pinned development identity above, but never submit that key.
+  // The Web Store assigns its own item identity; keep the local input unchanged.
+  delete manifest.key;
   return manifest;
 }
 
@@ -167,20 +170,21 @@ export async function prepareStorePackage({ dist, output }) {
   if (outputRelative !== '..' && !outputRelative.startsWith('../') && !isAbsolute(outputRelative)) fail('output must be outside the build directory');
   const files = await readBuild(dist);
   if (!files.has('manifest.json')) fail('missing manifest');
-  const manifest = prepareManifest(JSON.parse(files.get('manifest.json').toString('utf8')));
+  const originalManifest = JSON.parse(files.get('manifest.json').toString('utf8'));
+  const manifest = prepareManifest(originalManifest);
   files.set('manifest.json', Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
   validateResources(files, manifest);
   const zip = createZip(files);
   const name = 'codearchive-chrome-webstore.zip';
   const sha256 = digest(zip);
-  const localExtensionId = pinnedId(manifest.key);
+  const localExtensionId = pinnedId(originalManifest.key);
   const report = {
     schemaVersion: 1, status: 'PREPARATION_ONLY', version: manifest.version,
     localExtensionId, storeExtensionId: null,
     artifact: { name, sha256, bytes: zip.length },
     permissions: manifest.permissions, hostPermissions: manifest.host_permissions,
     externalMatches: manifest.externally_connectable.matches,
-    checks: { localManifestUnchanged: true, developmentPermissionsRemoved: true, retiredReleasePermissionRemoved: true, localPageResourcesPresent: true, sourceMapsExcluded: true },
+    checks: { localManifestUnchanged: true, developmentKeyRemoved: !Object.hasOwn(manifest, 'key'), developmentPermissionsRemoved: true, retiredReleasePermissionRemoved: true, localPageResourcesPresent: true, sourceMapsExcluded: true },
     files: [...files].map(([path, bytes]) => ({ path, bytes: bytes.length, sha256: digest(bytes) })),
     remainingVerification: ['Chrome runtime and interrupted-job recovery', 'Store-issued extension ID and API allowed origin', 'Published privacy policy URL and store disclosures', 'Master release source and version']
   };
