@@ -1,0 +1,25 @@
+name: Master Release Source
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  require-develop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - name: Require same-repository develop promotion
+        run: node scripts/release-source.mjs promotion
+        env:
+          PROMOTION_REPOSITORY: ${{ github.repository }}
+          PROMOTION_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          PROMOTION_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          PROMOTION_BASE_REF: ${{ github.base_ref }}
+          PROMOTION_HEAD_REF: ${{ github.head_ref }}

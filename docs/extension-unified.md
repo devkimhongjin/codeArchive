@@ -12,6 +12,8 @@ Chrome이 완전히 종료되면 확장 작업은 진행되지 않습니다. 과
 
 ## 로컬 검증 폴더
 
+로그인 복귀는 확장 관리 화면이 만든 일회성 nonce와 Chrome session 저장소의 로그인 탭/대상 탭/만료 정보를 사용합니다. 로그인 탭은 `about:blank`로 먼저 만들고 복귀 정보를 저장한 뒤 OAuth 주소로 이동합니다. 승인된 웹 origin의 루트로 돌아오면 원래 관리 문서의 메모리 nonce 응답을 확인한 뒤 그 탭과 창을 활성화하고 로그인 탭만 닫습니다. `tabs`·`cookies` 권한을 추가하지 않으며 `Tab.url`이 없어도 문서 응답으로 검증합니다. 원래 문서가 닫히거나 새로고침·이동하거나 다른 로그인 시도로 바뀌었거나 10분이 지나면 자동 복귀하지 않습니다. 일반 웹 대시보드 로그인과 서버 OAuth 세션 방식은 변경하지 않습니다.
+
 `apps/extension/build.local.json`의 `installedExtensionDir`에 현재 Chrome에 등록한 폴더를 지정하고 `npm --prefix apps/extension run build`를 실행합니다. 빌드는 기존 파일을 백업한 뒤 해당 폴더를 갱신합니다. Chrome에서 CodeArchive 확장 새로고침(↻) 후 팝업을 엽니다. 설정 파일은 Git에 포함하지 않습니다.
 
 대시보드 번들은 `apps/dashboard/dist-extension`에서 상대 경로로 생성되어 확장 `dist/dashboard.html` 및 `dist/assets`에 포함됩니다. 빌드 전에 dashboard와 extension의 `npm ci`를 실행합니다. Shiki는 확장 CSP를 유지하기 위해 JavaScript 정규식 엔진을 사용합니다. 원격 스크립트·eval·추가 쿠키 권한을 사용하지 않습니다.

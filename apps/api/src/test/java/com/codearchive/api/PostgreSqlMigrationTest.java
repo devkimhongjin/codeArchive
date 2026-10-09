@@ -36,7 +36,29 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
-    private static final int LATEST_MIGRATION = 28;
+    private static final int LATEST_MIGRATION = 29;
+
+    @Test
+    void supportReviewUpgradePreservesOldInquiriesAndMessages() throws Exception {
+        TestDatabase database = TestDatabase.create();
+        try {
+            database.flyway(MigrationVersion.fromVersion("28")).migrate();
+            long inquiryId;
+            try (Connection connection = database.connection(); Statement statement = connection.createStatement()) {
+                ResultSet user = statement.executeQuery("INSERT INTO users(email, password_hash, created_at) VALUES ('support-upgrade@example.test', 'fixture', now()) RETURNING id"); user.next(); long userId = user.getLong(1);
+                ResultSet inquiry = statement.executeQuery("INSERT INTO support_inquiries(owner_id, category, title, status, created_at, updated_at, closed_at, version) VALUES (" + userId + ", 'BUG', 'retained', 'CLOSED', now(), now(), now(), 0) RETURNING id"); inquiry.next(); inquiryId = inquiry.getLong(1);
+                statement.executeUpdate("INSERT INTO support_messages(inquiry_id, author_id, author_role, body, created_at) VALUES (" + inquiryId + ", " + userId + ", 'USER', 'retained body', now())");
+            }
+            assertEquals(1, database.flyway().migrate().migrationsExecuted);
+            assertEquals("CLOSED", database.scalar("SELECT status FROM support_inquiries WHERE id = ?", inquiryId));
+            assertEquals("retained body", database.scalar("SELECT body FROM support_messages WHERE inquiry_id = ?", inquiryId));
+            try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement("UPDATE support_inquiries SET status='IN_REVIEW' WHERE id=?")) {
+                statement.setLong(1, inquiryId); assertEquals(1, statement.executeUpdate());
+            }
+            assertEquals("IN_REVIEW", database.scalar("SELECT status FROM support_inquiries WHERE id = ?", inquiryId));
+            database.assertFinalSchema(); validateWithHibernate(database);
+        } finally { database.drop(); }
+    }
 
     @Test
     void freshSchemaMigratesTwiceAndPassesHibernateValidation() throws Exception {

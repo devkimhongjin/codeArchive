@@ -3,7 +3,7 @@ import { isLightTheme, isDarkTheme } from "../../../shared/codeThemes";
 import { setPopupGithubAutomation } from './popupGithubAutomation';
 import { isCaptureRecord, isUuid } from "./capture";
 import { DashboardBridge } from "./bridge";
-import { DASHBOARD_LOGIN_ROUTE_KEY, dashboardSender, dashboardExternalUrl, dashboardLoginReturn, dashboardReturnQuery } from './dashboardNavigation';
+import { dashboardSender, dashboardExternalUrl, validDashboardLoginNonce, beginDashboardLogin, completeDashboardLogin } from './dashboardNavigation';
 import { IndexedDbCaptureStore } from "./storage";
 import { bindAutomaticCapture, nextAutomaticCapture, loadPopupLocalState, prepareCaptureDownload, retryRelayConnection, storeCaptureLocalFirst } from "./backgroundActions";
 import { exportCode } from "./export";
@@ -460,10 +460,8 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       void bridge.handleExtensionMessage(dashboardMessage.message, sender, chrome.runtime.id).then(sendResponse).catch(() => sendResponse({ error: 'BAD_REQUEST' }));
     } else {
       const url = dashboardExternalUrl(dashboardMessage.url);
-      if (!url) { sendResponse({ error: 'BAD_REQUEST' }); return false; }
-      void chrome.tabs.create({ url }).then(async tab => {
-        if (!Number.isSafeInteger(tab.id)) throw new Error('Login tab unavailable');
-        await chrome.storage.session.set({ [DASHBOARD_LOGIN_ROUTE_KEY]: { loginTabId: tab.id, dashboardTabId: sender.tab!.id, expiresAt: Date.now() + 10 * 60_000 } });
+      if (!url || !validDashboardLoginNonce(dashboardMessage.loginNonce)) { sendResponse({ error: 'BAD_REQUEST' }); return false; }
+      void beginDashboardLogin(url, sender.tab!.id!, dashboardMessage.loginNonce).then(() => {
         sendResponse({ ok: true });
       }).catch(() => sendResponse({ error: '로그인 창을 열지 못했습니다.' }));
     }
@@ -721,19 +719,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   const url = changeInfo.url ?? (changeInfo.status === 'complete' ? tab.url : undefined);
-  if (!url || !dashboardLoginReturn(url)) return;
-  void (async () => {
-    const route = asObject((await chrome.storage.session.get(DASHBOARD_LOGIN_ROUTE_KEY))[DASHBOARD_LOGIN_ROUTE_KEY]);
-    if (!route || route.loginTabId !== tabId || !Number.isSafeInteger(route.dashboardTabId) || typeof route.expiresAt !== 'number' || route.expiresAt < Date.now()) return;
-    const dashboardTabId = route.dashboardTabId as number;
-    const dashboard = await chrome.tabs.get(dashboardTabId);
-    const dashboardUrl = new URL(dashboard.url ?? '');
-    if (dashboardUrl.protocol !== 'chrome-extension:' || dashboardUrl.hostname !== chrome.runtime.id || dashboardUrl.pathname !== '/dashboard.html') return;
-    await chrome.storage.session.remove(DASHBOARD_LOGIN_ROUTE_KEY);
-    await chrome.tabs.update(dashboardTabId, { active: true });
-    await chrome.runtime.sendMessage({ type: new URL(url).searchParams.has('authError') ? 'DASHBOARD_LOGIN_FAILED' : 'DASHBOARD_LOGIN_COMPLETE', returnQuery: dashboardReturnQuery(url) }).catch(() => undefined);
-    await chrome.tabs.remove(tabId);
-  })().catch(() => undefined);
+  if (url) void completeDashboardLogin(tabId, url).catch(() => undefined);
 });
 
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
