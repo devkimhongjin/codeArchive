@@ -15,6 +15,7 @@ public class SupportInquiry {
     @Column(name = "created_at", nullable = false) private Instant createdAt;
     @Column(name = "updated_at", nullable = false) private Instant updatedAt;
     @Column(name = "closed_at") private Instant closedAt;
+    @Column(name = "archived_at") private Instant archivedAt;
     @Version private long version;
     protected SupportInquiry() {}
     SupportInquiry(AppUser owner, SupportCategory category, String title, Instant now) {
@@ -25,8 +26,15 @@ public class SupportInquiry {
     public SupportCategory getCategory() { return category; } public String getTitle() { return title; }
     public SupportStatus getStatus() { return status; } public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; } public Instant getClosedAt() { return closedAt; }
+    public Instant getArchivedAt() { return archivedAt; }
     void setStatus(SupportStatus next, Instant now) {
         if (next == null || next == SupportStatus.CLOSED) throw new IllegalArgumentException("Unsupported inquiry status");
         status = next; closedAt = null; updatedAt = now;
+        if (next != SupportStatus.ANSWERED) archivedAt = null;
     }
+    void archive(Instant now) {
+        if (status != SupportStatus.ANSWERED && status != SupportStatus.CLOSED) throw new IllegalArgumentException("Only answered inquiries can be archived");
+        archivedAt = now; updatedAt = now;
+    }
+    void restore(Instant now) { archivedAt = null; updatedAt = now; }
 }

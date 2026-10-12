@@ -37,6 +37,7 @@ codearchive:
     client-secret: ${GITHUB_CLIENT_SECRET:}
     redirect-uri: ${GITHUB_REDIRECT_URI:http://localhost:5173/api/login/oauth2/code/github}
     dashboard-origin: ${DASHBOARD_ORIGIN:http://localhost:5173}
+    extension-api-origin: ${EXTENSION_API_ORIGIN:https://codearchive-api-stg-e3q54l32da-as.a.run.app}
     # GitHub App credentials are server-only. Leaving either blank keeps the
     # provider fail-closed and records an actionable unavailable state.
     app-id: ${GITHUB_APP_ID:}

@@ -1,9 +1,11 @@
 package com.codearchive.api.config;
 
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import java.io.Serializable;
 import java.io.IOException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -18,6 +20,7 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestRedirectFilter;
 import org.springframework.security.oauth2.client.web.DefaultOAuth2AuthorizationRequestResolver;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
+import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
@@ -53,7 +56,12 @@ import com.codearchive.api.relay.RelayGrantService;
 public class SecurityConfig {
 
     /** Derived from the pinned public key in apps/extension/manifest.json. */
-    private static final String EXTENSION_ORIGIN = "chrome-extension://oohlcmihldmfninmdcmanddfmhoonmdl";
+    public static final String STORE_EXTENSION_ORIGIN = "chrome-extension://mlhibjadcbklfdllkonhjjajhmhnoalj";
+    public static final String LEGACY_EXTENSION_ORIGIN = "chrome-extension://oohlcmihldmfninmdcmanddfmhoonmdl";
+    public static final String EXTENSION_OAUTH_INTENT = SecurityConfig.class.getName() + ".extensionOauth";
+    public static final String EXTENSION_OAUTH_COMPLETION = SecurityConfig.class.getName() + ".extensionOauthCompletion";
+    public static final Duration EXTENSION_OAUTH_TTL = Duration.ofMinutes(10);
+    public static boolean isExtensionOrigin(String value) { return STORE_EXTENSION_ORIGIN.equals(value) || LEGACY_EXTENSION_ORIGIN.equals(value); }
 
     /**
      * JDBC sessions must serialize the GitHub principal across restarts. The OAuth2
@@ -83,12 +91,46 @@ public class SecurityConfig {
 
     @Bean
     OAuth2AuthorizationRequestResolver githubAuthorizationRequestResolver(
-            ClientRegistrationRepository clientRegistrations) {
+            ClientRegistrationRepository clientRegistrations, GithubOAuth2Properties properties) {
         DefaultOAuth2AuthorizationRequestResolver resolver = new DefaultOAuth2AuthorizationRequestResolver(
                 clientRegistrations, "/api/oauth2/authorization");
         resolver.setAuthorizationRequestCustomizer(builder -> builder.additionalParameters(parameters ->
                 parameters.put("prompt", "select_account")));
-        return resolver;
+        return new OAuth2AuthorizationRequestResolver() {
+            @Override public OAuth2AuthorizationRequest resolve(HttpServletRequest request) { return direct(request, resolver.resolve(request)); }
+            @Override public OAuth2AuthorizationRequest resolve(HttpServletRequest request, String registrationId) { return direct(request, resolver.resolve(request, registrationId)); }
+            private OAuth2AuthorizationRequest direct(HttpServletRequest request, OAuth2AuthorizationRequest authorization) {
+                if (authorization == null || request.getSession(false) == null) return authorization;
+                Object pending = request.getSession(false).getAttribute(EXTENSION_OAUTH_INTENT);
+                if (!(pending instanceof ExtensionOAuthIntent intent) || intent.expiresAt() <= Instant.now().toEpochMilli()) {
+                    request.getSession(false).removeAttribute(EXTENSION_OAUTH_INTENT);
+                    request.getSession(false).removeAttribute(EXTENSION_OAUTH_COMPLETION);
+                    return authorization;
+                }
+                // The Origin-less top-level navigation consumes the short-lived
+                // extension-origin bootstrap before it changes the callback URI.
+                request.getSession(false).removeAttribute(EXTENSION_OAUTH_INTENT);
+                OAuth2AuthorizationRequest direct = OAuth2AuthorizationRequest.from(authorization)
+                        .redirectUri(properties.extensionApiRoot() + "/api/login/oauth2/code/github").build();
+                request.getSession(false).setAttribute(EXTENSION_OAUTH_COMPLETION,
+                        new ExtensionOAuthCompletion(intent.expiresAt(), direct.getState()));
+                return direct;
+            }
+        };
+    }
+    public record ExtensionOAuthIntent(long expiresAt) implements Serializable {
+        private static final long serialVersionUID = 1L;
+        public static ExtensionOAuthIntent issue() {
+            return new ExtensionOAuthIntent(Instant.now().plus(EXTENSION_OAUTH_TTL).toEpochMilli());
+        }
+        public boolean active() { return expiresAt > Instant.now().toEpochMilli(); }
+    }
+    public record ExtensionOAuthCompletion(long expiresAt, String state) implements Serializable {
+        private static final long serialVersionUID = 1L;
+        public boolean activeFor(String candidate) { return expiresAt > Instant.now().toEpochMilli() && state != null && state.equals(candidate); }
+    }
+    OAuth2AuthorizationRequestResolver githubAuthorizationRequestResolver(ClientRegistrationRepository clientRegistrations) {
+        return githubAuthorizationRequestResolver(clientRegistrations, new GithubOAuth2Properties());
     }
 
     @Bean
@@ -139,7 +181,8 @@ public class SecurityConfig {
                         // GitHub returns the browser here. The controller converts a
                         // missing/expired login session into a fixed dashboard result;
                         // state and installation ownership still require authentication.
-                        .requestMatchers(HttpMethod.GET, "/api/github/installations/callback").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/github/installations/callback", "/api/github/installations/setup", "/api/extension-login/complete").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/extension-login/start").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login").permitAll()
                         // Native handoff uses a short-lived S256 proof; approval stays session/CSRF protected.
                         .requestMatchers(HttpMethod.POST, "/api/desktop-auth/requests", "/api/desktop-auth/exchange").permitAll()
@@ -205,7 +248,8 @@ public class SecurityConfig {
                 .collect(Collectors.toList());
         // The pinned extension's bundled management page uses Chrome's HttpOnly
         // session. Ordinary endpoints still require session auth, CSRF and account assertions.
-        if (!origins.contains(EXTENSION_ORIGIN)) origins.add(EXTENSION_ORIGIN);
+        if (!origins.contains(STORE_EXTENSION_ORIGIN)) origins.add(STORE_EXTENSION_ORIGIN);
+        if (!origins.contains(LEGACY_EXTENSION_ORIGIN)) origins.add(LEGACY_EXTENSION_ORIGIN);
         configuration.setAllowedOrigins(origins);
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList(
@@ -218,7 +262,8 @@ public class SecurityConfig {
         // ordinary endpoints retain session/CSRF policy and never accept relay bearer grants.
         CorsConfiguration relayConfiguration = new CorsConfiguration(configuration);
         List<String> relayOrigins = new ArrayList<>(origins);
-        if (!relayOrigins.contains(EXTENSION_ORIGIN)) relayOrigins.add(EXTENSION_ORIGIN);
+        if (!relayOrigins.contains(STORE_EXTENSION_ORIGIN)) relayOrigins.add(STORE_EXTENSION_ORIGIN);
+        if (!relayOrigins.contains(LEGACY_EXTENSION_ORIGIN)) relayOrigins.add(LEGACY_EXTENSION_ORIGIN);
         relayConfiguration.setAllowedOrigins(relayOrigins);
         List<String> relayHeaders = new ArrayList<>(configuration.getAllowedHeaders());
         relayHeaders.add("Authorization");
