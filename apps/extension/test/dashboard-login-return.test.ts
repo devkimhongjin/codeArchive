@@ -10,7 +10,7 @@ function fixture() {
   const target: { id: number; windowId: number; url?: string } = { id: 1, windowId: 3 }; // Tab.url intentionally absent.
   let response: any = { ready: true, loginNonce: nonce };
   const api = {
-    runtime: { id: extensionId, sendMessage: async (message: unknown) => { calls.push(['message', message]); return response; } },
+    runtime: { id: extensionId, getURL: (path: string) => `chrome-extension://${extensionId}/${path}`, sendMessage: async (message: unknown) => { calls.push(['message', message]); return response; } },
     storage: { session: { get: async () => ({ ...session }), set: async (value: object) => { Object.assign(session, value); calls.push(['set']); }, remove: async (key: string) => { delete session[key]; calls.push(['forget']); } } },
     tabs: {
       get: async () => target, create: async (options: unknown) => { calls.push(['create', options]); return { id: 2 }; },
@@ -23,13 +23,20 @@ function fixture() {
 test('saves a login route before navigating to an already-authorized provider', async () => {
   const f = fixture(); await beginDashboardLogin(returned + 'api/oauth2/authorization/github', 1, nonce, f.api, 100);
   assert.deepEqual(f.calls.map(call => call[0]), ['create', 'set', 'update']);
-  assert.deepEqual(f.calls[0], ['create', { url: 'about:blank' }]);
+  assert.deepEqual(f.calls[0], ['create', { url: `chrome-extension://${extensionId}/login.html` }]);
   assert.equal(f.session[DASHBOARD_LOGIN_ROUTE_KEY].loginNonce, nonce);
 });
 test('requires the initiating extension document but not optional sender.tab.url', () => {
   const sender = { id: extensionId, url: `chrome-extension://${extensionId}/dashboard.html`, frameId: 0, documentId: 'original', tab: { id: 1 } };
   assert.equal(dashboardSender(sender, extensionId), true);
   for (const other of [{ ...sender, id: 'other' }, { ...sender, frameId: 1 }, { ...sender, documentId: undefined }, { ...sender, url: 'https://evil.test/' }, { ...sender, tab: { id: 1, url: 'https://evil.test/' } }]) assert.equal(dashboardSender(other, extensionId), false);
+});
+test('a failed provider navigation removes the progress tab and its route', async () => {
+  const f = fixture();
+  f.api.tabs.update = async () => { throw new Error('navigation failed'); };
+  await assert.rejects(beginDashboardLogin(returned + 'api/oauth2/authorization/github', 1, nonce, f.api, 100), /navigation failed/);
+  assert.equal(f.session[DASHBOARD_LOGIN_ROUTE_KEY], undefined);
+  assert.deepEqual(f.calls.slice(-2), [['forget'], ['remove', 2]]);
 });
 test('returns to and focuses the initiating extension document without tabs URL permission', async () => {
   const f = fixture(); assert.equal(await completeDashboardLogin(2, returned, f.api, 100), true);

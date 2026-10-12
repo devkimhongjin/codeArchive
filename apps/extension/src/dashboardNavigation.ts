@@ -50,7 +50,7 @@ export function validDashboardLoginNonce(value: unknown): value is string {
 export async function beginDashboardLogin(url: string, dashboardTabId: number, loginNonce: string, api = chrome, now = Date.now()) {
   // Register the route before navigating. An already-signed-in OAuth round-trip
   // can otherwise finish before tabs.create's response has been persisted.
-  const tab = await api.tabs.create({ url: 'about:blank' });
+  const tab = await api.tabs.create({ url: api.runtime.getURL('login.html') });
   if (!Number.isSafeInteger(tab.id)) throw new Error('Login tab unavailable');
   try {
     await api.storage.session.set({ [DASHBOARD_LOGIN_ROUTE_KEY]: { loginTabId: tab.id, dashboardTabId, loginNonce, expiresAt: now + 10 * 60_000 } });
