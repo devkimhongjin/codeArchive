@@ -6,7 +6,7 @@ CodeArchive는 SWEA·프로그래머스·정올의 본인 정답 풀이를 기�
 
 ## Chrome 확장 설치와 업데이트
 
-Chrome 웹스토어의 [CodeArchive](https://chromewebstore.google.com/detail/codearchive/mlhibjadcbklfdllkonhjjajhmhnoalj)는 스토어 항목 ID `mlhibjadcbklfdllkonhjjajhmhnoalj`를 사용합니다. 현재 브랜치의 1.0.1은 검증용 후보이며, API·worker 적용과 실제 확장 검증 후 master 기준 ZIP으로 제출합니다. 제출 성공은 스토어 공개 완료를 뜻하지 않습니다.
+Chrome 웹스토어의 [CodeArchive](https://chromewebstore.google.com/detail/codearchive/mlhibjadcbklfdllkonhjjajhmhnoalj)는 스토어 항목 ID `mlhibjadcbklfdllkonhjjajhmhnoalj`를 사용합니다. 1.0.1 업데이트는 검증된 master 소스에서 빌드하며, API·worker를 함께 적용한 뒤 ZIP을 제출합니다. 제출 성공은 스토어 공개 완료를 뜻하지 않으며, 실제 확장의 수용 검증은 관련 Issue에서 별도로 관리합니다.
 
 로컬 검증:
 
