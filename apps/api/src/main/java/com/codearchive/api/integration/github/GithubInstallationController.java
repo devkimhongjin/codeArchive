@@ -40,25 +40,40 @@ public class GithubInstallationController {
         this.properties = properties;
     }
 
+    /**
+     * Legacy web, desktop, and pre-direct-extension clients remain on v1 even
+     * when their browser Origin is a known extension. They can still be using
+     * the Netlify session cookie, so origin alone cannot select the API return.
+     */
     @PostMapping("/start")
     public ResponseEntity<?> start(Authentication authentication,
                                    @RequestHeader(value = GithubAccountAssertion.HEADER, required = false)
-                                   String expectedGithubId,
-                                   HttpSession session, HttpServletRequest request) {
+                                   String expectedGithubId, HttpSession session) {
+        return start(authentication, expectedGithubId, session, false);
+    }
+
+    /** The bundled direct dashboard opts in explicitly after its API-origin fetch. */
+    @PostMapping("/extension/start")
+    public ResponseEntity<?> startExtension(Authentication authentication,
+                                            @RequestHeader(value = GithubAccountAssertion.HEADER, required = false)
+                                            String expectedGithubId, HttpSession session, HttpServletRequest request) {
+        if (request == null || !com.codearchive.api.config.SecurityConfig.isExtensionOrigin(request.getHeader("Origin"))) {
+            return ResponseEntity.status(403).body(new ApiError("Trusted extension origin is required"));
+        }
+        return start(authentication, expectedGithubId, session, true);
+    }
+
+    private ResponseEntity<?> start(Authentication authentication, String expectedGithubId, HttpSession session, boolean directReturn) {
         var checked = GithubAccountAssertion.require(authentication, expectedGithubId, users);
         if (!checked.accepted()) return checked.failure();
         if (!github.browseReady() || !states.ready()) {
             return ResponseEntity.status(503).body(new ApiError("GitHub App provider is unavailable"));
         }
         try {
-            List<GithubAppProvider.InstallationChoice> installations =
-                    github.installations(checked.account().githubId());
-            if (!installations.isEmpty()) {
-                return ResponseEntity.ok(new StartResponse("AVAILABLE", installations, null));
-            }
+            List<GithubAppProvider.InstallationChoice> installations = github.installations(checked.account().githubId());
+            if (!installations.isEmpty()) return ResponseEntity.ok(new StartResponse("AVAILABLE", installations, null));
             AppUser user = checked.account().user();
-            String installUrl = states.issue(user.getId(), checked.account().githubId(), session,
-                    request != null && com.codearchive.api.config.SecurityConfig.isExtensionOrigin(request.getHeader("Origin")));
+            String installUrl = states.issue(user.getId(), checked.account().githubId(), session, directReturn);
             return ResponseEntity.ok(new StartResponse("INSTALL_REQUIRED", List.of(), installUrl));
         } catch (SecurityException exception) {
             return ResponseEntity.status(403).body(new ApiError("GitHub installation is not available to this account"));
@@ -66,7 +81,6 @@ public class GithubInstallationController {
             return ResponseEntity.status(503).body(new ApiError("GitHub App provider is unavailable"));
         }
     }
-
     @GetMapping("/callback")
     public ResponseEntity<Void> callback(Authentication authentication,
                                          @RequestParam(value = "state", required = false) String state,
@@ -109,11 +123,6 @@ public class GithubInstallationController {
             return callbackRedirect("provider_unavailable", null, payload);
         }
     }
-    /** Native desktop handoff invokes the controller directly and must retain the legacy return route. */
-    public ResponseEntity<?> start(Authentication authentication, String expectedGithubId, HttpSession session) {
-        return start(authentication, expectedGithubId, session, null);
-    }
-
     @GetMapping("/setup")
     public ResponseEntity<Void> setup(@RequestParam(value = "state", required = false) String state,
                                       @RequestParam(value = "installation_id", required = false) Long installationId) {

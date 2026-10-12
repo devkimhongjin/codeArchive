@@ -726,6 +726,21 @@ class CodeArchiveApiIntegrationTest {
     }
 
     @Test
+    void directInstallationStartRequiresCsrfAndAnExactTrustedExtensionOrigin() throws Exception {
+        githubAccountService.upsert(principal("8041", "direct-install-user", "Install", null));
+        mockMvc.perform(post("/api/github/installations/extension/start").with(csrf().asHeader())
+                        .with(githubLogin("8041", "direct-install-user", "Install", null)).header("X-CodeArchive-Github-Id", "8041"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/github/installations/extension/start").with(csrf().asHeader())
+                        .with(githubLogin("8041", "direct-install-user", "Install", null)).header("X-CodeArchive-Github-Id", "8041")
+                        .header("Origin", "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/github/installations/extension/start").with(csrf().asHeader())
+                        .with(githubLogin("8041", "direct-install-user", "Install", null)).header("X-CodeArchive-Github-Id", "8041")
+                        .header("Origin", "chrome-extension://mlhibjadcbklfdllkonhjjajhmhnoalj"))
+                .andExpect(status().isServiceUnavailable());
+    }
+    @Test
     void dashboardCorsPreflightAllowsImmutableGithubAccountAssertion() throws Exception {
         mockMvc.perform(options("/api/settings")
                         .header("Origin", "http://localhost:5173")

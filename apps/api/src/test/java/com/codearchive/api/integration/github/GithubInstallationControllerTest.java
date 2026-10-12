@@ -25,6 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockHttpSession;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
@@ -94,6 +95,43 @@ class GithubInstallationControllerTest {
                 "https://dashboard.example.test/?githubInstall=success&installationId=44");
     }
 
+    @Test
+    void legacyStartRetainsV1ForAClientThatCouldUseAnExtensionOrigin() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        when(github.installations("123")).thenReturn(List.of());
+        when(states.issue(17L, "123", session, false)).thenReturn("legacy");
+
+        var response = controller.start(github("123", "account"), "123", session);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(states).issue(17L, "123", session, false);
+    }
+
+    @Test
+    void directExtensionStartRequiresTheExactOriginAndIssuesV2() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        when(github.installations("123")).thenReturn(List.of());
+        when(states.issue(17L, "123", session, true)).thenReturn("direct");
+        MockHttpServletRequest trusted = new MockHttpServletRequest();
+        trusted.addHeader("Origin", "chrome-extension://mlhibjadcbklfdllkonhjjajhmhnoalj");
+
+        var response = controller.startExtension(github("123", "account"), "123", session, trusted);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(states).issue(17L, "123", session, true);
+    }
+
+    @Test
+    void directExtensionStartRejectsMissingOrUnknownOriginsBeforeStateIssue() {
+        var missing = controller.startExtension(github("123", "account"), "123", new MockHttpSession(), new MockHttpServletRequest());
+        MockHttpServletRequest unknown = new MockHttpServletRequest();
+        unknown.addHeader("Origin", "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        var rejected = controller.startExtension(github("123", "account"), "123", new MockHttpSession(), unknown);
+
+        assertThat(missing.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(rejected.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        verify(states, never()).issue(anyLong(), anyString(), any(HttpSession.class), org.mockito.ArgumentMatchers.anyBoolean());
+    }
     @Test
     void callbackReturnsOnlyFixedFailureCodes() {
         MockHttpSession session = new MockHttpSession();
