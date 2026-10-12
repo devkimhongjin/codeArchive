@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ApiError, createSupportTicket, getMe, getSupportAccess, getSupportAdminTicket, getSupportAdminTickets, getSupportTicket, getSupportTickets, replySupportAdminTicket, setSupportAdminStatus } from './api'
+import { ApiError, archiveSupportAdminTicket, createSupportTicket, getMe, getSupportAccess, getSupportAdminTicket, getSupportAdminTickets, getSupportTicket, getSupportTickets, replySupportAdminTicket, restoreSupportAdminTicket, setSupportAdminStatus } from './api'
 import type { User } from './types'
 import type { SupportAccess, SupportCategory, SupportInquiry, SupportPage, SupportStatus } from './supportTypes'
 
@@ -13,7 +13,7 @@ const answerOf = (ticket: SupportInquiry) => { const answers = ticket.messages.f
 
 export function SupportView({ user, mode, onLogin, onAuthInvalid }: { user: User | null; mode: 'live' | 'local'; onLogin: () => void; onAuthInvalid: () => void }) {
   const [access, setAccess] = useState<SupportAccess | null>(null), [loadedContext, setLoadedContext] = useState('')
-  const [list, setList] = useState<SupportPage | null>(null), [index, setIndex] = useState(0), [selected, setSelected] = useState<SupportInquiry | null>(null)
+  const [list, setList] = useState<SupportPage | null>(null), [index, setIndex] = useState(0), [selected, setSelected] = useState<SupportInquiry | null>(null), [archived, setArchived] = useState(false)
   const [category, setCategory] = useState<SupportCategory>('BUG'), [title, setTitle] = useState(''), [body, setBody] = useState(''), [answer, setAnswer] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const generation = useRef(0), context = `${user?.githubId ?? ''}:${mode}`, current = useRef(context)
   if (current.current !== context) { current.current = context; generation.current++ }
@@ -31,7 +31,7 @@ export function SupportView({ user, mode, onLogin, onAuthInvalid }: { user: User
     try {
       const permitted = await getSupportAccess(user.githubId)
       if (!active(g, key)) return
-      const data = permitted.admin ? await getSupportAdminTickets(user.githubId, next) : await getSupportTickets(user.githubId, next)
+      const data = permitted.admin ? await getSupportAdminTickets(user.githubId, next, archived) : await getSupportTickets(user.githubId, next)
       if (!active(g, key)) return
       setAccess(permitted); setLoadedContext(key); setList(data); setIndex(data.page)
       if (detail) {
@@ -76,22 +76,35 @@ export function SupportView({ user, mode, onLogin, onAuthInvalid }: { user: User
     } catch (e) { if (!authFailure(e, g, key) && active(g, key)) setError(e instanceof Error ? e.message : '문의 처리에 실패했습니다.') }
     finally { if (current.current === key) setBusy(false) }
   }
+  const archive = async (restore = false) => {
+    if (!user || !selected || busy || !admin || (!restore && selected.inquiry.status !== 'ANSWERED' && selected.inquiry.status !== 'CLOSED')) return
+    if (!restore && !window.confirm('답변이 완료된 문의를 보관하시겠습니까?')) return
+    const key = current.current, g = generation.current, id = selected.inquiry.id; setBusy(true)
+    try {
+      if (!await check(key, g)) return
+      await (restore ? restoreSupportAdminTicket(user.githubId, id) : archiveSupportAdminTicket(user.githubId, id))
+      if (!active(g, key)) return
+      setSelected(null); setAnswer(''); await load(0)
+    } catch (e) { if (!authFailure(e, g, key) && active(g, key)) setError(e instanceof Error ? e.message : '문의 보관 상태를 변경하지 못했습니다.') }
+    finally { if (current.current === key) setBusy(false) }
+  }
   if (!user || mode !== 'live') return <section className="support-view"><h1>문의·오류 제보</h1><p>개인 문의는 GitHub 로그인 후 서버 연결 상태에서 이용할 수 있습니다.</p><button className="primary-button" onClick={onLogin}>GitHub로 로그인</button></section>
   return <section className="support-view">
     <div className="page-heading"><h1>문의·오류 제보</h1><p>첨부 파일과 자동 수집은 하지 않습니다. 비밀번호, 토큰, 비공개 소스는 입력하지 마세요.</p><p>문의는 본인과 관리자만 열람하며 접수됨·확인중·답변완료 상태로 처리합니다. 임의 종료나 자동 삭제는 하지 않습니다. 데이터 요청은 관리자가 검토합니다. <a href="https://github.com/devkimhongjin/codeArchive/blob/master/docs/extension-privacy.md" target="_blank" rel="noreferrer">개인정보 안내</a></p></div>
     {error && <p role="alert">{error}</p>}
     {!verified ? <p role="status">문의 접근 권한을 확인하고 있습니다.</p> : <div className="support-grid">
-      <article><div><h2>{admin ? '전체 문의' : '내 문의'}</h2>
-        {!admin && <button type="button" disabled={busy} onClick={() => { generation.current++; setSelected(null); setAnswer('') }}>새 문의</button>}
-        <button type="button" disabled={busy} onClick={() => void load(index, selected?.inquiry.id)}>새로고침</button></div>
-        {list?.items.map(item => <button type="button" disabled={busy} className="support-ticket" key={item.id} onClick={() => { setSelected(null); setAnswer(''); void load(index, item.id) }}><strong>{item.title}</strong><span>{labels[item.category]} · {statusLabel(item.status)} · {date(item.updatedAt)}</span></button>)}
+      <article><div className="support-list-header"><h2>{admin ? (archived ? '보관된 문의' : '전체 문의') : '내 문의'}</h2><div className="support-list-actions">
+        {admin && <button className="ghost-button" type="button" disabled={busy} onClick={() => { const next = !archived; setArchived(next); setSelected(null); setIndex(0); void (async () => { const key = current.current, g = ++generation.current; try { const data = await getSupportAdminTickets(user!.githubId, 0, next); if (active(g, key)) { setList(data); setIndex(data.page) } } catch (cause) { if (!authFailure(cause, g, key) && active(g, key)) setError(cause instanceof Error ? cause.message : '문의를 불러오지 못했습니다.') } })() }}>{archived ? '활성 문의 보기' : '보관함 보기'}</button>}
+        {!admin && <button className="ghost-button" type="button" disabled={busy} onClick={() => { generation.current++; setSelected(null); setAnswer('') }}>새 문의</button>}
+        <button className="ghost-button" type="button" disabled={busy} onClick={() => void load(index, selected?.inquiry.id)}>새로고침</button></div></div>
+        {list?.items.map(item => <button type="button" disabled={busy} className="support-ticket" key={item.id} onClick={() => { setSelected(null); setAnswer(''); void load(index, item.id) }}><strong>{item.title}</strong><span>{admin && item.ownerNickname ? `${item.ownerNickname} · ` : ''}{labels[item.category]} · {statusLabel(item.status)} · {date(item.updatedAt)}</span></button>)}
         {list && !list.items.length && <p>등록된 문의가 없습니다.</p>}
-        <div><button type="button" disabled={busy || index === 0} onClick={() => { setSelected(null); void load(index - 1) }}>이전</button><span>{index + 1}</span><button type="button" disabled={busy || !list?.hasMore} onClick={() => { setSelected(null); void load(index + 1) }}>다음</button></div>
+        <div className="support-pagination"><button className="ghost-button" type="button" disabled={busy || index === 0} onClick={() => { setSelected(null); void load(index - 1) }}>이전</button><span aria-label={`현재 페이지 ${index + 1}`}>{index + 1}</span><button className="ghost-button" type="button" disabled={busy || !list?.hasMore} onClick={() => { setSelected(null); void load(index + 1) }}>다음</button></div>
       </article>
       <article>{selected ? <>
         <h2>{selected.inquiry.title}</h2><p>{labels[selected.inquiry.category]} · {statusLabel(selected.inquiry.status)}</p>
         <h3>접수 내용</h3><div className="support-messages">{selected.messages.filter(message => message.authorRole === 'USER').map(message => <div key={message.id}><time>{date(message.createdAt)}</time><p>{message.body}</p></div>)}</div>
-        {admin ? <><label>처리 상태<select disabled={busy} value={selected.inquiry.status === 'CLOSED' ? 'OPEN' : selected.inquiry.status} onChange={e => void update(e.target.value as SupportStatus)}>{Object.entries(statuses).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>관리자 답변<textarea value={answer} maxLength={10000} disabled={busy} onChange={e => setAnswer(e.target.value)} /></label><button className="primary-button" disabled={busy || !answer.trim()} onClick={() => void update()}>답변 저장</button></> : <><h3>관리자 답변</h3><p>{answerOf(selected) || '아직 등록된 답변이 없습니다.'}</p></>}
+        {admin ? <><p>{selected.inquiry.ownerNickname || '닉네임 미설정'}</p><label>처리 상태<select disabled={busy} value={selected.inquiry.status === 'CLOSED' ? 'OPEN' : selected.inquiry.status} onChange={e => void update(e.target.value as SupportStatus)}>{Object.entries(statuses).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>관리자 답변<textarea value={answer} maxLength={10000} disabled={busy} onChange={e => setAnswer(e.target.value)} /></label><button className="primary-button" disabled={busy || !answer.trim()} onClick={() => void update()}>답변 저장</button>{archived ? <button className="ghost-button" type="button" disabled={busy} onClick={() => void archive(true)}>보관 복원</button> : <button className="ghost-button" type="button" disabled={busy || (selected.inquiry.status !== 'ANSWERED' && selected.inquiry.status !== 'CLOSED')} onClick={() => void archive(false)}>문의 보관</button>}</> : <><h3>관리자 답변</h3><p>{answerOf(selected) || '아직 등록된 답변이 없습니다.'}</p></>}
       </> : admin ? <p>목록에서 문의를 선택해 상태와 답변을 확인하세요.</p> : <>
         <h2>새 문의</h2><label>분류<select value={category} disabled={busy} onChange={e => setCategory(e.target.value as SupportCategory)}>{categories.map(([v, label]) => <option value={v} key={v}>{label}</option>)}</select></label>
         <label>제목<input value={title} maxLength={150} disabled={busy} onChange={e => setTitle(e.target.value)} /></label><label>내용<textarea value={body} maxLength={10000} disabled={busy} onChange={e => setBody(e.target.value)} /></label><button className="primary-button" disabled={busy} onClick={() => void create()}>문의 등록</button>

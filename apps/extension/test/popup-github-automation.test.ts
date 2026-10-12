@@ -3,6 +3,7 @@ import test from 'node:test';
 import { MemoryCaptureStore } from '../src/storage';
 import { setPopupGithubAutomation } from '../src/popupGithubAutomation';
 import type { AccountSettings } from '../../dashboard/src/types';
+import { PUBLIC_API_ORIGIN } from '../../../shared/publicApiOrigin';
 
 const settings = (enabled = false): AccountSettings => ({ version: 7, name: 'keep-name', nickname: 'keep-nickname',
   copyHeader: true, downloadHeader: false, githubHeader: true, downloadFilenameTemplate: '{number}',
@@ -21,7 +22,7 @@ async function fixture(enabled = false) {
   const hooks = new Map<string, () => Promise<Response> | Response>();
   const fetcher = (async (input, init = {}) => {
     const url = new URL(String(input)); const path = `${init.method ?? 'GET'} ${url.pathname}`;
-    assert.equal(url.origin, 'https://codearchive-dashboard-beta.netlify.app');
+    assert.equal(url.origin, PUBLIC_API_ORIGIN);
     assert.equal(init.credentials, 'include'); assert.equal(init.redirect, 'error');
     calls.push({ path, init });
     if (hooks.has(path)) return hooks.get(path)!();
@@ -119,7 +120,7 @@ test('grant failure reports saved settings separately and does not restore a rev
   const saved = await f.store.getSettings();
   assert.equal(saved.githubAutoCommitEnabled, false); assert.equal(saved.accountSettingsVersion, 8); assert.equal(saved.relay, undefined);
 });
-for (const endpoint of ['https://foreign.test/api/relay/captures', '/api/settings', '/api/relay/captures?key=untrusted', 'https://user:pass@codearchive-dashboard-beta.netlify.app/api/relay/captures']) {
+for (const endpoint of ['https://foreign.test/api/relay/captures', '/api/settings', '/api/relay/captures?key=untrusted', `https://user:pass@${new URL(PUBLIC_API_ORIGIN).host}/api/relay/captures`]) {
   test(`unexpected relay endpoint is rejected: ${endpoint}`, async () => {
     const f = await fixture(); f.hooks.set('POST /api/relay/grants', () => json({ endpoint, generation: 8, secret: 'not-used', expiresAt: '2099-01-01' }));
     assert.equal((await f.run()).relayReady, false); assert.equal((await f.store.getSettings()).relay, undefined);

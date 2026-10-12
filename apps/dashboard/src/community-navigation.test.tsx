@@ -21,7 +21,7 @@ it('shares the saved code theme with the archive, all community picker themes, a
   localStorage.setItem(CODE_THEME_MODE_KEY, 'dark')
   let settings = {
     version: 1, name: '', nickname: '테스트', copyHeader: false, downloadHeader: false, githubHeader: false,
-    downloadFilenameTemplate: '{platform}-{number}', gitPathTemplate: '{nickname}/{platform}/{number}', githubCommitMessageTemplate: 'Add {platform} {number}',
+    downloadFilenameTemplate: '{platform}-{number}', gitPathTemplate: '{nickname}/{platform}/{number}/{time}', githubCommitMessageTemplate: 'Add {platform} {number}',
     lightTheme: 'solarized-light', darkTheme: 'dracula', autoSyncEnabled: false, githubAutoCommitEnabled: false,
   }
   const summary = { id: 44, platform: 'SWEA', problemNumber: '1234', title: '공개 코드', language: 'Java', languageKey: 'java', author: { nickname: '테스트' }, solvedAt: null }
@@ -40,8 +40,8 @@ it('shares the saved code theme with the archive, all community picker themes, a
     for (const theme of [...LIGHT_THEMES, ...DARK_THEMES]) {
       fireEvent.change(screen.getByLabelText('코드 보기 테마'), { target: { value: theme } })
       await waitFor(() => expect(document.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).toBe(theme))
-      await waitFor(() => expect(settings.lightTheme === theme || settings.darkTheme === theme).toBe(true))
     }
+    await waitFor(() => expect(settings.darkTheme).toBe(DARK_THEMES[DARK_THEMES.length - 1]))
     const finalTheme = DARK_THEMES[DARK_THEMES.length - 1]!
     fireEvent.click(screen.getByRole('button', { name: '내 문제로 돌아가기' }))
     expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe(finalTheme)

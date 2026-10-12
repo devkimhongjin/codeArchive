@@ -2,13 +2,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { EXTENSION_ID } from '../../dashboard/src/extensionConfig';
+import { EXTENSION_CANDIDATES, EXTENSION_ID, LEGACY_EXTENSION_ID } from '../../dashboard/src/extensionConfig';
+import { LEGACY_LOCAL_EXTENSION_ID, STORE_EXTENSION_ID } from '../../../shared/publicApiOrigin';
 
-test('public manifest key pins the same ID used by the dashboard', () => {
+test('development manifest key retains the local identity while the web fallback selects the Store identity', () => {
   const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8').replace(/^\uFEFF/, ''));
   const hex = createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest('hex').slice(0, 32);
   const id = [...hex].map(digit => String.fromCharCode(97 + parseInt(digit, 16))).join('');
-  assert.equal(id, EXTENSION_ID);
+  assert.equal(id, LEGACY_LOCAL_EXTENSION_ID);
+  assert.equal(LEGACY_EXTENSION_ID, LEGACY_LOCAL_EXTENSION_ID);
+  assert.equal(EXTENSION_ID, STORE_EXTENSION_ID);
+  assert.deepEqual(EXTENSION_CANDIDATES, [STORE_EXTENSION_ID, LEGACY_LOCAL_EXTENSION_ID]);
   assert.deepEqual(manifest.externally_connectable.matches, [
     'https://codearchive-dashboard-beta.netlify.app/*',
     'http://localhost:5173/*'
@@ -18,6 +22,7 @@ test('public manifest key pins the same ID used by the dashboard', () => {
     'https://school.programmers.co.kr/*',
     'https://jungol.co.kr/*',
     'https://api.github.com/*',
+    'https://codearchive-api-stg-e3q54l32da-as.a.run.app/*',
     'https://codearchive-dashboard-beta.netlify.app/*',
     'http://localhost:5173/*'
   ]);

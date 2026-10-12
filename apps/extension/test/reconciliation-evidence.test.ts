@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { loadReconciliationEvidence, validReconciliationRecord } from '../src/reconciliationEvidence'
 import { MemoryCaptureStore } from '../src/storage'
 import { createCapture } from '../src/capture'
+import { PUBLIC_API_ORIGIN } from '../../../shared/publicApiOrigin'
 const id = '11111111-1111-4111-8111-111111111111'
 const record = { captureId: id, recordId: 10, platform: 'SWEA', historicalSubmissionId: 'OwnSubmission', problemNumber: '123', language: 'JAVA', solvedAt: '2026-01-02T03:04:05Z', sourceDigest: 'a'.repeat(64) }
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
@@ -26,7 +27,7 @@ test('authenticated keyset reconciliation pins account and fixed API origin', as
   }) as typeof fetch;
   const evidence = await loadReconciliationEvidence(await store('1'), 'SWEA', fetcher);
   assert.equal(evidence.remoteComplete, true); assert.equal(evidence.remote.length, 1); assert.equal(calls.length, 3);
-  assert.ok(calls.every(url => new URL(url).origin === 'https://codearchive-dashboard-beta.netlify.app'));
+  assert.ok(calls.every(url => new URL(url).origin === PUBLIC_API_ORIGIN));
 });
 test('account switches, unsupported servers, duplicate IDs and stalled cursors discard partial remote results', async () => {
   for (const mode of ['switch', 'unsupported', 'duplicate', 'cursor'] as const) {

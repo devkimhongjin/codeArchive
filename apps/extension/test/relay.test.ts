@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchGithubCommitStatuses, recordRelayAttempt, relayCapture, revokeRelay } from "../src/relay";
+import { fetchGithubCommitStatuses, migrateLegacyRelayEndpoint, recordRelayAttempt, relayCapture, revokeRelay } from "../src/relay";
+import { LEGACY_DASHBOARD_ORIGIN, LOCAL_DASHBOARD_ORIGIN, PUBLIC_API_ORIGIN } from "../../../shared/publicApiOrigin";
 import { MemoryCaptureStore } from "../src/storage";
 import type { Capture, CaptureSettings } from "../src/types";
 
@@ -43,6 +44,20 @@ test("a successful retry restores the durable relay status", async () => {
   const current = await store.getSettings();
   await recordRelayAttempt(store, current, "ACK");
   assert.equal((await store.getSettings()).relay?.status, "CONFIRMED");
+});
+
+test("only the published legacy relay endpoint migrates to the direct API", async () => {
+  const store = new MemoryCaptureStore();
+  const relay = { endpoint: `${LEGACY_DASHBOARD_ORIGIN}/api/relay/captures`, secret: "opaque", accountId: "7", generation: 1, status: "CONFIRMED" as const };
+  await store.updateSettings({ accountId: '7', accountSettingsVersion: 1, autoSyncEnabled: true, relay });
+  assert.equal(await migrateLegacyRelayEndpoint(store, await store.getSettings()), true);
+  assert.equal(new URL((await store.getSettings()).relay!.endpoint).origin, PUBLIC_API_ORIGIN);
+
+  const localStore = new MemoryCaptureStore();
+  const local = { ...relay, endpoint: `${LOCAL_DASHBOARD_ORIGIN}/api/relay/captures` };
+  await localStore.updateSettings({ autoSyncEnabled: true, relay: local });
+  assert.equal(await migrateLegacyRelayEndpoint(localStore, await localStore.getSettings()), false);
+  assert.equal((await localStore.getSettings()).relay!.endpoint, local.endpoint);
 });
 
 test("delayed relay failure or revoke acknowledgement cannot mutate a newer relay or REVOCATION_PENDING", async () => {

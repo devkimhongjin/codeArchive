@@ -2,9 +2,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { SupportView } from './SupportView'
-const mocks = vi.hoisted(() => ({ access: vi.fn(), list: vi.fn(), adminList: vi.fn(), detail: vi.fn(), adminDetail: vi.fn(), create: vi.fn(), me: vi.fn(), adminReply: vi.fn(), status: vi.fn() }))
+const mocks = vi.hoisted(() => ({ access: vi.fn(), list: vi.fn(), adminList: vi.fn(), detail: vi.fn(), adminDetail: vi.fn(), create: vi.fn(), me: vi.fn(), adminReply: vi.fn(), status: vi.fn(), archive: vi.fn(), restore: vi.fn() }))
 const ApiMockError = vi.hoisted(() => class ApiError extends Error { constructor(message = 'error', readonly status = 500) { super(message) } })
-vi.mock('./api', () => ({ ApiError: ApiMockError, getSupportAccess: mocks.access, getSupportTickets: mocks.list, getSupportAdminTickets: mocks.adminList, getSupportTicket: mocks.detail, getSupportAdminTicket: mocks.adminDetail, createSupportTicket: mocks.create, getMe: mocks.me, replySupportAdminTicket: mocks.adminReply, setSupportAdminStatus: mocks.status }))
+vi.mock('./api', () => ({ ApiError: ApiMockError, getSupportAccess: mocks.access, getSupportTickets: mocks.list, getSupportAdminTickets: mocks.adminList, getSupportTicket: mocks.detail, getSupportAdminTicket: mocks.adminDetail, createSupportTicket: mocks.create, getMe: mocks.me, replySupportAdminTicket: mocks.adminReply, setSupportAdminStatus: mocks.status, archiveSupportAdminTicket: mocks.archive, restoreSupportAdminTicket: mocks.restore }))
 const user = { id: 1, githubId: '42', githubLogin: 'tester' }
 const summary = { id: 7, category: 'BUG' as const, title: 'ticket', status: 'OPEN' as const, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', closedAt: null }
 const ticket = { inquiry: summary, messages: [{ id: 1, authorRole: 'USER' as const, body: 'body', createdAt: '2026-01-01T00:00:00Z' }], admin: false }
@@ -15,7 +15,7 @@ function administrator() { mocks.access.mockResolvedValue({ admin: true }); mock
 describe('SupportView', () => {
   afterEach(cleanup)
   beforeEach(() => {
-    vi.resetAllMocks(); mocks.access.mockResolvedValue({ admin: false }); mocks.list.mockResolvedValue({ ...page, items: [], total: 0 }); mocks.adminList.mockResolvedValue({ ...page, items: [], total: 0 }); mocks.detail.mockResolvedValue(ticket); mocks.me.mockResolvedValue(user)
+    vi.restoreAllMocks(); vi.resetAllMocks(); vi.spyOn(window, 'confirm').mockReturnValue(true); mocks.access.mockResolvedValue({ admin: false }); mocks.list.mockResolvedValue({ ...page, items: [], total: 0 }); mocks.adminList.mockResolvedValue({ ...page, items: [], total: 0 }); mocks.detail.mockResolvedValue(ticket); mocks.me.mockResolvedValue(user)
   })
   it('requires login without reading private tickets', () => { render(<SupportView {...props} user={null} mode="local" />); expect(screen.getByText('GitHub로 로그인')).toBeTruthy(); expect(mocks.access).not.toHaveBeenCalled() })
   it('validates and submits one inquiry for the current account', async () => {
@@ -25,7 +25,7 @@ describe('SupportView', () => {
     await waitFor(() => expect(mocks.create).toHaveBeenCalledWith('42', { category: 'BUG', title: 'title', body: 'body' }))
   })
   it('opens the verified administrator inbox directly without a composer or toggle', async () => {
-    administrator(); render(<SupportView {...props} />); await waitFor(() => expect(mocks.adminList).toHaveBeenCalledWith('42', 0))
+    administrator(); render(<SupportView {...props} />); await waitFor(() => expect(mocks.adminList).toHaveBeenCalledWith('42', 0, false))
     expect(mocks.list).not.toHaveBeenCalled(); expect(screen.queryByText('전체 문의 관리자 보기')).toBeNull(); expect(screen.queryByLabelText('제목')).toBeNull(); expect(screen.queryByText('새 문의')).toBeNull()
   })
   it('keeps access checking until the server verifies authority', async () => {
@@ -74,6 +74,28 @@ describe('SupportView', () => {
     let release!: (value: typeof user) => void; mocks.me.mockImplementationOnce(() => new Promise(resolve => { release = resolve })); const view = render(<SupportView {...props} />); await waitFor(() => screen.getByLabelText('제목'))
     fireEvent.change(screen.getByLabelText('제목'), { target: { value: 'title' } }); fireEvent.change(screen.getByLabelText('내용'), { target: { value: 'body' } }); fireEvent.click(screen.getByText('문의 등록')); view.rerender(<SupportView {...props} user={{ ...user, githubId: '43' }} />); release(user)
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith('43', 0)); expect(mocks.create).not.toHaveBeenCalled(); expect(props.onAuthInvalid).not.toHaveBeenCalled()
+  })
+  it('archives an answered inquiry, shows it in the archive, and restores it through verified admin calls', async () => {
+    const answered = { ...summary, status: 'ANSWERED' as const, ownerNickname: 'archive-nick' }
+    const answeredTicket = { ...ticket, inquiry: answered, admin: true, messages: [...ticket.messages, { id: 2, authorRole: 'ADMIN' as const, body: 'answer', createdAt: summary.createdAt }] }
+    const activePage = { ...page, items: [answered] }
+    const emptyPage = { ...page, items: [], total: 0 }
+    const archivePage = { ...page, items: [answered] }
+    mocks.access.mockResolvedValue({ admin: true })
+    mocks.adminList.mockImplementation((_id: string, _page: number, archived = false) => Promise.resolve(archived ? archivePage : mocks.archive.mock.calls.length ? emptyPage : activePage))
+    mocks.adminDetail.mockResolvedValue(answeredTicket); mocks.archive.mockResolvedValue(answeredTicket); mocks.restore.mockResolvedValue(answeredTicket)
+    render(<SupportView {...props} />); await openTicket()
+    expect(screen.getByText('archive-nick')).toBeTruthy(); fireEvent.click(screen.getByRole('button', { name: '문의 보관' }))
+    await waitFor(() => expect(mocks.archive).toHaveBeenCalledWith('42', 7)); expect(screen.queryByText('접수 내용')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '보관함 보기' })); await waitFor(() => expect(mocks.adminList).toHaveBeenCalledWith('42', 0, true)); expect(screen.getByText('ticket')).toBeTruthy()
+    fireEvent.click(screen.getByText('ticket')); await waitFor(() => screen.getByRole('button', { name: '보관 복원' })); fireEvent.click(screen.getByRole('button', { name: '보관 복원' }))
+    await waitFor(() => expect(mocks.restore).toHaveBeenCalledWith('42', 7)); expect(mocks.adminList).toHaveBeenCalledWith('42', 0, true)
+  })
+  it('fences a failed administrator archive before it reaches the archive endpoint', async () => {
+    const answered = { ...summary, status: 'ANSWERED' as const, ownerNickname: 'archive-nick' }
+    administrator(); mocks.adminList.mockResolvedValue({ ...page, items: [answered] }); mocks.adminDetail.mockResolvedValue({ ...ticket, inquiry: answered, admin: true }); mocks.me.mockRejectedValueOnce(new ApiMockError('changed', 409))
+    render(<SupportView {...props} />); await openTicket(); fireEvent.click(screen.getByRole('button', { name: '문의 보관' }))
+    await waitFor(() => expect(props.onAuthInvalid).toHaveBeenCalledTimes(1)); expect(mocks.archive).not.toHaveBeenCalled(); expect(screen.queryByText('접수 내용')).toBeNull()
   })
   it('loads the next bounded page', async () => {
     mocks.list.mockResolvedValue({ ...page, items: [], total: 21, hasMore: true }); render(<SupportView {...props} />); await waitFor(() => expect(mocks.list).toHaveBeenCalledWith('42', 0)); fireEvent.click(screen.getByText('다음')); await waitFor(() => expect(mocks.list).toHaveBeenCalledWith('42', 1))
