@@ -90,7 +90,7 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
     const preservedScanningRoute = structuredClone(session[routeKey]) as { tabId: number; url: string; status: string; platform: string };
     assert.deepEqual(await request({ type: "LOCAL_HISTORY_STATUS" }, historySender), { status: "TAB_NOT_FOUND" });
     assert.deepEqual(session[routeKey], preservedScanningRoute);
-    assert.deepEqual(await request({ type: "LOCAL_HISTORY_IMPORT_START", submissionIds: ["12345"] }, historySender), { status: "TAB_NOT_FOUND" });
+    assert.deepEqual(await request({ type: "LOCAL_HISTORY_IMPORT_START", submissionIds: ["12345"] }, historySender), { status: "SERVER_COLLECTION_REQUIRED" });
     assert.deepEqual(await request({ type: "LOCAL_HISTORY_CANCEL" }, historySender), { status: "TAB_NOT_FOUND" });
     assert.deepEqual(session[routeKey], preservedScanningRoute);
     assert.equal(sourceQueries, 0); assert.equal(sent.length, 0); assert.equal(injections, 0);

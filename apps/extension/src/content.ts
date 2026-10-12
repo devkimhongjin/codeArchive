@@ -697,8 +697,8 @@ function startSweaImport(document: Document, location: Location, ids: unknown): 
       return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId };
     }
     const capture = hydrated.capture;
-    try { const response = await chrome.runtime.sendMessage({ type: "STORE_HISTORICAL_CAPTURE", capture }); if (!(response as { ok?: boolean })?.ok) throw new HistoricalImportFailure("STORE_REJECTED"); if ((response as { reconciliation?: string }).reconciliation === "ambiguous") return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId }; return { saved: (response as { created?: boolean }).created ? 1 : 0, duplicate: (response as { created?: boolean }).created ? 0 : 1, skipped: 0 }; }
-    catch (error) { if (error instanceof HistoricalImportFailure) throw error; throw new HistoricalImportFailure("STORE_FAILED"); }
+    try { const response = await chrome.runtime.sendMessage({ type: "STORE_HISTORICAL_CAPTURE", capture }); if (!(response as { ok?: boolean })?.ok || (response as { reconciliation?: string }).reconciliation === "ambiguous") return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId }; return { saved: (response as { created?: boolean }).created ? 1 : 0, duplicate: (response as { created?: boolean }).created ? 0 : 1, skipped: 0 }; }
+    catch { return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId }; }
   }, (candidate, result) => { if (result.saved + result.duplicate > 0) completedProblems.add(`SWEA:${candidate.problemNumber}`); }, candidate => candidate.submissionId);
   void controller.settled().then(() => {
     if (generation !== sweaGeneration || sweaController !== controller || !controller.state) return;
@@ -871,10 +871,10 @@ function startProgrammersImport(document: Document, location: Location, ids: unk
         capture.solvedAt !== new Date(candidate.createdAt).toISOString()) { controller.cancel(); return { saved: 0, duplicate: 0, skipped: 0 }; }
     try {
       const stored = await chrome.runtime.sendMessage({ type: "STORE_HISTORICAL_CAPTURE", capture }) as { ok?: unknown; created?: unknown; reconciliation?: string };
-      if (stored?.ok !== true) throw new HistoricalImportFailure("STORE_REJECTED");
+      if (stored?.ok !== true) return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId };
       if (stored.reconciliation === "ambiguous") return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId };
       return { saved: stored.created === true ? 1 : 0, duplicate: stored.created === true ? 0 : 1, skipped: 0 };
-    } catch (error) { if (error instanceof HistoricalImportFailure) throw error; throw new HistoricalImportFailure("STORE_FAILED"); }
+    } catch { return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId }; }
   }, (candidate, result) => { if (result.saved + result.duplicate) completedProblems.add(`PROGRAMMERS:${candidate.problemNumber}`); }, candidate => candidate.submissionId);
   programmersLocalState = { status: "IMPORTING", startedAt: Date.now(), unsupportedProblemNumbers };
   void controller.settled().then(() => {
@@ -1047,6 +1047,7 @@ function startLocalJungolImport(document: Document, location: Location, ids: unk
     let result: { saved: number; duplicate: number; skipped: number } | null = null;
     let failureReason: HistoricalImportFailureReason = "IMPORT_FAILED";
     const isDetailFailure = (reason: HistoricalImportFailureReason) => reason === "DETAIL_NOT_FOUND" || reason === "DETAIL_UNVERIFIED";
+    const isStoreFailure = (reason: HistoricalImportFailureReason) => reason === 'STORE_REJECTED' || reason === 'STORE_FAILED';
     for (let attempt = 0; attempt < 3 && mayStore(); attempt++) {
       try {
         result = await importVisibleJungolHistory(document, location, [candidate], capture => {
@@ -1060,7 +1061,7 @@ function startLocalJungolImport(document: Document, location: Location, ids: unk
     // A rejected detail is isolated to this submission only after cleanup and
     // source ownership are confirmed. Never continue under a stale dialog/route.
     if (result?.skipped === 1 && mayStore() &&
-        isDetailFailure(failureReason) &&
+        (isDetailFailure(failureReason) || isStoreFailure(failureReason)) &&
         mayStoreLocalHistoryCapture(jungolLocalTask === task, task.cancelling, task.url, location.href) &&
         previewJungolHistory(document, location).status === "READY" &&
         !document.querySelector('[role="dialog"][aria-label="제출 상세"]')) {

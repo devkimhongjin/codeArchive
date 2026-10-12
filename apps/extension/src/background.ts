@@ -5,10 +5,10 @@ import { isCaptureRecord, isUuid } from "./capture";
 import { DashboardBridge } from "./bridge";
 import { dashboardSender, dashboardExternalUrl, validDashboardLoginNonce, beginDashboardLogin, completeDashboardLogin } from './dashboardNavigation';
 import { IndexedDbCaptureStore } from "./storage";
-import { bindAutomaticCapture, nextAutomaticCapture, loadPopupLocalState, prepareCaptureDownload, retryRelayConnection, storeCaptureLocalFirst } from "./backgroundActions";
+import { prepareCaptureDownload, retryRelayConnection } from "./backgroundActions";
 import { exportCode } from "./export";
 import { normalizedHeaderFields } from "../../../shared/headerFields";
-import { fetchGithubCommitStatuses, migrateLegacyRelayEndpoint, recordRelayAttempt, relayCapture, revokeRelay } from "./relay";
+import { fetchGithubCommitStatuses, fetchRecentServerCapture, migrateLegacyRelayEndpoint, revokeRelay } from "./relay";
 import {
   normalizeSweaDetailUrl,
   validateSweaProblemContext
@@ -20,6 +20,9 @@ import { isJungolHistoryPath } from "./historicalJungol";
 import { isHistoricalSubmissionId } from "./historicalIdentity";
 import { historyPlatformForUrl, isLocalHistoryPageSender, mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
 import { requestLocalHistoryMessage } from "./localHistoryConnection";
+import { storeCaptureOnServer, loadPopupServerState } from './serverCapture';
+import { registerHistoricalOnServer } from './cloudClient';
+import { GithubBatchTaskRunner, type GithubBatchTask } from './githubBatchTask';
 
 const store = new IndexedDbCaptureStore();
 const bridge = new DashboardBridge(store, {
@@ -34,6 +37,17 @@ const bridge = new DashboardBridge(store, {
 });
 
 const LOCAL_HISTORY_ROUTE_KEY = "codearchive-local-history-route";
+const SERVER_HISTORY_RUN_KEY = 'codearchive-server-history-run';
+type ServerHistoryRun = { runId: string; platform: Platform; submissionIds: string[]; account: string };
+const GITHUB_BATCH_TASK_KEY = 'codearchive-github-batch-task';
+const batchTaskStorage = chrome.storage.local ?? chrome.storage.session;
+const githubBatchRunner = new GithubBatchTaskRunner({
+  get: async () => (await batchTaskStorage.get(GITHUB_BATCH_TASK_KEY))[GITHUB_BATCH_TASK_KEY] as GithubBatchTask | undefined ?? null,
+  set: async task => { await batchTaskStorage.set({ [GITHUB_BATCH_TASK_KEY]: task }); },
+});
+chrome.alarms.create('codearchive-github-batch', { periodInMinutes: .5 });
+chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === 'codearchive-github-batch') void githubBatchRunner.resume(); });
+void githubBatchRunner.resume();
 // Remove only the legacy app reconnect alarm; stored pairing/data remain intact.
 void chrome.alarms.clear('codearchive-desktop-reconnect');
 type LocalHistoryRoute = { tabId: number; url: string; status: string; platform: Platform };
@@ -114,7 +128,8 @@ async function runLocalHistoryCommand(type: LocalHistoryCommand, platform: Platf
     }) as { status?: unknown };
     const status = typeof response?.status === "string" ? response.status : "FAILED";
     await writeLocalHistoryRoute({ ...target, status });
-    return response;
+    const run = (await chrome.storage.session.get(SERVER_HISTORY_RUN_KEY))[SERVER_HISTORY_RUN_KEY] as ServerHistoryRun | undefined;
+    return run && run.platform === platform ? { ...response, serverAccount: run.account, serverRunId: run.runId } : response;
   } catch {
     await writeLocalHistoryRoute({ ...target, status: "INTERRUPTED" });
     return { status: "INTERRUPTED" };
@@ -161,17 +176,8 @@ async function drainRelay(): Promise<void> {
     await finishSelfRevocation(settings);
     return;
   }
-  if (!settings.autoSyncEnabled || !settings.relay) return;
-  while (true) {
-    const next = nextAutomaticCapture(await store.listAll(), settings);
-    if (!next) return;
-    const result = await relayCapture(next, settings);
-    if (result === "ACK") await store.markSynced([next.captureId]);
-    await recordRelayAttempt(store, settings, result);
-    if (result !== "ACK") return;
-    settings = await store.getSettings();
-    if (!settings.autoSyncEnabled || settings.relay?.status !== "CONFIRMED") return;
-  }
+  // Existing device records are not upload authority. New captures go straight
+  // to the server; the legacy store is retained only to preserve user data.
 }
 
 let relayDrainPromise: Promise<void> | null = null;
@@ -220,7 +226,8 @@ type InternalMessage =
   | { type: "LOCAL_HISTORY_RECONCILIATION"; platform: unknown }
   | { type: "LOCAL_HISTORY_IDS"; platform?: unknown }
   | { type: "LOCAL_HISTORY_SCAN_START" | "LOCAL_HISTORY_STATUS" | "LOCAL_HISTORY_CANCEL"; platform?: unknown }
-  | { type: "LOCAL_HISTORY_IMPORT_START"; platform?: unknown; submissionIds: unknown };
+  | { type: "LOCAL_HISTORY_IMPORT_START"; platform?: unknown; submissionIds: unknown; serverRunId?: unknown; serverAccount?: unknown }
+  | { type: 'START_GITHUB_BATCH' | 'GET_GITHUB_BATCH' | 'CANCEL_GITHUB_BATCH' | 'RESUME_GITHUB_BATCH'; account?: unknown; target?: unknown };
 
 type ProgrammersAuxiliaryMessage = { type: "PROGRAMMERS_AUX_READ"; lessonUrl: unknown; mode: unknown; submissionId?: unknown } | { type: "PROGRAMMERS_AUX_CANCEL" };
 type ProgrammersAuxiliaryRun = { sourceTabId: number; generation: number; lessonUrl: string; auxiliaryTabId?: number; cancelled: boolean; cleaned: boolean; interruptRead?: () => void };
@@ -487,9 +494,8 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       sendResponse({ ok: false, error: "INVALID_CAPTURE" });
       return false;
     }
-    void store.getSettings().then(settings => storeCaptureLocalFirst(store, bindAutomaticCapture(capture, settings), requestRelayDrain))
-      .then(({ created }) => sendResponse({ ok: true, created }))
-      .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
+    void storeCaptureOnServer(store, capture).then(sendResponse)
+      .catch(() => sendResponse({ ok: false, error: "SERVER_UNAVAILABLE" }));
     return true;
   }
 
@@ -515,8 +521,15 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
         sendResponse({ ok: false, error: "INVALID_HISTORICAL_CAPTURE" });
         return;
       }
-      const written = await store.putCapture(capture);
-      sendResponse({ ok: true, ...written });
+      const run = (await chrome.storage.session.get(SERVER_HISTORY_RUN_KEY))[SERVER_HISTORY_RUN_KEY] as ServerHistoryRun | undefined;
+      if (!route) { sendResponse({ ok: false, error: 'INVALID_HISTORICAL_CAPTURE' }); return; }
+      if (!run || run.platform !== capture.platform || !run.submissionIds.includes(capture.historicalSubmissionId!)) {
+        sendResponse({ ok: false, error: 'SERVER_COLLECTION_REQUIRED' }); return;
+      }
+      // Keep the verified capture in memory only. The account-bound dashboard
+      // confirms the server write before the content task counts this item.
+      const registered = await registerHistoricalOnServer(capture, run.account);
+      sendResponse(registered?.ok === true ? { ok: true, created: registered.created === true } : { ok: false, error: 'SERVER_REGISTRATION_FAILED' });
     })()
       .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;
@@ -542,7 +555,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   }
 
   if (object.type === "GET_POPUP_STATE") {
-    void Promise.all([loadPopupLocalState(store), chrome.storage.session.get(SUBMISSION_PROGRESS_KEY).catch(() => ({} as Record<string, unknown>))])
+    void Promise.all([loadPopupServerState(store), chrome.storage.session.get(SUBMISSION_PROGRESS_KEY).catch(() => ({} as Record<string, unknown>))])
       .then(([state, progress]) => sendResponse({ ...state, submissionProgress: activeSubmissionProgress(progress[SUBMISSION_PROGRESS_KEY]) }))
       .catch(() => sendResponse({ pendingCount: 0, settings: null, recentCaptures: [], error: "STORAGE_ERROR" }));
     return true;
@@ -594,7 +607,31 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     if (platform !== "JUNGOL" && platform !== "SWEA" && platform !== "PROGRAMMERS") { sendResponse({ status: "BAD_REQUEST" }); return false; }
     const ids = object.type === "LOCAL_HISTORY_IMPORT_START" ? object.submissionIds : undefined;
     if (ids !== undefined && (!Array.isArray(ids) || ids.length < 1 || ids.length > 5_000 || ids.some(id => !isHistoricalSubmissionId(platform, id)) || new Set(ids).size !== ids.length)) { sendResponse({ status: "BAD_REQUEST" }); return false; }
-    void localHistoryCommand(object.type, platform, ids as string[] | undefined).then(sendResponse).catch(() => sendResponse({ status: "FAILED" }));
+    void (async () => {
+      if (object.type === 'LOCAL_HISTORY_SCAN_START') await chrome.storage.session.remove(SERVER_HISTORY_RUN_KEY);
+      if (object.type === 'LOCAL_HISTORY_IMPORT_START') {
+        const own = senderUrl(sender);
+        if (!own || own.searchParams.get('server') !== '1' || own.searchParams.get('embedded') !== '1' || sender.frameId === 0 ||
+            typeof object.serverRunId !== 'string' || !isUuid(object.serverRunId) || typeof object.serverAccount !== 'string' || !/^[0-9]+:[0-9]+$/.test(object.serverAccount)) return { status: 'SERVER_COLLECTION_REQUIRED' };
+        const route = await readLocalHistoryRoute();
+        if (!route || route.platform !== platform || route.status !== 'READY') return { status: 'INTERRUPTED' };
+        await chrome.storage.session.set({ [SERVER_HISTORY_RUN_KEY]: { runId: object.serverRunId, platform, submissionIds: ids, account: object.serverAccount } });
+      }
+      return localHistoryCommand(object.type as LocalHistoryCommand, platform, ids as string[] | undefined);
+    })().then(sendResponse).catch(() => sendResponse({ status: "FAILED" }));
+    return true;
+  }
+
+  if (object.type === 'START_GITHUB_BATCH' || object.type === 'GET_GITHUB_BATCH' || object.type === 'CANCEL_GITHUB_BATCH' || object.type === 'RESUME_GITHUB_BATCH') {
+    if (!dashboardSender(sender, chrome.runtime.id) || typeof object.account !== 'string' || !/^[0-9]+:[0-9]+$/.test(object.account)) { sendResponse({ error: 'UNAUTHORIZED' }); return false; }
+    const account = object.account;
+    void (async () => {
+      if (object.type === 'START_GITHUB_BATCH') return { task: await githubBatchRunner.start(account, object.target as never) };
+      if (object.type === 'CANCEL_GITHUB_BATCH') await githubBatchRunner.cancel(account);
+      if (object.type === 'RESUME_GITHUB_BATCH') await githubBatchRunner.retry(account);
+      if (object.type === 'GET_GITHUB_BATCH') void githubBatchRunner.resume();
+      return { task: await githubBatchRunner.get(account) };
+    })().then(sendResponse).catch(error => sendResponse({ error: error instanceof Error ? error.message : '일괄 커밋을 확인하지 못했습니다.' }));
     return true;
   }
 
@@ -624,15 +661,18 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 
   if (object.type === "COPY_RECENT_CAPTURE" || object.type === "DOWNLOAD_RECENT_CAPTURE") {
     if (!isPopupSender(sender) || typeof object.captureId !== "string") { sendResponse({ ok: false, error: "UNAUTHORIZED" }); return false; }
-    void store.getCapture(object.captureId).then(async capture => {
-      if (!capture) return sendResponse({ ok: false, error: "NOT_FOUND" });
-      const settings = await store.getSettings(); const text = exportCode(capture, settings.copyHeader === true, normalizedHeaderFields(settings.copyHeaderFields));
+    void (async () => {
+      const settings = await store.getSettings();
+      const capture = await fetchRecentServerCapture(object.captureId!, settings);
+      const latest = await store.getSettings();
+      if (latest.accountId !== settings.accountId || latest.relay?.secret !== settings.relay?.secret || latest.relay?.generation !== settings.relay?.generation) return sendResponse({ ok: false, error: 'ACCOUNT_CHANGED' });
+      const text = exportCode(capture, settings.copyHeader === true, normalizedHeaderFields(settings.copyHeaderFields));
       if (object.type === "COPY_RECENT_CAPTURE") return sendResponse({ ok: true, text });
       const download = prepareCaptureDownload(capture, settings);
       if (!download) return sendResponse({ ok: false, error: "DOWNLOAD_TOO_LARGE" });
       try { await chrome.downloads.download({ url: download.url, filename: download.filename, conflictAction: "uniquify", saveAs: false }); sendResponse({ ok: true }); }
       catch { sendResponse({ ok: false, error: "DOWNLOAD_FAILED" }); }
-    }).catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
+    })().catch(() => sendResponse({ ok: false, error: "SERVER_CAPTURE_UNAVAILABLE" }));
     return true;
   }
 

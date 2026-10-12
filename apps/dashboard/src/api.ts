@@ -148,6 +148,8 @@ export async function getHistoricalGithubStatus(expectedGithubId: string): Promi
 
 export const getHistoricalCommitCandidates = (githubId: string) => requestJson<import('./types').HistoricalCommitCandidate[]>(
     '/api/solutions/historical-github-candidates', { headers: accountAssertionHeaders(githubId) })
+export const getGithubCommitCandidates = (githubId: string) => requestJson<import('./types').GithubCommitCandidate[]>(
+    '/api/solutions/github-candidates', { headers: accountAssertionHeaders(githubId) })
 export type GithubRecoveryResult = { captureId: string; state: import('./types').HistoricalCommitState; comparison: 'MATCH' | 'MISSING' | 'CONFLICT' | 'UNAVAILABLE' | 'CONTEXT_UNAVAILABLE'; diagnostic: string; retryAllowed: boolean }
 export const reconcileHistoricalCommit = (githubId: string, captureId: string, settingsVersion: number, retry = false) => requestJson<GithubRecoveryResult>(
   '/api/solutions/historical-github-reconcile', { method: 'POST', headers: accountAssertionHeaders(githubId), body: JSON.stringify({ captureId, settingsVersion, retry }) })
@@ -156,6 +158,13 @@ export const requestHistoricalCommitBatch = (githubId: string, request: {
 }) => requestJson<Record<string, import('./types').HistoricalCommitState>>('/api/solutions/historical-github-batch', {
   method: 'POST', headers: accountAssertionHeaders(githubId), body: JSON.stringify(request),
 })
+export const requestGithubCommitBatch = (githubId: string, request: {
+  captureIds: string[]; settingsVersion: number; installationId: number; owner: string; repository: string; branch: string
+}) => requestJson<Record<string, import('./types').HistoricalCommitState>>('/api/solutions/github-batch', {
+  method: 'POST', headers: accountAssertionHeaders(githubId), body: JSON.stringify(request),
+})
+export const reconcileGithubCommit = (githubId: string, captureId: string, settingsVersion: number, retry = false) => requestJson<GithubRecoveryResult>(
+  '/api/solutions/github-reconcile', { method: 'POST', headers: accountAssertionHeaders(githubId), body: JSON.stringify({ captureId, settingsVersion, retry }) })
 
 export function getCommunitySolutions(expectedGithubId: string, platform: Platform, problemNumber: string, languageKey: string, page: number, sort: import('./types').CommunitySort = 'submitted'): Promise<CommunityPage> {
   const query = new URLSearchParams({ platform, problemNumber, page: String(page), size: '20', sort })

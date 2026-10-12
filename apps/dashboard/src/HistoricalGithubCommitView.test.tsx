@@ -5,12 +5,21 @@ import { HistoricalGithubCommitView } from './HistoricalGithubCommitView'
 import type { AccountSettings, HistoricalCommitCandidate } from './types'
 
 const mocks = vi.hoisted(() => ({ candidates: vi.fn(), settings: vi.fn(), me: vi.fn(), commit: vi.fn(), reconcile: vi.fn() }))
-vi.mock('./api', () => ({ getHistoricalCommitCandidates: mocks.candidates, getAccountSettings: mocks.settings, getMe: mocks.me, requestHistoricalCommitBatch: mocks.commit, reconcileHistoricalCommit: mocks.reconcile }))
+vi.mock('./api', () => ({ getHistoricalCommitCandidates: mocks.candidates, getGithubCommitCandidates: mocks.candidates, getAccountSettings: mocks.settings, getMe: mocks.me, requestHistoricalCommitBatch: mocks.commit, requestGithubCommitBatch: mocks.commit, reconcileHistoricalCommit: mocks.reconcile, reconcileGithubCommit: mocks.reconcile }))
 const user = { id: 1, githubId: 'g', githubLogin: 'account' }
 const settings = { version: 7, githubTargetConfigured: true, githubInstallationId: 77, githubOwner: 'owner', githubRepository: 'archive', githubBranch: 'main', githubRootPath: 'solutions', gitPathTemplate: '{platform}/{number}/{capture_ID}', githubAutoCommitEnabled: false } as AccountSettings
 const record = (index: number, state: HistoricalCommitCandidate['state'] = 'NONE'): HistoricalCommitCandidate => ({ captureId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, platform: index % 2 ? 'SWEA' : 'PROGRAMMERS', historicalSubmissionId: `site-${index}`, problemNumber: String(index), title: `문제${index}`, language: 'Java', state })
 beforeEach(() => { vi.resetAllMocks(); mocks.me.mockResolvedValue(user); mocks.settings.mockResolvedValue(settings); mocks.candidates.mockResolvedValue([record(1), record(2)]); mocks.commit.mockImplementation((_id, request) => Promise.resolve(Object.fromEntries(request.captureIds.map((id: string) => [id, 'PENDING'])))) })
 afterEach(() => { cleanup(); vi.useRealTimers() })
+it('selects uncommitted server solutions including new automatic captures without historical IDs', async () => {
+  const normal = { ...record(1), historicalSubmissionId: null }
+  mocks.candidates.mockResolvedValue([normal, record(2, 'SUCCEEDED'), record(3, 'PENDING'), record(4, 'UNKNOWN'), record(5, 'FAILED')])
+  render(<HistoricalGithubCommitView user={user} mode="live" allSolutions />)
+  await preview(2)
+  fireEvent.click(await screen.findByRole('button', { name: 'GitHub 커밋 2건 요청' }))
+  await waitFor(() => expect(mocks.commit).toHaveBeenCalledOnce())
+  expect(mocks.commit.mock.calls[0][1].captureIds).toEqual([normal.captureId, record(5).captureId])
+})
 async function preview(count = 2) {
   await waitFor(() => expect((screen.getByRole('button', { name: `선택한 ${count}건 커밋 대상 확인` }) as HTMLButtonElement).disabled).toBe(false))
   fireEvent.click(screen.getByRole('button', { name: `선택한 ${count}건 커밋 대상 확인` }))
@@ -111,7 +120,7 @@ it('does not automatically replay an ambiguous response', async () => {
 it('disables commit preview if GitHub target is missing', async () => {
   mocks.settings.mockResolvedValue({ ...settings, githubTargetConfigured: false })
   render(<HistoricalGithubCommitView user={user} mode="live" />)
-  await screen.findByText(/GitHub 탭에서 저장소/)
+  await screen.findByText(/GitHub 관리에서 저장소/)
   expect((screen.getByRole('button', { name: '선택한 2건 커밋 대상 확인' }) as HTMLButtonElement).disabled).toBe(true)
 })
 

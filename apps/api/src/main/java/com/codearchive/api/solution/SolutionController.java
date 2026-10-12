@@ -201,12 +201,20 @@ public class SolutionController {
     @GetMapping("/historical-github-candidates")
     public ResponseEntity<?> historicalGithubCandidates(Authentication authentication,
             @RequestHeader(value = "X-CodeArchive-Account", required = false) String assertion) {
+        return githubCandidates(authentication, assertion, false);
+    }
+    @GetMapping("/github-candidates")
+    public ResponseEntity<?> githubCandidates(Authentication authentication,
+            @RequestHeader(value = "X-CodeArchive-Account", required = false) String assertion) {
+        return githubCandidates(authentication, assertion, true);
+    }
+    private ResponseEntity<?> githubCandidates(Authentication authentication, String assertion, boolean allSolutions) {
         Optional<GithubIdentity> identity = GithubAuthentication.identity(authentication);
         if (identity.isEmpty()) return ResponseEntity.status(401).body(new ApiError("Authentication is required"));
         ResponseEntity<?> failure = validateAccountAssertion(identity.get().githubId(), assertion);
         if (failure != null) return failure;
         List<Solution> historical = solutionService.listForUser(identity.get().githubId()).stream()
-                .filter(solution -> solution.isHistoricalImport() && solution.getHistoricalSubmissionId() != null).toList();
+                .filter(solution -> allSolutions || solution.isHistoricalImport() && solution.getHistoricalSubmissionId() != null).toList();
         if (historical.isEmpty()) return ResponseEntity.ok(List.of());
         var states = automation.statuses(historical.get(0).getUser(), historical.stream().map(Solution::getCaptureId).toList());
         return ResponseEntity.ok(historical.stream().map(solution -> HistoricalCommitCandidate.from(solution,
@@ -216,6 +224,14 @@ public class SolutionController {
     @PostMapping("/historical-github-batch")
     public ResponseEntity<?> historicalGithubBatch(@RequestBody JsonNode body, Authentication authentication,
             @RequestHeader(value = "X-CodeArchive-Account", required = false) String assertion) {
+        return githubBatch(body, authentication, assertion, false);
+    }
+    @PostMapping("/github-batch")
+    public ResponseEntity<?> githubBatch(@RequestBody JsonNode body, Authentication authentication,
+            @RequestHeader(value = "X-CodeArchive-Account", required = false) String assertion) {
+        return githubBatch(body, authentication, assertion, true);
+    }
+    private ResponseEntity<?> githubBatch(JsonNode body, Authentication authentication, String assertion, boolean allSolutions) {
         Optional<GithubIdentity> identity = GithubAuthentication.identity(authentication);
         if (identity.isEmpty()) return ResponseEntity.status(401).body(new ApiError("Authentication is required"));
         ResponseEntity<?> failure = validateAccountAssertion(identity.get().githubId(), assertion);
@@ -236,13 +252,15 @@ public class SolutionController {
         List<Solution> owned = solutionService.listForUser(identity.get().githubId());
         List<Solution> selected = new ArrayList<>();
         for (String id : ids) {
-            Optional<Solution> match = owned.stream().filter(solution -> solution.isHistoricalImport() &&
-                    solution.getHistoricalSubmissionId() != null && id.equals(solution.getCaptureId())).findFirst();
+            Optional<Solution> match = owned.stream().filter(solution -> (allSolutions || solution.isHistoricalImport() &&
+                    solution.getHistoricalSubmissionId() != null) && id.equals(solution.getCaptureId())).findFirst();
             if (match.isEmpty()) return ResponseEntity.status(409).body(new ApiError("Historical capture is not synced"));
             selected.add(match.get());
         }
         try {
-            return ResponseEntity.ok(automation.requestManualHistoricalByCapture(selected,
+            return ResponseEntity.ok(allSolutions ? automation.requestManualByCapture(selected,
+                    body.path("settingsVersion").asLong(), body.path("installationId").asLong(),
+                    body.path("owner").asText(), body.path("repository").asText(), body.path("branch").asText()) : automation.requestManualHistoricalByCapture(selected,
                     body.path("settingsVersion").asLong(), body.path("installationId").asLong(),
                     body.path("owner").asText(), body.path("repository").asText(), body.path("branch").asText()));
         } catch (CaptureValidationException | DataIntegrityViolationException exception) {
@@ -253,6 +271,14 @@ public class SolutionController {
     @PostMapping("/historical-github-reconcile")
     public ResponseEntity<?> reconcileHistorical(@RequestBody JsonNode body, Authentication authentication,
             @RequestHeader(value = "X-CodeArchive-Account", required = false) String assertion) {
+        return githubReconcile(body, authentication, assertion, false);
+    }
+    @PostMapping("/github-reconcile")
+    public ResponseEntity<?> githubReconcile(@RequestBody JsonNode body, Authentication authentication,
+            @RequestHeader(value = "X-CodeArchive-Account", required = false) String assertion) {
+        return githubReconcile(body, authentication, assertion, true);
+    }
+    private ResponseEntity<?> githubReconcile(JsonNode body, Authentication authentication, String assertion, boolean allSolutions) {
         Optional<GithubIdentity> identity = GithubAuthentication.identity(authentication);
         if (identity.isEmpty()) return ResponseEntity.status(401).body(new ApiError("Authentication is required"));
         ResponseEntity<?> failure = validateAccountAssertion(identity.get().githubId(), assertion);
@@ -262,7 +288,7 @@ public class SolutionController {
                 || !body.path("settingsVersion").isIntegralNumber() || !body.path("retry").isBoolean())
             return ResponseEntity.badRequest().body(new ApiError("Invalid reconciliation request"));
         Optional<Solution> match = solutionService.listForUser(identity.get().githubId()).stream()
-                .filter(item -> item.isHistoricalImport() && body.path("captureId").asText().equals(item.getCaptureId())).findFirst();
+                .filter(item -> (allSolutions || item.isHistoricalImport()) && body.path("captureId").asText().equals(item.getCaptureId())).findFirst();
         if (match.isEmpty()) return ResponseEntity.status(404).body(new ApiError("Owned historical submission missing"));
         try {
             return ResponseEntity.ok(automation.reconcile(match.get(), body.path("settingsVersion").asLong(), body.path("retry").asBoolean()));

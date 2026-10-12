@@ -24,7 +24,7 @@ function asSynced(value: unknown): value is Preview {
     typeof item.problemNumber === 'string' && typeof item.title === 'string' && typeof item.language === 'string' &&
     item.result === 'ACCEPTED' && item.syncState === 'SYNCED' && typeof item.observedAt === 'string' && !Number.isNaN(Date.parse(item.observedAt));
 }
-function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement, captures: Preview[]) {
+function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement, captures: Preview[], services: PopupServices) {
   list.replaceChildren(); empty.hidden = captures.length !== 0;
   for (const capture of captures) {
     const item = document.createElement('article'); item.className = 'recent-item';
@@ -39,7 +39,27 @@ function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement,
     const title = document.createElement('a'); title.className = 'recent-title'; title.href = 'dashboard.html'; title.target = '_blank'; title.rel = 'noopener noreferrer'; title.textContent = `#${capture.problemNumber} · ${capture.title}`;
     const meta = document.createElement('p'); meta.className = 'recent-meta'; meta.textContent = `${canonicalLanguageDisplayName(capture.language)} · 풀이 시간 ${formatSolutionTime(capture.solvedAt ?? capture.observedAt)}`;
     const performance = document.createElement('p'); performance.className = 'recent-performance'; performance.textContent = `실행 시간 ${formatExecutionTime(capture.executionTime)} · 메모리 ${formatCaptureMemory(capture)}`;
-    item.append(heading, title, meta, performance); list.append(item);
+    item.append(heading, title, meta, performance);
+    const actions = document.createElement('div'); actions.className = 'recent-actions';
+    const notice = document.createElement('span'); notice.setAttribute('role', 'status');
+    for (const action of ['copy', 'download'] as const) {
+      const handler = action === 'copy' ? services.copyCapture : services.downloadCapture;
+      if (!handler) continue;
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = action === 'copy' ? '코드 복사' : '다운로드';
+      button.setAttribute('aria-label', `${capture.problemNumber} ${button.textContent}`);
+      button.addEventListener('click', async () => {
+        button.disabled = true; notice.textContent = '서버에서 코드를 가져오고 있어요.';
+        try {
+          if (action === 'copy') { const result = await services.copyCapture!(capture.captureId); if (!result.ok || typeof result.text !== 'string') throw new Error(); await services.copy(result.text); }
+          else if (!(await services.downloadCapture!(capture.captureId)).ok) throw new Error();
+          notice.textContent = action === 'copy' ? '복사했습니다.' : '다운로드를 시작했습니다.';
+        } catch { notice.textContent = '코드를 가져오지 못했습니다. 로그인·연결 상태를 확인해 주세요.'; }
+        finally { button.disabled = false; }
+      });
+      actions.append(button);
+    }
+    if (actions.childElementCount) { actions.append(notice); item.append(actions); }
+    list.append(item);
   }
 }
 export function mountPopup(document: Document, services: PopupServices): void {
@@ -67,7 +87,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
     const key = JSON.stringify(captures);
     if (key === recentRenderKey) return;
     recentRenderKey = key;
-    renderRecent(document, recentList, recentEmpty, captures);
+    renderRecent(document, recentList, recentEmpty, captures, services);
   };
   const showCurrentRecent = () => showRecent(visibleCaptures.map(capture => ({ ...capture, githubCommitStatus: knownStatuses.get(capture.captureId) })));
   async function refreshStatuses(): Promise<void> {

@@ -104,6 +104,21 @@ public class SolutionService {
     }
 
     @Transactional(readOnly = true)
+    public List<SolutionPreview> recentForUser(String githubId) {
+        AppUser user = userRepository.findByGithubId(githubId)
+                .orElseThrow(() -> new CaptureValidationException("Authenticated user no longer exists"));
+        return solutionRepository.findRecentProblemPreviews(user.getId(), org.springframework.data.domain.PageRequest.of(0, 3));
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<Solution> recentCaptureForUser(String githubId, String captureId) {
+        AppUser user = userRepository.findByGithubId(githubId)
+                .orElseThrow(() -> new CaptureValidationException("Authenticated user no longer exists"));
+        if (recentForUser(githubId).stream().noneMatch(record -> record.captureId().equals(captureId))) return Optional.empty();
+        return solutionRepository.findByUserIdAndCaptureId(user.getId(), captureId);
+    }
+
+    @Transactional(readOnly = true)
     public List<String> historicalSubmissionIdsForUser(String githubId, Platform platform) {
         AppUser user = userRepository.findByGithubId(githubId)
                 .orElseThrow(() -> new CaptureValidationException("Authenticated user no longer exists"));
