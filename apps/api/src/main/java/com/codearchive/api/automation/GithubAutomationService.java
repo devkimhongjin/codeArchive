@@ -99,17 +99,23 @@ public class GithubAutomationService {
     @Transactional
     public Map<String, CommitJobState> requestManualHistorical(List<Solution> selected, long settingsVersion,
             long installationId, String owner, String repository, String branch) {
-        return requestHistorical(selected, settingsVersion, installationId, owner, repository, branch, false);
+        return requestHistorical(selected, settingsVersion, installationId, owner, repository, branch, false, true);
     }
 
     @Transactional
     public Map<String, CommitJobState> requestManualHistoricalByCapture(List<Solution> selected, long settingsVersion,
             long installationId, String owner, String repository, String branch) {
-        return requestHistorical(selected, settingsVersion, installationId, owner, repository, branch, true);
+        return requestHistorical(selected, settingsVersion, installationId, owner, repository, branch, true, true);
+    }
+
+    @Transactional
+    public Map<String, CommitJobState> requestManualByCapture(List<Solution> selected, long settingsVersion,
+            long installationId, String owner, String repository, String branch) {
+        return requestHistorical(selected, settingsVersion, installationId, owner, repository, branch, true, false);
     }
 
     private Map<String, CommitJobState> requestHistorical(List<Solution> selected, long settingsVersion,
-            long installationId, String owner, String repository, String branch, boolean byCapture) {
+            long installationId, String owner, String repository, String branch, boolean byCapture, boolean historicalOnly) {
         if (selected.isEmpty()) throw new CaptureValidationException("No historical submissions selected");
         AppUser user = selected.get(0).getUser();
         UserSettings current = settings.findByUserId(user.getId()).orElse(null);
@@ -121,20 +127,20 @@ public class GithubAutomationService {
             throw new CaptureValidationException("GitHub target or settings changed");
         Map<String, CommitJobState> result = new LinkedHashMap<>();
         for (Solution solution : selected.stream().sorted(java.util.Comparator.comparing(Solution::getCaptureId)).toList()) {
-            if (!user.getId().equals(solution.getUser().getId()) || !solution.isHistoricalImport() ||
-                    solution.getHistoricalSubmissionId() == null)
+            if (!user.getId().equals(solution.getUser().getId()) || historicalOnly && (!solution.isHistoricalImport() ||
+                    solution.getHistoricalSubmissionId() == null))
                 throw new CaptureValidationException("Only synced historical submissions can be committed");
             GithubCommitJob job = jobs.findByUserIdAndCaptureId(user.getId(), solution.getCaptureId())
                     .orElseGet(() -> jobs.saveAndFlush(new GithubCommitJob(user, solution.getCaptureId(),
-                            settingsVersion, CommitJobOrigin.HISTORICAL_MANUAL)));
-            if (job.getOrigin() != CommitJobOrigin.HISTORICAL_MANUAL)
+                            settingsVersion, historicalOnly ? CommitJobOrigin.HISTORICAL_MANUAL : CommitJobOrigin.MANUAL)));
+            if (historicalOnly && job.getOrigin() != CommitJobOrigin.HISTORICAL_MANUAL)
                 throw new CaptureValidationException("Capture already has another GitHub job");
             // Lock existing work before an explicit failed-job retry. UNKNOWN
             // remains terminal because GitHub may already have accepted it.
             if (byCapture) {
                 job = jobs.findByIdForClaim(job.getId()).orElseThrow(() -> new CaptureValidationException("Job missing"));
                 if (job.getState() == CommitJobState.FAILED) {
-                    job.retryManual(settingsVersion);
+                    if (historicalOnly) job.retryManual(settingsVersion); else job.retryAsManual(settingsVersion);
                     jobs.saveAndFlush(job);
                 } else if ((job.getState() == CommitJobState.PENDING || job.getState() == CommitJobState.RUNNING) &&
                         job.getSettingsGeneration() != settingsVersion) {
@@ -168,7 +174,7 @@ public class GithubAutomationService {
             if (locked.getState() != CommitJobState.UNKNOWN || !recoveryAuthorized(locked, current, solution, settingsVersion))
                 throw new CaptureValidationException("Job or settings changed during comparison");
             boolean allowed = observed == GithubProvider.Comparison.MISSING && locked.getDiagnostic().safeBeforeRef()
-                    && locked.getOrigin() == CommitJobOrigin.HISTORICAL_MANUAL;
+                      && locked.getOrigin() != CommitJobOrigin.AUTOMATIC;
             if (observed == GithubProvider.Comparison.MATCH) {
                 locked.terminal(CommitJobState.SUCCEEDED);
                 locked.recordDiagnostic(GithubProvider.Diagnostic.OK);
@@ -281,12 +287,14 @@ public class GithubAutomationService {
                 current.getVersion() != job.getSettingsGeneration()) return false;
         if (job.getOrigin() == CommitJobOrigin.HISTORICAL_MANUAL)
             return solution.isHistoricalImport() && solution.getHistoricalSubmissionId() != null;
+        if (job.getOrigin() == CommitJobOrigin.MANUAL) return true;
         return !solution.isHistoricalImport() && current.isAutoSyncEnabled() && current.isGithubAutoCommitEnabled();
     }
 
     private boolean finalWriteAuthorized(Claim claim) {
         UserSettings current = settings.findByUserId(claim.settings().getUser().getId()).orElse(null);
         if (current == null || current.getVersion() != claim.settings().getVersion() || !current.githubTargetConfigured()) return false;
+        if (claim.origin() == CommitJobOrigin.MANUAL) return true;
         return claim.origin() == CommitJobOrigin.HISTORICAL_MANUAL
                 ? claim.solution().isHistoricalImport() && claim.solution().getHistoricalSubmissionId() != null
                 : !claim.solution().isHistoricalImport() && current.isAutoSyncEnabled() && current.isGithubAutoCommitEnabled();

@@ -4,12 +4,8 @@ import { afterEach, expect, it, vi } from 'vitest'
 import App from './App'
 
 const mocks = vi.hoisted(() => ({ me: vi.fn(), bridge: vi.fn() }))
-vi.mock('./api', async original => ({ ...await original<typeof import('./api')>(), getMe: mocks.me }))
+vi.mock('./api', async original => ({ ...await original<typeof import('./api')>(), getMe: mocks.me, getSolutions: async () => [] }))
 vi.mock('./bridge', async original => ({ ...await original<typeof import('./bridge')>(), requestBridge: mocks.bridge }))
-vi.mock('./HistoricalImportView', async () => {
-  const { useState } = await import('react')
-  return { HistoricalImportView: ({ onCommitReady }: { onCommitReady?: () => void }) => { const [count, setCount] = useState(0); return <div>로컬 과거 풀이 동기화<button onClick={() => setCount(value => value + 1)}>검증 작업 {count}</button><button onClick={onCommitReady}>일괄 GitHub 커밋</button></div> } }
-})
 vi.mock('./HistoricalCollectionView', async () => {
   const { useState } = await import('react')
   return { HistoricalCollectionView: ({ onSelectionChange }: { onSelectionChange: (scope: { batchId: string; platform: 'JUNGOL'; submissionIds: string[] } | null) => void }) => {
@@ -25,7 +21,7 @@ vi.mock('./HistoricalGithubCommitView', async () => {
 afterEach(() => { cleanup(); localStorage.clear(); window.history.replaceState({}, '', '/'); vi.clearAllMocks() })
 
 it('separates history management and preserves both operations across action and navigation changes', async () => {
-  mocks.me.mockRejectedValue(new Error('signed out'))
+  mocks.me.mockResolvedValue({ id: 1, githubId: 'g', githubLogin: 'account' })
   mocks.bridge.mockRejectedValue(new Error('extension unavailable'))
   render(<App />)
   expect(screen.queryByText('로컬 과거 풀이 동기화')).toBeNull()
@@ -35,17 +31,14 @@ it('separates history management and preserves both operations across action and
   expect(screen.queryByRole('button', { name: '일괄 GitHub 커밋' })).toBeNull()
   expect(screen.queryByRole('button', { name: '검증 작업 0' })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: '수집 완료 0' }))
-  expect(await screen.findByText('로컬 과거 풀이 동기화')).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: '검증 작업 0' }))
+  expect(await screen.findByText('서버 등록 확인 · 제출 1건')).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: '일괄 GitHub 커밋' }))
   fireEvent.click(screen.getByRole('button', { name: '커밋 작업 0' }))
-  expect(screen.getByRole('button', { name: '검증 작업 1' })).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: '설정' }))
-  expect(screen.queryByRole('button', { name: '검증 작업 1' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '커밋 작업 1' })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: /전체 풀이/ }))
-  expect(screen.queryByRole('button', { name: '검증 작업 1' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '커밋 작업 1' })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: '과거 풀이 관리' }))
-  expect(screen.getByRole('button', { name: '검증 작업 1' })).toBeTruthy()
   expect(screen.getByRole('button', { name: '수집 완료 1' })).toBeTruthy()
   expect(screen.getByRole('button', { name: '커밋 작업 1' })).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: '새 수집 시작' }))
@@ -54,12 +47,12 @@ it('separates history management and preserves both operations across action and
 })
 
 it('opens the history tab from its URL and restores it through browser navigation', async () => {
-  mocks.me.mockRejectedValue(new Error('signed out'))
+  mocks.me.mockResolvedValue({ id: 1, githubId: 'g', githubLogin: 'account' })
   mocks.bridge.mockRejectedValue(new Error('extension unavailable'))
   window.history.replaceState({}, '', '/?view=history')
   render(<App />)
   fireEvent.click(screen.getByRole('button', { name: '수집 완료 0' }))
-  expect(await screen.findByRole('button', { name: '검증 작업 0' })).toBeTruthy()
+  expect(await screen.findByText('서버 등록 확인 · 제출 1건')).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: /전체 풀이/ }))
   window.history.replaceState({}, '', '/?view=history')
   fireEvent(window, new PopStateEvent('popstate'))

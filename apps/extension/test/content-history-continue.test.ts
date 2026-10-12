@@ -77,8 +77,8 @@ test("production import skips a rejected detail, stores the next submission, and
     navigate = false; storeFailure = true; opened.length = 0;
     message("LOCAL_HISTORY_IMPORT_START", ["2002", "2001"]);
     const storageStopped = await untilTerminal();
-    assert.equal(storageStopped.status, "FAILED"); assert.equal(storageStopped.failureReason, "STORE_FAILED");
-    assert.deepEqual(opened, ["2002"], "storage errors must not replay stores or continue"); assert.deepEqual(stored, ["2002"]);
+    assert.equal(storageStopped.status, "DONE"); assert.equal(storageStopped.skipped, 2);
+    assert.deepEqual(opened, ["2002", "2001", "2001", "2001"], "registration failure must continue without replaying the store"); assert.deepEqual(stored, ["2002"]);
     storeFailure = false; closeBlocked = true; opened.length = 0;
     message("LOCAL_HISTORY_IMPORT_START", ["2001", "2002"]);
     const cleanupStopped = await untilTerminal();

@@ -74,6 +74,7 @@ export type ExtensionCapability = string
 export type HistoricalRecord = Pick<Solution, 'captureId' | 'platform' | 'problemNumber' | 'title' | 'language' | 'solvedAt' | 'metadataPending'> & { historicalSubmissionId: string }
 export type HistoricalCommitState = 'NONE' | 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN'
 export type HistoricalCommitCandidate = HistoricalRecord & { state: HistoricalCommitState }
+export type GithubCommitCandidate = Omit<HistoricalCommitCandidate, 'historicalSubmissionId'> & { historicalSubmissionId?: string | null }
 
 export type ExtensionCaptureResponse = {
   captures?: Capture[]

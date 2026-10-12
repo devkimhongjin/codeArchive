@@ -45,9 +45,9 @@ import { BUILD_METADATA, buildLabel, updatedLabel } from '../../../shared/buildM
 import { EXTENSION_RELEASE, isVersionAtLeast } from './extensionRelease'
 import { formatExecutionTime, formatMemory } from './performancePresentation'
 import { CommunityView } from './CommunityView'
-import { HistoricalImportView } from './HistoricalImportView'
 import { HistoricalCollectionView } from './HistoricalCollectionView'
 import { HistoricalGithubCommitView } from './HistoricalGithubCommitView'
+import { GithubBatchProgress } from './GithubBatchProgress'
 import { formatKstDate, formatKstDateTime } from '../../../shared/timePresentation'
 import { readCommunityRoute, readView, urlForView, type CommunityRoute } from './communityRoute'
 import { CommunitySettings } from './CommunitySettings'
@@ -538,6 +538,11 @@ export default function App() {
     if (solutionPage !== currentSolutionPage) setSolutionPage(currentSolutionPage)
   }, [solutionPage, currentSolutionPage])
   useEffect(() => { if (view === 'history') setHistoricalOpened(true) }, [view])
+  useEffect(() => {
+    if (!historicalScope || modeRef.current !== 'live' || !userRef.current) return
+    setHistoricalRevision(value => value + 1)
+    void refreshSolutions(accountGeneration.current, userRef.current.githubId).catch(() => undefined)
+  }, [historicalScope])
 
   useEffect(() => {
     if (!pagedSolutionGroups.some(group => group.submissions.some(solution => solution.captureId === selectedId))) {
@@ -819,7 +824,7 @@ export default function App() {
           void refreshPendingCount(capability, candidate, true)
           // A capability is bound to this dashboard document by the extension.
           // This is a read-only fallback, never an upload or ACK authority.
-          if (!user || modeRef.current === 'local') {
+          if (!extensionRuntime() && (!user || modeRef.current === 'local')) {
             try {
               const response = await requestBridge(candidate, { type: 'GET_LOCAL_ARCHIVE', capability, limit: 50 }) as { captures?: unknown; localOnly?: unknown }
               if (response.localOnly === true && Array.isArray(response.captures) && requestIsCurrent(fence, accountGeneration.current, bridgeOperation.current)) {
@@ -1365,7 +1370,7 @@ export default function App() {
             </button>
           </nav>
           <div className="topbar-actions">
-            <button
+            {!extensionRuntime() && <button
               className={`sync-button ${syncing ? 'is-loading' : ''} ${lastSyncState === 'partial' || lastSyncState === 'failed' ? 'has-warning' : ''}`}
               onClick={() => void syncPending()}
               disabled={syncing}
@@ -1376,7 +1381,7 @@ export default function App() {
               <Icon name="sync" size={16} />
               <span>{syncing ? '동기화 중' : '동기화'}</span>
               <b className="sync-count" aria-hidden="true">{pendingBadge}</b>
-            </button>
+            </button>}
             {user ? (
               <div className="account-menu">
                 <ProfileAvatar user={user} />
@@ -1395,14 +1400,15 @@ export default function App() {
       </header>
 
       <main className="page-content">
+        <GithubBatchProgress user={user} />
         <DesktopVersion /><DesktopUpdateNotice />
         <section className={`connection-banner is-${bridgeStatus} ${extensionUpdateRequired ? 'needs-update' : ''}`} role="status">
           <div className="connection-icon"><Icon name={bridgeStatus === 'connected' ? 'check' : bridgeStatus === 'connecting' ? 'sync' : 'link'} size={17} /></div>
           <div className="connection-copy">
             <strong>{extensionStatusLabel}</strong>
             <span>{serverStatusLabel}</span>
-            {mode === 'local' && <em>로컬 보관함</em>}
-            <small id="pending-sync-help">{pendingDescription}</small>
+            {mode === 'local' && !extensionRuntime() && <em>로컬 보관함</em>}
+            <small id="pending-sync-help">{extensionRuntime() ? '풀이는 로그인한 계정의 서버에서 관리합니다.' : pendingDescription}</small>
           </div>
           <div className="connection-actions">
             {mode === 'local' && !user && <button className="banner-action" onClick={() => navigateSameTab(GITHUB_LOGIN_URL)}>GitHub로 로그인 <Icon name="github" size={14} /></button>}
@@ -1452,34 +1458,20 @@ export default function App() {
         <section hidden={view !== 'history'} className="history-management" aria-label="과거 풀이 관리">
           <div className="page-heading">
             <h1>과거 풀이 관리</h1>
-            <p>사이트별 과거 풀이를 수집하고, 서버 동기화와 GitHub 커밋을 순서대로 진행하세요.</p>
+            <p>사이트별 과거 풀이를 서버에 등록하고, 원하는 제출을 GitHub에 커밋하세요.</p>
           </div>
           <div className="history-storage-guide">
             <h2>저장 안내</h2>
-            <p><strong>과거 풀이 수집</strong>은 본인 제출의 원본을 확인해 이 브라우저에 저장합니다. <strong>일괄 동기화</strong>는 선택한 풀이를 서버에 저장하고, <strong>일괄 GitHub 커밋</strong>은 서버 풀이를 연결된 저장소에 커밋합니다.</p>
-            <p>수집은 로그인 없이 가능합니다. 수집 완료 후 원본 확인을 마친 선택 제출만 일괄 동기화·GitHub 커밋할 수 있으며, 서버 작업에는 로그인이 필요합니다.</p>
+            <p>후보를 선택하고 <strong>서버 등록</strong>을 누르면 본인 제출의 원본을 확인해 로그인한 계정에 저장합니다. 이미 서버에 있는 제출은 제외합니다.</p>
+            <p>서버 등록 완료 후 이 화면 상단에서 <strong>일괄 GitHub 커밋</strong>을 진행할 수 있습니다. 커밋할 저장소와 제출을 확인한 뒤 요청합니다.</p>
           </div>
           {historicalOpened && <>
-          <HistoricalCollectionView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} disabled={historicalSyncBusy || historicalCommitBusy} onSelectionChange={receiveHistoricalScope} />
-          <div hidden={!historicalScope}>{historicalScope && <HistoricalImportView selectionScope={historicalScope} onBusyChange={setHistoricalSyncBusy} onCommitReady={() => setHistoricalCommitPreview(value => value + 1)} extensionId={extensionId} capability={bridgeCapability} supported={historySupported} user={user} mode={mode} onImported={() => {
-            setHistoricalRevision(value => value + 1)
-            if (modeRef.current === 'live' && userRef.current) {
-              void refreshSolutions(accountGeneration.current, userRef.current.githubId).catch(() => undefined)
-              return
-            }
-            const capability = bridgeCapabilityRef.current
-            if (!capability || modeRef.current !== 'local') return
-            const generation = accountGeneration.current
-            const connectedExtensionId = currentExtensionId.current
-            void requestBridge(currentExtensionId.current, { type: 'GET_LOCAL_ARCHIVE', capability, limit: 50 })
-              .then((response: { captures?: unknown; localOnly?: unknown }) => {
-                if (generation !== accountGeneration.current || capability !== bridgeCapabilityRef.current ||
-                    connectedExtensionId !== currentExtensionId.current || modeRef.current !== 'local' ||
-                    response.localOnly !== true || !Array.isArray(response.captures)) return
-                setSolutions(response.captures.map(normalizeSolution))
-              }).catch(() => undefined)
-          }} />}</div>
+          <div className="history-result-actions" aria-label="수집 후 작업">
+            <p role="status">{historicalScope ? `서버 등록 확인 · 제출 ${historicalScope.submissionIds.length}건` : user && mode === 'live' ? historicalSyncBusy ? '서버 제출 기록을 확인하고 등록하고 있습니다.' : '후보를 선택해 서버에 등록하면 GitHub 커밋을 진행할 수 있습니다.' : 'CodeArchive에 로그인한 뒤 수집을 시작해 주세요.'}</p>
+            {historicalScope && <button type="button" className="history-work-button active" disabled={!user || mode !== 'live' || historicalSyncBusy || historicalCommitBusy} onClick={() => setHistoricalCommitPreview(value => value + 1)}><Icon name="github" size={16} /> 일괄 GitHub 커밋</button>}
+          </div>
           <div hidden={!historicalScope || !historicalCommitPreview}>{historicalScope && historicalCommitPreview > 0 && <HistoricalGithubCommitView selectionScope={historicalScope} previewRequest={historicalCommitPreview} onBusyChange={setHistoricalCommitBusy} user={user} mode={mode} revision={historicalRevision} />}</div>
+          <HistoricalCollectionView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} disabled={historicalCommitBusy} onSelectionChange={receiveHistoricalScope} serverContext={{ user, mode, extensionId, capability: bridgeCapability }} onBusyChange={setHistoricalSyncBusy} />
           </>}
         </section>
         {view === 'community' && <CommunityView
@@ -1721,7 +1713,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
           {group && group.submissions.length > 1 && <label className="submission-picker">제출 기록<select aria-label="제출 기록" value={solution.captureId} onChange={(event) => onSelectSubmission(event.target.value)}>{group.submissions.map((submission, index) => <option key={submission.captureId} value={submission.captureId}>{index + 1}. {formatObservedTime(submission.solvedAt ?? submission.observedAt)} · {canonicalLanguageDisplayName(submission.language)}</option>)}</select></label>}
           <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
           <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} activeMode={codeThemeMode} />
-          <div className="detail-note"><Icon name="spark" size={14} /><span>{solution.historicalImport ? mode === 'live' ? '과거 풀이를 명시적으로 서버에 동기화한 기록입니다. 자동 GitHub 커밋은 실행되지 않습니다.' : '이 브라우저에 보관한 과거 풀이입니다. 과거 풀이 관리 탭에서 서버 동기화와 GitHub 커밋을 요청할 수 있습니다.' : mode === 'local' ? '이 브라우저의 로컬 기록입니다. 로그인 후 명시적으로 동기화할 수 있습니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
+          <div className="detail-note"><Icon name="spark" size={14} /><span>{solution.historicalImport ? mode === 'live' ? '과거 풀이의 원본을 확인해 서버에 등록한 기록입니다. GitHub 커밋은 별도로 요청할 수 있습니다.' : '이 브라우저에 보관한 과거 풀이입니다. 과거 풀이 관리 탭에서 서버 동기화와 GitHub 커밋을 요청할 수 있습니다.' : mode === 'local' ? '이 브라우저의 로컬 기록입니다. 로그인 후 명시적으로 동기화할 수 있습니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
         </>
       )}
     </section>
@@ -2135,6 +2127,7 @@ function SettingsView({
   return (
     <section className="settings-page">
       <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> WORKSPACE / {section === 'github' ? 'GITHUB' : 'SETTINGS'}</p><h1>{section === 'github' ? 'GitHub 관리' : '설정'}</h1><p>{section === 'github' ? '저장소와 자동 커밋을 관리합니다.' : '프로필, 코드 저장 및 자동 동기화를 관리합니다.'}</p></div>
+      {section === 'github' && user && savedTarget && <div className="github-batch-management"><HistoricalGithubCommitView allSolutions user={user} mode={accountSettingsReady ? 'live' : 'local'} revision={accountSettings.version} /></div>}
       {section === 'github' && user && savedTarget && <GithubRepositoryBrowser githubId={user.githubId} target={savedTarget} lightTheme={accountSettings.lightTheme} darkTheme={accountSettings.darkTheme} codeThemeMode={codeThemeMode} onExpectedAccountChange={onExpectedAccountChange} />}
       {section === 'settings' && <DesktopSettings />}
       {section === 'settings' && <CommunitySettings user={user} ready={accountSettingsReady} duplicateVisibility={accountSettings.communityDuplicateVisibility ?? 'all'} onDuplicateChange={communityDuplicateVisibility => updateAccountSettings({ ...accountSettings, communityDuplicateVisibility }, true)} publicByDefault={accountSettings.communityPublicByDefault ?? true} onChange={communityPublicByDefault => updateAccountSettings({ ...accountSettings, communityPublicByDefault }, true)} saving={settingsBusy} onPublished={onCommunityPublished} onAuthInvalid={onExpectedAccountChange} />}
