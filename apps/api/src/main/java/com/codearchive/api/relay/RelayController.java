@@ -44,6 +44,24 @@ import org.springframework.http.ResponseEntity; import org.springframework.secur
    captureIds.stream().distinct().forEach(captureId->result.put(captureId,Optional.ofNullable(existing.get(captureId)).map(state->state.name()).orElse("NOT_REQUESTED")));
    return ResponseEntity.ok(Map.of("statuses",result));
  }
+ @GetMapping("/recent") @Transactional(readOnly=true) public ResponseEntity<?> recent(@RequestHeader(value="Authorization",required=false) String authorization){
+   if(authorization==null||!authorization.startsWith("Bearer "))return ResponseEntity.status(401).body(new ApiError("Relay authorization is required"));
+   RelayGrant grant=grants.findByTokenHash(hash(authorization.substring(7))).filter(RelayGrant::usable).orElse(null);
+   if(grant==null)return ResponseEntity.status(401).body(new ApiError("Relay authorization is invalid"));
+   UserSettings current=settings.findByUserId(grant.getUser().getId()).orElse(null);
+   if(current==null||!current.isAutoSyncEnabled()||current.getVersion()!=grant.getGeneration())return ResponseEntity.status(401).body(new ApiError("Relay authorization is stale"));
+   return ResponseEntity.ok(Map.of("captures",solutions.recentForUser(grant.getUser().getGithubId())));
+ }
+ @GetMapping("/captures/{captureId}") @Transactional(readOnly=true) public ResponseEntity<?> recentCapture(@RequestHeader(value="Authorization",required=false) String authorization,@PathVariable String captureId){
+   if(authorization==null||!authorization.startsWith("Bearer "))return ResponseEntity.status(401).body(new ApiError("Relay authorization is required"));
+   RelayGrant grant=grants.findByTokenHash(hash(authorization.substring(7))).filter(RelayGrant::usable).orElse(null);
+   if(grant==null)return ResponseEntity.status(401).body(new ApiError("Relay authorization is invalid"));
+   UserSettings current=settings.findByUserId(grant.getUser().getId()).orElse(null);
+   if(current==null||!current.isAutoSyncEnabled()||current.getVersion()!=grant.getGeneration())return ResponseEntity.status(401).body(new ApiError("Relay authorization is stale"));
+   if(!captureId.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))return ResponseEntity.badRequest().body(new ApiError("Invalid capture identity"));
+   var capture=solutions.recentCaptureForUser(grant.getUser().getGithubId(),captureId);
+   return capture.isPresent()?ResponseEntity.ok(SolutionResponse.from(capture.get())):ResponseEntity.status(404).body(new ApiError("Recent owned solution missing"));
+ }
  public record GrantRequest(String deviceId,long generation){} public record GrantResponse(String secret,long generation,String endpoint,String expiresAt){}
  private static String randomSecret(){byte[] b=new byte[32];new SecureRandom().nextBytes(b);return Base64.getUrlEncoder().withoutPadding().encodeToString(b);} private static String hash(String text){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)));}catch(NoSuchAlgorithmException e){throw new IllegalStateException(e);}}
 }

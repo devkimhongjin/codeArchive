@@ -3,7 +3,7 @@ import type { HistoricalRecord, Platform } from './types'
 export const HISTORY_PLATFORMS: Platform[] = ['JUNGOL', 'SWEA', 'PROGRAMMERS']
 export const historyPlatformLabel: Record<Platform, string> = { JUNGOL: '정올', SWEA: 'SWEA', PROGRAMMERS: '프로그래머스' }
 export const historyKey = (record: HistoricalRecord) => `${record.platform}:${record.historicalSubmissionId}`
-export const historyProblemCount = (records: HistoricalRecord[]) => new Set(records.map(record => `${record.platform}:${record.problemNumber}`)).size
+export const historyProblemCount = (records: { platform: Platform; problemNumber: string }[]) => new Set(records.map(record => `${record.platform}:${record.problemNumber}`)).size
 export function isHistoricalRecord(value: unknown): value is HistoricalRecord {
   if (!value || typeof value !== 'object') return false
   const record = value as HistoricalRecord

@@ -24,6 +24,7 @@ import com.codearchive.api.auth.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
 import java.util.UUID;
 import java.util.Base64;
 import java.nio.charset.StandardCharsets;
@@ -451,6 +452,66 @@ class CodeArchiveApiIntegrationTest {
                         .content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", is("captures cannot contain more than 50 items")));
+    }
+
+    @Test
+    void bearerRecentPreviewsAndCodeAreScopedToCurrentAccountGenerationAndRecentProblems() throws Exception {
+        githubAccountService.upsert(principal("712", "recent-owner", "Recent", null));
+        enableRelay("712", "recent-owner", "Recent");
+        MvcResult issued = mockMvc.perform(post("/api/relay/grants").with(csrf().asHeader()).with(githubLogin("712", "recent-owner", "Recent", null))
+                .header("X-CodeArchive-Github-Id", "712").contentType("application/json").content("{\"deviceId\":\"synthetic-recent-device\",\"generation\":1}"))
+                .andExpect(status().isOk()).andReturn();
+        String secret = objectMapper.readTree(issued.getResponse().getContentAsString()).path("secret").asText();
+        String id = UUID.randomUUID().toString(), older = UUID.randomUUID().toString();
+        for (String captureId : List.of(older, id)) {
+            var payload = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(capture(captureId, "synthetic recent code"));
+            payload.put("observedAt", captureId.equals(id) ? "2026-10-12T00:00:02.000Z" : "2026-10-12T00:00:01.000Z");
+            mockMvc.perform(post("/api/relay/captures").header("Authorization", "Bearer " + secret).contentType("application/json").content(payload.toString())).andExpect(status().isOk());
+        }
+        mockMvc.perform(get("/api/relay/recent")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/relay/recent").header("Authorization", "Bearer " + secret)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.captures", hasSize(1))).andExpect(jsonPath("$.captures[0].captureId", is(id))).andExpect(jsonPath("$.captures[0].sourceCode").doesNotExist());
+        mockMvc.perform(get("/api/relay/captures/" + id).header("Authorization", "Bearer " + secret)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.sourceCode", is("synthetic recent code")));
+        mockMvc.perform(get("/api/relay/captures/" + older).header("Authorization", "Bearer " + secret)).andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/relay/captures/" + UUID.randomUUID()).header("Authorization", "Bearer " + secret)).andExpect(status().isNotFound());
+        mockMvc.perform(delete("/api/relay/grants/self").header("Authorization", "Bearer " + secret)).andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/relay/recent").header("Authorization", "Bearer " + secret)).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void serverPreviewsAndAllSolutionManualBatchAreOwnedAndDoNotExposeCode() throws Exception {
+        AppUser owner = githubAccountService.upsert(principal("710", "server-batch", "Batch", null));
+        githubAccountService.upsert(principal("711", "other-batch", "Other", null));
+        var settings = historicalTarget(owner, "server-batch");
+        var captureIds = objectMapper.createArrayNode();
+        for (int i = 0; i < 4; i++) {
+            String id = UUID.randomUUID().toString(); captureIds.add(id);
+            var payload = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(capture(id, "synthetic source"));
+            payload.put("problemNumber", i < 3 ? "1000" : "1001");
+            payload.put("observedAt", "2026-10-12T00:00:0" + i + ".000Z");
+            String upload = objectMapper.createObjectNode().set("captures", objectMapper.createArrayNode().add(payload)).toString();
+            mockMvc.perform(post("/api/solutions/bulk").with(csrf().asHeader()).with(githubLogin("710", "server-batch", "Batch", null))
+                    .header("X-CodeArchive-Account", "710").contentType("application/json").content(upload)).andExpect(status().isOk());
+        }
+        mockMvc.perform(get("/api/solutions/github-candidates").with(githubLogin("710", "server-batch", "Batch", null)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(4))).andExpect(jsonPath("$[0].sourceCode").doesNotExist());
+        mockMvc.perform(get("/api/solutions/historical-github-candidates").with(githubLogin("710", "server-batch", "Batch", null)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
+        var previews = solutionRepository.findRecentProblemPreviews(owner.getId(), org.springframework.data.domain.PageRequest.of(0, 3));
+        org.assertj.core.api.Assertions.assertThat(previews).hasSize(2);
+        org.assertj.core.api.Assertions.assertThat(previews.get(1).captureId()).isEqualTo(captureIds.get(2).asText());
+        org.assertj.core.api.Assertions.assertThat(solutionRepository.findRecentProblemPreviews(userRepository.findByGithubId("711").orElseThrow().getId(), org.springframework.data.domain.PageRequest.of(0, 3))).isEmpty();
+        var request = objectMapper.createObjectNode().put("settingsVersion", settings.getVersion()).put("installationId", 77)
+                .put("owner", "server-batch").put("repository", "archive").put("branch", "main"); request.set("captureIds", captureIds);
+        mockMvc.perform(post("/api/solutions/github-batch").with(csrf().asHeader()).with(githubLogin("711", "other-batch", "Other", null))
+                .header("X-CodeArchive-Account", "711").contentType("application/json").content(request.toString())).andExpect(status().isConflict());
+        for (int retry = 0; retry < 2; retry++) mockMvc.perform(post("/api/solutions/github-batch").with(csrf().asHeader()).with(githubLogin("710", "server-batch", "Batch", null))
+                .header("X-CodeArchive-Account", "710").contentType("application/json").content(request.toString()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$['" + captureIds.get(0).asText() + "']", is("PENDING")));
+        org.assertj.core.api.Assertions.assertThat(githubCommitJobRepository.count()).isEqualTo(4);
+        org.assertj.core.api.Assertions.assertThat(githubCommitJobRepository.findByUserIdAndCaptureId(owner.getId(), captureIds.get(0).asText()).orElseThrow().getOrigin())
+                .isEqualTo(com.codearchive.api.automation.CommitJobOrigin.MANUAL);
     }
 
     @Test

@@ -43,6 +43,8 @@ await cp(resolve(root, "src/archive.css"), resolve(dist, "archive.css"));
 await cp(resolve(root, "src/archive-viewer.css"), resolve(dist, "archive-viewer.css"));
 await cp(resolve(root, "src/history.html"), resolve(dist, "history.html"));
 await cp(resolve(root, "src/history.css"), resolve(dist, "history.css"));
+await cp(resolve(root, "src/login.html"), resolve(dist, "login.html"));
+await cp(resolve(root, "src/login.css"), resolve(dist, "login.css"));
 
 await cp(resolve(root, "icons"), resolve(dist, "icons"), { recursive: true });
 

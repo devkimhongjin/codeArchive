@@ -155,6 +155,19 @@ class GithubAutomationServiceTest {
     verify(jobs).findByUserIdAndCaptureIdIn(1L,List.of("capture-a","capture-b"));
   }
 
+  @Test void normalManualJobRunsWithAutomaticFlagsOffAndFencesSettings() throws Exception {
+    var jobs = mock(GithubCommitJobRepository.class); var settingsRepo = mock(UserSettingsRepository.class); var solutions = mock(SolutionRepository.class); var provider = mock(GithubProvider.class);
+    AppUser user = AppUser.fromGithub("1", "owner", "Owner", null); set(user, "id", 1L);
+    UserSettings current = settings(user, 7, Instant.EPOCH); set(current, "autoSyncEnabled", false); set(current, "githubAutoCommitEnabled", false);
+    Solution normal = solution(user, "normal", Instant.now());
+    GithubCommitJob manual = new GithubCommitJob(user, "normal", 7, CommitJobOrigin.MANUAL); set(manual, "id", 99L);
+    when(jobs.findByIdForClaim(99L)).thenReturn(Optional.of(manual)); when(jobs.findById(99L)).thenReturn(Optional.of(manual));
+    when(settingsRepo.findByUserId(1L)).thenReturn(Optional.of(current)); when(solutions.findByUserIdAndCaptureId(1L, "normal")).thenReturn(Optional.of(normal));
+    doAnswer(invocation -> { assertThat(((GithubProvider.FinalWriteGuard) invocation.getArgument(2)).stillAuthorized()).isTrue(); return GithubProvider.Result.succeeded(); }).when(provider).createOnly(eq(current), eq(normal), any());
+    new GithubAutomationService(jobs, settingsRepo, solutions, provider).process(99L);
+    assertThat(manual.getState()).isEqualTo(CommitJobState.SUCCEEDED);
+  }
+
   private static UserSettings settings(AppUser user,long version,Instant boundary) throws Exception { UserSettings s=new UserSettings(user); s.apply(new SettingsRequest(0,"n","n",false,false,false,"{number}","{number}","Add {platform} {number} solution","github-light","github-dark",true,true,1L,"owner","repo","main",null)); set(s,"version",version); set(s,"automationEnabledAt",boundary); return s; }
   private static Solution solution(AppUser u,String id,Instant observed){ return new Solution(u,id,Platform.SWEA,"1","T","https://example.test","Java","class X{}","ACCEPTED",observed,observed,null,null); }
   private static void set(Object target,String name,Object value)throws Exception{Field f=target.getClass().getDeclaredField(name);f.setAccessible(true);f.set(target,value);}

@@ -502,7 +502,8 @@ it('clears cascade placeholders without browsing id zero or an empty branch', as
   fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '' } }); await waitFor(() => expect((screen.getByLabelText('GitHub 설치') as HTMLSelectElement).value).toBe(''))
   expect(mocks.directories.mock.calls).toHaveLength(directoryCalls); expect(mocks.branches.mock.calls).toHaveLength(branchCalls); expect(mocks.repositories.mock.calls).toHaveLength(repositoryCalls)
   expect(mocks.repositories).not.toHaveBeenCalledWith('account-17', 0); expect(mocks.branches).not.toHaveBeenCalledWith('account-17', 9, 0); expect(mocks.directories).not.toHaveBeenCalledWith('account-17', 9, 11, '')
-  expect((screen.getByLabelText('GitHub 자동 커밋') as HTMLInputElement).checked).toBe(false)
+  const automatic = screen.queryByLabelText('GitHub 자동 커밋') as HTMLInputElement | null
+  expect(automatic?.checked ?? false).toBe(false)
   expect(screen.queryByLabelText('저장소')).toBeNull(); expect(screen.queryByLabelText('브랜치')).toBeNull()
 })
 

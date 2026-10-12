@@ -38,11 +38,11 @@ let pendingLoginNonce: string | null = null
 export async function openExtensionExternal(url: string): Promise<unknown> {
   let target = url
   if (url === '/api/oauth2/authorization/github' || url === extensionApiUrl('/api/oauth2/authorization/github')) {
-    const csrfResponse = await fetch(extensionApiUrl('/api/auth/csrf'), { credentials: 'include' })
+    const csrfResponse = await fetch(extensionApiUrl('/api/auth/csrf'), { credentials: 'include', signal: AbortSignal.timeout(30000) })
     if (!csrfResponse.ok) throw new Error('로그인 보안 토큰을 확인하지 못했습니다.')
     const csrf = await csrfResponse.json() as { headerName?: unknown; token?: unknown }
     if ((csrf.headerName !== 'X-XSRF-TOKEN' && csrf.headerName !== 'X-CSRF-TOKEN') || typeof csrf.token !== 'string' || !csrf.token) throw new Error('로그인 보안 토큰을 확인하지 못했습니다.')
-    const started = await fetch(extensionApiUrl('/api/extension-login/start'), { method: 'POST', credentials: 'include', headers: { [csrf.headerName]: csrf.token } })
+    const started = await fetch(extensionApiUrl('/api/extension-login/start'), { method: 'POST', credentials: 'include', headers: { [csrf.headerName]: csrf.token }, signal: AbortSignal.timeout(30000) })
     if (!started.ok) throw new Error('로그인 준비를 시작하지 못했습니다.')
     const payload = await started.json() as { authorizationUrl?: unknown }
     if (payload.authorizationUrl !== '/api/oauth2/authorization/github') throw new Error('로그인 준비를 확인하지 못했습니다.')

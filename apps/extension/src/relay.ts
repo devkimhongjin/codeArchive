@@ -96,6 +96,37 @@ export async function fetchGithubCommitStatuses(
   }
 }
 
+/** Reads only source-free previews for the bearer-bound server account. */
+export async function fetchRecentServerCaptures(settings: CaptureSettings, fetcher: typeof fetch = fetch): Promise<Omit<Capture, 'sourceCode'>[]> {
+  const relay = settings.relay, origin = relay && trustedRelayEndpoint(relay.endpoint);
+  if (!relay || !origin || settings.accountId !== relay.accountId || !['CONFIRMED', 'OFFLINE', 'RELAY_ERROR'].includes(relay.status)) return [];
+  const response = await fetchWithTimeout(fetcher, new URL('/api/relay/recent', origin.origin), { headers: { Authorization: `Bearer ${relay.secret}` } }, RELAY_REQUEST_TIMEOUT_MS);
+  if (response.status === 401) return [];
+  if (!response.ok) throw new Error('서버의 최근 풀이를 확인하지 못했습니다.');
+  const payload = await response.json() as { captures?: unknown };
+  if (!Array.isArray(payload.captures) || payload.captures.length > 3) throw new Error('서버 풀이 응답을 확인하지 못했습니다.');
+  return payload.captures.map((record: unknown) => {
+    const item = record as Partial<Capture> | null;
+    if (!item || typeof item.captureId !== 'string' || !['JUNGOL', 'SWEA', 'PROGRAMMERS'].includes(item.platform ?? '') ||
+        typeof item.problemNumber !== 'string' || typeof item.title !== 'string' || typeof item.language !== 'string' ||
+        typeof item.observedAt !== 'string' || !Number.isFinite(Date.parse(item.observedAt))) throw new Error('서버 풀이 응답을 확인하지 못했습니다.');
+    // Explicit projection: do not retain unexpected source fields from any server response.
+    return { captureId: item.captureId, platform: item.platform!, problemNumber: item.problemNumber, title: item.title,
+      language: item.language, problemUrl: '', observedAt: item.observedAt, solvedAt: item.solvedAt ?? item.observedAt,
+      executionTime: item.executionTime ?? undefined, memoryUsage: item.memoryUsage ?? undefined, memoryValue: item.memoryValue ?? undefined, memoryUnit: item.memoryUnit ?? undefined,
+      result: 'ACCEPTED', syncState: 'SYNCED', syncAccountId: relay.accountId };
+  });
+}
+export async function fetchRecentServerCapture(captureId: string, settings: CaptureSettings, fetcher: typeof fetch = fetch): Promise<Capture> {
+  const relay = settings.relay, origin = relay && trustedRelayEndpoint(relay.endpoint);
+  if (!relay || !origin || settings.accountId !== relay.accountId || !/^[0-9a-f-]{36}$/i.test(captureId)) throw new Error('LOGIN_REQUIRED');
+  const response = await fetchWithTimeout(fetcher, new URL(`/api/relay/captures/${captureId}`, origin.origin), { headers: { Authorization: `Bearer ${relay.secret}` } }, RELAY_REQUEST_TIMEOUT_MS);
+  if (!response.ok) throw new Error('SERVER_CAPTURE_UNAVAILABLE');
+  const capture = await response.json() as Capture;
+  if (capture.captureId !== captureId || capture.result !== 'ACCEPTED' || typeof capture.sourceCode !== 'string' || capture.sourceCode.length > 1_000_000) throw new Error('INVALID_SERVER_CAPTURE');
+  return { ...capture, syncState: 'SYNCED', syncAccountId: relay.accountId };
+}
+
 /** Persist only the result for the exact relay snapshot that made the request. */
 export async function recordRelayAttempt(store: Pick<CaptureStore, "mutateRelayIfCurrent">, settings: CaptureSettings, result: RelayAttemptResult): Promise<void> {
   if (result === "DISABLED") return;

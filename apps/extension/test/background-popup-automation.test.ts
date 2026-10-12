@@ -10,7 +10,7 @@ test('only the own popup can submit a boolean, account/version-bound GitHub cons
     runtime: { id, onMessage: { addListener(callback: typeof listener) { listener = callback; } }, onMessageExternal: { addListener() {} } },
     alarms: { clear: async () => true, create() {}, onAlarm: { addListener() {} } },
     storage: { session: { get: async () => ({}), set: async () => {}, remove: async () => {} },
-      local: { get: async () => { storageCalls++; return { 'codearchive-popup-relay-device-id': 'test-device-fixture' }; }, set: async () => {} } },
+      local: { get: async (key: string) => { if (key === 'codearchive-popup-relay-device-id') storageCalls++; return { 'codearchive-popup-relay-device-id': 'test-device-fixture' }; }, set: async () => {} } },
     tabs: { onUpdated: { addListener() {} } },
   };
   const previous = { chrome: globalThis.chrome, indexedDB: globalThis.indexedDB, IDBKeyRange: globalThis.IDBKeyRange };

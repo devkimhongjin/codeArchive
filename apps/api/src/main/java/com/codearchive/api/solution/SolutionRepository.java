@@ -11,6 +11,8 @@ import java.time.Instant;
 import org.springframework.data.repository.query.Param;
 
 public interface SolutionRepository extends JpaRepository<Solution, Long> {
+    @Query("select new com.codearchive.api.solution.SolutionPreview(s.captureId, s.platform, s.problemNumber, s.title, s.language, s.observedAt, s.solvedAt, s.executionTime, s.memoryUsage, s.memoryValue, s.memoryUnit) from Solution s where s.user.id = :userId and not exists (select n.id from Solution n where n.user.id = :userId and n.platform = s.platform and n.problemNumber = s.problemNumber and (n.observedAt > s.observedAt or (n.observedAt = s.observedAt and n.id > s.id))) order by s.observedAt desc, s.id desc")
+    List<SolutionPreview> findRecentProblemPreviews(@Param("userId") Long userId, Pageable pageable);
     List<Solution> findByUserIdAndPlatformAndIdGreaterThanOrderByIdAsc(Long userId, Platform platform, Long afterId, Pageable pageable);
     Optional<Solution> findByUserIdAndCaptureId(Long userId, String captureId);
     Optional<Solution> findByUserIdAndPlatformAndHistoricalSubmissionId(Long userId, Platform platform, String historicalSubmissionId);
