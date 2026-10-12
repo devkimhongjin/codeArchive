@@ -2,6 +2,7 @@ import { GITHUB_LOGIN_URL, type AccountSettings, type AuthProviders, type BulkRe
 
 export { GITHUB_LOGIN_URL } from './types'
 import { apiFetch } from './desktop'
+import { extensionRuntime } from './extensionEnvironment'
 import type { SupportAccess, SupportInquiry, SupportPage, SupportStatus, SupportCategory } from './supportTypes'
 
 export class ApiError extends Error {
@@ -174,10 +175,12 @@ export const getSupportAccess = (expectedGithubId: string) => requestJson<Suppor
 export const getSupportTickets = (expectedGithubId: string, page = 0) => requestJson<SupportPage>(`/api/support/tickets?page=${page}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
 export const getSupportTicket = (expectedGithubId: string, id: number) => requestJson<SupportInquiry>(`/api/support/tickets/${id}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
 export const createSupportTicket = (expectedGithubId: string, request: { category: SupportCategory; title: string; body: string }) => requestJson<SupportInquiry>('/api/support/tickets', { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify(request) })
-export const getSupportAdminTickets = (expectedGithubId: string, page = 0) => requestJson<SupportPage>(`/api/support/admin/tickets?page=${page}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
+export const getSupportAdminTickets = (expectedGithubId: string, page = 0, archived = false) => requestJson<SupportPage>(`/api/support/admin/tickets?page=${page}&archived=${archived}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
 export const getSupportAdminTicket = (expectedGithubId: string, id: number) => requestJson<SupportInquiry>(`/api/support/admin/tickets/${id}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
 export const replySupportAdminTicket = (expectedGithubId: string, id: number, body: string) => requestJson<SupportInquiry>(`/api/support/admin/tickets/${id}/messages`, { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ body }) })
 export const setSupportAdminStatus = (expectedGithubId: string, id: number, status: SupportStatus) => requestJson<SupportInquiry>(`/api/support/admin/tickets/${id}/status`, { method: 'PUT', headers: expectedGithubIdHeaders(expectedGithubId), body: JSON.stringify({ status }) })
+export const archiveSupportAdminTicket = (expectedGithubId: string, id: number) => requestJson<SupportInquiry>(`/api/support/admin/tickets/${id}/archive`, { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId) })
+export const restoreSupportAdminTicket = (expectedGithubId: string, id: number) => requestJson<SupportInquiry>(`/api/support/admin/tickets/${id}/restore`, { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId) })
 
 export async function bulkUpload(captures: Capture[], expectedGithubId: string): Promise<BulkResponse> {
   return requestJson<BulkResponse>('/api/solutions/bulk', {
@@ -212,7 +215,7 @@ export async function revokeRelayGrant(deviceId: string, expectedGithubId: strin
   await requestJson(`/api/relay/grants/${encodeURIComponent(deviceId)}`, { method: 'DELETE', headers: expectedGithubIdHeaders(expectedGithubId) })
 }
 export const getGithubInstallations = (expectedGithubId: string) => requestJson<GithubInstallation[]>('/api/github/targets/installations', { headers: expectedGithubIdHeaders(expectedGithubId) })
-export const startGithubInstallation = (expectedGithubId: string) => requestJson<GithubInstallationStart>('/api/github/installations/start', { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId) })
+export const startGithubInstallation = (expectedGithubId: string, directExtension = Boolean(extensionRuntime())) => requestJson<GithubInstallationStart>(directExtension ? '/api/github/installations/extension/start' : '/api/github/installations/start', { method: 'POST', headers: expectedGithubIdHeaders(expectedGithubId) })
 export const getGithubRepositories = (expectedGithubId: string, installationId: number, page = 1) => requestJson<GithubPage<GithubRepositoryTarget>>(`/api/github/targets/installations/${installationId}/repositories?page=${page}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
 export const getGithubBranches = (expectedGithubId: string, installationId: number, repositoryId: number, page = 1) => requestJson<GithubPage<GithubBranchTarget>>(`/api/github/targets/installations/${installationId}/repositories/${repositoryId}/branches?page=${page}`, { headers: expectedGithubIdHeaders(expectedGithubId) })
 export const getGithubDirectories = (expectedGithubId: string, installationId: number, repositoryId: number, branch: string, path = '') => requestJson<GithubDirectoryTarget>(`/api/github/targets/installations/${installationId}/repositories/${repositoryId}/directories?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}`, { headers: expectedGithubIdHeaders(expectedGithubId) })

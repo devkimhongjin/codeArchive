@@ -63,6 +63,31 @@ class GithubInstallStateServiceTest {
                         exception -> assertThat(exception.failure()).isEqualTo(Failure.ACCOUNT_MISMATCH));
     }
 
+    @Test
+    void signedSetupRoutingDoesNotNeedTheOriginalSessionOrConsumeTheState() {
+        GithubInstallStateService service = service(NOW);
+        MockHttpSession legacySession = new MockHttpSession();
+        String legacy = stateFrom(service.issue(17L, "123456", legacySession));
+        MockHttpSession directSession = new MockHttpSession();
+        String direct = stateFrom(service.issue(17L, "123456", directSession, true));
+
+        assertThat(service.setupReturn(legacy)).contains(false);
+        assertThat(service.setupReturn(direct)).contains(true);
+        // The actual fixed callback, with its original cookie, still consumes it.
+        assertThat(service.consume(legacy, 17L, "123456", legacySession).version()).isEqualTo(1);
+        assertThat(service.consume(direct, 17L, "123456", directSession).version()).isEqualTo(2);
+    }
+
+    @Test
+    void expiredDirectStateCanOnlySelectTheFixedErrorLanding() {
+        MockHttpSession session = new MockHttpSession();
+        String direct = stateFrom(service(NOW).issue(17L, "123456", session, true));
+        GithubInstallStateService expired = service(NOW.plusSeconds(601));
+
+        assertThat(expired.setupReturn(direct)).isEmpty();
+        assertThat(expired.errorReturn(direct)).contains(true);
+    }
+
     private static GithubInstallStateService service(Instant instant) {
         return new GithubInstallStateService("codearchive", "server-only-private-key", Duration.ofMinutes(10),
                 new ObjectMapper(), Clock.fixed(instant, ZoneOffset.UTC), new SecureRandom());

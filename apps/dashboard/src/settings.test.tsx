@@ -146,7 +146,8 @@ it('covers the target panel with a named loading state and blocks saving while G
 
   expect((await screen.findAllByText('연결 중')).length).toBeGreaterThanOrEqual(1)
   expect(screen.getByText('GitHub에서 안전하게 확인하고 있습니다.')).toBeTruthy()
-  expect((screen.getByRole('button', { name: '설정 저장' }) as HTMLButtonElement).disabled).toBe(true)
+  await new Promise(resolve => setTimeout(resolve, 550))
+  expect(mocks.save).not.toHaveBeenCalled()
   installations.resolve([{ id: 9, accountLogin: 'first' }, { id: 10, accountLogin: 'second' }])
   expect(await screen.findByRole('option', { name: 'first' })).toBeTruthy()
   await waitFor(() => expect(screen.queryByText('GitHub에서 안전하게 확인하고 있습니다.')).toBeNull())
@@ -322,24 +323,89 @@ it.each([
 })
 
 it('uses only the server-verified GitHub target cascade and clears dependent consent', async () => {
-  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false }); mocks.save.mockResolvedValue(settings)
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false }); mocks.save.mockImplementation((draft: AccountSettings) => Promise.resolve({ ...draft, version: draft.version + 1, githubTargetConfigured: true }))
   mocks.installations.mockResolvedValue([{ id: 9, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue([{ id: 11, owner: 'archive-user', name: 'repo', fullName: 'archive-user/repo', privateRepository: true, defaultBranch: 'main' }]); mocks.branches.mockResolvedValue([{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }]); mocks.directories.mockResolvedValueOnce({ currentPath: '', parentPath: '', directories: ['src'] }).mockResolvedValueOnce({ currentPath: 'src', parentPath: '', directories: [] }).mockResolvedValueOnce({ currentPath: '', parentPath: '', directories: ['src'] })
   mocks.bridge.mockResolvedValue({ capability: 'capability' }); await openGithub()
-  fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' })); await screen.findByRole('option', { name: 'archive-user' }); fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '9' } }); await screen.findByRole('option', { name: 'archive-user/repo' }); fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } }); await screen.findByRole('option', { name: 'main' }); fireEvent.change(screen.getByLabelText('브랜치'), { target: { value: 'main' } }); await screen.findByRole('button', { name: 'src/' }); fireEvent.click(screen.getByRole('button', { name: 'src/' })); await screen.findByRole('button', { name: '상위 폴더' }); fireEvent.click(screen.getByRole('button', { name: '상위 폴더' })); await waitFor(() => expect((screen.getByRole('button', { name: '설정 저장' }) as HTMLButtonElement).disabled).toBe(false)); fireEvent.click(screen.getByRole('button', { name: '설정 저장' })); await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ githubInstallationId: 9, githubOwner: 'archive-user', githubRepository: 'repo', githubBranch: 'main', githubRootPath: null, githubAutoCommitEnabled: false }), 'account-17')); expect(mocks.installations).toHaveBeenCalledWith('account-17'); expect(mocks.repositories).toHaveBeenCalledWith('account-17', 9, 1); expect(mocks.branches).toHaveBeenCalledWith('account-17', 9, 11, 1); expect(mocks.directories).toHaveBeenCalledWith('account-17', 9, 11, 'main', '')
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' })); await screen.findByRole('option', { name: 'archive-user' }); fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '9' } }); await screen.findByRole('option', { name: 'archive-user/repo' }); fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } }); await screen.findByRole('option', { name: 'main' }); fireEvent.change(screen.getByLabelText('브랜치'), { target: { value: 'main' } }); await screen.findByRole('button', { name: 'src/' }); fireEvent.click(screen.getByRole('button', { name: 'src/' })); await screen.findByRole('button', { name: '상위 폴더' }); fireEvent.click(screen.getByRole('button', { name: '상위 폴더' })); await screen.findByRole('button', { name: '이 폴더를 저장 위치로 선택' }); fireEvent.click(screen.getByRole('button', { name: '이 폴더를 저장 위치로 선택' })); await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ githubInstallationId: 9, githubOwner: 'archive-user', githubRepository: 'repo', githubBranch: 'main', githubRootPath: null, githubAutoCommitEnabled: false }), 'account-17')); expect(await screen.findByText('연결 완료')).toBeTruthy(); expect(screen.queryByRole('button', { name: '설정 저장' })).toBeNull(); expect(mocks.installations).toHaveBeenCalledWith('account-17'); expect(mocks.repositories).toHaveBeenCalledWith('account-17', 9, 1); expect(mocks.branches).toHaveBeenCalledWith('account-17', 9, 11, 1); expect(mocks.directories).toHaveBeenCalledWith('account-17', 9, 11, 'main', '')
 })
 
 it('browses folders without changing the draft target until explicitly selected', async () => {
-  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false }); mocks.save.mockResolvedValue(settings)
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false }); mocks.save.mockImplementation((draft: AccountSettings) => Promise.resolve({ ...draft, version: draft.version + 1, githubTargetConfigured: true }))
   mocks.installations.mockResolvedValue([{ id: 9, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue([{ id: 11, owner: 'archive-user', name: 'repo', fullName: 'archive-user/repo', privateRepository: true, defaultBranch: 'main' }]); mocks.branches.mockResolvedValue([{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }]); mocks.directories.mockResolvedValueOnce({ currentPath: '', parentPath: '', directories: ['src'] }).mockResolvedValueOnce({ currentPath: 'src', parentPath: '', directories: [] })
   mocks.bridge.mockResolvedValue({ capability: 'folder-picker' }); await openGithub()
   fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' })); await screen.findByRole('option', { name: 'archive-user' }); fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '9' } }); await screen.findByRole('option', { name: 'archive-user/repo' }); fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } }); await screen.findByRole('option', { name: 'main' }); fireEvent.change(screen.getByLabelText('브랜치'), { target: { value: 'main' } })
   fireEvent.click(await screen.findByRole('button', { name: 'src/' }))
   await waitFor(() => expect(screen.getByText('둘러보는 폴더').parentElement?.textContent).toContain('src'))
   expect(screen.getByText('선택한 저장 위치').parentElement?.textContent).toContain('/')
+  // A normal autosave while browsing must retain the acknowledged empty
+  // target. Repository and branch choices are still provisional here.
+  fireEvent.click(screen.getByRole('button', { name: '설정' }))
+  fireEvent.change(screen.getByLabelText('닉네임'), { target: { value: '탐색 중 별명' } })
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ nickname: '탐색 중 별명', githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false }), 'account-17'))
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 관리' }))
   fireEvent.click(screen.getByRole('button', { name: '이 폴더를 저장 위치로 선택' }))
   expect(screen.getByText('선택한 저장 위치').parentElement?.textContent).toContain('src')
-  fireEvent.click(screen.getByRole('button', { name: '설정 저장' }))
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ githubRootPath: 'src', githubAutoCommitEnabled: false }), 'account-17'))
+})
+
+it('retries a rejected target acknowledgement from the collapsed GitHub picker', async () => {
+  const withoutTarget = { ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false }
+  const persistedTarget = { ...withoutTarget, version: 5, githubInstallationId: 9, githubOwner: 'archive-user', githubRepository: 'repo', githubBranch: 'main', githubRootPath: 'src', githubTargetConfigured: true }
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue(withoutTarget)
+  mocks.save.mockRejectedValueOnce(new Error('GitHub target save failed')).mockResolvedValueOnce(persistedTarget)
+  mocks.installations.mockResolvedValue([{ id: 9, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue([{ id: 11, owner: 'archive-user', name: 'repo', fullName: 'archive-user/repo', privateRepository: true, defaultBranch: 'main' }]); mocks.branches.mockResolvedValue([{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }]); mocks.directories.mockResolvedValueOnce({ currentPath: '', parentPath: '', directories: ['src'] }).mockResolvedValueOnce({ currentPath: 'src', parentPath: '', directories: [] })
+  mocks.bridge.mockResolvedValue({ capability: 'retry-target-ack' })
+  await openGithub()
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' })); await screen.findByRole('option', { name: 'archive-user' }); fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '9' } }); await screen.findByRole('option', { name: 'archive-user/repo' }); fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } }); await screen.findByRole('option', { name: 'main' }); fireEvent.change(screen.getByLabelText('브랜치'), { target: { value: 'main' } })
+  fireEvent.click(await screen.findByRole('button', { name: 'src/' })); await screen.findByRole('button', { name: '이 폴더를 저장 위치로 선택' }); fireEvent.click(screen.getByRole('button', { name: '이 폴더를 저장 위치로 선택' }))
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledOnce())
+  expect(screen.queryByRole('heading', { name: 'GitHub 자동 커밋' })).toBeNull()
+  expect((await screen.findByRole('alert')).textContent).toContain('GitHub target save failed')
+  const retry = screen.getByRole('button', { name: '저장 다시 시도' }) as HTMLButtonElement
+  expect(retry.disabled).toBe(false)
+  fireEvent.click(retry)
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2))
+  expect(mocks.save.mock.calls[1][0]).toEqual(expect.objectContaining({ version: 4, githubInstallationId: 9, githubOwner: 'archive-user', githubRepository: 'repo', githubBranch: 'main', githubRootPath: 'src', githubAutoCommitEnabled: false }))
+})
+
+it('uses the synchronously acknowledged target when a queued draft follows a provisional replacement', async () => {
+  const first = deferred<AccountSettings>()
+  const acknowledgedA = { ...settings, version: 5, copyHeader: false }
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue(settings)
+  mocks.save.mockReturnValueOnce(first.promise).mockImplementationOnce((draft: AccountSettings) => Promise.resolve({ ...draft, version: 6 }))
+  mocks.installations.mockResolvedValue([{ id: 88, accountLogin: 'other-owner' }]); mocks.repositories.mockResolvedValue([{ id: 8, owner: 'other-owner', name: 'replacement', fullName: 'other-owner/replacement', privateRepository: true, defaultBranch: 'main' }]); mocks.branches.mockResolvedValue([{ name: 'main', protectedBranch: false, commitSha: 'b'.repeat(40) }]); mocks.directories.mockResolvedValue({ currentPath: '', parentPath: '', directories: [] })
+  mocks.bridge.mockResolvedValue({ capability: 'acknowledged-target-capability' })
+  await openSettings()
+  fireEvent.click(screen.getByLabelText('복사할 때 문제 정보 주석 포함'))
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1))
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 관리' }))
+  fireEvent.click(await screen.findByRole('button', { name: '연결 변경·기존 항목 관리' }))
+  fireEvent.click(screen.getByRole('button', { name: '저장 위치 다시 선택' }))
+  await waitFor(() => expect(mocks.repositories).toHaveBeenCalledWith('account-17', 88, 1))
+  fireEvent.click(screen.getByRole('button', { name: '설정' }))
+  fireEvent.change(screen.getByLabelText('닉네임'), { target: { value: '대체 대상 초안' } })
+  await act(async () => { first.resolve(acknowledgedA) })
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2))
+  expect(mocks.save.mock.calls[1][0]).toEqual(expect.objectContaining({ version: 5, nickname: '대체 대상 초안', githubInstallationId: 77, githubOwner: 'codearchive', githubRepository: 'solutions', githubBranch: 'main', githubRootPath: 'archive', githubAutoCommitEnabled: false }))
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 관리' }))
+  expect(screen.queryByRole('region', { name: '연결된 GitHub 저장소 파일' })).toBeNull()
+})
+
+it('renews the relay from the filtered acknowledgement without granting provisional target consent', async () => {
+  const acknowledgedA = { ...settings, version: 5, nickname: '필터된 별명', githubAutoCommitEnabled: false }
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue(settings); mocks.save.mockResolvedValue(acknowledgedA)
+  mocks.installations.mockResolvedValue([{ id: 88, accountLogin: 'other-owner' }]); mocks.repositories.mockResolvedValue([{ id: 8, owner: 'other-owner', name: 'replacement', fullName: 'other-owner/replacement', privateRepository: true, defaultBranch: 'main' }]); mocks.branches.mockResolvedValue([{ name: 'main', protectedBranch: false, commitSha: 'b'.repeat(40) }]); mocks.directories.mockResolvedValue({ currentPath: '', parentPath: '', directories: [] })
+  mocks.grant.mockImplementation((_device: string, generation: number) => Promise.resolve({ endpoint: '/api/relay/captures', secret: `relay-${generation}`, generation, expiresAt: '2030-01-01T00:00:00Z' }))
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT' ? Promise.resolve({ capability: 'filtered-ack-capability' }) : message.type === 'REUSE_RELAY' ? Promise.resolve({ reused: false }) : Promise.resolve({ ok: true }))
+  await openGithub()
+  fireEvent.click(screen.getByRole('button', { name: '연결 변경·기존 항목 관리' }))
+  fireEvent.click(screen.getByRole('button', { name: '저장 위치 다시 선택' }))
+  await waitFor(() => expect(mocks.repositories).toHaveBeenCalledWith('account-17', 88, 1))
+  fireEvent.click(screen.getByRole('button', { name: '설정' }))
+  fireEvent.change(screen.getByLabelText('닉네임'), { target: { value: '필터된 별명' } })
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ githubInstallationId: 77, githubOwner: 'codearchive', githubAutoCommitEnabled: false, nickname: '필터된 별명' }), 'account-17'))
+  await waitFor(() => expect(mocks.grant).toHaveBeenCalledWith(expect.any(String), 5, 'account-17'))
+  await waitFor(() => expect(bridgeMessages('CONFIGURE_RELAY').some(([, message]) => (message as { githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean }).githubAutoCommitEnabled === false && (message as { githubTargetConfigured?: boolean }).githubTargetConfigured === true)).toBe(true))
 })
 
 it('allows viewing but not selecting a root path rejected by account settings', async () => {
@@ -514,8 +580,8 @@ it('fails closed and returns to local mode when a GitHub-account assertion is re
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT' ? Promise.resolve({ capability: 'assertion-capability' }) : Promise.resolve({ ok: true }))
   await openSettings()
   const configurationsBeforeRejection = bridgeMessages('CONFIGURE_RELAY').length
-  fireEvent.click(screen.getByRole('button', { name: '설정 저장' }))
-  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ version: 4 }), 'account-17'))
+  fireEvent.change(screen.getByLabelText('닉네임'), { target: { value: '다른 별명' } })
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ version: 4, nickname: '다른 별명' }), 'account-17'))
   await waitFor(() => expect(screen.queryByRole('button', { name: '로그아웃' })).toBeNull())
   expect(screen.getAllByText('GitHub 계정이 변경되었습니다. 다시 연결해 주세요.').length).toBeGreaterThan(0)
   // The reset is allowed to send a null relay cleanup, but cannot issue or
@@ -539,16 +605,17 @@ it('fails closed when an inline theme save receives an account-mismatch 409', as
   expect(mocks.grant).not.toHaveBeenCalled()
 })
 
-it('fails closed when an inline theme conflict refresh detects an account mismatch', async () => {
+it('keeps a generic inline theme conflict recoverable without signing the user out', async () => {
   const solution = { captureId: 'theme-refresh-mismatch', platform: 'SWEA' as const, problemNumber: '46', title: '테마 새로고침', problemUrl: 'https://example.test/46', language: 'Java', sourceCode: 'class Main {}', result: 'ACCEPTED' }
-  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([solution]); mocks.settings.mockResolvedValueOnce({ ...settings, autoSyncEnabled: false, githubAutoCommitEnabled: false }).mockRejectedValueOnce(new ApiError('GitHub account changed; reconnect required', 409)); mocks.save.mockRejectedValue(new ApiError('Settings changed; refresh and retry', 409))
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([solution]); mocks.settings.mockResolvedValue({ ...settings, autoSyncEnabled: false, githubAutoCommitEnabled: false }); mocks.save.mockRejectedValue(new ApiError('Settings changed; refresh and retry', 409))
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT' ? Promise.resolve({ capability: 'theme-refresh-capability' }) : Promise.resolve({ ok: true }))
-  render(<App />); await screen.findAllByText('테마 새로고침'); await waitFor(() => expect(mocks.settings).toHaveBeenCalledOnce())
+  render(<App />); await screen.findAllByText('테마 새로고침'); await waitFor(() => expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe('one-light'))
   fireEvent.change(screen.getByLabelText('코드 보기 테마'), { target: { value: 'solarized-light' } })
-  await waitFor(() => expect(mocks.settings).toHaveBeenCalledTimes(2))
-  await waitFor(() => expect(screen.queryByRole('button', { name: '로그아웃' })).toBeNull())
-  expect(mocks.grant).not.toHaveBeenCalled()
-  expect(bridgeMessages('DISCONNECT').length).toBeGreaterThan(0)
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledOnce())
+  fireEvent.click(screen.getByRole('button', { name: '설정' }))
+  expect((await screen.findByRole('alert')).textContent).toContain('다른 창에서 설정이 변경되었습니다')
+  expect(screen.getAllByRole('button', { name: '로그아웃' }).length).toBeGreaterThan(0)
+  expect(mocks.settings).toHaveBeenCalledOnce()
 })
 
 it('coalesces rapid inline theme changes onto the latest acknowledged settings version', async () => {
@@ -558,8 +625,8 @@ it('coalesces rapid inline theme changes onto the latest acknowledged settings v
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT' ? Promise.resolve({ capability: 'rapid-theme-capability' }) : Promise.resolve({ ok: true }))
   render(<App />); await screen.findAllByText('빠른 테마')
   await waitFor(() => expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe('one-light'))
-  fireEvent.change(screen.getByLabelText('코드 보기 테마'), { target: { value: 'solarized-light' } }); fireEvent.change(screen.getByLabelText('코드 보기 테마'), { target: { value: 'one-dark-pro' } })
-  await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1)); first.resolve(afterFirst)
+  fireEvent.change(screen.getByLabelText('코드 보기 테마'), { target: { value: 'solarized-light' } }); await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1))
+  fireEvent.change(screen.getByLabelText('코드 보기 테마'), { target: { value: 'one-dark-pro' } }); first.resolve(afterFirst)
   await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2))
   expect(mocks.save.mock.calls[1][0]).toEqual(expect.objectContaining({ version: 5, lightTheme: 'solarized-light', darkTheme: 'one-dark-pro' }))
   await waitFor(() => expect(bridgeMessages('CONFIGURE_RELAY').some(([, message]) => (message as { lightTheme?: string; darkTheme?: string }).lightTheme === 'solarized-light' && (message as { darkTheme?: string }).darkTheme === 'one-dark-pro')).toBe(true))
@@ -610,15 +677,15 @@ it('fences an ordinary A settings-save success while connect-live replaces A wit
   const savedA = { ...settings, version: 5, name: 'A 저장됨', nickname: 'A 별명', githubOwner: 'a-private', githubRepository: 'secret-repo', autoSyncEnabled: false, githubAutoCommitEnabled: false }
   const settingsB = { ...settings, version: 9, name: 'B 이름', nickname: 'B 별명', githubOwner: 'b-private', githubRepository: 'b-repo', githubBranch: 'release/v1', githubRootPath: 'b-root', autoSyncEnabled: false, githubAutoCommitEnabled: false }
   const pendingA = deferred<AccountSettings>()
-  mocks.me.mockResolvedValueOnce(accountA).mockResolvedValueOnce(accountB); mocks.list.mockRejectedValueOnce(new Error('A archive unavailable')).mockResolvedValueOnce([]); mocks.settings.mockResolvedValueOnce({ ...savedA, version: 4 }).mockResolvedValueOnce(settingsB); mocks.save.mockReturnValueOnce(pendingA.promise); mocks.bridge.mockRejectedValue(new Error('extension unavailable'))
+  mocks.me.mockResolvedValueOnce(accountA).mockResolvedValueOnce(accountB); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValueOnce({ ...savedA, version: 4 }).mockResolvedValueOnce(settingsB); mocks.save.mockReturnValueOnce(pendingA.promise); mocks.bridge.mockRejectedValue(new Error('extension unavailable'))
   await openSettings('A 저장됨')
-  fireEvent.click(screen.getByRole('button', { name: '설정 저장' })); await waitFor(() => expect(mocks.save).toHaveBeenCalledOnce())
-  expect(screen.getByRole('button', { name: '저장 중…' })).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: '서버 연결 새로고침' })); await screen.findByDisplayValue('B 이름')
+  fireEvent.click(screen.getByLabelText('복사할 때 문제 정보 주석 포함')); await waitFor(() => expect(mocks.save).toHaveBeenCalledOnce())
+  expect(screen.getByText('저장 중…')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '동기화' })); await screen.findByDisplayValue('B 이름')
   pendingA.resolve(savedA); await new Promise(resolve => setTimeout(resolve, 0))
   expect(screen.getByDisplayValue('B 이름')).toBeTruthy(); expect(screen.getByDisplayValue('B 별명')).toBeTruthy()
   expect(screen.queryByText('계정 설정을 저장했습니다.')).toBeNull(); expect(screen.queryByText(/a-private\/secret-repo/)).toBeNull()
-  expect((screen.getByRole('button', { name: '설정 저장' }) as HTMLButtonElement).disabled).toBe(false)
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledOnce())
   expect(bridgeMessages('CONFIGURE_RELAY').some(([, message]) => (message as { accountId?: string }).accountId === '17')).toBe(false)
 })
 
@@ -628,13 +695,13 @@ it('fences an ordinary A settings-save error while connect-live replaces A with 
   const settingsA = { ...settings, name: 'A 이름', nickname: 'A 별명', githubOwner: 'a-private', githubRepository: 'secret-repo', autoSyncEnabled: false, githubAutoCommitEnabled: false }
   const settingsB = { ...settings, version: 9, name: 'B 이름', nickname: 'B 별명', githubOwner: 'b-private', githubRepository: 'b-repo', githubBranch: 'release/v1', githubRootPath: 'b-root', autoSyncEnabled: false, githubAutoCommitEnabled: false }
   const pendingA = deferred<AccountSettings>()
-  mocks.me.mockResolvedValueOnce(accountA).mockResolvedValueOnce(accountB); mocks.list.mockRejectedValueOnce(new Error('A archive unavailable')).mockResolvedValueOnce([]); mocks.settings.mockResolvedValueOnce(settingsA).mockResolvedValueOnce(settingsB); mocks.save.mockReturnValueOnce(pendingA.promise); mocks.bridge.mockRejectedValue(new Error('extension unavailable'))
+  mocks.me.mockResolvedValueOnce(accountA).mockResolvedValueOnce(accountB); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValueOnce(settingsA).mockResolvedValueOnce(settingsB); mocks.save.mockReturnValueOnce(pendingA.promise); mocks.bridge.mockRejectedValue(new Error('extension unavailable'))
   await openSettings('A 이름')
-  fireEvent.click(screen.getByRole('button', { name: '설정 저장' })); await waitFor(() => expect(mocks.save).toHaveBeenCalledOnce())
-  fireEvent.click(screen.getByRole('button', { name: '서버 연결 새로고침' })); await screen.findByDisplayValue('B 이름')
+  fireEvent.change(screen.getByLabelText('닉네임'), { target: { value: 'A 변경' } }); await waitFor(() => expect(mocks.save).toHaveBeenCalledOnce())
+  fireEvent.click(screen.getByRole('button', { name: '동기화' })); await screen.findByDisplayValue('B 이름')
   pendingA.reject(new Error('A save failed')); await new Promise(resolve => setTimeout(resolve, 0))
   expect(screen.getByDisplayValue('B 이름')).toBeTruthy(); expect(screen.getByDisplayValue('B 별명')).toBeTruthy()
-  expect(screen.queryByText('A save failed')).toBeNull(); expect((screen.getByRole('button', { name: '설정 저장' }) as HTMLButtonElement).disabled).toBe(false)
+  expect(screen.queryByText('A save failed')).toBeNull(); expect(screen.queryByRole('button', { name: '설정 저장' })).toBeNull()
   expect(bridgeMessages('CONFIGURE_RELAY').some(([, message]) => (message as { accountId?: string }).accountId === '17')).toBe(false)
 })
 
@@ -646,7 +713,6 @@ it('saves a versioned complete settings draft and configures the opaque relay af
   fireEvent.change(screen.getByLabelText('닉네임'), { target: { value: '새 별명' } })
   fireEvent.click(screen.getByRole('button', { name: 'GitHub 관리' }))
   fireEvent.click(screen.getByLabelText('GitHub 커밋 시 문제 정보 주석 포함'))
-  fireEvent.click(screen.getByRole('button', { name: '설정 저장' }))
   await waitFor(() => expect(mocks.save).toHaveBeenCalledOnce())
   expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ version: 4, name: '홍길동', nickname: '새 별명', copyHeader: true, downloadHeader: false, githubHeader: true, downloadFilenameTemplate: settings.downloadFilenameTemplate, gitPathTemplate: settings.gitPathTemplate, githubCommitMessageTemplate: 'Add {platform} {number} solution', lightTheme: 'one-light', darkTheme: 'dracula', autoSyncEnabled: true, githubAutoCommitEnabled: true, githubInstallationId: 77, githubOwner: 'codearchive', githubRepository: 'solutions', githubBranch: 'main', githubRootPath: 'archive' }), 'account-17')
   // Initial automatic connection receives the loaded settings, and save then
@@ -663,11 +729,12 @@ it('requires a submission identity token and inserts a selected Git path token',
   const input = screen.getByLabelText('Git 저장 경로') as HTMLInputElement
   fireEvent.change(input, { target: { value: 'archive/{number}' } })
   expect(screen.getByRole('alert').textContent).toContain('{capture_ID}')
-  expect((screen.getByRole('button', { name: '설정 저장' }) as HTMLButtonElement).disabled).toBe(true)
+  await new Promise(resolve => setTimeout(resolve, 550))
+  expect(mocks.save).not.toHaveBeenCalled()
   input.setSelectionRange(input.value.length, input.value.length)
   fireEvent.click(within(screen.getByLabelText('Git 경로 토큰')).getByRole('button', { name: '{time}' }))
   expect(input.value).toBe('archive/{number}{time}')
-  expect((screen.getByRole('button', { name: '설정 저장' }) as HTMLButtonElement).disabled).toBe(false)
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledOnce())
 })
 
 it('shows independent header choices only when enabled and previews the selected lines', async () => {
@@ -688,7 +755,6 @@ it('shows independent header choices only when enabled and previews the selected
   fireEvent.click(screen.getByLabelText('GitHub 커밋 시 문제 정보 주석 포함'))
   const github = screen.getByRole('group', { name: 'GitHub 커밋 주석 항목' })
   fireEvent.click(within(github).getByLabelText('언어'))
-  fireEvent.click(screen.getByRole('button', { name: '설정 저장' }))
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
     copyHeaderFields: ['identity', 'title', 'language', 'performance'],
     downloadHeaderFields: ['identity', 'title', 'solvedAt', 'language', 'performance', 'url'],
@@ -719,7 +785,6 @@ it('defaults an unset nickname to the GitHub login without replacing a chosen ni
   await openSettings()
   expect((screen.getByLabelText('닉네임') as HTMLInputElement).value).toBe('archive-user')
   fireEvent.change(screen.getByLabelText('닉네임'), { target: { value: '내별명' } })
-  fireEvent.click(screen.getByRole('button', { name: '설정 저장' }))
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ nickname: '내별명' }), 'account-17'))
 })
 
@@ -747,7 +812,6 @@ it('pushes acknowledged profile/export/theme settings with relay null when autom
   const initial = bridgeMessages('CONFIGURE_RELAY').slice(-1)[0][1] as Record<string, unknown>
   expect(initial).toEqual(expect.objectContaining({ relay: null, accountId: '17', name: '오프라인 이름', nickname: '오프 별명', copyHeader: true, downloadHeader: false, lightTheme: 'solarized-light', darkTheme: 'one-dark-pro' }))
   fireEvent.change(screen.getByLabelText('닉네임'), { target: { value: '저장 별명' } })
-  fireEvent.click(screen.getByRole('button', { name: '설정 저장' }))
   await waitFor(() => expect(bridgeMessages('CONFIGURE_RELAY').filter(([, message]) => (message as { relay?: unknown }).relay === null)).toHaveLength(2))
   const saved = bridgeMessages('CONFIGURE_RELAY').slice(-1)[0][1] as Record<string, unknown>
   expect(saved).toEqual(expect.objectContaining({ relay: null, nickname: '저장 별명', accountId: '17' }))
@@ -781,7 +845,6 @@ it('fences an older deferred grant so a newer save is the only relay configurati
   await openSettings()
   await waitFor(() => expect(mocks.grant).toHaveBeenCalledOnce())
   fireEvent.change(screen.getByLabelText('닉네임'), { target: { value: '최신 별명' } })
-  fireEvent.click(screen.getByRole('button', { name: '설정 저장' }))
   await waitFor(() => expect(mocks.grant).toHaveBeenCalledTimes(2))
   await waitFor(() => expect(bridgeMessages('CONFIGURE_RELAY').some(([, message]) => (message as { relay?: { secret?: string } }).relay?.secret === 'newer-opaque-secret')).toBe(true))
   rejectOldGrant(new Error('old grant failed after newer save'))
@@ -796,7 +859,7 @@ it('shows an actionable optimistic-concurrency error', async () => {
   mocks.save.mockRejectedValue(new ApiError('conflict', 409))
   mocks.bridge.mockResolvedValue({ capability: 'capability-1' })
   await openSettings()
-  fireEvent.click(screen.getByRole('button', { name: '설정 저장' }))
+  fireEvent.change(screen.getByLabelText('닉네임'), { target: { value: '충돌 별명' } })
   expect((await screen.findByRole('alert')).textContent).toContain('다른 창에서 설정이 변경되었습니다')
 })
 

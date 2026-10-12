@@ -1,5 +1,5 @@
 {
-  "version": "0.3.3",
+  "version": "1.0.0",
   "extension": {
     "id": "oohlcmihldmfninmdcmanddfmhoonmdl",
     "minimumChromeVersion": "120",
@@ -9,6 +9,7 @@
       "dashboardMinimumExtensionVersion": "0.3.0"
     },
     "releaseListUrl": "https://api.github.com/repos/devkimhongjin/codeArchive/releases?per_page=20",
-    "releaseHistoryUrl": "https://github.com/devkimhongjin/codeArchive/releases"
+    "releaseHistoryUrl": "https://github.com/devkimhongjin/codeArchive/releases",
+    "storeItemId": "mlhibjadcbklfdllkonhjjajhmhnoalj"
   }
 }

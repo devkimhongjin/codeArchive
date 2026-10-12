@@ -8,21 +8,20 @@ import type { User } from './types'
 const mocks = vi.hoisted(() => ({ publish: vi.fn() }))
 vi.mock('./api', async original => ({ ...await original<typeof import('./api')>(), publishAllCommunitySolutions: mocks.publish }))
 const user: User = { id: 1, githubId: '100', githubLogin: 'me' }
-const props = { user, ready: true, publicByDefault: true, onChange: vi.fn(), onSave: vi.fn(), saving: false, onPublished: vi.fn(), onAuthInvalid: vi.fn() }
+const props = { user, ready: true, publicByDefault: true, onChange: vi.fn(), saving: false, onPublished: vi.fn(), onAuthInvalid: vi.fn() }
 afterEach(cleanup)
 beforeEach(() => { vi.clearAllMocks(); mocks.publish.mockResolvedValue({ changedSubmissions: 3, publishedProblems: 2, publishedSubmissions: 4 }) })
 function Harness() {
   const [value, setValue] = useState(true)
   return <CommunitySettings {...props} publicByDefault={value} onChange={setValue} />
 }
-it('starts public and allows private choice before explicitly saving', () => {
+it('starts public and changes the saved setting without a manual save control', () => {
   render(<Harness />)
   expect((screen.getByLabelText('새 정답 풀이의 기본 공개') as HTMLSelectElement).value).toBe('published')
   fireEvent.change(screen.getByLabelText('새 정답 풀이의 기본 공개'), { target: { value: 'private' } })
   expect((screen.getByLabelText('새 정답 풀이의 기본 공개') as HTMLSelectElement).value).toBe('private')
-  expect(props.onSave).not.toHaveBeenCalled()
-  fireEvent.click(screen.getByRole('button', { name: '공개 설정 저장' }))
-  expect(props.onSave).toHaveBeenCalledOnce()
+  expect(screen.getByText('공개 설정 변경은 자동으로 저장됩니다.')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: /공개 설정 저장/ })).toBeNull()
   expect(mocks.publish).not.toHaveBeenCalled()
 })
 it('does not enable writes before account settings are ready', () => {
@@ -37,9 +36,8 @@ it('publishes only after confirmation and distinguishes problems from submission
   expect(mocks.publish).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: '내 정답 풀이 공개 확인' }))
   await waitFor(() => expect(mocks.publish).toHaveBeenCalledWith('100'))
-  expect(await screen.findByRole('status')).toHaveProperty('textContent', '공개 완료 · 문제 2건 · 제출 4건 · 새로 공개 3건')
+  expect(await screen.findByText('공개 완료 · 문제 2건 · 제출 4건 · 새로 공개 3건')).toBeTruthy()
   expect(props.onPublished).toHaveBeenCalledWith('100')
-  expect(props.onSave).not.toHaveBeenCalled()
 })
 it('cancels confirmation without publishing', () => {
   render(<CommunitySettings {...props} />)
@@ -59,7 +57,7 @@ it('ignores success belonging to the previous account', async () => {
   resolve({ changedSubmissions: 3, publishedProblems: 2, publishedSubmissions: 4 })
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   expect(props.onPublished).not.toHaveBeenCalled()
-  expect(screen.queryByRole('status')).toBeNull()
+  expect(screen.queryByText('공개 완료 · 문제 2건 · 제출 4건 · 새로 공개 3건')).toBeNull()
 })
 it('invalidates an expired account and reports uncertain completion without retry', async () => {
   mocks.publish.mockRejectedValue(new ApiError('Authentication is required', 401))
@@ -81,5 +79,4 @@ it('exposes all duplicate publication choices and explains immediate existing-re
     expect(changed).toHaveBeenLastCalledWith(value)
   }
   expect(screen.getByText(/기존 정답 풀이에도 즉시 적용/)).toBeTruthy()
-  expect(props.onSave).not.toHaveBeenCalled()
 })

@@ -35,6 +35,10 @@ public class GithubOAuth2FailureHandler implements AuthenticationFailureHandler 
             request.getSession(false).removeAttribute(DesktopLoginService.COMPLETED_KEY);
             request.getSession(false).removeAttribute(DesktopLoginService.INSTALL_KEY);
             DesktopBrowserRedirect.failed(response);
+        } else if (request.getSession(false) != null && request.getSession(false).getAttribute(SecurityConfig.EXTENSION_OAUTH_COMPLETION) instanceof SecurityConfig.ExtensionOAuthCompletion intent) {
+            request.getSession(false).removeAttribute(SecurityConfig.EXTENSION_OAUTH_COMPLETION);
+            if (intent.activeFor(request.getParameter("state"))) response.sendRedirect(properties.extensionApiRoot() + "/api/extension-login/complete?authError=github");
+            else response.sendRedirect(properties.dashboardRoot() + "/?authError=github");
         } else response.sendRedirect(properties.dashboardRoot() + "/?authError=github");
     }
 }

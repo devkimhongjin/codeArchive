@@ -26,7 +26,7 @@ test('own management tab reads existing captures without app pairing and fences 
   assert.ok('capability' in await restarted.handleExtensionMessage({ type: 'CONNECT' }, sender, id));
 });
 test('login navigation pins provider URLs and copies no OAuth secrets into the extension', () => {
-  assert.equal(dashboardExternalUrl('/api/oauth2/authorization/github'), 'https://codearchive-dashboard-beta.netlify.app/api/oauth2/authorization/github');
+  assert.equal(dashboardExternalUrl('/api/oauth2/authorization/github'), 'https://codearchive-api-stg-e3q54l32da-as.a.run.app/api/oauth2/authorization/github');
   assert.ok(dashboardExternalUrl('https://github.com/apps/codearchive/installations/new?state=public-state'));
   for (const unsafe of ['https://evil.test/', '//evil.test/api/oauth2/authorization/github', 'https://name:secret@github.com/apps/codearchive/installations/new', '/api/oauth2/authorization/github?redirect=https://evil.test']) assert.equal(dashboardExternalUrl(unsafe), null);
   assert.equal(dashboardLoginReturn('https://codearchive-dashboard-beta.netlify.app/'), true);

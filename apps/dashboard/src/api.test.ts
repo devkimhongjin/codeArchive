@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { accountAssertionHeaders, bulkUpload, GITHUB_LOGIN_URL, getAccountSettings, getAuthProviders, getGithubBranches, getGithubDirectories, getGithubInstallations, getGithubRepositories, getSolutions, expectedGithubIdHeaders } from './api'
+import { accountAssertionHeaders, bulkUpload, GITHUB_LOGIN_URL, getAccountSettings, getAuthProviders, getGithubBranches, getGithubDirectories, getGithubInstallations, getGithubRepositories, startGithubInstallation, getSolutions, expectedGithubIdHeaders } from './api'
 
 describe('GitHub authentication contract', () => {
   const fetchMock = vi.fn<typeof fetch>()
@@ -99,6 +99,29 @@ describe('GitHub account assertions', () => {
   })
 })
 
+describe('GitHub installation return routing', () => {
+  const fetchMock = vi.fn<typeof fetch>()
+
+  beforeEach(() => {
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('keeps the legacy endpoint v1 and opts a bundled extension into the direct endpoint explicitly', async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ headerName: 'X-XSRF-TOKEN', token: 'csrf-token' }), { headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'INSTALL_REQUIRED', installations: [], installUrl: 'legacy' }), { headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'INSTALL_REQUIRED', installations: [], installUrl: 'direct' }), { headers: { 'content-type': 'application/json' } }))
+
+    await startGithubInstallation('42', false)
+    await startGithubInstallation('42', true)
+
+    const starts = fetchMock.mock.calls.map(([url]) => url).filter(url => typeof url === 'string' && url.includes('/api/github/installations'))
+    expect(starts).toEqual(['/api/github/installations/start', '/api/github/installations/extension/start'])
+  })
+})
 describe('logout session completion', () => {
   it('does not treat a later CSRF refresh outage as a failed logout', async () => {
     vi.resetModules()

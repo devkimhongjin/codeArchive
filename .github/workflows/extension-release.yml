@@ -1,10 +1,10 @@
-name: Extension beta package
+name: Extension package
 
 on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish a prerelease after validation
+        description: Publish a stable GitHub release after validation
         required: true
         type: boolean
         default: false
@@ -66,7 +66,7 @@ jobs:
           name: codearchive-extension-v${{ steps.release.outputs.version }}
           path: release/*
           if-no-files-found: error
-      - name: Publish GitHub prerelease
+      - name: Publish GitHub release
         if: github.ref_type == 'tag' || inputs.publish == true
         shell: bash
         env:
@@ -93,7 +93,6 @@ jobs:
             release/codearchive-extension.zip \
             release/codearchive-extension.zip.sha256 \
             release/codearchive-extension-metadata.json \
-            --prerelease \
             --title "CodeArchive Extension v$VERSION" \
             --notes-file release/release-notes.md \
             "${target_args[@]}"

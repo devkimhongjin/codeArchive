@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError, publishAllCommunitySolutions } from './api'
 import type { User, CommunityDuplicateVisibility } from './types'
 
-export function CommunitySettings({ user, ready, publicByDefault, duplicateVisibility = 'all', onDuplicateChange, onChange, onSave, saving, onPublished, onAuthInvalid }: {
+export function CommunitySettings({ user, ready, publicByDefault, duplicateVisibility = 'all', onDuplicateChange, onChange, saving, onPublished, onAuthInvalid }: {
   user: User | null; ready: boolean; publicByDefault: boolean; onChange: (value: boolean) => void
   duplicateVisibility?: CommunityDuplicateVisibility; onDuplicateChange?: (value: CommunityDuplicateVisibility) => void
-  onSave: () => void; saving: boolean; onPublished: (githubId: string) => void; onAuthInvalid: (githubId: string) => void
+  saving: boolean; onPublished: (githubId: string) => void; onAuthInvalid: (githubId: string) => void
 }) {
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -48,7 +48,7 @@ export function CommunitySettings({ user, ready, publicByDefault, duplicateVisib
       </select>
     </div>
     <p>중복 공개 방식을 변경해 저장하면 기존 정답 풀이에도 즉시 적용됩니다. 같은 플랫폼·문제별로 선택한 제출만 공개하고 나머지는 비공개로 전환합니다. 측정값이 없으면 뒤로 두며, 동점이면 최근 제출을 선택합니다. 코드 길이는 UTF-8 바이트 기준입니다.</p>
-    <button type="button" className="primary-button" disabled={!ready || saving || busy} onClick={onSave}>{saving ? '공개 설정 저장 중…' : '공개 설정 저장'}</button>
+    <p role="status">공개 설정 변경은 자동으로 저장됩니다.</p>
     {!user && <p>로그인 후 계정의 공개 설정을 저장할 수 있습니다.</p>}
     <h3>기존 문제 공개</h3><p>이 계정에 저장된 기존 정답 풀이를 저장된 중복 공개 설정에 따라 공개합니다. 비정답 풀이와 다른 계정의 기록은 제외됩니다.</p>
     <button type="button" className="ghost-button" disabled={!ready || busy || saving} onClick={() => { setConfirm(true); setError(null); setMessage(null) }}>기존 정답 풀이 공개</button>

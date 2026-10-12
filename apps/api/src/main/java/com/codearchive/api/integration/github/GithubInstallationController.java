@@ -10,6 +10,9 @@ import com.codearchive.api.common.GithubAccountAssertion;
 import com.codearchive.api.config.GithubOAuth2Properties;
 import com.codearchive.api.integration.github.GithubInstallStateService.InstallStateException;
 import jakarta.servlet.http.HttpSession;
+import jakarta.servlet.http.HttpServletRequest;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.net.URI;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
@@ -37,24 +40,40 @@ public class GithubInstallationController {
         this.properties = properties;
     }
 
+    /**
+     * Legacy web, desktop, and pre-direct-extension clients remain on v1 even
+     * when their browser Origin is a known extension. They can still be using
+     * the Netlify session cookie, so origin alone cannot select the API return.
+     */
     @PostMapping("/start")
     public ResponseEntity<?> start(Authentication authentication,
                                    @RequestHeader(value = GithubAccountAssertion.HEADER, required = false)
-                                   String expectedGithubId,
-                                   HttpSession session) {
+                                   String expectedGithubId, HttpSession session) {
+        return start(authentication, expectedGithubId, session, false);
+    }
+
+    /** The bundled direct dashboard opts in explicitly after its API-origin fetch. */
+    @PostMapping("/extension/start")
+    public ResponseEntity<?> startExtension(Authentication authentication,
+                                            @RequestHeader(value = GithubAccountAssertion.HEADER, required = false)
+                                            String expectedGithubId, HttpSession session, HttpServletRequest request) {
+        if (request == null || !com.codearchive.api.config.SecurityConfig.isExtensionOrigin(request.getHeader("Origin"))) {
+            return ResponseEntity.status(403).body(new ApiError("Trusted extension origin is required"));
+        }
+        return start(authentication, expectedGithubId, session, true);
+    }
+
+    private ResponseEntity<?> start(Authentication authentication, String expectedGithubId, HttpSession session, boolean directReturn) {
         var checked = GithubAccountAssertion.require(authentication, expectedGithubId, users);
         if (!checked.accepted()) return checked.failure();
         if (!github.browseReady() || !states.ready()) {
             return ResponseEntity.status(503).body(new ApiError("GitHub App provider is unavailable"));
         }
         try {
-            List<GithubAppProvider.InstallationChoice> installations =
-                    github.installations(checked.account().githubId());
-            if (!installations.isEmpty()) {
-                return ResponseEntity.ok(new StartResponse("AVAILABLE", installations, null));
-            }
+            List<GithubAppProvider.InstallationChoice> installations = github.installations(checked.account().githubId());
+            if (!installations.isEmpty()) return ResponseEntity.ok(new StartResponse("AVAILABLE", installations, null));
             AppUser user = checked.account().user();
-            String installUrl = states.issue(user.getId(), checked.account().githubId(), session);
+            String installUrl = states.issue(user.getId(), checked.account().githubId(), session, directReturn);
             return ResponseEntity.ok(new StartResponse("INSTALL_REQUIRED", List.of(), installUrl));
         } catch (SecurityException exception) {
             return ResponseEntity.status(403).body(new ApiError("GitHub installation is not available to this account"));
@@ -62,26 +81,26 @@ public class GithubInstallationController {
             return ResponseEntity.status(503).body(new ApiError("GitHub App provider is unavailable"));
         }
     }
-
     @GetMapping("/callback")
     public ResponseEntity<Void> callback(Authentication authentication,
                                          @RequestParam(value = "state", required = false) String state,
                                          @RequestParam(value = "installation_id", required = false) Long installationId,
                                          HttpSession session) {
         var identity = GithubAuthentication.identity(authentication);
-        if (identity.isEmpty()) return redirect("authentication_required", null);
+        if (identity.isEmpty()) return redirectForState("authentication_required", null, state);
         AppUser user = users.findByGithubId(identity.get().githubId()).orElse(null);
-        if (user == null || user.getId() == null) return redirect("authentication_required", null);
+        if (user == null || user.getId() == null) return redirectForState("authentication_required", null, state);
 
+        final GithubInstallStateService.Payload payload;
         try {
-            states.consume(state, user.getId(), identity.get().githubId(), session);
+            payload = states.consume(state, user.getId(), identity.get().githubId(), session);
         } catch (InstallStateException exception) {
-            return redirect(switch (exception.failure()) {
+            return redirectForState(switch (exception.failure()) {
                 case EXPIRED -> "expired";
                 case ACCOUNT_MISMATCH -> "account_mismatch";
                 case PROVIDER_UNAVAILABLE -> "provider_unavailable";
                 case INVALID, REPLAYED -> "invalid";
-            }, null);
+            }, null, state);
         }
 
         // GitHub's documented setup callback contract guarantees installation_id,
@@ -89,24 +108,55 @@ public class GithubInstallationController {
         // below are the trust boundaries, so an omitted setup_action must not turn a
         // successful installation into a false cancellation.
         if (installationId == null || installationId <= 0) {
-            return redirect("cancelled", null);
+            return callbackRedirect("cancelled", null, payload);
         }
         try {
             boolean owned = github.installations(identity.get().githubId()).stream()
                     .anyMatch(installation -> installation.id() == installationId);
-            if (!owned) return redirect("installation_unavailable", null);
-            return redirect("success", installationId);
+            if (!owned) return callbackRedirect("installation_unavailable", null, payload);
+            return callbackRedirect("success", installationId, payload);
         } catch (ProviderUnavailableException exception) {
-            return redirect("provider_unavailable", null);
+            return callbackRedirect("provider_unavailable", null, payload);
         } catch (SecurityException exception) {
-            return redirect("installation_unavailable", null);
+            return callbackRedirect("installation_unavailable", null, payload);
         } catch (Exception exception) {
-            return redirect("provider_unavailable", null);
+            return callbackRedirect("provider_unavailable", null, payload);
         }
+    }
+    @GetMapping("/setup")
+    public ResponseEntity<Void> setup(@RequestParam(value = "state", required = false) String state,
+                                      @RequestParam(value = "installation_id", required = false) Long installationId) {
+        var direct = states.setupReturn(state);
+        if (direct.isEmpty()) return ResponseEntity.badRequest().build();
+        String root = direct.get() ? properties.extensionApiRoot() : properties.dashboardRoot();
+        String target = root + "/api/github/installations/callback?state=" + URLEncoder.encode(state, StandardCharsets.UTF_8);
+        if (installationId != null && installationId > 0) target += "&installation_id=" + installationId;
+        return ResponseEntity.status(302).location(URI.create(target)).build();
     }
 
     private ResponseEntity<Void> redirect(String result, Long installationId) {
         String target = properties.dashboardRoot() + "/?githubInstall=" + result;
+        if (installationId != null) target += "&installationId=" + installationId;
+        return ResponseEntity.status(302).location(URI.create(target)).build();
+    }
+    private ResponseEntity<Void> callbackRedirect(String result, Long installationId, GithubInstallStateService.Payload payload) {
+        return GithubInstallStateService.isExtensionReturn(payload) ? directRedirect(result, installationId) : redirect(result, installationId);
+    }
+    /**
+     * Authentication can fail before the session-bound state is consumable.
+     * A valid signed state is sufficient to select one of two fixed landing
+     * pages; it never grants, consumes, or reveals installation ownership.
+     */
+    private ResponseEntity<Void> redirectForState(String result, Long installationId, String state) {
+        var direct = states.errorReturn(state);
+        // An invalid opaque callback value still has no influence over the
+        // destination. Preserve the fixed legacy error landing for old tabs;
+        // only a valid v2 signature selects the API completion route.
+        if (direct.isEmpty()) return redirect(result, installationId);
+        return direct.get() ? directRedirect(result, installationId) : redirect(result, installationId);
+    }
+    private ResponseEntity<Void> directRedirect(String result, Long installationId) {
+        String target = properties.extensionApiRoot() + "/api/extension-login/complete?githubInstall=" + result;
         if (installationId != null) target += "&installationId=" + installationId;
         return ResponseEntity.status(302).location(URI.create(target)).build();
     }

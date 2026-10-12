@@ -71,6 +71,12 @@ public class GithubOAuth2SuccessHandler implements AuthenticationSuccessHandler 
             if (intent.expiresAt() > System.currentTimeMillis()) { DesktopBrowserRedirect.install(response); return; }
             request.getSession(false).removeAttribute(DesktopLoginService.INSTALL_KEY);
         }
+        if (request.getSession(false) != null && request.getSession(false).getAttribute(SecurityConfig.EXTENSION_OAUTH_COMPLETION) instanceof SecurityConfig.ExtensionOAuthCompletion intent) {
+            request.getSession(false).removeAttribute(SecurityConfig.EXTENSION_OAUTH_COMPLETION);
+            if (!intent.activeFor(request.getParameter("state"))) { response.sendRedirect(properties.dashboardRoot() + "/"); return; }
+            response.sendRedirect(properties.extensionApiRoot() + "/api/extension-login/complete");
+            return;
+        }
         response.sendRedirect(properties.dashboardRoot() + "/");
     }
 }

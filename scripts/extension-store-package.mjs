@@ -9,6 +9,7 @@ const release = JSON.parse(await readFile(resolve(root, 'release.json'), 'utf8')
 const hosts = [
   'https://swexpertacademy.com/*', 'https://school.programmers.co.kr/*',
   'https://jungol.co.kr/*',
+  'https://codearchive-api-stg-e3q54l32da-as.a.run.app/*',
   'https://codearchive-dashboard-beta.netlify.app/*'
 ];
 const retiredReleaseHost = 'https://api.github.com/*';

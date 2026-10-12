@@ -1,9 +1,34 @@
 import type { Capture, CaptureSettings } from "./types";
 import type { CaptureStore } from "./storage";
+import { LEGACY_DASHBOARD_ORIGIN, LEGACY_RELAY_ORIGINS, PUBLIC_API_ORIGIN } from '../../../shared/publicApiOrigin';
 
 export type RelayAttemptResult = "ACK" | "OFFLINE" | "AUTH_EXPIRED" | "RELAY_ERROR" | "DISABLED";
 export type GithubCommitStatus = "NOT_REQUESTED" | "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "UNKNOWN";
 export const RELAY_REQUEST_TIMEOUT_MS = 8_000;
+
+function trustedRelayEndpoint(value: string): URL | null {
+  try {
+    const endpoint = new URL(value, PUBLIC_API_ORIGIN);
+    if (endpoint.username || endpoint.password || !endpoint.pathname.startsWith('/api/relay/')) return null;
+    return endpoint.origin === PUBLIC_API_ORIGIN || (LEGACY_RELAY_ORIGINS as readonly string[]).includes(endpoint.origin) ? endpoint : null;
+  } catch { return null; }
+}
+
+/** Moves an existing opaque grant to the direct host only for the exact persisted
+ * account/version snapshot. The grant's scope and secret are unchanged. */
+export async function migrateLegacyRelayEndpoint(store: Pick<CaptureStore, 'mutateRelayIfCurrent'>, settings: CaptureSettings): Promise<boolean> {
+  const relay = settings.relay, endpoint = relay && trustedRelayEndpoint(relay.endpoint);
+  // localhost grants can belong to a developer's unrelated local API. Only
+  // the old published dashboard proxy is known to address the same service.
+  if (!relay || !endpoint || endpoint.origin !== LEGACY_DASHBOARD_ORIGIN) return false;
+  let migrated = false;
+  await store.mutateRelayIfCurrent(relay, current => {
+    if (current.accountId !== relay.accountId || current.accountSettingsVersion !== relay.generation) return current;
+    migrated = true;
+    return { ...current, relay: { ...relay, endpoint: new URL(endpoint.pathname + endpoint.search, PUBLIC_API_ORIGIN).href } };
+  });
+  return migrated;
+}
 
 async function fetchWithTimeout(
   fetcher: typeof fetch,
@@ -39,8 +64,7 @@ export async function relayCapture(
   const relay = settings.relay;
   if (!settings.autoSyncEnabled || !relay || relay.status === "AUTH_EXPIRED") return "DISABLED";
   if (relay.status !== "CONFIRMED" && relay.status !== "OFFLINE" && relay.status !== "RELAY_ERROR") return "DISABLED";
-  let endpoint: URL; try { endpoint = new URL(relay.endpoint, "https://codearchive-dashboard-beta.netlify.app"); } catch { return "RELAY_ERROR"; }
-  if (!(["https://codearchive-dashboard-beta.netlify.app", "http://localhost:5173"] as string[]).includes(endpoint.origin) || !endpoint.pathname.startsWith("/api/relay/")) return "RELAY_ERROR";
+  const endpoint = trustedRelayEndpoint(relay.endpoint); if (!endpoint) return "RELAY_ERROR";
   try {
     const { syncAccountId: _deviceOwner, ...payload } = capture;
     const response = await fetchWithTimeout(fetcher, endpoint, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${relay.secret}` }, body: JSON.stringify(payload) }, timeoutMs);
@@ -57,13 +81,8 @@ export async function fetchGithubCommitStatuses(
 ): Promise<Record<string, GithubCommitStatus>> {
   const relay = settings.relay;
   if (!relay || captureIds.length === 0 || relay.status === "AUTH_EXPIRED" || relay.status === "REVOCATION_PENDING") return {};
-  let endpoint: URL;
-  try {
-    endpoint = new URL("/api/relay/github-commit-status", new URL(relay.endpoint, "https://codearchive-dashboard-beta.netlify.app").origin);
-  } catch {
-    return {};
-  }
-  if (!("https://codearchive-dashboard-beta.netlify.app" === endpoint.origin || "http://localhost:5173" === endpoint.origin)) return {};
+  const relayEndpoint = trustedRelayEndpoint(relay.endpoint); if (!relayEndpoint) return {};
+  const endpoint = new URL("/api/relay/github-commit-status", relayEndpoint.origin);
   for (const captureId of [...new Set(captureIds)].slice(0, 10)) endpoint.searchParams.append("captureId", captureId);
   try {
     const response = await fetchWithTimeout(fetcher, endpoint, { headers: { "Authorization": `Bearer ${relay.secret}` } }, timeoutMs);
@@ -89,7 +108,7 @@ export async function recordRelayAttempt(store: Pick<CaptureStore, "mutateRelayI
 /** The bearer is intentionally allowed only to revoke itself, never settings. */
 export async function revokeRelay(settings: CaptureSettings, fetcher: typeof fetch = fetch, timeoutMs = RELAY_REQUEST_TIMEOUT_MS): Promise<"ACK" | "OFFLINE" | "RELAY_ERROR"> {
   const relay=settings.relay; if(!relay) return "ACK";
-  let endpoint: URL; try { endpoint=new URL("/api/relay/grants/self",new URL(relay.endpoint,"https://codearchive-dashboard-beta.netlify.app").origin); } catch { return "RELAY_ERROR"; }
-  if(!(["https://codearchive-dashboard-beta.netlify.app","http://localhost:5173"] as string[]).includes(endpoint.origin))return "RELAY_ERROR";
+  const original = trustedRelayEndpoint(relay.endpoint); if (!original) return "RELAY_ERROR";
+  const endpoint = new URL("/api/relay/grants/self", original.origin);
   try { const response=await fetchWithTimeout(fetcher,endpoint,{method:"DELETE",headers:{"Authorization":`Bearer ${relay.secret}`}},timeoutMs); return response.ok||response.status===401?"ACK":"RELAY_ERROR"; } catch {return "OFFLINE";}
 }

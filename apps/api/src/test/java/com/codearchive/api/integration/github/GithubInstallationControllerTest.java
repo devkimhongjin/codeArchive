@@ -25,6 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockHttpSession;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
@@ -50,6 +51,8 @@ class GithubInstallationControllerTest {
         when(users.findByGithubId("123")).thenReturn(Optional.of(user));
         when(github.browseReady()).thenReturn(true);
         when(states.ready()).thenReturn(true);
+        when(states.setupReturn(anyString())).thenReturn(Optional.of(false));
+        when(states.errorReturn(anyString())).thenReturn(Optional.of(false));
     }
 
     @Test
@@ -62,14 +65,14 @@ class GithubInstallationControllerTest {
         var body = (GithubInstallationController.StartResponse) response.getBody();
         assertThat(body.status()).isEqualTo("AVAILABLE");
         assertThat(body.installations()).extracting(GithubAppProvider.InstallationChoice::id).containsExactly(44L);
-        verify(states, never()).issue(anyLong(), anyString(), any(HttpSession.class));
+        verify(states, never()).issue(anyLong(), anyString(), any(HttpSession.class), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     @Test
     void issuesAnInstallUrlOnlyWhenNoInstallationExists() throws Exception {
         MockHttpSession session = new MockHttpSession();
         when(github.installations("123")).thenReturn(List.of());
-        when(states.issue(17L, "123", session)).thenReturn("https://github.com/apps/codearchive/installations/new?state=signed");
+        when(states.issue(17L, "123", session, false)).thenReturn("https://github.com/apps/codearchive/installations/new?state=signed");
 
         var response = controller.start(github("123", "account"), "123", session);
 
@@ -92,6 +95,43 @@ class GithubInstallationControllerTest {
                 "https://dashboard.example.test/?githubInstall=success&installationId=44");
     }
 
+    @Test
+    void legacyStartRetainsV1ForAClientThatCouldUseAnExtensionOrigin() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        when(github.installations("123")).thenReturn(List.of());
+        when(states.issue(17L, "123", session, false)).thenReturn("legacy");
+
+        var response = controller.start(github("123", "account"), "123", session);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(states).issue(17L, "123", session, false);
+    }
+
+    @Test
+    void directExtensionStartRequiresTheExactOriginAndIssuesV2() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        when(github.installations("123")).thenReturn(List.of());
+        when(states.issue(17L, "123", session, true)).thenReturn("direct");
+        MockHttpServletRequest trusted = new MockHttpServletRequest();
+        trusted.addHeader("Origin", "chrome-extension://mlhibjadcbklfdllkonhjjajhmhnoalj");
+
+        var response = controller.startExtension(github("123", "account"), "123", session, trusted);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(states).issue(17L, "123", session, true);
+    }
+
+    @Test
+    void directExtensionStartRejectsMissingOrUnknownOriginsBeforeStateIssue() {
+        var missing = controller.startExtension(github("123", "account"), "123", new MockHttpSession(), new MockHttpServletRequest());
+        MockHttpServletRequest unknown = new MockHttpServletRequest();
+        unknown.addHeader("Origin", "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        var rejected = controller.startExtension(github("123", "account"), "123", new MockHttpSession(), unknown);
+
+        assertThat(missing.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(rejected.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        verify(states, never()).issue(anyLong(), anyString(), any(HttpSession.class), org.mockito.ArgumentMatchers.anyBoolean());
+    }
     @Test
     void callbackReturnsOnlyFixedFailureCodes() {
         MockHttpSession session = new MockHttpSession();
@@ -163,7 +203,30 @@ class GithubInstallationControllerTest {
 
         assertThat(response.getHeaders().getLocation()).hasToString(
                 "https://dashboard.example.test/?githubInstall=authentication_required");
-        verifyNoInteractions(states, github);
+        verifyNoInteractions(github);
+    }
+
+    @Test
+    void directStateKeepsOwnershipFailureOnTheFixedApiReturn() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        when(states.consume("direct", 17L, "123", session))
+                .thenReturn(new Payload(2, 17L, "123", 1L, 2L, "nonce", "/api/extension-login/complete"));
+        when(github.installations("123")).thenReturn(List.of());
+
+        var response = controller.callback(github("123", "account"), "direct", 44L, session);
+
+        assertThat(response.getHeaders().getLocation()).hasToString(
+                "https://codearchive-api-stg-e3q54l32da-as.a.run.app/api/extension-login/complete?githubInstall=installation_unavailable");
+    }
+
+    @Test
+    void unauthenticatedValidDirectStateUsesOnlyTheFixedApiReturn() {
+        when(states.errorReturn("direct")).thenReturn(Optional.of(true));
+
+        var response = controller.callback(null, "direct", 44L, new MockHttpSession());
+
+        assertThat(response.getHeaders().getLocation()).hasToString(
+                "https://codearchive-api-stg-e3q54l32da-as.a.run.app/api/extension-login/complete?githubInstall=authentication_required");
     }
 
     private static OAuth2AuthenticationToken github(String id, String login) {

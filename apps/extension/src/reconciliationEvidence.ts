@@ -1,7 +1,8 @@
 import type { CaptureStore } from './storage'
 import type { ReconciliationRecord } from '../../../shared/submissionReconciliation'
 import { normalizeDifficulty } from '../../../shared/difficulty'
-const API_ORIGIN = 'https://codearchive-dashboard-beta.netlify.app'
+import { PUBLIC_API_ORIGIN } from '../../../shared/publicApiOrigin'
+const API_ORIGIN = PUBLIC_API_ORIGIN
 export type ReconciliationEvidence = { local: ReconciliationRecord[]; remote: ReconciliationRecord[]; localComplete: boolean; remoteComplete: boolean; serverReason?: string }
 type User = { id: number; githubId: string }
 export async function loadReconciliationEvidence(store: Pick<CaptureStore, 'listAll' | 'getSettings'>, platform: 'SWEA' | 'PROGRAMMERS', fetcher: typeof fetch = fetch): Promise<ReconciliationEvidence> {

@@ -11,6 +11,9 @@ function fixture() {
   const location = { protocol: 'chrome-extension:', hostname: id, assign: vi.fn() }
   const dispatchEvent = vi.fn()
   vi.stubGlobal('window', { chrome: { runtime }, location, dispatchEvent })
+  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(url.includes('/api/auth/csrf')
+    ? new Response(JSON.stringify({ headerName: 'X-XSRF-TOKEN', token: 'token' }), { status: 200 })
+    : new Response(JSON.stringify({ authorizationUrl: '/api/oauth2/authorization/github' }), { status: 200 }))))
   return { runtime, location, dispatchEvent }
 }
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
@@ -20,7 +23,7 @@ it('uses only the current extension and fixed API origin, preserving HttpOnly br
   vi.stubGlobal('fetch', fetcher)
   expect(extensionRuntime()).toBe(runtime)
   await apiFetch('/api/auth/me', { credentials: 'omit' })
-  expect(fetcher).toHaveBeenCalledWith('https://codearchive-dashboard-beta.netlify.app/api/auth/me', { credentials: 'include' })
+  expect(fetcher).toHaveBeenCalledWith('https://codearchive-api-stg-e3q54l32da-as.a.run.app/api/auth/me', { credentials: 'include' })
   for (const path of ['https://evil.test/api/me', '//evil.test/api/me', '/api/../secret', '/api/\\evil', '/api/%2e%2e/secret']) expect(() => extensionApiUrl(path)).toThrow()
   location.hostname = 'other'
   expect(extensionRuntime()).toBeUndefined()
@@ -35,7 +38,8 @@ it('uses the internal capability bridge and rejects another extension storage id
 it('opens provider flow through the worker without navigating away from the management page', async () => {
   const { runtime, location, dispatchEvent } = fixture()
   navigateSameTab('/api/oauth2/authorization/github')
-  expect(runtime.sendMessage.mock.calls[0]?.[0]).toEqual({ type: 'DASHBOARD_OPEN_EXTERNAL', url: '/api/oauth2/authorization/github', loginNonce: expect.any(String) })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(runtime.sendMessage.mock.calls[0]?.[0]).toEqual({ type: 'DASHBOARD_OPEN_EXTERNAL', url: 'https://codearchive-api-stg-e3q54l32da-as.a.run.app/api/oauth2/authorization/github', loginNonce: expect.any(String) })
   expect(location.assign).not.toHaveBeenCalled()
   expect(dispatchEvent).toHaveBeenCalled()
 })

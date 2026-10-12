@@ -47,8 +47,8 @@ public class SupportController {
         if (!write(checked.account().user().getId())) return limited();
         return ResponseEntity.status(410).cacheControl(CacheControl.noStore()).body(new ApiError("Inquiry follow-up, closure and deletion are no longer supported"));
     }
-    @GetMapping("/admin/tickets") public ResponseEntity<?> all(Authentication auth, @RequestHeader(value = GithubAccountAssertion.HEADER, required = false) String expected, @RequestParam(defaultValue = "0") int page) {
-        var checked = admin(auth, expected); if (!checked.accepted()) return checked.failure(); if (!read(checked.account().user().getId())) return limited(); if (!page(page)) return bad("Invalid support page"); return noStore(support.all(page));
+    @GetMapping("/admin/tickets") public ResponseEntity<?> all(Authentication auth, @RequestHeader(value = GithubAccountAssertion.HEADER, required = false) String expected, @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "false") boolean archived) {
+        var checked = admin(auth, expected); if (!checked.accepted()) return checked.failure(); if (!read(checked.account().user().getId())) return limited(); if (!page(page)) return bad("Invalid support page"); return noStore(support.all(page, archived));
     }
     @GetMapping("/admin/tickets/{id}") public ResponseEntity<?> adminDetail(Authentication auth, @RequestHeader(value = GithubAccountAssertion.HEADER, required = false) String expected, @PathVariable long id) {
         var checked = admin(auth, expected); if (!checked.accepted()) return checked.failure(); if (!read(checked.account().user().getId())) return limited(); if (id <= 0) return bad("Invalid support inquiry"); try { return noStore(support.adminDetail(id)); } catch (NoSuchElementException e) { return ResponseEntity.notFound().build(); }
@@ -58,6 +58,12 @@ public class SupportController {
     }
     @PutMapping("/admin/tickets/{id}/status") public ResponseEntity<?> status(Authentication auth, @RequestHeader(value = GithubAccountAssertion.HEADER, required = false) String expected, @PathVariable long id, @RequestBody StatusRequest request) {
         var checked = admin(auth, expected); if (!checked.accepted()) return checked.failure(); if (!write(checked.account().user().getId())) return limited(); SupportStatus status = status(request == null ? null : request.status()); if (id <= 0 || status == null || status == SupportStatus.CLOSED) return bad("Invalid support status"); try { return noStore(support.changeStatus(id, status)); } catch (NoSuchElementException e) { return ResponseEntity.notFound().build(); } catch (IllegalArgumentException e) { return bad("An administrator answer is required before ANSWERED"); }
+    }
+    @PostMapping("/admin/tickets/{id}/archive") public ResponseEntity<?> archive(Authentication auth, @RequestHeader(value = GithubAccountAssertion.HEADER, required = false) String expected, @PathVariable long id) {
+        var checked = admin(auth, expected); if (!checked.accepted()) return checked.failure(); if (!write(checked.account().user().getId())) return limited(); if (id <= 0) return bad("Invalid support inquiry"); try { return noStore(support.archive(id)); } catch (NoSuchElementException e) { return ResponseEntity.notFound().build(); } catch (IllegalArgumentException e) { return bad(e.getMessage()); }
+    }
+    @PostMapping("/admin/tickets/{id}/restore") public ResponseEntity<?> restore(Authentication auth, @RequestHeader(value = GithubAccountAssertion.HEADER, required = false) String expected, @PathVariable long id) {
+        var checked = admin(auth, expected); if (!checked.accepted()) return checked.failure(); if (!write(checked.account().user().getId())) return limited(); if (id <= 0) return bad("Invalid support inquiry"); try { return noStore(support.restore(id)); } catch (NoSuchElementException e) { return ResponseEntity.notFound().build(); }
     }
     private GithubAccountAssertion.Checked account(Authentication auth, String expected) { return GithubAccountAssertion.require(auth, expected, users); }
     private GithubAccountAssertion.Checked admin(Authentication auth, String expected) { var checked = account(auth, expected); if (!checked.accepted()) return checked; if (!SupportAdminPolicy.isAdmin(checked.account().githubId(), checked.account().user())) return new GithubAccountAssertion.Checked(null, ResponseEntity.status(403).body(new ApiError("Support administrator access is required"))); return checked; }

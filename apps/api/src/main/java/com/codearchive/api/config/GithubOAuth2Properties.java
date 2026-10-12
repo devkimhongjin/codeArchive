@@ -10,6 +10,7 @@ public class GithubOAuth2Properties {
     private String clientSecret = "";
     private String redirectUri = "http://localhost:5173/api/login/oauth2/code/github";
     private String dashboardOrigin = "http://localhost:5173";
+    private String extensionApiOrigin = "https://codearchive-api-stg-e3q54l32da-as.a.run.app";
 
     public boolean isEnabled() {
         return !clientId.isBlank() && !clientSecret.isBlank();
@@ -46,6 +47,9 @@ public class GithubOAuth2Properties {
     public void setDashboardOrigin(String dashboardOrigin) {
         this.dashboardOrigin = dashboardOrigin == null ? "" : dashboardOrigin.trim();
     }
+    public String getExtensionApiOrigin() { return extensionApiOrigin; }
+    public void setExtensionApiOrigin(String extensionApiOrigin) { this.extensionApiOrigin = extensionApiOrigin == null ? "" : extensionApiOrigin.trim(); }
+    public String extensionApiRoot() { return validatedOrigin(extensionApiOrigin, "EXTENSION_API_ORIGIN"); }
 
     public URI dashboardUri() {
         URI uri;
@@ -80,5 +84,11 @@ public class GithubOAuth2Properties {
             throw new IllegalStateException("GITHUB_REDIRECT_URI must be an absolute http(s) URL without query or fragment");
         }
         return uri.toString();
+    }
+    private static String validatedOrigin(String value, String name) {
+        URI uri;
+        try { uri = URI.create(value); } catch (IllegalArgumentException exception) { throw new IllegalStateException(name + " must be an absolute https URL", exception); }
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null || uri.getRawQuery() != null || uri.getRawFragment() != null) throw new IllegalStateException(name + " must be an absolute https URL without query or fragment");
+        String result = uri.toString(); return result.endsWith("/") ? result.substring(0, result.length() - 1) : result;
     }
 }
