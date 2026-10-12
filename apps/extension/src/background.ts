@@ -8,7 +8,7 @@ import { IndexedDbCaptureStore } from "./storage";
 import { bindAutomaticCapture, nextAutomaticCapture, loadPopupLocalState, prepareCaptureDownload, retryRelayConnection, storeCaptureLocalFirst } from "./backgroundActions";
 import { exportCode } from "./export";
 import { normalizedHeaderFields } from "../../../shared/headerFields";
-import { fetchGithubCommitStatuses, recordRelayAttempt, relayCapture, revokeRelay } from "./relay";
+import { fetchGithubCommitStatuses, migrateLegacyRelayEndpoint, recordRelayAttempt, relayCapture, revokeRelay } from "./relay";
 import {
   normalizeSweaDetailUrl,
   validateSweaProblemContext
@@ -156,6 +156,7 @@ async function finishSelfRevocation(settings: Awaited<ReturnType<typeof store.ge
 
 async function drainRelay(): Promise<void> {
   let settings = await store.getSettings();
+  if (await migrateLegacyRelayEndpoint(store, settings)) settings = await store.getSettings();
   if (settings.relay?.status === "REVOCATION_PENDING") {
     await finishSelfRevocation(settings);
     return;

@@ -1,0 +1,91 @@
+name: Chrome Web Store release
+
+on:
+  push:
+    tags: ["extension-v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Validate package and publisher configuration without upload
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: chrome-webstore-codearchive-item
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24.18.0, cache: npm, cache-dependency-path: apps/extension/package-lock.json }
+      - name: Require immutable master release source and matching tag
+        run: |
+          git fetch --no-tags origin +refs/heads/master:refs/remotes/origin/master
+          node scripts/release-source.mjs extension
+      - name: Validate release contract
+        id: release
+        run: |
+          version="$(node scripts/extension-release.mjs verify)"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "$GITHUB_REF_NAME" != "extension-v$version" ]]; then
+            echo "Tag must match extension-v$version" >&2; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Require publisher configuration
+        env:
+          CWS_WIF_PROVIDER: ${{ vars.CWS_WIF_PROVIDER }}
+          CWS_SERVICE_ACCOUNT: ${{ vars.CWS_SERVICE_ACCOUNT }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+        run: |
+          test -n "$CWS_WIF_PROVIDER" || { echo "CWS_WIF_PROVIDER is not configured" >&2; exit 1; }
+          test -n "$CWS_SERVICE_ACCOUNT" || { echo "CWS_SERVICE_ACCOUNT is not configured" >&2; exit 1; }
+          test -n "$CWS_PUBLISHER_ID" || { echo "CWS_PUBLISHER_ID is not configured" >&2; exit 1; }
+      - run: npm --prefix apps/extension ci
+      - run: node --test scripts/chrome-webstore-publish.test.mjs
+      - run: npm --prefix apps/dashboard ci
+      - run: npm --prefix apps/dashboard test
+      - run: npm --prefix apps/extension test
+      - run: CODEARCHIVE_SKIP_INSTALLED_EXTENSION=true CODEARCHIVE_RELEASE_BUILD=true CODEARCHIVE_BUILD_SHA=${{ github.sha }} npm --prefix apps/extension run build
+      - run: node scripts/extension-store-package.mjs prepare apps/extension/dist release/store
+      - name: Require successful Verify workflow for this master source
+        if: github.event_name != 'workflow_dispatch' || inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 20); do
+            result="$(gh run list --workflow verify.yml --commit "$GITHUB_SHA" --branch master --event push --json status,conclusion --limit 1)"
+            status="$(jq -r '.[0].status // empty' <<<"$result")"
+            conclusion="$(jq -r '.[0].conclusion // empty' <<<"$result")"
+            if [[ "$status" == "completed" && "$conclusion" == "success" ]]; then exit 0; fi
+            if [[ "$status" == "completed" ]]; then echo "Verify failed for this source" >&2; exit 1; fi
+            sleep 30
+          done
+          echo "Timed out waiting for Verify on this master source" >&2; exit 1
+      - uses: google-github-actions/auth@v3
+        if: github.event_name != 'workflow_dispatch' || inputs.dry_run != true
+        id: auth
+        with:
+          workload_identity_provider: ${{ vars.CWS_WIF_PROVIDER }}
+          service_account: ${{ vars.CWS_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Upload and submit for default publish review
+        env:
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_STORE_ITEM_ID: mlhibjadcbklfdllkonhjjajhmhnoalj
+          CWS_VERSION: ${{ steps.release.outputs.version }}
+          CWS_ARCHIVE: release/store/codearchive-chrome-webstore.zip
+          CWS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          CWS_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+        run: node scripts/chrome-webstore-publish.mjs

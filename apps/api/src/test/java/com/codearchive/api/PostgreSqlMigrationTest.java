@@ -1,6 +1,7 @@
 package com.codearchive.api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -36,7 +37,7 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
-    private static final int LATEST_MIGRATION = 29;
+    private static final int LATEST_MIGRATION = 30;
 
     @Test
     void supportReviewUpgradePreservesOldInquiriesAndMessages() throws Exception {
@@ -49,8 +50,9 @@ class PostgreSqlMigrationTest {
                 ResultSet inquiry = statement.executeQuery("INSERT INTO support_inquiries(owner_id, category, title, status, created_at, updated_at, closed_at, version) VALUES (" + userId + ", 'BUG', 'retained', 'CLOSED', now(), now(), now(), 0) RETURNING id"); inquiry.next(); inquiryId = inquiry.getLong(1);
                 statement.executeUpdate("INSERT INTO support_messages(inquiry_id, author_id, author_role, body, created_at) VALUES (" + inquiryId + ", " + userId + ", 'USER', 'retained body', now())");
             }
-            assertEquals(1, database.flyway().migrate().migrationsExecuted);
+            assertEquals(2, database.flyway().migrate().migrationsExecuted);
             assertEquals("CLOSED", database.scalar("SELECT status FROM support_inquiries WHERE id = ?", inquiryId));
+            assertNull(database.scalar("SELECT archived_at FROM support_inquiries WHERE id = ?", inquiryId));
             assertEquals("retained body", database.scalar("SELECT body FROM support_messages WHERE inquiry_id = ?", inquiryId));
             try (Connection connection = database.connection(); PreparedStatement statement = connection.prepareStatement("UPDATE support_inquiries SET status='IN_REVIEW' WHERE id=?")) {
                 statement.setLong(1, inquiryId); assertEquals(1, statement.executeUpdate());
@@ -593,6 +595,7 @@ class PostgreSqlMigrationTest {
             }
             assertEquals("NO", nullable("support_inquiries", "owner_id"));
             assertEquals("NO", nullable("support_inquiries", "version"));
+            assertEquals("YES", nullable("support_inquiries", "archived_at"));
             assertEquals("NO", nullable("support_messages", "inquiry_id"));
             assertEquals("NO", nullable("support_messages", "author_id"));
             assertEquals(1L, ((Number) scalar("SELECT COUNT(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = ? AND c.conname = 'ck_support_inquiries_category'", schema)).longValue());

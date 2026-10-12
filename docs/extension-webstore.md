@@ -1,6 +1,8 @@
-# Chrome 웹스토어 준비
+# Chrome 웹스토어 배포
 
-관련 Issue: #400. 현재 상태는 **패키지 준비**이며 웹스토어 등록·심사·게시를 완료한 상태가 아닙니다. Windows 설치 파일 작업은 중지했습니다. 공개 릴리스는 `develop` 검증 후 `master`의 코드로 만듭니다.
+[CodeArchive Chrome 웹스토어 항목](https://chromewebstore.google.com/detail/codearchive/mlhibjadcbklfdllkonhjjajhmhnoalj)의 Item ID는 `mlhibjadcbklfdllkonhjjajhmhnoalj`입니다. 현재 스토어에 공개된 버전과 이 저장소의 다음 후보 버전은 구분합니다. 소스의 `1.0.0`은 `master` 검증 뒤에만 심사 제출하며, 제출 성공은 공개 완료를 뜻하지 않습니다.
+
+새 확장 대시보드·팝업·캡처·Relay 요청은 고정 Cloud Run API `https://codearchive-api-stg-e3q54l32da-as.a.run.app`를 직접 사용합니다. `codearchive-dashboard-beta.netlify.app`은 기존 설치본의 bridge와 로그인 반환을 위한 호환 경로로만 남아 있습니다.
 
 ## 패키지 생성
 
@@ -8,83 +10,58 @@
 npm --prefix apps/dashboard ci
 npm --prefix apps/extension ci
 node --test scripts/extension-store-package.test.mjs
+$env:CODEARCHIVE_SKIP_INSTALLED_EXTENSION = 'true'
 npm --prefix apps/extension run build
 node scripts/extension-store-package.mjs prepare
 ```
 
-기본 출력은 `output/chrome-webstore`입니다. 이미 생성한 파일을 덮어쓰지 않습니다. 다시 생성할 때는 새로운 출력 폴더를 지정합니다.
-
-```powershell
-node scripts/extension-store-package.mjs prepare apps/extension/dist output/chrome-webstore-next
-```
+기본 출력은 `output/chrome-webstore`입니다. 이미 생성한 파일을 덮어쓰지 않습니다. 패키지에는 다음 파일이 생성됩니다.
 
 | 파일 | 내용 |
 | --- | --- |
 | `codearchive-chrome-webstore.zip` | 루트 manifest와 컴파일된 확장·대시보드·수집 화면 |
 | `codearchive-chrome-webstore.zip.sha256` | ZIP SHA256 |
-| `package-report.json` | 포함 파일별 크기·SHA256, 권한, 로컬 ID 및 남은 검증 |
+| `package-report.json` | 포함 파일, 권한, 로컬 개발 ID와 검사 결과 |
 
-패키지 생성은 원본 manifest, 실제 Chrome 설치 폴더, 브라우저 데이터, 서버 설정을 수정하지 않습니다. 소스맵을 제외하고 JavaScript의 소스맵 참조를 제거합니다. 개발용 `http://localhost:5173/*`를 host permissions와 externally connectable에서 제외하고, 제거된 연동 가이드에 쓰던 `https://api.github.com/*` 권한도 ZIP에서는 제외하며, 확장 페이지 CSP를 `script-src 'self'; object-src 'self';`로 명시합니다. 로컬 개발 빌드는 기존 설정을 유지합니다.
+스토어 ZIP은 개발용 manifest `key`를 제외합니다. 원본 manifest의 로컬 개발 ID `oohlcmihldmfninmdcmanddfmhoonmdl`과 키는 개발 빌드 호환성만 위해 보존합니다. 스토어 Item ID와 같거나 로컬 IndexedDB가 자동 이전된다고 가정하지 않습니다.
 
-manifest의 버전·공개 키·로컬 ID 계약, 권한·사이트 범위, manifest와 HTML이 참조하는 로컬 파일을 검사합니다. 예상 밖 파일, 심볼릭 링크, 누락 파일, HTML 인라인 스크립트·이벤트 처리와 원격 script/link를 거부합니다. ZIP은 파일 순서와 타임스탬프를 고정합니다. 이 검사는 JavaScript 전체의 의미 분석이나 실제 Chrome 검증을 대신하지 않습니다. 실제 ZIP에 포함된 의존 코드도 원격 실행 코드가 없는지 검토해야 합니다.
-
-`netlify.toml`의 `build.ignore = "exit 0"`으로 저장소 변경에 따른 웹 빌드를 중지합니다. 기존에 게시된 API 프록시는 사용하며, 이 작업에서 새 Netlify 배포를 실행하지 않습니다.
-
-CI도 준비 명령을 실행하며, 웹스토어에 업로드하거나 자동 게시하지 않습니다. 기존 GitHub 릴리스 워크플로의 master 제한은 유지합니다.
-
-## 스토어 설명 초안
-
-**단일 목적:** SWEA·프로그래머스·정올의 본인 정답 풀이를 기록하고, CodeArchive에서 풀이 조회·동기화·선택한 GitHub 저장소 기록을 관리합니다.
-
-**상세 설명:** 정답 제출의 코드와 문제 정보를 기록합니다. 확장에 포함된 관리 탭에서 풀이 검색, 코드 테마, 과거 제출 수집, 서버 동기화와 GitHub 커밋을 관리합니다. 로그인 후 신규 정답은 자동 동기화합니다. GitHub 자동 커밋은 저장소 연결과 별도 ON/OFF 설정에 따릅니다. 커뮤니티 공개 설정을 적용한 코드와 닉네임은 같은 문제의 풀이를 공개한 로그인 사용자에게 표시됩니다. Chrome을 완전히 종료하면 확장 작업은 실행되지 않습니다. 별도 PC 앱은 필요하지 않습니다.
-
-## 권한 설명 초안
+## 권한과 데이터 경계
 
 | 권한/대상 | 사용 이유 |
 | --- | --- |
-| `storage` | 확장 설정, 연결 상태, 재시도·수집 진행 정보를 Chrome 프로필에 보관합니다. 풀이 데이터는 IndexedDB에 보관합니다. |
-| `alarms` | 관리 화면이 닫혀 있어도 동기화 재시도를 예약합니다. |
-| `scripting` | 사용자가 시작한 과거 풀이 수집에서 해당 플랫폼 탭에 패키지의 수집 스크립트를 적용합니다. |
-| `downloads` | 사용자가 선택한 풀이를 코드 파일로 내보냅니다. |
-| SWEA·프로그래머스·정올 | 본인 정답 결과, 원본 코드, 문제 정보와 제출 기록을 확인합니다. |
-| `codearchive-dashboard-beta.netlify.app` | 기존 API 프록시를 통한 계정 확인, 로그인 반환, 풀이 동기화, 설정·커뮤니티·GitHub 관리에 사용합니다. Netlify 웹 배포를 수행한다는 의미가 아닙니다. |
-| `externally_connectable`의 CodeArchive origin | 기존 CodeArchive 페이지와의 제한된 메시지 연결 및 인증 후 확장 화면 복귀에 사용합니다. 일반 웹사이트의 관리 API 접근은 허용하지 않습니다. |
+| `storage` | 확장 설정, 재시도·수집 진행과 IndexedDB 풀이 기록을 보관합니다. |
+| `alarms` | 관리 화면이 닫혀 있을 때 동기화 재시도를 예약합니다. |
+| `scripting` | 사용자가 시작한 과거 풀이 수집에서 패키지 수집 스크립트를 적용합니다. |
+| `downloads` | 사용자가 선택한 풀이를 파일로 내보냅니다. |
+| SWEA·프로그래머스·정올 | 본인 제출 결과·코드·문제 정보를 확인합니다. |
+| Cloud Run API | 인증된 계정 확인, 설정, 동기화, 문의와 GitHub 관리를 처리합니다. |
+| legacy dashboard origin | 이전 설치본의 제한된 bridge 호환에만 사용합니다. |
 
-사용자 저장소 조회와 커밋은 인증된 CodeArchive API가 처리합니다. 제거된 연동 가이드의 `api.github.com` 권한은 웹스토어 ZIP에 포함하지 않습니다.
+Chrome이 HttpOnly 인증 쿠키를 관리하며 확장은 쿠키 값을 읽지 않습니다. GitHub OAuth/App token, 개인 키, 소스 코드와 자격 증명은 패키지나 release metadata에 넣지 않습니다. 자세한 항목은 [데이터 처리 안내](extension-privacy.md)에 있습니다.
 
-원격 JavaScript를 받아 실행하지 않으며 React와 Shiki 코드는 ZIP 안에 포함됩니다. 쿠키 읽기, 전체 방문 기록, 임의 사이트 접근 권한은 요청하지 않습니다. GitHub 로그인은 별도 브라우저 인증 페이지에서 처리하고 인증 쿠키 값은 Chrome이 관리합니다.
+## 자동 심사 제출 파이프라인
 
-## 개인정보 안내
+`.github/workflows/chrome-webstore-release.yml`은 `master` 첫 부모 이력의 `extension-v<version>` 태그만 처리합니다. 동일 Cloud Web Store item은 하나의 고정 concurrency 그룹으로 직렬화합니다.
 
-[데이터 처리 안내](extension-privacy.md)에 수집 항목, 자동 동기화, 커뮤니티 공개와 GitHub 전송을 정리했습니다. 인증된 비공개 문의는 데이터 접근·정정·삭제 요청 채널이며 접수됨·확인중·답변완료로 관리합니다. 임의 종료·삭제와 90일 자동 삭제를 제거했고 실제 정책 반영에는 API/V29 적용이 필요합니다. 백업 보관 기간은 확인하지 않았습니다. 정책 참조 URL은 `https://github.com/devkimhongjin/codeArchive/blob/master/docs/extension-privacy.md`이며, 실제 스토어 개인정보 입력란 등록과 공개 접근 확인은 출시 전에 수행합니다. GitHub 문서가 존재한다는 이유만으로 스토어의 모든 개인정보 항목이 충족된다고 판단하지 않습니다.
+1. release source, 태그와 버전, dashboard/extension 테스트·빌드, ZIP 계약을 검증합니다.
+2. 같은 master SHA의 성공한 `Verify` workflow를 확인합니다.
+3. `CWS_WIF_PROVIDER`, `CWS_SERVICE_ACCOUNT`, `CWS_PUBLISHER_ID` repository variable이 있는지 확인합니다.
+4. Google workload identity로 짧은 수명의 Chrome Web Store API token을 얻어 key-free ZIP을 업로드합니다.
+5. API v2 상태가 후보 버전을 확인하면 `DEFAULT_PUBLISH`로 심사를 제출합니다.
 
-## 실제 ID와 출시 검증
+이 워크플로는 장기 키를 사용하지 않고, token이나 API 응답 본문을 로그에 출력하지 않습니다. 업로드, 심사 대기, 공개 상태를 구분하며 다른 대기 심사본을 바꾸지 않습니다. 수동 실행의 dry run은 패키지와 구성만 검증합니다. Publisher service account의 Dashboard 등록과 repository variables는 구성되어 있지만, 실제 CI token/API 호출 결과가 기록되기 전까지 연결 성공이나 게시 완료를 주장하지 않습니다.
 
-현재 공개 키는 **로컬** 확장 ID `oohlcmihldmfninmdcmanddfmhoonmdl`을 유지합니다. 이를 웹스토어의 실제 Item ID로 간주하지 않습니다. 등록 후 스토어에서 발급된 ID·공개 키를 확인하고, 로컬 및 공개 빌드 ID·릴리스 계약·API 허용 origin을 함께 검증합니다. 기존 로컬 ID의 IndexedDB 기록이 다른 ID의 스토어 확장으로 자동 이전된다고 가정하지 않습니다. 이전 방식은 별도 사용자 검증이 필요합니다.
+## 출시 전 확인
 
-출시 전 확인:
-
-- 최종 master 버전의 릴리스 노트와 ZIP 내용 일치.
-- 실제 스토어 ID로 로그인 반환, API CORS와 계정·CSRF 경계 확인.
-- 신규 정답 자동 동기화와 최근 동기화된 문제, 연결된 저장소 팝업 ON/OFF 확인.
-- 전체 풀이·커뮤니티·과거 수집·수동 일괄 동기화/커밋 동작 확인.
-- 관리 탭 이동·닫기, 확장 service worker 재시작, Chrome 재실행 후 중복 전송 없이 작업 상태 복구 확인.
-- 최종 ZIP에 포함된 코드의 원격 코드 실행 여부 검토.
-- 실제 화면 캡처, 개인정보 URL, 데이터 사용 고지와 권한 설명 준비.
+- master SHA, `release.json`, manifest, dashboard와 extension package 버전이 일치한다.
+- 스토어 origin의 CORS, CSRF, 계정 assertion, 로그인 및 GitHub 설치 반환을 실제 Chrome에서 확인한다.
+- 새 정답 자동 동기화, 저장소 선택 뒤 자동 저장, 자동 커밋 ON/OFF, 문의 보관·복원을 확인한다.
+- 최종 ZIP에 개발 key, 원격 실행 코드, 예상 밖 권한이 없는지 검사한다.
+- 개인정보 URL, 데이터 사용 고지, 스크린샷과 심사 입력값을 확인한다.
 
 ## 공식 참고 자료
 
+- [Chrome Web Store API v2](https://developer.chrome.com/docs/webstore/api/reference/rest/v2)
 - [최초 게시와 ZIP 업로드](https://developer.chrome.com/docs/webstore/publish)
 - [개인정보·단일 목적·권한 설명](https://developer.chrome.com/docs/webstore/cws-dashboard-privacy)
 - [웹스토어 공개 키와 개발용 확장 ID](https://developer.chrome.com/docs/extensions/reference/manifest/key)
-- [Manifest V3 원격 코드 제한](https://developer.chrome.com/docs/extensions/develop/migrate/remote-hosted-code)
-
-## 제출 자료와 확인 상태 (v0.3.2)
-
-- [릴리스 노트](releases/extension-v0.3.2.md)
-- [스토어 입력 초안·검증 절차](webstore/submission-v0.3.2.md)
-- [배포 순서·승인 경계·롤백](releases/deployment-v0.3.2.md)
-- [개인정보 안내 초안](extension-privacy.md)
-- 저장소의 `master`로 승격한 뒤 release build로 ZIP과 체크섬을 생성합니다. ZIP의 출처 SHA와 검증 결과는 준비 폴더의 별도 기록에 남깁니다.
-- 아이콘 `apps/extension/icons/icon-128.png`은 포함합니다. 홍보 이미지와 실제 화면 캡처는 스토어 등록 전에 준비합니다.
-- 실제 게시·심사 요청 전 스토어 ID, 로그인/API origin, 개인정보 보관·삭제·비공개 문의 절차, 아래 실브라우저 검증을 확정해야 합니다. 등록 완료로 표시하거나 #400을 종료하지 않습니다.

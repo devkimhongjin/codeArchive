@@ -28,6 +28,7 @@ public class GithubInstallStateService {
     private static final Base64.Encoder ENCODER = Base64.getUrlEncoder().withoutPadding();
     private static final Base64.Decoder DECODER = Base64.getUrlDecoder();
     private static final String RETURN_PATH = "/";
+    private static final String EXTENSION_RETURN_PATH = "/api/extension-login/complete";
 
     private final String appSlug;
     private final byte[] signingKey;
@@ -61,6 +62,9 @@ public class GithubInstallStateService {
     }
 
     public String issue(long userId, String githubId, HttpSession session) {
+        return issue(userId, githubId, session, false);
+    }
+    public String issue(long userId, String githubId, HttpSession session, boolean directExtension) {
         if (!ready() || userId <= 0 || !validGithubId(githubId)) {
             throw new InstallStateException(Failure.PROVIDER_UNAVAILABLE);
         }
@@ -68,8 +72,8 @@ public class GithubInstallStateService {
             Instant now = clock.instant();
             byte[] nonceBytes = new byte[32];
             random.nextBytes(nonceBytes);
-            Payload payload = new Payload(1, userId, githubId, now.getEpochSecond(), now.plus(ttl).getEpochSecond(),
-                    ENCODER.encodeToString(nonceBytes), RETURN_PATH);
+            Payload payload = new Payload(directExtension ? 2 : 1, userId, githubId, now.getEpochSecond(), now.plus(ttl).getEpochSecond(),
+                    ENCODER.encodeToString(nonceBytes), directExtension ? EXTENSION_RETURN_PATH : RETURN_PATH);
             String encodedPayload = ENCODER.encodeToString(objectMapper.writeValueAsBytes(payload));
             String state = encodedPayload + "." + ENCODER.encodeToString(sign(encodedPayload));
             session.setAttribute(SESSION_ATTRIBUTE,
@@ -110,10 +114,10 @@ public class GithubInstallStateService {
         // provider call, so refreshes and callback retries cannot replay it.
         session.removeAttribute(SESSION_ATTRIBUTE);
         long now = clock.instant().getEpochSecond();
-        if (payload.version() != 1 || payload.expiresAt() != pending.expiresAt()
+        if ((payload.version() != 1 && payload.version() != 2) || payload.expiresAt() != pending.expiresAt()
                 || payload.issuedAt() > now + 30 || payload.expiresAt() <= now
                 || payload.expiresAt() - payload.issuedAt() > ttl.toSeconds()
-                || !RETURN_PATH.equals(payload.returnPath()) || payload.nonce() == null
+                || !validReturnPath(payload) || payload.nonce() == null
                 || !payload.nonce().matches("[A-Za-z0-9_-]{40,64}")) {
             throw new InstallStateException(payload.expiresAt() <= now ? Failure.EXPIRED : Failure.INVALID);
         }
@@ -122,6 +126,33 @@ public class GithubInstallStateService {
         }
         return payload;
     }
+
+    /** Validates the signed route hint without consuming or requiring the browser
+     * session, so the global Setup URL can select a fixed callback only while fresh. */
+    public java.util.Optional<Boolean> setupReturn(String state) {
+        return routingReturn(state, true);
+    }
+    /** A callback error may be reported after the state expires. This method still
+     * permits only a verified fixed return hint; it never authorizes or consumes. */
+    public java.util.Optional<Boolean> errorReturn(String state) {
+        return routingReturn(state, false);
+    }
+    private java.util.Optional<Boolean> routingReturn(String state, boolean requireFresh) {
+        try {
+            if (state == null || state.length() > 4096 || !state.matches("[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+")) return java.util.Optional.empty();
+            String[] parts = state.split("\\.", -1);
+            Payload payload = objectMapper.readValue(DECODER.decode(parts[0]), Payload.class);
+            if (!MessageDigest.isEqual(sign(parts[0]), DECODER.decode(parts[1]))) return java.util.Optional.empty();
+            long now = clock.instant().getEpochSecond();
+            if ((requireFresh && payload.expiresAt() <= now) || !validReturnPath(payload)) return java.util.Optional.empty();
+            return java.util.Optional.of(payload.version() == 2);
+        } catch (Exception exception) { return java.util.Optional.empty(); }
+    }
+
+    private static boolean validReturnPath(Payload payload) {
+        return (payload.version() == 1 && RETURN_PATH.equals(payload.returnPath())) || (payload.version() == 2 && EXTENSION_RETURN_PATH.equals(payload.returnPath()));
+    }
+    public static boolean isExtensionReturn(Payload payload) { return payload != null && payload.version() == 2 && EXTENSION_RETURN_PATH.equals(payload.returnPath()); }
 
     private byte[] sign(String encodedPayload) {
         if (signingKey.length == 0) {

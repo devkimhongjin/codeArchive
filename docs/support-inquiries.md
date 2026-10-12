@@ -9,11 +9,13 @@
 - 관리자 권한은 서버가 확인한 GitHub 고유 ID `301944193`(devkimhongjin)의 로그인과 저장된 동일 계정에만 부여됩니다. 사용자명, 요청 헤더, 클라이언트 상태는 권한을 만들지 않습니다.
 - 관리자만 `/admin/tickets` 목록·상세·답변·상태 변경을 사용할 수 있습니다. 권한 확인 뒤 전체 문의함이 바로 열리며 작성 폼이나 관리자 전환 체크박스가 없습니다. 일반 사용자의 관리자 요청은 403이고, 다른 사용자의 문의는 404입니다.
 
-`GET /access`, `GET/POST /tickets`, `GET /tickets/{id}`, 관리자용 `GET /admin/tickets`, `GET /admin/tickets/{id}`, `POST /admin/tickets/{id}/messages`, `PUT /admin/tickets/{id}/status`를 제공합니다. 목록은 페이지당 20건이며 응답은 `Cache-Control: no-store`입니다. 이전 클라이언트의 사용자 메시지·종료·삭제 요청은 인증/계정 확인 뒤 410을 반환하며 데이터를 변경하지 않습니다.
+`GET /access`, `GET/POST /tickets`, `GET /tickets/{id}`, 관리자용 `GET /admin/tickets?archived=false|true`, `GET /admin/tickets/{id}`, `POST /admin/tickets/{id}/messages`, `PUT /admin/tickets/{id}/status`, `POST /admin/tickets/{id}/archive`, `POST /admin/tickets/{id}/restore`를 제공합니다. 목록은 페이지당 20건이며 응답은 `Cache-Control: no-store`입니다. 이전 클라이언트의 사용자 메시지·종료·삭제 요청은 인증/계정 확인 뒤 410을 반환하며 데이터를 변경하지 않습니다.
 
 상태는 `OPEN`(접수됨), `IN_REVIEW`(확인중), `ANSWERED`(답변완료)입니다. 관리자가 명시적으로 상태를 선택합니다. 답변을 저장하면 `ANSWERED`가 되며, 이후 수정은 같은 답변을 갱신합니다. 답변 없는 문의를 `ANSWERED`로 변경할 수 없습니다. 관리자 답변의 `close: true`와 `CLOSED` 상태 요청은 거부합니다. 문의 탭은 주 메뉴의 맨 오른쪽에 둡니다.
 
 ## 보관과 요청 처리
+
+관리자만 답변완료(`ANSWERED`) 또는 호환용 이전 `CLOSED` 문의를 보관할 수 있습니다. 보관된 문의는 기본 관리자 목록에서만 빠지고, 보관함에서 복원할 수 있으며 본인 문의·원문·관리자 답변은 유지됩니다. `IN_REVIEW`로 되돌리면 보관 상태가 자동으로 해제됩니다. 관리자 목록과 상세에는 작성자의 닉네임만 표시하며 이름·이메일은 포함하지 않습니다.
 
 문의 접근 시 자동 정리를 실행하지 않으며 임의 종료·삭제하지 않습니다. 접근·정정·삭제 요청은 관리자가 본인 확인 후 별도 검토합니다. 자동 계정 삭제나 별도의 관리자 삭제 UI를 제공하지 않습니다. 보관 기한이나 백업 삭제 시점은 확인되지 않은 값으로 약속하지 않습니다.
 

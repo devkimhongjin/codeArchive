@@ -1,5 +1,4 @@
-import { normalizeDifficulty, difficultyKey } from '../../../shared/difficulty'
-import { StaticAnalysisPanel } from './StaticAnalysisPanel'
+import { normalizeDifficulty } from '../../../shared/difficulty'
 import { CodeThemePreview } from './CodeThemePreview'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { HistoricalCollectionScope } from '../../../shared/historicalCollectionScope'
@@ -270,7 +269,6 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [platformFilter, setPlatformFilter] = useState<'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'>('ALL')
   const [languageFilter, setLanguageFilter] = useState('ALL')
-  const [difficultyFilter, setDifficultyFilter] = useState('ALL')
   const [solutionSort, setSolutionSort] = useState<SolutionSort>('latest')
   const [solutionPage, setSolutionPage] = useState(1)
   const [loading, setLoading] = useState(false)
@@ -320,10 +318,23 @@ export default function App() {
   const relayHandoffRef = useRef<string | null>(null)
   const relayHandoffInFlight = useRef(new Set<string>())
   const relayHandoffOperation = useRef(0)
-  const themeSaveRequested = useRef(0)
-  const themeSaveCompleted = useRef(0)
-  const themeSaving = useRef(false)
-  const themeQueueGeneration = useRef(0)
+  const settingsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const settingsSaveInFlight = useRef(false)
+  const settingsSaveQueued = useRef(false)
+  // React state updates are asynchronous. The serialized writer must read the
+  // acknowledgement that arrived immediately before its next queued request.
+  const savedTargetRef = useRef<GithubSavedTarget | null>(null)
+  // Repository, branch, and folder browsing creates a recoverable draft. It
+  // cannot enter an unrelated settings write before the folder confirmation.
+  const unconfirmedTargetRef = useRef(false)
+
+  useEffect(() => () => {
+    if (settingsSaveTimer.current) clearTimeout(settingsSaveTimer.current)
+    settingsSaveTimer.current = null
+    // A late network acknowledgement must have no authority after React has
+    // removed this owner of the account settings lane.
+    accountGeneration.current += 1
+  }, [])
 
   const updateAccountSettingsDraft = (next: AccountSettings) => {
     // A draft change (especially an immediate local OFF) invalidates any
@@ -335,11 +346,11 @@ export default function App() {
   }
 
   const clearAccountDraft = () => {
+    if (settingsSaveTimer.current) clearTimeout(settingsSaveTimer.current)
+    settingsSaveTimer.current = null; settingsSaveQueued.current = false; settingsSaveInFlight.current = false
+    unconfirmedTargetRef.current = false
+    savedTargetRef.current = null
     setSavedTarget(null)
-    themeQueueGeneration.current += 1
-    themeSaveRequested.current = 0
-    themeSaveCompleted.current = 0
-    themeSaving.current = false
     settingsLoadedRef.current = null
     // A completion from the prior identity must not keep the replacement
     // account's controls disabled or surface its error in the new profile.
@@ -351,85 +362,28 @@ export default function App() {
   const updateCodeThemes = (themes: Pick<AccountSettings, 'lightTheme' | 'darkTheme'>) => {
     const next = { ...accountSettingsRef.current, ...themes }
     updateAccountSettingsDraft(next)
-    // A disconnected archive still has a useful, durable browser-only preference.
-    if (!user || mode === 'local') { persistLocalThemes(next); return }
-    const generation = accountGeneration.current
-    const account = user
-    const queueGeneration = themeQueueGeneration.current
-    themeSaveRequested.current += 1
-    if (themeSaving.current) return
-    themeSaving.current = true
-    void (async () => {
-      try {
-        while (queueGeneration === themeQueueGeneration.current && generation === accountGeneration.current && themeSaveCompleted.current < themeSaveRequested.current) {
-          const request = themeSaveRequested.current
-          const draft = accountSettingsRef.current
-          let saved: AccountSettings
-          try { saved = await updateAccountSettings(draft, account.githubId) }
-          catch (error) {
-            if (error instanceof ApiError && error.status === 409) {
-              // A session/account assertion mismatch is not an optimistic
-              // settings conflict. Close authority before attempting a
-              // refresh, and apply the same rule if the refresh detects it.
-              if (await handleExpectedAccountChange(error, account.githubId)) return
-              let latest: AccountSettings
-              try { latest = await getAccountSettings(account.githubId) }
-              catch (refreshError) {
-                if (await handleExpectedAccountChange(refreshError, account.githubId)) return
-                throw refreshError
-              }
-              if (queueGeneration !== themeQueueGeneration.current || generation !== accountGeneration.current || userRef.current?.id !== account.id) return
-              const merged = { ...latest, lightTheme: accountSettingsRef.current.lightTheme, darkTheme: accountSettingsRef.current.darkTheme }
-              accountSettingsRef.current = merged
-              setAccountSettings(merged)
-              continue
-            }
-            // A later UI change may have arrived while this PUT was pending.
-            // Never make the older captured draft durable in that case: finish
-            // the current queue locally with the latest visible selection. A
-            // subsequent explicit change starts a fresh request from the last
-            // acknowledged settings version.
-            if (queueGeneration !== themeQueueGeneration.current || generation !== accountGeneration.current || userRef.current?.id !== account.id) return
-            themeSaveCompleted.current = themeSaveRequested.current
-            persistLocalThemes(accountSettingsRef.current)
-            const message = error instanceof Error ? error.message : '코드 보기 테마를 저장하지 못했습니다.'
-            setSettingsError(message)
-            showToast('info', `미리보기에는 적용했습니다. ${message}`)
-            return
-          }
-          if (queueGeneration !== themeQueueGeneration.current || generation !== accountGeneration.current || userRef.current?.id !== account.id) return
-          themeSaveCompleted.current = request
-          if (request !== themeSaveRequested.current) {
-            const newer = { ...accountSettingsRef.current, version: saved.version }
-            accountSettingsRef.current = newer
-            setAccountSettings(newer)
-            continue
-          }
-          relayHandoffOperation.current += 1
-          accountSettingsRef.current = saved
-          settingsLoadedRef.current = { accountId: account.id, generation, version: saved.version }
-          relayHandoffRef.current = null
-          setAccountSettings(saved)
-          updateExportSettings({ copyHeader: saved.copyHeader, downloadHeader: saved.downloadHeader, copyHeaderFields: normalizedHeaderFields(saved.copyHeaderFields), downloadHeaderFields: normalizedHeaderFields(saved.downloadHeaderFields), filenameTemplate: saved.downloadFilenameTemplate, gitPathTemplate: saved.gitPathTemplate })
-          await configureRelay(saved, account, generation)
-        }
-      } catch (error) {
-        if (queueGeneration !== themeQueueGeneration.current || generation !== accountGeneration.current || userRef.current?.id !== account.id) return
-        const message = error instanceof Error ? error.message : '코드 보기 테마를 저장하지 못했습니다.'
-        setSettingsError(message)
-      } finally { if (queueGeneration === themeQueueGeneration.current) themeSaving.current = false }
-    })()
+    // Keep the immediately-previewed choice available to this browser even if
+    // the authenticated conditional write is rejected. The next successful
+    // acknowledgement remains the server authority for account settings.
+    persistLocalThemes(next)
+    // A disconnected archive still has a durable browser-only preference.
+    if (!user || mode === 'local') return
+    // Theme changes use the same conditional-write lane as every other
+    // setting. This prevents a theme acknowledgement from racing a newer
+    // nickname or GitHub target draft.
+    scheduleAccountSettingsSave(0)
   }
 
-  const chooseCodeTheme = (theme: CodeTheme, persistImmediately: boolean) => {
+  const chooseCodeTheme = (theme: CodeTheme, _persistImmediately: boolean) => {
     const nextMode = isLightTheme(theme) ? 'light' : 'dark'
     setCodeThemeMode(nextMode)
     try { localStorage.setItem(CODE_THEME_MODE_KEY, nextMode) } catch { /* The current preview still updates. */ }
     const nextThemes = isLightTheme(theme)
       ? { lightTheme: theme, darkTheme: accountSettingsRef.current.darkTheme }
       : { lightTheme: accountSettingsRef.current.lightTheme, darkTheme: theme }
-    if (persistImmediately) updateCodeThemes(nextThemes)
-    else updateAccountSettingsDraft({ ...accountSettingsRef.current, ...nextThemes })
+    // The preview updates first in both modes; persistence is queued only
+    // after live settings have finished loading.
+    updateCodeThemes(nextThemes)
   }
 
   const showToast = (kind: Toast['kind'], message: string) => {
@@ -500,7 +454,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!user) { settingsLoadedRef.current = null; setSavedTarget(null); updateAccountSettingsDraft(defaultAccountSettings()); return }
+    if (!user) { settingsLoadedRef.current = null; unconfirmedTargetRef.current = false; savedTargetRef.current = null; setSavedTarget(null); updateAccountSettingsDraft(defaultAccountSettings()); return }
     let active = true
     const generation = accountGeneration.current
     const loadingFor = user
@@ -517,9 +471,11 @@ export default function App() {
         ? { ...server, copyHeader: exportSettings.copyHeader, downloadHeader: exportSettings.downloadHeader, downloadFilenameTemplate: exportSettings.filenameTemplate, gitPathTemplate: exportSettings.gitPathTemplate ?? server.gitPathTemplate }
         : server
       relayHandoffOperation.current += 1
+      unconfirmedTargetRef.current = false
       accountSettingsRef.current = migrated
       setAccountSettings(migrated)
-      setSavedTarget(savedGithubTarget(server))
+      savedTargetRef.current = savedGithubTarget(server)
+      setSavedTarget(savedTargetRef.current)
       setExportSettings({ copyHeader: migrated.copyHeader, downloadHeader: migrated.downloadHeader, copyHeaderFields: migrated.copyHeaderFields, downloadHeaderFields: migrated.downloadHeaderFields, filenameTemplate: migrated.downloadFilenameTemplate, gitPathTemplate: migrated.gitPathTemplate })
       settingsLoadedRef.current = { accountId: loadingFor.id, generation, version: migrated.version }
       // If automatic connection won the race against settings loading, now send
@@ -569,8 +525,8 @@ export default function App() {
   }, [solutions])
 
   const filteredSolutions = useMemo(() => {
-    return filterAndSortSolutions(solutions, { query, platform: platformFilter, languageKey: languageFilter, difficulty: difficultyFilter, sort: solutionSort })
-  }, [difficultyFilter, languageFilter, platformFilter, query, solutionSort, solutions])
+    return filterAndSortSolutions(solutions, { query, platform: platformFilter, languageKey: languageFilter, difficulty: 'ALL', sort: solutionSort })
+  }, [languageFilter, platformFilter, query, solutionSort, solutions])
 
   const solutionGroups = useMemo(() => groupSolutions(filteredSolutions), [filteredSolutions])
   const solutionPageCount = Math.max(1, Math.ceil(solutionGroups.length / ARCHIVE_PAGE_SIZE))
@@ -1037,26 +993,103 @@ export default function App() {
     catch { showToast('info', '설정은 현재 화면에 적용됐지만 브라우저에 저장하지 못했습니다.') }
   }
 
+  const settingsDraftForSave = (draft: AccountSettings): AccountSettings => {
+    if (!unconfirmedTargetRef.current) return draft
+    // Preserve the last server-acknowledged target while another field is
+    // saved during a target-picker session.  Turning auto-commit off is safe
+    // for that retained target and prevents an automatic commit to it while
+    // the new target is still provisional.
+    return {
+      ...draft,
+      githubTargetConfigured: Boolean(savedTargetRef.current),
+      githubInstallationId: savedTargetRef.current?.installationId ?? null,
+      githubOwner: savedTargetRef.current?.owner ?? null,
+      githubRepository: savedTargetRef.current?.repository ?? null,
+      githubBranch: savedTargetRef.current?.branch ?? null,
+      githubRootPath: savedTargetRef.current?.rootPath ?? null,
+      githubAutoCommitEnabled: false,
+    }
+  }
+
+  const autoSaveDraftIsValid = (draft: AccountSettings) => {
+    const persisted = settingsDraftForSave(draft)
+    const targetValues = [persisted.githubInstallationId, persisted.githubOwner, persisted.githubRepository, persisted.githubBranch]
+    const targetStarted = targetValues.some(value => value !== null && value !== '')
+    return hasGitSubmissionIdentityToken(persisted.gitPathTemplate) && (!targetStarted || targetValues.every(value => value !== null && value !== ''))
+  }
+
+  const applyAcknowledgedTarget = (saved: AccountSettings) => {
+    savedTargetRef.current = savedGithubTarget(saved)
+    setSavedTarget(savedTargetRef.current)
+  }
+
+  const acknowledgedRelaySettings = (saved: AccountSettings): AccountSettings => {
+    const latest = accountSettingsRef.current
+    // The server acknowledgement is authoritative for the target/version, but
+    // a later local OFF or provisional target choice cannot regain automation
+    // authority while its own conditional write is queued.
+    const pauseForLaterOff = !latest.autoSyncEnabled || (!latest.githubAutoCommitEnabled && saved.githubAutoCommitEnabled)
+    return {
+      ...saved,
+      autoSyncEnabled: pauseForLaterOff ? false : saved.autoSyncEnabled,
+      githubAutoCommitEnabled: !latest.autoSyncEnabled || !latest.githubAutoCommitEnabled || unconfirmedTargetRef.current
+        ? false
+        : saved.githubAutoCommitEnabled,
+    }
+  }
+
+  const renewRelayForAcknowledgedSettings = async (saved: AccountSettings, account: User, generation: number) => {
+    const acknowledged = acknowledgedRelaySettings(saved)
+    relayHandoffOperation.current += 1
+    relayHandoffRef.current = null
+    await configureRelay(acknowledged, account, generation)
+  }
+
   const saveAccountSettings = async () => {
-    if (!user || settingsBusy) return
+    if (!user) return
+    if (settingsSaveInFlight.current) { settingsSaveQueued.current = true; return }
     const generation = accountGeneration.current
     const savingFor = user
     const savingDraft = accountSettingsRef.current
-    if (!hasGitSubmissionIdentityToken(savingDraft.gitPathTemplate)) {
-      setSettingsError('Git 저장 경로에 {capture_ID} 또는 {time}을 추가해 주세요.')
+    if (!autoSaveDraftIsValid(savingDraft)) {
+      // A previously scheduled valid edit can become incomplete before its
+      // timer fires. Keep its draft visible and wait for a valid completion.
       return
     }
+    const requestDraft = settingsDraftForSave(savingDraft)
     const stillCurrent = () => generation === accountGeneration.current && userRef.current?.id === savingFor.id
-    setSettingsBusy(true); setSettingsError(null)
+    settingsSaveInFlight.current = true; setSettingsBusy(true); setSettingsError(null)
     try {
-      const saved = await updateAccountSettings(extensionRuntime() ? { ...savingDraft, autoSyncEnabled: true } : savingDraft, savingFor.githubId)
+      const saved = await updateAccountSettings(extensionRuntime() ? { ...requestDraft, autoSyncEnabled: true } : requestDraft, savingFor.githubId)
       if (stillCurrent()) {
+        // Never let a late acknowledgement erase a newer visible draft. Its
+        // version becomes the base for the queued conditional write instead.
+        if (accountSettingsRef.current !== savingDraft) {
+          accountSettingsRef.current = { ...accountSettingsRef.current, version: saved.version }
+          settingsLoadedRef.current = { accountId: savingFor.id, generation, version: saved.version }
+          applyAcknowledgedTarget(saved)
+          setAccountSettings(accountSettingsRef.current)
+          await renewRelayForAcknowledgedSettings(saved, savingFor, generation)
+          settingsSaveQueued.current = true
+          return
+        }
+        if (requestDraft !== savingDraft) {
+          // A non-target edit was acknowledged while a target remains
+          // provisional. Keep that visible target draft, but advance its
+          // conditional-write base without repeatedly saving it.
+          accountSettingsRef.current = { ...savingDraft, version: saved.version }
+          settingsLoadedRef.current = { accountId: savingFor.id, generation, version: saved.version }
+          applyAcknowledgedTarget(saved)
+          setAccountSettings(accountSettingsRef.current)
+          await renewRelayForAcknowledgedSettings(saved, savingFor, generation)
+          return
+        }
         relayHandoffOperation.current += 1
         accountSettingsRef.current = saved
         settingsLoadedRef.current = { accountId: savingFor.id, generation, version: saved.version }
         relayHandoffRef.current = null
         setAccountSettings(saved)
-        setSavedTarget(savedGithubTarget(saved))
+        applyAcknowledgedTarget(saved)
         updateExportSettings({ copyHeader: saved.copyHeader, downloadHeader: saved.downloadHeader, copyHeaderFields: normalizedHeaderFields(saved.copyHeaderFields), downloadHeaderFields: normalizedHeaderFields(saved.downloadHeaderFields), filenameTemplate: saved.downloadFilenameTemplate, gitPathTemplate: saved.gitPathTemplate })
         await configureRelay(saved, savingFor, generation)
         if (stillCurrent() && modeRef.current === 'live') {
@@ -1069,7 +1102,21 @@ export default function App() {
       if (await handleExpectedAccountChange(error, savingFor.githubId)) return
       const message = error instanceof ApiError && error.status === 409 ? '다른 창에서 설정이 변경되었습니다. 새로고침 후 다시 저장해 주세요.' : error instanceof Error ? error.message : '설정을 저장하지 못했습니다.'
       setSettingsError(message)
-    } finally { if (stillCurrent()) setSettingsBusy(false) }
+    } finally {
+      if (stillCurrent()) {
+        settingsSaveInFlight.current = false; setSettingsBusy(false)
+        if (settingsSaveQueued.current) { settingsSaveQueued.current = false; void saveAccountSettings() }
+      }
+    }
+  }
+
+  const scheduleAccountSettingsSave = (delay = 500) => {
+    if (settingsSaveTimer.current) clearTimeout(settingsSaveTimer.current)
+    settingsSaveTimer.current = null
+    if (!user || mode !== 'live' || !settingsLoadedRef.current || settingsLoadedRef.current.accountId !== user.id) return
+    const draft = accountSettingsRef.current
+    if (!autoSaveDraftIsValid(draft)) return
+    settingsSaveTimer.current = setTimeout(() => { settingsSaveTimer.current = null; void saveAccountSettings() }, delay)
   }
 
   const syncPending = async () => {
@@ -1291,7 +1338,7 @@ export default function App() {
           <button className="brand" onClick={() => changeView('solutions')} aria-label="CodeArchive 홈">
             <span className="brand-copy">
               <span className="brand-name">CodeArchive</span>
-              <span className="brand-release"><span className="brand-beta">BETA</span><span className="brand-updated">{updatedLabel()}</span></span>
+              <span className="brand-release"><span className="brand-updated">{updatedLabel()}</span></span>
             </span>
           </button>
           <button className="mobile-menu" onClick={() => setMobileNavOpen((open) => !open)} aria-label="메뉴 열기">
@@ -1384,8 +1431,6 @@ export default function App() {
             query={query}
             platformFilter={platformFilter}
             languageFilter={languageFilter}
-            difficultyFilter={difficultyFilter}
-            setDifficultyFilter={value => { setDifficultyFilter(value); setSolutionPage(1) }}
             languages={languages}
             solutionSort={solutionSort}
             loading={loading}
@@ -1460,13 +1505,33 @@ export default function App() {
             exportSettings={exportSettings}
             updateExportSettings={updateExportSettings}
             accountSettings={accountSettings}
-            savedTarget={savedTarget}
-            updateAccountSettings={next => { markDesktopDraft(); updateAccountSettingsDraft(next) }}
+            savedTarget={savedTarget && savedTarget.installationId === accountSettings.githubInstallationId && savedTarget.owner === accountSettings.githubOwner && savedTarget.repository === accountSettings.githubRepository && savedTarget.branch === accountSettings.githubBranch && savedTarget.rootPath === accountSettings.githubRootPath ? savedTarget : null}
+            updateAccountSettings={(next, immediate = false, confirmTarget = false) => {
+              markDesktopDraft()
+              // A deferred GitHub picker event can arrive while an account
+              // replacement is clearing its settings. Do not let that stale
+              // event throw while deciding its debounce class; the account
+              // generation and loaded-account checks in the save lane still
+              // prevent it from issuing a write.
+              const prior = accountSettingsRef.current ?? defaultAccountSettings()
+              updateAccountSettingsDraft(next)
+              // Text entry is debounced. A toggle, picker, or target step is
+              // already a complete user decision and should acknowledge soon.
+              const textOnly = Object.keys(next).every(key => ['name', 'nickname', 'downloadFilenameTemplate', 'gitPathTemplate', 'githubCommitMessageTemplate'].includes(key) || next[key as keyof AccountSettings] === prior[key as keyof AccountSettings])
+              const targetTupleChanged = next.githubInstallationId !== prior.githubInstallationId || next.githubOwner !== prior.githubOwner || next.githubRepository !== prior.githubRepository || next.githubBranch !== prior.githubBranch || next.githubRootPath !== prior.githubRootPath
+              // Installation, repository, and branch choices are a recoverable
+              // draft. The directory confirmation passes `immediate`, which is
+              // the only point a new target is eligible for a server write.
+              if (confirmTarget) unconfirmedTargetRef.current = false
+              else if (targetTupleChanged) unconfirmedTargetRef.current = !immediate
+              if (targetTupleChanged && !immediate) return
+              scheduleAccountSettingsSave(immediate || !textOnly ? 0 : 500)
+            }}
             codeThemeMode={codeThemeMode}
             onCodeThemeChange={(theme) => chooseCodeTheme(theme, false)}
             settingsBusy={settingsBusy}
             settingsError={settingsError}
-            onSaveSettings={() => void saveAccountSettings()}
+            onRetrySettingsSave={() => scheduleAccountSettingsSave(0)}
             onCommunityPublished={expectedGithubId => { if (userRef.current?.githubId === expectedGithubId && modeRef.current === 'live') void refreshSolutions(accountGeneration.current, expectedGithubId).catch(() => showToast('info', '공개는 완료됐습니다. 풀이 목록을 새로고침해 주세요.')) }}
             onAutoSyncDisabled={clearRelay}
             previewSolution={selectedSolution ?? { captureId: 'preview', platform: 'SWEA', problemNumber: '0000', title: '미리보기', problemUrl: 'https://example.com/problem/0000', language: 'Java', sourceCode: '', result: 'ACCEPTED', solvedAt: '2026-01-01T00:00:00Z', executionTime: 123, memoryValue: 2048, memoryUnit: 'KB' }}
@@ -1506,8 +1571,6 @@ function SolutionsView({
   query,
   platformFilter,
   languageFilter,
-  difficultyFilter,
-  setDifficultyFilter,
   languages,
   solutionSort,
   loading,
@@ -1538,8 +1601,6 @@ function SolutionsView({
   query: string
   platformFilter: 'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'
   languageFilter: string
-  difficultyFilter: string
-  setDifficultyFilter: (value: string) => void
   languages: Array<{ key: string; label: string }>
   solutionSort: SolutionSort
   loading: boolean
@@ -1560,7 +1621,7 @@ function SolutionsView({
   const listRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = 0
-  }, [page, query, platformFilter, languageFilter, difficultyFilter, solutionSort])
+  }, [page, query, platformFilter, languageFilter, solutionSort])
   return (
     <section className="solutions-layout" aria-label="풀이 아카이브">
       <div className="solutions-heading">
@@ -1588,9 +1649,8 @@ function SolutionsView({
         <select value={languageFilter} onChange={(event) => setLanguageFilter(event.target.value)} aria-label="언어 필터">
           {languages.map((language) => <option key={language.key} value={language.key}>{language.label}</option>)}
         </select>
-        <select aria-label="난이도 필터" value={difficultyFilter} onChange={event => setDifficultyFilter(event.target.value)}><option value="ALL">모든 난이도</option><option value="UNKNOWN">미확인</option>{[...new Set(solutions.filter(item => item.difficulty).map(item => difficultyKey(item.platform, item.difficulty)))].sort().map(key => <option key={key} value={key}>{key.replace(':', ' ')}</option>)}</select>
         <label className="archive-theme-picker">코드 보기 테마 <CodeThemeSelect value={codeThemeMode === 'dark' ? darkTheme : lightTheme} onChange={onCodeThemeChange} /></label>
-        {(query || platformFilter !== 'ALL' || languageFilter !== 'ALL' || difficultyFilter !== 'ALL') && <button className="filter-reset" onClick={() => { setQuery(''); setPlatformFilter('ALL'); setLanguageFilter('ALL'); setDifficultyFilter('ALL') }}><Icon name="close" size={13} /> 필터 초기화</button>}
+        {(query || platformFilter !== 'ALL' || languageFilter !== 'ALL') && <button className="filter-reset" onClick={() => { setQuery(''); setPlatformFilter('ALL'); setLanguageFilter('ALL') }}><Icon name="close" size={13} /> 필터 초기화</button>}
       </div>
 
       <div className="content-grid">
@@ -1630,7 +1690,7 @@ function SolutionGroupRow({ group, selected, onSelect, onOtherSolutions }: { gro
       <span className={`platform-logo ${group.platform === 'SWEA' ? 'swea' : group.platform === 'JUNGOL' ? 'jungol' : 'programmers'}`}>{group.platform === 'SWEA' ? 'S' : group.platform === 'JUNGOL' ? 'J' : 'P'}</span>
       <span className="solution-row-main">
         <span className="solution-row-top"><span className="solution-platform">{group.platform}</span><span className="solution-result">풀이 {group.submissions.length}개</span></span>
-        <span className="solution-title">{group.title}</span><small>{group.submissions.find(item => item.difficulty)?.difficulty?.label ?? '난이도 미확인'}</small>
+        <span className="solution-title">{group.title}</span>
         <span className="solution-row-bottom"><span>#{group.problemNumber}</span><span className="row-divider" /><span>{languageLabels}</span><span className="row-time"><Icon name="clock" size={12} /> {formatDate(latest.solvedAt ?? latest.observedAt)}</span></span>
       </span>
       <Icon name="chevron" size={17} />
@@ -1649,7 +1709,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
             <div className="detail-heading-main">
               <div className="detail-breadcrumb"><span>{solution.platform}</span><Icon name="chevron" size={12} /><span>#{solution.problemNumber}</span></div>
               <h2>{solution.title}</h2>
-              <div className="detail-subline"><span>{solution.difficulty?.label ?? '난이도 미확인'}</span><span>{canonicalLanguageDisplayName(solution.language)}</span><span className="row-divider" /><span>풀이 시간 {formatObservedTime(solution.solvedAt ?? solution.observedAt)}</span></div>
+              <div className="detail-subline"><span>{canonicalLanguageDisplayName(solution.language)}</span><span className="row-divider" /><span>풀이 시간 {formatObservedTime(solution.solvedAt ?? solution.observedAt)}</span></div>
             </div>
             <div className="detail-heading-actions"><button type="button" className="problem-link" onClick={() => onOtherSolutions(solution.platform, solution.problemNumber)}>다른 풀이 보기</button><a className="problem-link" href={solution.problemUrl} target="_blank" rel="noreferrer">문제 보기 <Icon name="external" size={14} /></a></div>
           </div>
@@ -1661,7 +1721,6 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
           {group && group.submissions.length > 1 && <label className="submission-picker">제출 기록<select aria-label="제출 기록" value={solution.captureId} onChange={(event) => onSelectSubmission(event.target.value)}>{group.submissions.map((submission, index) => <option key={submission.captureId} value={submission.captureId}>{index + 1}. {formatObservedTime(submission.solvedAt ?? submission.observedAt)} · {canonicalLanguageDisplayName(submission.language)}</option>)}</select></label>}
           <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
           <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} activeMode={codeThemeMode} />
-          <StaticAnalysisPanel captureId={solution.captureId} language={solution.language} source={solution.sourceCode} />
           <div className="detail-note"><Icon name="spark" size={14} /><span>{solution.historicalImport ? mode === 'live' ? '과거 풀이를 명시적으로 서버에 동기화한 기록입니다. 자동 GitHub 커밋은 실행되지 않습니다.' : '이 브라우저에 보관한 과거 풀이입니다. 과거 풀이 관리 탭에서 서버 동기화와 GitHub 커밋을 요청할 수 있습니다.' : mode === 'local' ? '이 브라우저의 로컬 기록입니다. 로그인 후 명시적으로 동기화할 수 있습니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
         </>
       )}
@@ -1711,7 +1770,7 @@ function SettingsView({
   onCodeThemeChange,
   settingsBusy,
   settingsError,
-  onSaveSettings,
+  onRetrySettingsSave,
   onCommunityPublished,
   onAutoSyncDisabled,
   previewSolution,
@@ -1727,12 +1786,12 @@ function SettingsView({
   updateExportSettings: (settings: ExportSettings) => void
   accountSettings: AccountSettings
   savedTarget: GithubSavedTarget | null
-  updateAccountSettings: (settings: AccountSettings) => void
+  updateAccountSettings: (settings: AccountSettings, immediate?: boolean, confirmTarget?: boolean) => void
   codeThemeMode: CodeThemeMode
   onCodeThemeChange: (theme: CodeTheme) => void
   settingsBusy: boolean
   settingsError: string | null
-  onSaveSettings: () => void
+  onRetrySettingsSave: () => void
   onCommunityPublished: (expectedGithubId: string) => void
   onAutoSyncDisabled: () => void
   previewSolution: Solution
@@ -1800,7 +1859,7 @@ function SettingsView({
     setAdditionPreview(null); setAdditionError(null); setAdditionSuccess(null)
     clearTreeOperationPreview()
     if (id === null) {
-      updateAccountSettings({ ...accountSettings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
+      updateAccountSettings({ ...accountSettings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false }, true)
       setRepositoryId(null); setRepositories([]); setBranches([]); setDirectory(null); setTree(null); setTreeError(null); setEmptyDefaultBranch(null); setReadmePreview(null)
       setRepositoriesLoaded(false); setBranchesLoaded(false); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
       return
@@ -1823,7 +1882,7 @@ function SettingsView({
     setAdditionPreview(null); setAdditionError(null); setAdditionSuccess(null)
     clearTreeOperationPreview()
     if (id === null) {
-      updateAccountSettings({ ...accountSettings, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
+      updateAccountSettings({ ...accountSettings, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false }, true)
       setRepositoryId(null); setBranches([]); setDirectory(null); setTree(null); setTreeError(null); setEmptyDefaultBranch(null); setReadmePreview(null); setBranchesLoaded(false); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
       return
     }
@@ -1855,7 +1914,7 @@ function SettingsView({
     setAdditionPreview(null); setAdditionError(null); setAdditionSuccess(null)
     clearTreeOperationPreview()
     if (!branch) {
-      updateAccountSettings({ ...accountSettings, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false })
+      updateAccountSettings({ ...accountSettings, githubBranch: null, githubRootPath: null, githubAutoCommitEnabled: false }, true)
       setDirectory(null); setTree(null); setTreeError(null); setTargetBusy(false); setTargetStep('idle'); clearTargetFeedback()
       return
     }
@@ -2061,8 +2120,12 @@ function SettingsView({
   const providerUnavailable = accountSettings.githubStatus === 'PROVIDER_UNAVAILABLE'
   const targetPanelExpanded = draftTargetConfigured || installations.length > 0 || accountSettings.githubInstallationId !== null || targetBusy || targetError !== null
   const targetLoadingText = targetStep === 'connecting' ? '연결 중' : targetStep === 'repositories' ? '저장소 확인 중' : targetStep === 'branches' ? '브랜치 확인 중' : targetStep === 'directories' ? '폴더 확인 중' : targetStep === 'initializing' ? 'README 초기화 중' : targetStep === 'adding' ? '파일 커밋 중' : null
-  const targetStateText = targetLoadingText ?? (targetError ? '재시도 필요' : draftTargetConfigured ? '연결 완료' : targetPanelExpanded ? '저장 위치 선택 중' : user ? '연결 필요' : 'GitHub 로그인 필요')
-  const githubStatusText = providerUnavailable ? '현재 GitHub App 연결을 사용할 수 없습니다. 서버 설정이 복구된 뒤 다시 시도해 주세요.' : draftTargetConfigured ? '저장하면 선택한 GitHub 대상을 다시 확인합니다.' : 'GitHub App을 연결하고 풀이를 저장할 위치를 선택하세요.'
+  // `savedTarget` is supplied only when the currently visible tuple is the
+  // server acknowledgement. A complete draft must never look connected until
+  // that acknowledgement arrives.
+  const targetPersisted = savedTarget !== null
+  const targetStateText = targetLoadingText ?? (targetError || settingsError ? '재시도 필요' : targetPersisted ? '연결 완료' : draftTargetConfigured ? settingsBusy ? '연결 확인 중' : '연결 확인 대기' : targetPanelExpanded ? '저장 위치 선택 중' : user ? '연결 필요' : 'GitHub 로그인 필요')
+  const githubStatusText = providerUnavailable ? '현재 GitHub App 연결을 사용할 수 없습니다. 서버 설정이 복구된 뒤 다시 시도해 주세요.' : targetPersisted ? '저장소 연결을 변경하거나 기존 항목을 관리할 수 있습니다.' : draftTargetConfigured ? settingsBusy ? '선택한 위치를 서버에서 확인하고 있습니다. 확인이 끝나면 자동 커밋을 사용할 수 있습니다.' : '선택한 위치 확인이 필요합니다. 입력은 유지되며 다시 시도할 수 있습니다.' : 'GitHub App을 연결하고 풀이를 저장할 위치를 선택하세요.'
   const retryTarget = () => {
     if (targetErrorStep === 'repositories' && accountSettings.githubInstallationId) { void chooseInstallation(accountSettings.githubInstallationId); return }
     if (targetErrorStep === 'branches' && repositoryId) { void chooseRepository(repositoryId); return }
@@ -2074,26 +2137,27 @@ function SettingsView({
       <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> WORKSPACE / {section === 'github' ? 'GITHUB' : 'SETTINGS'}</p><h1>{section === 'github' ? 'GitHub 관리' : '설정'}</h1><p>{section === 'github' ? '저장소와 자동 커밋을 관리합니다.' : '프로필, 코드 저장 및 자동 동기화를 관리합니다.'}</p></div>
       {section === 'github' && user && savedTarget && <GithubRepositoryBrowser githubId={user.githubId} target={savedTarget} lightTheme={accountSettings.lightTheme} darkTheme={accountSettings.darkTheme} codeThemeMode={codeThemeMode} onExpectedAccountChange={onExpectedAccountChange} />}
       {section === 'settings' && <DesktopSettings />}
-      {section === 'settings' && <CommunitySettings user={user} ready={accountSettingsReady} duplicateVisibility={accountSettings.communityDuplicateVisibility ?? 'all'} onDuplicateChange={communityDuplicateVisibility => updateAccountSettings({ ...accountSettings, communityDuplicateVisibility })} publicByDefault={accountSettings.communityPublicByDefault ?? true} onChange={communityPublicByDefault => updateAccountSettings({ ...accountSettings, communityPublicByDefault })} onSave={onSaveSettings} saving={settingsBusy} onPublished={onCommunityPublished} onAuthInvalid={onExpectedAccountChange} />}
+      {section === 'settings' && <CommunitySettings user={user} ready={accountSettingsReady} duplicateVisibility={accountSettings.communityDuplicateVisibility ?? 'all'} onDuplicateChange={communityDuplicateVisibility => updateAccountSettings({ ...accountSettings, communityDuplicateVisibility }, true)} publicByDefault={accountSettings.communityPublicByDefault ?? true} onChange={communityPublicByDefault => updateAccountSettings({ ...accountSettings, communityPublicByDefault }, true)} saving={settingsBusy} onPublished={onCommunityPublished} onAuthInvalid={onExpectedAccountChange} />}
       <div className={`settings-layout ${section === 'github' ? 'is-github-management' : ''}`}>
         <div className="settings-column">
-          {section === 'settings' && <article className="settings-card export-settings"><h2>계정 · 코드 저장</h2>{settingsError && <p role="alert">{settingsError}</p>}<div className="setting-field"><label htmlFor="profile-name">이름</label><input id="profile-name" value={accountSettings.name ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, name: e.target.value || null })} /><label htmlFor="profile-nickname">닉네임</label><input id="profile-nickname" value={accountSettings.nickname ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, nickname: e.target.value || null })} /></div><p>문제 정보 주석을 추가합니다. 원본 코드는 유지합니다.</p>
+          {section === 'settings' && <article className="settings-card export-settings"><h2>계정 · 코드 저장</h2>{settingsError && <p role="alert">{settingsError}</p>}<p role="status" aria-live="polite">{settingsBusy ? '저장 중…' : settingsError ? '저장하지 못했습니다. 입력한 내용은 유지합니다.' : '변경 사항은 자동으로 저장됩니다.'}</p>{settingsError && <button type="button" className="ghost-button" onClick={onRetrySettingsSave}>저장 다시 시도</button>}<div className="setting-field"><label htmlFor="profile-name">이름</label><input id="profile-name" value={accountSettings.name ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, name: e.target.value || null })} /><label htmlFor="profile-nickname">닉네임</label><input id="profile-nickname" value={accountSettings.nickname ?? ''} onChange={e => updateAccountSettings({ ...accountSettings, nickname: e.target.value || null })} /></div><p>문제 정보 주석을 추가합니다. 원본 코드는 유지합니다.</p>
             <label><input type="checkbox" checked={accountSettings.copyHeader} onChange={e => updateAccountSettings({ ...accountSettings, copyHeader: e.target.checked })} /> 복사할 때 문제 정보 주석 포함</label>
             {accountSettings.copyHeader && <HeaderFieldsPicker label="복사" fields={normalizedHeaderFields(accountSettings.copyHeaderFields)} solution={previewSolution} onChange={copyHeaderFields => updateAccountSettings({ ...accountSettings, copyHeaderFields })} />}
             <label><input type="checkbox" checked={accountSettings.downloadHeader} onChange={e => updateAccountSettings({ ...accountSettings, downloadHeader: e.target.checked })} /> 다운로드할 때 문제 정보 주석 포함</label>
             {accountSettings.downloadHeader && <HeaderFieldsPicker label="다운로드" fields={normalizedHeaderFields(accountSettings.downloadHeaderFields)} solution={previewSolution} onChange={downloadHeaderFields => updateAccountSettings({ ...accountSettings, downloadHeaderFields })} />}
-            <div className="setting-field"><TokenTemplateInput id="filename-template" label="다운로드 파일명" maxLength={160} tokens={FILENAME_TOKENS} value={accountSettings.downloadFilenameTemplate} onChange={downloadFilenameTemplate => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p></div><CodeThemePreview lightTheme={accountSettings.lightTheme} darkTheme={accountSettings.darkTheme} mode={codeThemeMode} onChange={onCodeThemeChange} />{!extensionRuntime() && <label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label>}{!gitPathHasIdentity && <p className="field-error" role="alert">GitHub 관리에서 저장 경로를 수정해야 설정을 저장할 수 있습니다.</p>}<button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy || targetBusy || !gitPathHasIdentity}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
+            <div className="setting-field"><TokenTemplateInput id="filename-template" label="다운로드 파일명" maxLength={160} tokens={FILENAME_TOKENS} value={accountSettings.downloadFilenameTemplate} onChange={downloadFilenameTemplate => updateAccountSettings({ ...accountSettings, downloadFilenameTemplate })} /><p>미리보기: <output>{downloadFilename(previewSolution, accountSettings.downloadFilenameTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p></div><CodeThemePreview lightTheme={accountSettings.lightTheme} darkTheme={accountSettings.darkTheme} mode={codeThemeMode} onChange={onCodeThemeChange} />{!extensionRuntime() && <label><input type="checkbox" checked={accountSettings.autoSyncEnabled} onChange={e => { updateAccountSettings({ ...accountSettings, autoSyncEnabled: e.target.checked }); if (!e.target.checked) onAutoSyncDisabled() }} /> 자동 동기화</label>}{!gitPathHasIdentity && <p className="field-error" role="alert">GitHub 관리에서 저장 경로를 수정해야 설정을 저장할 수 있습니다.</p>}
           </article>}
-          {section === 'github' && <article className="settings-card export-settings"><h2>GitHub 자동 커밋</h2>{settingsError && <p role="alert">{settingsError}</p>}<p>자동 커밋할 파일의 경로, 메시지와 주석을 지정합니다.</p>
+          {section === 'github' && savedTarget && <article className="settings-card export-settings"><h2>GitHub 자동 커밋</h2><p>서버에 저장된 대상에 자동 커밋할 파일의 경로, 메시지와 주석을 지정합니다.</p>
             <label><input type="checkbox" checked={accountSettings.githubHeader} onChange={e => updateAccountSettings({ ...accountSettings, githubHeader: e.target.checked })} /> GitHub 커밋 시 문제 정보 주석 포함</label>
             {accountSettings.githubHeader && <HeaderFieldsPicker label="GitHub 커밋" fields={normalizedHeaderFields(accountSettings.githubHeaderFields)} solution={previewSolution} onChange={githubHeaderFields => updateAccountSettings({ ...accountSettings, githubHeaderFields })} />}
-            <div className="setting-field"><label htmlFor="git-path-template">Git 저장 경로</label><div className="git-path-token-list" aria-label="Git 경로 토큰">{GIT_PATH_TOKENS.map(token => <button type="button" key={token} onClick={() => insertGitPathToken(token)}>{token}</button>)}</div><input ref={gitPathInput} id="git-path-template" maxLength={240} aria-invalid={!gitPathHasIdentity} value={accountSettings.gitPathTemplate} onChange={e => updateAccountSettings({ ...accountSettings, gitPathTemplate: e.target.value })} />{!gitPathHasIdentity && <p className="field-error" role="alert">제출별 파일을 구분하려면 {'{capture_ID}'} 또는 {'{time}'}이 필요합니다.</p>}<p>Git 미리보기: <output>{gitPath(previewSolution, accountSettings.gitPathTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id }) ?? '유효하지 않은 상대 경로'}</output></p><TokenTemplateInput id="github-commit-message-template" label="Git 커밋 메시지" maxLength={200} tokens={COMMIT_MESSAGE_TOKENS} value={accountSettings.githubCommitMessageTemplate} onChange={githubCommitMessageTemplate => updateAccountSettings({ ...accountSettings, githubCommitMessageTemplate })} /><p>커밋 미리보기: <output>{githubCommitMessage(previewSolution, accountSettings.githubCommitMessageTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p></div><label><input type="checkbox" disabled={!draftTargetConfigured || providerUnavailable} checked={accountSettings.githubAutoCommitEnabled} onChange={e => updateAccountSettings({ ...accountSettings, githubAutoCommitEnabled: e.target.checked })} /> GitHub 자동 커밋</label><button className="primary-button" onClick={onSaveSettings} disabled={settingsBusy || targetBusy || !gitPathHasIdentity}>{settingsBusy ? '저장 중…' : '설정 저장'}</button>
+            <div className="setting-field"><label htmlFor="git-path-template">Git 저장 경로</label><div className="git-path-token-list" aria-label="Git 경로 토큰">{GIT_PATH_TOKENS.map(token => <button type="button" key={token} onClick={() => insertGitPathToken(token)}>{token}</button>)}</div><input ref={gitPathInput} id="git-path-template" maxLength={240} aria-invalid={!gitPathHasIdentity} value={accountSettings.gitPathTemplate} onChange={e => updateAccountSettings({ ...accountSettings, gitPathTemplate: e.target.value })} />{!gitPathHasIdentity && <p className="field-error" role="alert">제출별 파일을 구분하려면 {'{capture_ID}'} 또는 {'{time}'}이 필요합니다.</p>}<p>Git 미리보기: <output>{gitPath(previewSolution, accountSettings.gitPathTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id }) ?? '유효하지 않은 상대 경로'}</output></p><TokenTemplateInput id="github-commit-message-template" label="Git 커밋 메시지" maxLength={200} tokens={COMMIT_MESSAGE_TOKENS} value={accountSettings.githubCommitMessageTemplate} onChange={githubCommitMessageTemplate => updateAccountSettings({ ...accountSettings, githubCommitMessageTemplate })} /><p>커밋 미리보기: <output>{githubCommitMessage(previewSolution, accountSettings.githubCommitMessageTemplate, { name: accountSettings.name, nickname: accountSettings.nickname, id: user?.id })}</output></p></div><label><input type="checkbox" disabled={!savedTarget || providerUnavailable} checked={accountSettings.githubAutoCommitEnabled} onChange={e => updateAccountSettings({ ...accountSettings, githubAutoCommitEnabled: e.target.checked })} /> GitHub 자동 커밋</label>
           </article>}
           {section === 'github' && <article className={`settings-card github-card ${targetPanelExpanded ? 'is-expanded' : 'is-collapsed'}`} aria-busy={targetBusy}>
             <div className="github-card-heading">
-              <div><span className="card-kicker">GITHUB APP</span><h2>GitHub 대상</h2><p>{providerUnavailable ? githubStatusText : savedTarget ? '저장소 연결을 변경하거나 기존 항목을 관리할 수 있습니다.' : githubStatusText}</p></div>
-              <span className={`github-target-state ${targetBusy ? 'is-loading' : targetError ? 'is-error' : draftTargetConfigured ? 'is-ready' : ''}`} role="status" aria-live="polite">{targetStateText}</span>
+              <div><span className="card-kicker">GITHUB APP</span><h2>GitHub 대상</h2><p>{githubStatusText}</p></div>
+              <span className={`github-target-state ${targetBusy || settingsBusy && draftTargetConfigured && !targetPersisted ? 'is-loading' : targetError || settingsError ? 'is-error' : targetPersisted ? 'is-ready' : ''}`} role="status" aria-live="polite">{targetStateText}</span>
             </div>
+            {settingsError && <div className="github-target-feedback is-error" role="alert"><div><strong>저장 다시 시도</strong><p>{settingsError}</p></div><button type="button" className="ghost-button" onClick={onRetrySettingsSave} disabled={settingsBusy}>저장 다시 시도</button></div>}
             {savedTarget && <button type="button" className="ghost-button github-target-advanced-toggle" aria-expanded={showTargetSetup} onClick={() => setShowTargetSetup(value => !value)}>{showTargetSetup ? '연결 변경·관리 닫기' : '연결 변경·기존 항목 관리'}</button>}
             {(!savedTarget || showTargetSetup) && (!targetPanelExpanded ? (
               <div className="github-connect-cta">
@@ -2119,7 +2183,7 @@ function SettingsView({
                     <label><span><b>3</b> 브랜치</span><select aria-label="브랜치" disabled={targetBusy} value={accountSettings.githubBranch ?? ''} onChange={event => void chooseBranch(event.target.value)}><option value="">선택하세요</option>{branches.map(value => <option key={value.name} value={value.name}>{value.name}{value.protectedBranch ? ' (보호됨)' : ''}</option>)}{emptyDefaultBranch && !includeReadme && <option value={emptyDefaultBranch}>{emptyDefaultBranch} (첫 풀이 커밋 시 생성)</option>}</select>{branchesLoaded && branches.length === 0 && <small role="status">브랜치가 없습니다. {emptyDefaultBranch ? '비어 있는 저장소입니다.' : '저장소 상태를 확인하지 못했습니다. 다시 시도해 주세요.'}</small>}</label>
                     {branchesLoaded && branches.length === 0 && emptyDefaultBranch && <div className="github-empty-repository"><strong>비어 있는 저장소 시작하기</strong><label><input type="checkbox" checked={includeReadme} onChange={event => setIncludeReadme(event.target.checked)} /> CodeArchive README 추가</label>{includeReadme ? <><pre aria-label="README 미리보기">{readmePreview}</pre><button type="button" className="primary-button" disabled={targetBusy || !readmePreview} onClick={() => void initializeEmptyRepository()}>README로 초기화</button></> : <p>첫 풀이가 성공적으로 커밋될 때 기본 브랜치가 생성됩니다. 위 브랜치를 선택하고 저장하세요.</p>}</div>}
                   </>}
-                  {directory && <div className="github-directory"><span><b>4</b> 폴더</span><p>둘러보는 폴더 <strong>{directory.currentPath || '/'}</strong></p><p>선택한 저장 위치 <strong>{accountSettings.githubRootPath || '/'}</strong></p><div>{directory.currentPath && <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.parentPath, false)} disabled={targetBusy}>상위 폴더</button>}{!tree && directory.directories.map(name => <button type="button" key={name} onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath ? `${directory.currentPath}/${name}` : name, false)} disabled={targetBusy}>{name}/</button>)}</div><button type="button" className="github-select-directory" disabled={targetBusy || !!treeError || !tree || !browsedRootSavable || accountSettings.githubRootPath === (directory.currentPath || null)} onClick={() => updateAccountSettings({ ...accountSettings, githubRootPath: directory.currentPath || null, githubAutoCommitEnabled: false })}>이 폴더를 저장 위치로 선택</button>{!browsedRootSavable && <small role="status">이 폴더는 살펴볼 수 있지만 자동 커밋 위치로 저장할 수 없습니다.</small>}<small>선택한 위치를 적용하려면 아래의 설정 저장을 누르세요.</small></div>}
+                  {directory && <div className="github-directory"><span><b>4</b> 폴더</span><p>둘러보는 폴더 <strong>{directory.currentPath || '/'}</strong></p><p>선택한 저장 위치 <strong>{accountSettings.githubRootPath || '/'}</strong></p><div>{directory.currentPath && <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.parentPath, false)} disabled={targetBusy}>상위 폴더</button>}{!tree && directory.directories.map(name => <button type="button" key={name} onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath ? `${directory.currentPath}/${name}` : name, false)} disabled={targetBusy}>{name}/</button>)}</div><button type="button" className="github-select-directory" disabled={targetBusy || !!treeError || !tree || !browsedRootSavable || savedTarget !== null && accountSettings.githubRootPath === (directory.currentPath || null)} onClick={() => updateAccountSettings({ ...accountSettings, githubRootPath: directory.currentPath || null, githubAutoCommitEnabled: false }, true, true)}>이 폴더를 저장 위치로 선택</button>{!browsedRootSavable && <small role="status">이 폴더는 살펴볼 수 있지만 자동 커밋 위치로 저장할 수 없습니다.</small>}<small>유효한 선택은 자동으로 연결을 확인합니다.</small></div>}
                   {directory && <div className="github-tree"><strong>파일·폴더 구조</strong>{treeError && <p role="alert">{treeError} <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath, false)} disabled={targetBusy}>다시 확인</button></p>}{tree && <><ul>{tree.items.map(entry => <li key={`${entry.path}:${entry.type}`} className={entry.type === 'tree' && accountSettings.githubRootPath === entry.path ? 'is-selected' : ''}>{entry.type === 'tree' ? <button type="button" aria-current={accountSettings.githubRootPath === entry.path ? 'location' : undefined} disabled={targetBusy || !/^[A-Za-z0-9_.-]+$/.test(entry.name)} onClick={() => void chooseBranch(accountSettings.githubBranch!, entry.path, false)}>{entry.name}/</button> : <span>{entry.name}{entry.type === 'commit' ? ' (서브모듈)' : ''}</span>}</li>)}</ul>{tree.items.length === 0 && <p>이 폴더에 파일이 없습니다.</p>}{tree.hasMore && <button type="button" className="ghost-button" disabled={targetBusy} onClick={() => void loadMoreTree()}>파일 더 보기</button>}{tree.truncated && <p role="status">GitHub가 일부 항목만 반환했습니다. 더 작은 하위 폴더에서 확인해 주세요.</p>}</>}</div>}
                   {directory && tree?.headSha && <div className="github-add-file">
                     <strong>이 폴더에 새 항목 추가</strong>
@@ -2142,7 +2206,7 @@ function SettingsView({
                     {treeOperationPreview && <div className="github-add-preview"><strong>{treeOperationPreview.operation === 'MOVE' ? '이동' : '삭제'}될 변경 (미리보기)</strong><p>브랜치: {treeOperationPreview.branch} · 기준 HEAD: {treeOperationPreview.expectedHeadSha.slice(0, 7)}</p><p>파일 {treeOperationPreview.changes.length}개 · 원본: {treeOperationPreview.sourcePath}{treeOperationPreview.destinationPath ? ` → ${treeOperationPreview.destinationPath}` : ''}</p><pre aria-label="이동 또는 삭제 변경 경로">{treeOperationPreview.changes.map(change => `${change.fromPath}${change.toPath ? ` → ${change.toPath}` : ' 삭제'}`).join('\n')}</pre><button type="button" className="primary-button" disabled={targetBusy} onClick={() => void confirmTreeOperation()}>이 변경을 커밋</button></div>}
                   </div>}
                 </div>
-                {draftTargetConfigured && <div className="github-target-current"><Icon name="check" size={15} /><span><strong>현재 대상</strong>{accountSettings.githubOwner}/{accountSettings.githubRepository} · {accountSettings.githubBranch}{accountSettings.githubRootPath ? `/${accountSettings.githubRootPath}` : ''}</span></div>}
+                {draftTargetConfigured && <div className="github-target-current"><Icon name="check" size={15} /><span><strong>{savedTarget ? '저장된 대상' : '저장 전 선택'}</strong>{accountSettings.githubOwner}/{accountSettings.githubRepository} · {accountSettings.githubBranch}{accountSettings.githubRootPath ? `/${accountSettings.githubRootPath}` : ''}</span></div>}
               </div>
             ))}
             {targetBusy && <div className="github-target-overlay" role="status" aria-live="assertive"><Icon name="sync" size={20} /><strong>{targetLoadingText}</strong><span>GitHub에서 안전하게 확인하고 있습니다.</span></div>}

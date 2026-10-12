@@ -6,6 +6,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.codearchive.api.auth.*;
+import com.codearchive.api.settings.UserSettings;
+import com.codearchive.api.settings.UserSettingsRepository;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -25,9 +27,9 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 @SpringBootTest @AutoConfigureMockMvc @ActiveProfiles("test")
 class SupportIntegrationTest {
-  @Autowired MockMvc mvc; @Autowired UserRepository users; @Autowired SupportInquiryRepository inquiries; @Autowired SupportMessageRepository messages; @Autowired SupportService support; @Autowired PlatformTransactionManager transactions; @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
+  @Autowired MockMvc mvc; @Autowired UserRepository users; @Autowired UserSettingsRepository settings; @Autowired SupportInquiryRepository inquiries; @Autowired SupportMessageRepository messages; @Autowired SupportService support; @Autowired PlatformTransactionManager transactions; @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
   @BeforeEach void clear() { cleanup(); }
-  @AfterEach void cleanup() { messages.deleteAll(); inquiries.deleteAll(); users.deleteAll(); }
+  @AfterEach void cleanup() { messages.deleteAll(); inquiries.deleteAll(); settings.deleteAll(); users.deleteAll(); }
   @Test void requiresGithubSessionCsrfAndMatchingAccount() throws Exception {
     mvc.perform(get("/api/support/tickets")).andExpect(status().isUnauthorized());
     account("100");
@@ -80,6 +82,44 @@ class SupportIntegrationTest {
     support.changeStatus(id, SupportStatus.IN_REVIEW);
     Assertions.assertEquals(2, messages.findByInquiryIdOrderByIdAsc(id).size());
   }
+  @Test void administratorArchivesOnlyAnsweredTicketsAndKeepsOwnerHistoryPrivate() throws Exception {
+    AppUser owner = users.saveAndFlush(AppUser.fromGithub("3000", "public-login", "Private Person", "private@example.test"));
+    new org.springframework.transaction.support.TransactionTemplate(transactions).executeWithoutResult(tx -> settings.saveAndFlush(nickname(users.findById(owner.getId()).orElseThrow(), "archive-nick")));
+    AppUser admin = account(SupportAdminPolicy.ADMIN_GITHUB_ID);
+    long id = create("3000");
+
+    mvc.perform(post("/api/support/admin/tickets/{id}/archive", id).with(login(SupportAdminPolicy.ADMIN_GITHUB_ID, "admin")).with(csrf().asHeader()).header("X-CodeArchive-Github-Id", SupportAdminPolicy.ADMIN_GITHUB_ID))
+        .andExpect(status().isBadRequest());
+    mvc.perform(post("/api/support/admin/tickets/{id}/archive", id).with(login("3000", "public-login")).with(csrf().asHeader()).header("X-CodeArchive-Github-Id", "3000"))
+        .andExpect(status().isForbidden());
+    mvc.perform(post("/api/support/admin/tickets/{id}/archive", id).with(login(SupportAdminPolicy.ADMIN_GITHUB_ID, "admin")).header("X-CodeArchive-Github-Id", SupportAdminPolicy.ADMIN_GITHUB_ID))
+        .andExpect(status().isForbidden());
+    mvc.perform(post("/api/support/admin/tickets/{id}/archive", id).with(login(SupportAdminPolicy.ADMIN_GITHUB_ID, "admin")).with(csrf().asHeader()).header("X-CodeArchive-Github-Id", "999"))
+        .andExpect(status().isConflict());
+
+    support.answer(admin, id, "retained answer");
+    var active = mvc.perform(get("/api/support/admin/tickets").with(login(SupportAdminPolicy.ADMIN_GITHUB_ID, "admin")).header("X-CodeArchive-Github-Id", SupportAdminPolicy.ADMIN_GITHUB_ID))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(1)).andExpect(jsonPath("$.items[0].ownerNickname").value("archive-nick"))
+        .andExpect(jsonPath("$.items[0].name").doesNotExist()).andExpect(jsonPath("$.items[0].email").doesNotExist()).andReturn().getResponse().getContentAsString();
+    Assertions.assertFalse(active.contains("Private Person")); Assertions.assertFalse(active.contains("private@example.test"));
+
+    mvc.perform(post("/api/support/admin/tickets/{id}/archive", id).with(login(SupportAdminPolicy.ADMIN_GITHUB_ID, "admin")).with(csrf().asHeader()).header("X-CodeArchive-Github-Id", SupportAdminPolicy.ADMIN_GITHUB_ID))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.inquiry.archivedAt").exists());
+    mvc.perform(get("/api/support/admin/tickets").with(login(SupportAdminPolicy.ADMIN_GITHUB_ID, "admin")).header("X-CodeArchive-Github-Id", SupportAdminPolicy.ADMIN_GITHUB_ID))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(0));
+    mvc.perform(get("/api/support/admin/tickets").param("archived", "true").with(login(SupportAdminPolicy.ADMIN_GITHUB_ID, "admin")).header("X-CodeArchive-Github-Id", SupportAdminPolicy.ADMIN_GITHUB_ID))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(1)).andExpect(jsonPath("$.items[0].ownerNickname").value("archive-nick"));
+    mvc.perform(get("/api/support/tickets/{id}", id).with(login("3000", "public-login")).header("X-CodeArchive-Github-Id", "3000"))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.messages[0].body").value("<script>x</script>")).andExpect(jsonPath("$.messages[1].body").value("retained answer"));
+
+    mvc.perform(post("/api/support/admin/tickets/{id}/restore", id).with(login(SupportAdminPolicy.ADMIN_GITHUB_ID, "admin")).with(csrf().asHeader()).header("X-CodeArchive-Github-Id", SupportAdminPolicy.ADMIN_GITHUB_ID))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.inquiry.archivedAt").doesNotExist());
+    mvc.perform(post("/api/support/admin/tickets/{id}/archive", id).with(login(SupportAdminPolicy.ADMIN_GITHUB_ID, "admin")).with(csrf().asHeader()).header("X-CodeArchive-Github-Id", SupportAdminPolicy.ADMIN_GITHUB_ID)).andExpect(status().isOk());
+    mvc.perform(put("/api/support/admin/tickets/{id}/status", id).with(login(SupportAdminPolicy.ADMIN_GITHUB_ID, "admin")).with(csrf().asHeader()).header("X-CodeArchive-Github-Id", SupportAdminPolicy.ADMIN_GITHUB_ID).contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"IN_REVIEW\"}"))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.inquiry.archivedAt").doesNotExist());
+    mvc.perform(get("/api/support/admin/tickets").with(login(SupportAdminPolicy.ADMIN_GITHUB_ID, "admin")).header("X-CodeArchive-Github-Id", SupportAdminPolicy.ADMIN_GITHUB_ID))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(1));
+  }
   @Test void administratorCannotCloseOrMarkUnansweredTicketAnswered() throws Exception {
     account("2000"); account(SupportAdminPolicy.ADMIN_GITHUB_ID); long id = create("2000");
     for (String state : List.of("CLOSED", "ANSWERED", "INVALID")) {
@@ -88,6 +128,12 @@ class SupportIntegrationTest {
     mvc.perform(post("/api/support/admin/tickets/{id}/messages", id).with(login(SupportAdminPolicy.ADMIN_GITHUB_ID, "admin")).with(csrf().asHeader()).header("X-CodeArchive-Github-Id", SupportAdminPolicy.ADMIN_GITHUB_ID).contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"answer\",\"close\":true}")).andExpect(status().isBadRequest());
     Assertions.assertEquals(SupportStatus.OPEN, inquiries.findById(id).orElseThrow().getStatus());
     Assertions.assertEquals(1, messages.count());
+  }
+  private static UserSettings nickname(AppUser user, String value) {
+    UserSettings settings = new UserSettings(user);
+    settings.apply(new com.codearchive.api.settings.SettingsRequest(0, null, value, false, false, false,
+        "Solution_{number}_{name}", "{platform}/{number}_{title}/{time}", "Add {platform} {number} solution", "github-light", "dark", false, false, null, null, null, null, null));
+    return settings;
   }
   private long create(String id) throws Exception { mvc.perform(post("/api/support/tickets").with(login(id, "user" + id)).with(csrf().asHeader()).header("X-CodeArchive-Github-Id", id).contentType(MediaType.APPLICATION_JSON).content(ticket())).andExpect(status().isOk()); return inquiries.findAll().stream().mapToLong(SupportInquiry::getId).max().orElseThrow(); }
   private static String ticket() { return "{\"category\":\"BUG\",\"title\":\"title\",\"body\":\"<script>x</script>\"}"; }

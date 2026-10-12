@@ -1,8 +1,9 @@
 import type { CaptureSettings } from './types';
 import type { CaptureStore } from './storage';
 import type { AccountSettings, RelayGrant, User } from '../../dashboard/src/types';
+import { PUBLIC_API_ORIGIN } from '../../../shared/publicApiOrigin';
 
-const API_ORIGIN = 'https://codearchive-dashboard-beta.netlify.app';
+const API_ORIGIN = PUBLIC_API_ORIGIN;
 type Store = Pick<CaptureStore, 'getSettings' | 'mutateSettings'>;
 export type GithubToggleRequest = { enabled: boolean; accountId: string; settingsVersion: number };
 export type GithubToggleResult = { ok: boolean; error?: string; needsTarget?: boolean; relayReady?: boolean };

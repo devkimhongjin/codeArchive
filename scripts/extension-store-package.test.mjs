@@ -62,18 +62,18 @@ function unzip(archive) {
   return files;
 }
 
-test('store manifest removes development grants while preserving the pinned identity and source manifest', () => {
+test('store manifest removes the development key and grants without changing the pinned local source', () => {
   const before = JSON.stringify(source);
   const manifest = prepareManifest(source);
   assert.equal(JSON.stringify(source), before);
-  assert.equal(manifest.key, source.key);
+  assert.equal(Object.hasOwn(manifest, 'key'), false);
   assert.equal(manifest.version, source.version);
   assert.ok(manifest.host_permissions.every(value => value.startsWith('https://')));
   assert.equal(manifest.host_permissions.includes('https://api.github.com/*'), false);
   assert.deepEqual(manifest.host_permissions, source.host_permissions.filter(value => value !== 'http://localhost:5173/*' && value !== 'https://api.github.com/*'));
   assert.deepEqual(manifest.externally_connectable.matches, ['https://codearchive-dashboard-beta.netlify.app/*']);
   assert.equal(manifest.content_security_policy.extension_pages, "script-src 'self'; object-src 'self';");
-  assert.deepEqual(prepareManifest(manifest), manifest);
+  assert.throws(() => prepareManifest(manifest), /missing pinned public key/);
 });
 
 test('unexpected permission, host, external extension and broad site scope require review', () => {
@@ -85,6 +85,7 @@ test('unexpected permission, host, external extension and broad site scope requi
     value => value.content_scripts[0].all_frames = true,
     value => value.update_url = 'https://example.com/update',
     value => value.key = 'ZmFrZQ==',
+    value => delete value.key,
     value => value.version = '999.0.0',
     value => value.optional_host_permissions = ['<all_urls>'],
     value => value.content_security_policy = { extension_pages: "script-src 'self' 'unsafe-eval';" }
@@ -122,12 +123,15 @@ test('complete package is deterministic, has manifest at root, excludes source m
   assert.equal(report.status, 'PREPARATION_ONLY');
   assert.equal(report.storeExtensionId, null);
   assert.equal(report.localExtensionId, 'oohlcmihldmfninmdcmanddfmhoonmdl');
+  assert.equal(report.checks.developmentKeyRemoved, true);
   assert.deepEqual(await readFile(resolve(dist, 'manifest.json')), before);
   assert.equal(files.size, fixtureFiles().size - 1);
   assert.equal(files.has('background.js.map'), false);
   assert.doesNotMatch(files.get('background.js').toString(), /sourceMappingURL/);
   assert.match((await readFile(resolve(dist, 'background.js'))).toString(), /sourceMappingURL/);
-  assert.equal(JSON.parse(files.get('manifest.json').toString()).host_permissions.some(value => value.includes('localhost')), false);
+  const packagedManifest = JSON.parse(files.get('manifest.json').toString());
+  assert.equal(packagedManifest.host_permissions.some(value => value.includes('localhost')), false);
+  assert.equal(Object.hasOwn(packagedManifest, 'key'), false);
   assert.equal((await readFile(resolve(output, `${report.artifact.name}.sha256`), 'utf8')).split('  ')[0], report.artifact.sha256);
   const second = await prepareStorePackage({ dist, output: resolve(directory, 'second') });
   assert.equal(second.artifact.sha256, report.artifact.sha256);

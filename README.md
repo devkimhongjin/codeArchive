@@ -6,7 +6,7 @@ CodeArchive는 SWEA·프로그래머스·정올의 본인 정답 풀이를 기�
 
 ## Chrome 확장 설치와 업데이트
 
-현재는 **Chrome 웹스토어 제출 준비** 단계이며, 스토어 설치 링크는 아직 없습니다. `master`에서 만든 제출용 ZIP은 스토어 심사용 패키지이며, 스토어 게시·심사가 완료됐다는 의미는 아닙니다.
+Chrome 웹스토어의 [CodeArchive](https://chromewebstore.google.com/detail/codearchive/mlhibjadcbklfdllkonhjjajhmhnoalj)는 스토어 항목 ID `mlhibjadcbklfdllkonhjjajhmhnoalj`를 사용합니다. 이 저장소의 1.0.0은 master 승격 뒤 검증된 ZIP으로만 제출하며, 제출 성공은 스토어 공개 완료를 뜻하지 않습니다.
 
 로컬 검증:
 
@@ -18,7 +18,7 @@ CodeArchive는 SWEA·프로그래머스·정올의 본인 정답 풀이를 기�
 
 기존 사용자는 **확장을 삭제하지 말고 기존에 로드한 폴더에 빌드 파일을 갱신한 뒤 새로고침(↻)** 하세요. 열린 관리 화면과 문제 탭도 코드를 확인한 뒤 새로고침합니다. 확장 삭제는 Chrome 프로필의 풀이 기록을 지울 수 있습니다.
 
-이 사용 환경의 기존 폴더는 `%LOCALAPPDATA%\Programs\CodeArchive\resources\extension`입니다. 로컬 `apps/extension/build.local.json`에 `installedExtensionDir`을 지정하면 정규 빌드가 백업 후 그 폴더에 적용합니다. 개발자 개인 경로는 Git에 추가하지 않습니다. 웹스토어 ID가 기존 로컬 ID와 같거나 데이터가 자동 이전된다고 가정하지 않습니다.
+웹스토어 설치본은 Chrome이 업데이트합니다. 로컬 개발 검증에는 `apps/extension/build.local.json`으로 이미 존재하는 압축해제 폴더를 지정할 수 있습니다. 개발자 개인 경로는 Git에 추가하지 않습니다. 스토어 ID가 이전 로컬 개발 ID와 같거나 데이터가 자동 이전된다고 가정하지 않습니다.
 
 이전 PC 앱 릴리스는 변경하지 않았습니다. 해당 버전의 설치 안내는 [기존 PC 앱 문서](docs/desktop-app.md)를 참고하세요. 신규 구조는 확장 단독이며 Windows 설치 파일 작업을 진행하지 않습니다.
 
@@ -33,7 +33,7 @@ CodeArchive는 SWEA·프로그래머스·정올의 본인 정답 풀이를 기�
 | GitHub 연동 | 개인 계정의 App 설치·저장소·브랜치·폴더 선택, 경로/커밋 메시지 설정, 자동 커밋과 작업 상태 |
 | 저장소 관리 | 파일/폴더 트리 조회, 빈 저장소 초기화, 파일·폴더 추가, 이동·삭제 미리보기와 별도 커밋 확인 |
 | 커뮤니티 | 본인 풀이를 공개한 문제에 한해 다른 공개 풀이 탐색. 신규 풀이 기본 공개·비공개를 계정 설정에서 선택 |
-| 문의·오류 제보 | 인증된 개인 문의, 본인 문의 조회·후속 답변·종료·삭제와 검증된 관리자 답변. [보관·권한 안내](docs/support-inquiries.md) |
+| 문의·오류 제보 | 인증된 개인 문의와 검증된 관리자 답변, 답변완료 문의의 관리자 보관·복원. [보관·권한 안내](docs/support-inquiries.md) |
 
 과거 풀이 수집은 로그인 없이 시작할 수 있습니다. 서버 목록·동기화·커뮤니티·GitHub 기능에는 로그인이 필요합니다. Chrome을 완전히 종료하면 확장 작업은 실행되지 않습니다.
 
@@ -109,7 +109,7 @@ GitHub 자동 커밋 개발에는 별도로 `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE
 4. 고정 ID `oohlcmihldmfninmdcmanddfmhoonmdl`을 확인하고 문제 페이지를 새로 엽니다.
 5. 확장 팝업의 **대시보드 열기**로 로그인합니다. 신규 정답은 자동 동기화하고, 과거 수집 기록은 완료 후 일괄 작업으로 동기화합니다.
 
-베타 ZIP의 체크섬 확인·설치·기록을 보존하는 업데이트 방법은 [확장 배포 안내](docs/extension-beta-distribution.md)를 참고하세요. 기존 확장 프로그램을 삭제하면 로컬 기록이 사라질 수 있으므로, 업데이트할 때는 같은 폴더의 파일을 교체하고 **새로고침**합니다. 이전 개발 ID의 기록은 모두 옮기기 전에 해당 확장을 삭제하지 않습니다.
+스토어 ZIP의 체크섬 확인·설치·기록을 보존하는 업데이트 방법은 [확장 배포 안내](docs/extension-beta-distribution.md)를 참고하세요. 기존 확장 프로그램을 삭제하면 로컬 기록이 사라질 수 있으므로, 업데이트할 때는 같은 폴더의 파일을 교체하고 **새로고침**합니다. 이전 개발 ID의 기록은 모두 옮기기 전에 해당 확장을 삭제하지 않습니다.
 
 ### PostgreSQL
 
@@ -154,10 +154,10 @@ pwsh -NoProfile -File infra/gcp/staging-db-preflight.integration.ps1
 
 - 모든 공개 릴리스는 검증된 `master` 커밋을 기준으로 발행합니다. 구현 PR의 기본 대상은 `develop`이며, 릴리스 발행 전에 `master` 승격을 별도로 확인합니다. [PC 앱 릴리스·업데이트 절차](docs/desktop-app.md#릴리스와-업데이트)를 따릅니다.
 
-- 현재 저장소의 [Netlify 설정](netlify.toml)은 Dashboard를 배포하고 `/api/*`를 Cloud Run API로 프록시합니다. 브라우저의 OAuth callback은 Dashboard origin을 사용합니다.
+- 새 확장 대시보드·팝업·캡처·Relay 요청은 고정 Cloud Run API origin을 직접 사용합니다. Netlify dashboard origin은 기존 클라이언트 로그인과 bridge 호환 경로로만 유지합니다.
 - [GCP 배포 구성](infra/gcp/README.md)은 공개 API와 비공개 GitHub worker, Cloud Tasks OIDC 호출을 나눕니다. API와 worker의 DB가 검증된 비운영 대상인지 확인한 뒤 수동 배포합니다. 파일에 있는 구성은 현재 서비스의 배포 커밋을 보증하지 않습니다.
 - 기본 실행 모드는 `polling`이고, Cloud Tasks 배포에는 별도 환경 설정이 필요합니다. 내부 worker endpoint는 비공개 서비스에서만 활성화해야 합니다.
-- Dashboard bridge는 정확한 `http://localhost:5173`와 `https://codearchive-dashboard-beta.netlify.app`만 허용합니다. 다른 포트·`127.0.0.1`·유사 도메인은 연결 대상이 아닙니다.
+- legacy Dashboard bridge는 정확한 `http://localhost:5173`와 `https://codearchive-dashboard-beta.netlify.app`만 허용합니다. 새 스토어와 로컬 확장 origin은 API의 별도 정확한 CORS 허용 목록으로 검사합니다. 다른 포트·`127.0.0.1`·유사 도메인은 연결 대상이 아닙니다.
 - 계정은 GitHub 고유 ID로 구분하고, 서버는 계정별 데이터 접근과 설정 변경을 검사합니다. Extension에는 GitHub OAuth/App token을 전달하지 않고 제한된 Relay grant만 전달합니다.
 - 문제 본문 전체·공식 해설·비공개 테스트 데이터·플랫폼 로그인 정보를 아카이브하지 않습니다. 소스 코드나 비밀값을 로그에 포함하지 않는 오류 처리도 유지합니다.
 

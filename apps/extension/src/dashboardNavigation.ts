@@ -1,4 +1,6 @@
-const DASHBOARD_ORIGIN = 'https://codearchive-dashboard-beta.netlify.app';
+import { LEGACY_DASHBOARD_ORIGIN, PUBLIC_API_ORIGIN } from '../../../shared/publicApiOrigin';
+
+const DASHBOARD_ORIGIN = LEGACY_DASHBOARD_ORIGIN;
 
 export const DASHBOARD_LOGIN_ROUTE_KEY = 'codearchive-dashboard-login-route';
 export type DashboardPageSender = { id?: string; url?: string; frameId?: number; documentId?: string; tab?: { id?: number; url?: string } };
@@ -14,15 +16,19 @@ export function dashboardSender(sender: DashboardPageSender, extensionId: string
 export function dashboardExternalUrl(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 2000 || value.includes('\\')) return null;
   try {
-    const url = new URL(value, DASHBOARD_ORIGIN);
+    const url = new URL(value, PUBLIC_API_ORIGIN);
     if (url.username || url.password || url.hash) return null;
-    if (url.origin === DASHBOARD_ORIGIN && url.pathname === '/api/oauth2/authorization/github' && !url.search) return url.href;
+    if (url.origin === PUBLIC_API_ORIGIN && url.pathname === '/api/oauth2/authorization/github' && !url.search) return url.href;
     if (url.origin === 'https://github.com' && /^\/apps\/[a-z0-9-]+\/installations\/new$/.test(url.pathname)) return url.href;
   } catch { /* Invalid URL. */ }
   return null;
 }
 export function dashboardLoginReturn(url: string): boolean {
-  try { const parsed = new URL(url); return parsed.origin === DASHBOARD_ORIGIN && parsed.pathname === '/' && !parsed.username && !parsed.password; }
+  try {
+    const parsed = new URL(url);
+    return !parsed.username && !parsed.password && ((parsed.origin === DASHBOARD_ORIGIN && parsed.pathname === '/') ||
+      (parsed.origin === PUBLIC_API_ORIGIN && parsed.pathname === '/api/extension-login/complete'));
+  }
   catch { return false; }
 }
 export function dashboardReturnQuery(url: string): string {

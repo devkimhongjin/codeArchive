@@ -80,11 +80,10 @@ The `(user_id, capture_id)` database constraint makes retries idempotent and pre
 
 ## GitHub App installation callback
 
-Configure the GitHub App **Setup URL** to the public dashboard origin followed by
-`/api/github/installations/callback`. For the beta deployment this is:
+Configure the GitHub App **Setup URL** to the fixed API dispatcher:
 
 ```text
-https://codearchive-dashboard-beta.netlify.app/api/github/installations/callback
+https://codearchive-api-stg-e3q54l32da-as.a.run.app/api/github/installations/setup
 ```
 
 The dashboard starts installation with an authenticated, CSRF-protected `POST`.
