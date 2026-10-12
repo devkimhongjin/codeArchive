@@ -6,6 +6,17 @@ import { mountPopup } from '../src/popupView';
 import type { GithubCommitStatus } from '../src/relay';
 const html = readFileSync(new URL('../src/popup.html', import.meta.url), 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
+test('recent problem actions retrieve server code and show copy/download feedback', async () => {
+  const { document } = parseHTML(html), copied: string[] = [], requested: string[] = [];
+  mountPopup(document, { load: async () => ({ settings: {}, recentCaptures: [record('one')] }),
+    copy: async text => { copied.push(text); }, copyCapture: async id => { requested.push(id); return { ok: true, text: 'synthetic source' }; },
+    downloadCapture: async id => { requested.push(id); return { ok: true }; } });
+  await settle();
+  document.querySelector<HTMLButtonElement>('[aria-label="one 코드 복사"]')!.click(); await settle();
+  assert.deepEqual(copied, ['synthetic source']); assert.match(document.querySelector('.recent-actions')!.textContent!, /복사했습니다/);
+  document.querySelector<HTMLButtonElement>('[aria-label="one 다운로드"]')!.click(); await settle();
+  assert.deepEqual(requested, ['one', 'one']); assert.match(document.querySelector('.recent-actions')!.textContent!, /다운로드를 시작했습니다/);
+});
 function record(id: string, syncState = 'SYNCED', problemNumber = id) {
   return { captureId: id, platform: 'SWEA', problemNumber, title: `Problem ${id}`, problemUrl: 'https://example.test', language: 'Java', result: 'ACCEPTED', syncState, observedAt: '2026-09-18T00:00:00Z', solvedAt: '2026-09-18T00:00:00Z', executionTime: 0, memoryValue: 0, memoryUnit: 'KB' };
 }
