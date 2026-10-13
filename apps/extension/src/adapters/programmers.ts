@@ -83,14 +83,22 @@ function detectEditor(document: Document): EditorData | null {
   return { language, sourceCode: codeElement.value };
 }
 
-function resultGroup(document: Document): Element | null {
+function resultGroups(document: Document): Element[] | null {
   const groups = Array.from(document.querySelectorAll(PROGRAMMERS_RESULT_GROUP_SELECTOR));
-  return groups.length === 1 ? groups[0] ?? null : null;
-}
-
-function resultGroupSignature(document: Document): string | null {
-  const group = resultGroup(document);
-  return group ? elementText(group) : null;
+  if (groups.length === 1) {
+    // Effectiveness is a companion to correctness, not a complete standalone
+    // result. Keep unlabelled legacy single-table results supported.
+    return groups[0]?.getAttribute('data-category') === 'effectiveness' ? null : groups;
+  }
+  if (groups.length !== 2) return null;
+  const labels: Record<string, string> = { correctness: '정확성 테스트', effectiveness: '효율성 테스트' };
+  const categories = groups.map(group => group.getAttribute('data-category') ?? '');
+  if (new Set(categories).size !== 2 || categories.some(category => !Object.hasOwn(labels, category))) return null;
+  const container = groups[0]?.parentElement;
+  if (!container?.matches('.console-content')) return null;
+  return groups.every((group, index) => group.tagName === 'TABLE' && group.parentElement === container
+    && group.previousElementSibling?.matches('.console-message')
+    && normalizeText(group.previousElementSibling.textContent) === labels[categories[index]!]) ? groups : null;
 }
 
 function duplicateCodeNotice(document: Document): Element | null {
@@ -99,9 +107,10 @@ function duplicateCodeNotice(document: Document): Element | null {
   return notices.length === 1 ? notices[0] ?? null : null;
 }
 
-function parseResultGroup(group: Element): PerformanceData | null {
-  const cells = Array.from(group.querySelectorAll(PROGRAMMERS_RESULT_CELL_SELECTOR));
-  if (cells.length === 0) return null;
+function parseResultGroups(groups: Element[]): PerformanceData | null {
+  const sections = groups.map(group => Array.from(group.querySelectorAll(PROGRAMMERS_RESULT_CELL_SELECTOR)));
+  if (sections.some(cells => cells.length === 0)) return null;
+  const cells = sections.flat();
   const metrics = cells.map((cell) => {
     if (!cell.classList.contains("passed")) return null;
     const match = normalizeText(cell.textContent).match(RESULT_PATTERN);
@@ -112,10 +121,15 @@ function parseResultGroup(group: Element): PerformanceData | null {
   });
   if (metrics.some((metric) => metric === null)) return null;
   const valid = metrics as Array<{ executionTime: number; memoryUsage: number; memoryValue: number; memoryUnit: "MB" }>;
+  const executionTime = valid.reduce((sum, metric) => sum + metric.executionTime, 0);
+  // Weight by test count, not by category: the sections can contain 10 and 30
+  // rows. This preserves the existing sum-time / mean-memory contract.
+  const memoryUsage = valid.reduce((sum, metric) => sum + metric.memoryUsage, 0) / valid.length;
+  if (!Number.isFinite(executionTime) || !Number.isFinite(memoryUsage)) return null;
   return {
-    executionTime: valid.reduce((sum, metric) => sum + metric.executionTime, 0),
-    memoryUsage: valid.reduce((sum, metric) => sum + metric.memoryUsage, 0) / valid.length,
-    memoryValue: valid.reduce((sum, metric) => sum + metric.memoryValue, 0) / valid.length,
+    executionTime,
+    memoryUsage,
+    memoryValue: memoryUsage,
     memoryUnit: "MB"
   };
 }
@@ -128,8 +142,8 @@ interface PendingAttempt {
   startedAt: number;
   context: string;
   baselineDialog: WeakMap<Element, string>;
-  baselineResultGroup: string | null;
-  baselineResultElement: Element | null;
+  baselineResults: WeakMap<Element, string>;
+  sawSplitResults: boolean;
   baselineDuplicateNotice: Element | null;
   consumed: WeakSet<Element>;
   observedNoDialog: boolean;
@@ -175,18 +189,18 @@ export class ProgrammersAdapter implements PlatformAdapter {
   }
 
   collectPerformance(): PerformanceData | null {
+    this.expireAttempt();
     const attempt = this.pendingAttempt;
     if (!attempt) return null;
-    const signature = resultGroupSignature(this.document);
-    const group = resultGroup(this.document);
-    if (signature === null || !group) return null;
-    const freshGroup = group !== attempt.baselineResultElement || signature !== attempt.baselineResultGroup;
+    const groups = resultGroups(this.document);
+    if (!groups || attempt.sawSplitResults && groups.length !== 2) return null;
+    if (groups.length === 2) attempt.sawSplitResults = true;
     const notice = duplicateCodeNotice(this.document);
     const freshDuplicateNotice = notice !== null && notice !== attempt.baselineDuplicateNotice;
     // The site may reuse identical test results for a duplicate-code submit.
     // A new exact duplicate notice is evidence that the result belongs to this click.
-    if (!freshGroup && !freshDuplicateNotice) return null;
-    return parseResultGroup(group);
+    if (!freshDuplicateNotice && groups.some(group => attempt.baselineResults.get(group) === elementText(group))) return null;
+    return parseResultGroups(groups);
   }
 
   hasPendingSubmissionAttempt(): boolean {
@@ -202,12 +216,14 @@ export class ProgrammersAdapter implements PlatformAdapter {
     const baselineDialog = new WeakMap<Element, string>();
     const dialog = acceptedDialog(this.document);
     if (dialog) baselineDialog.set(dialog, elementText(dialog.querySelector(PROGRAMMERS_ACCEPTED_TITLE_SELECTOR) ?? dialog));
+    const baselineResults = new WeakMap<Element, string>();
+    for (const group of this.document.querySelectorAll(PROGRAMMERS_RESULT_GROUP_SELECTOR)) baselineResults.set(group, elementText(group));
     this.pendingAttempt = {
       startedAt: now.getTime(),
       context: this.location.href,
       baselineDialog,
-      baselineResultGroup: resultGroupSignature(this.document),
-      baselineResultElement: resultGroup(this.document),
+      baselineResults,
+      sawSplitResults: resultGroups(this.document)?.length === 2,
       baselineDuplicateNotice: duplicateCodeNotice(this.document),
       consumed: new WeakSet<Element>(),
       observedNoDialog: false,
