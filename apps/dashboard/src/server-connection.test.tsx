@@ -4,8 +4,10 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import App from './App'
 import { ApiError } from './api'
 
-const mocks = vi.hoisted(() => ({ me: vi.fn(), list: vi.fn(), settings: vi.fn(), bridge: vi.fn(), logout: vi.fn(), navigate: vi.fn(), extension: false }))
-vi.mock('./extensionEnvironment', async original => ({ ...await original<typeof import('./extensionEnvironment')>(), extensionRuntime: () => mocks.extension ? { id: 'oohlcmihldmfninmdcmanddfmhoonmdl' } : undefined }))
+const mocks = vi.hoisted(() => ({ me: vi.fn(), list: vi.fn(), settings: vi.fn(), bridge: vi.fn(), logout: vi.fn(), navigate: vi.fn(), loginComplete: vi.fn(), extension: false }))
+vi.mock('./extensionEnvironment', async original => ({ ...await original<typeof import('./extensionEnvironment')>(), extensionRuntime: () => mocks.extension ? { id: 'oohlcmihldmfninmdcmanddfmhoonmdl' } : undefined,
+  subscribeExtensionLogin: (callback: (query: string) => void) => { mocks.loginComplete.mockImplementation(callback); return () => mocks.loginComplete.mockReset() },
+}))
 vi.mock('./api', async original => ({ ...await original<typeof import('./api')>(), getMe: mocks.me, getSolutions: mocks.list, getAccountSettings: mocks.settings, logout: mocks.logout }))
 vi.mock('./bridge', async original => ({ ...await original<typeof import('./bridge')>(), requestBridge: mocks.bridge }))
 vi.mock('./navigation', () => ({ navigateSameTab: mocks.navigate }))
@@ -37,14 +39,21 @@ it('shows checking and archive loading separately, then automatically closes wit
   expect(screen.getAllByText(solution.title).length).toBeGreaterThan(0)
 })
 
-it('keeps checking after dismissing the popup and lets the user reopen it', async () => {
+it('blocks Escape and backdrop dismissal with no close control until the server is ready', async () => {
   const session = deferred<typeof user>()
   mocks.me.mockReturnValue(session.promise); mocks.list.mockResolvedValue([])
   render(<App />)
-  fireEvent.click(await screen.findByRole('button', { name: '서버 연결 안내 닫기' }))
-  expect(screen.queryByRole('dialog', { name: '서버 연결' })).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: '로그인 상태 확인 중' }))
-  expect(screen.getByRole('dialog', { name: '서버 연결' })).toBeTruthy()
+  const dialog = await screen.findByRole('dialog', { name: '서버 연결' })
+  const cancel = new Event('cancel', { cancelable: true })
+  fireEvent(dialog, cancel)
+  expect(cancel.defaultPrevented).toBe(true)
+  const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+  fireEvent(within(dialog).getByRole('heading', { name: '서버 연결' }), escape)
+  expect(escape.defaultPrevented).toBe(true)
+  fireEvent.click(dialog)
+  expect(screen.queryByRole('button', { name: '서버 연결 안내 닫기' })).toBeNull()
+  expect(within(dialog).queryByRole('button', { name: '닫기' })).toBeNull()
+  expect(dialog.hasAttribute('open')).toBe(true)
   await act(async () => session.resolve(user))
   await waitFor(() => expect(screen.queryByRole('dialog', { name: '서버 연결' })).toBeNull())
 })
@@ -58,6 +67,48 @@ it('only identifies the session as signed out after a 401 and offers explicit lo
   expect(mocks.navigate).not.toHaveBeenCalled()
   fireEvent.click(within(dialog).getByRole('button', { name: 'GitHub 로그인하기' }))
   expect(mocks.navigate).toHaveBeenCalledWith('/api/oauth2/authorization/github')
+  expect(within(dialog).getByText('GitHub 로그인 진행 중')).toBeTruthy()
+  expect(dialog.hasAttribute('open')).toBe(true)
+})
+
+it('requires login completion and a successful archive reply before unlocking the dashboard', async () => {
+  const archive = deferred<typeof solution[]>()
+  mocks.me.mockRejectedValueOnce(new ApiError('Authentication required', 401)).mockResolvedValue(user)
+  mocks.list.mockReturnValue(archive.promise)
+  render(<App />)
+  const dialog = await screen.findByRole('dialog', { name: '서버 연결' })
+  fireEvent.click(await within(dialog).findByRole('button', { name: 'GitHub 로그인하기' }))
+  expect(within(dialog).getByText('GitHub 로그인 진행 중')).toBeTruthy()
+  await act(async () => { mocks.loginComplete('') })
+  await within(dialog).findByText('로그인 확인 완료 · 내 풀이 불러오는 중')
+  expect(dialog.hasAttribute('open')).toBe(true)
+  await act(async () => archive.resolve([solution]))
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '서버 연결' })).toBeNull())
+  expect(screen.getAllByText(solution.title).length).toBeGreaterThan(0)
+  expect(screen.getByRole('button', { name: '로그아웃' })).toBeTruthy()
+})
+
+it('shows a login preparation failure inside the mandatory popup and allows another login attempt', async () => {
+  mocks.me.mockRejectedValue(new ApiError('Authentication required', 401))
+  render(<App />)
+  const dialog = await screen.findByRole('dialog', { name: '서버 연결' })
+  fireEvent.click(await within(dialog).findByRole('button', { name: 'GitHub 로그인하기' }))
+  fireEvent(window, new CustomEvent('codearchive-login-error', { detail: 'Synthetic login preparation failed' }))
+  expect(within(dialog).getByRole('alert').textContent).toContain('Synthetic login preparation failed')
+  fireEvent.click(within(dialog).getByRole('button', { name: 'GitHub 로그인하기' }))
+  expect(mocks.navigate).toHaveBeenCalledTimes(2)
+  expect(within(dialog).queryByRole('alert')).toBeNull()
+  expect(dialog.hasAttribute('open')).toBe(true)
+})
+
+it('does not unlock the dashboard when the session expires before its initial archive reply', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockRejectedValue(new ApiError('Authentication required', 401))
+  render(<App />)
+  const dialog = await screen.findByRole('dialog', { name: '서버 연결' })
+  await within(dialog).findByText('GitHub 로그아웃 상태')
+  expect(screen.queryByRole('button', { name: '로그아웃' })).toBeNull()
+  expect(within(dialog).getByRole('button', { name: 'GitHub 로그인하기' })).toBeTruthy()
+  expect(dialog.hasAttribute('open')).toBe(true)
 })
 
 it.each([new ApiError('Unavailable', 503), new ApiError('Forbidden', 403), new TypeError('Failed to fetch')])('does not mistake a connection failure for logout and recovers on explicit retry (%s)', async error => {
@@ -97,14 +148,15 @@ it('does not restore a loading session or popup after logout when the old archiv
   mocks.me.mockResolvedValue(user); mocks.list.mockReturnValue(archive.promise)
   render(<App />)
   await screen.findByRole('button', { name: '로그아웃' })
-  fireEvent.click(screen.getByRole('button', { name: '서버 연결 안내 닫기' }))
+  // Programmatic auth invalidation still fences the outstanding reply; the
+  // native browser modal prevents real pointer access to this background UI.
   fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
   await screen.findByRole('button', { name: 'GitHub 로그인' })
   await act(async () => archive.resolve([solution]))
-  expect(screen.queryByRole('dialog', { name: '서버 연결' })).toBeNull()
+  expect(screen.getByRole('dialog', { name: '서버 연결' })).toBeTruthy()
   expect(screen.queryByRole('button', { name: '로그아웃' })).toBeNull()
   expect(screen.queryByText(solution.title)).toBeNull()
-  expect(screen.getByText('GitHub 로그아웃 상태')).toBeTruthy()
+  expect(within(screen.getByRole('dialog', { name: '서버 연결' })).getByText('GitHub 로그아웃 상태')).toBeTruthy()
 })
 
 it('stops invalidated loading progress after a failed logout and allows reconnect', async () => {
@@ -113,13 +165,12 @@ it('stops invalidated loading progress after a failed logout and allows reconnec
   mocks.logout.mockRejectedValue(new ApiError('Synthetic logout failure', 503))
   render(<App />)
   await screen.findByRole('button', { name: '로그아웃' })
-  fireEvent.click(screen.getByRole('button', { name: '서버 연결 안내 닫기' }))
   fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
   await screen.findByText('Synthetic logout failure')
   expect((screen.getByRole('button', { name: '서버 연결 새로고침' }) as HTMLButtonElement).disabled).toBe(false)
   await act(async () => archive.resolve([solution]))
   expect(screen.queryByText(solution.title)).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: '서버 연결 새로고침' }))
+  fireEvent.click(within(screen.getByRole('dialog', { name: '서버 연결' })).getByRole('button', { name: '다시 연결' }))
   await waitFor(() => expect(screen.queryByRole('dialog', { name: '서버 연결' })).toBeNull())
   expect(screen.getAllByText(solution.title).length).toBeGreaterThan(0)
 })

@@ -62,14 +62,13 @@ async function openGithub() {
 beforeEach(() => { mocks.emptyBranch.mockResolvedValue({ defaultBranch: 'main' }); mocks.readmePreview.mockResolvedValue({ content: '# CodeArchive\n\n풀이를 자동으로 보관합니다.' }); mocks.initializeReadme.mockResolvedValue({ defaultBranch: 'main' }); mocks.installations.mockResolvedValue([{ id: 77, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue({ items: [{ id: 7, owner: 'codearchive', name: 'solutions', fullName: 'codearchive/solutions', privateRepository: true, defaultBranch: 'main' }], hasMore: false }); mocks.branches.mockResolvedValue({ items: [{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }], hasMore: false }); mocks.tree.mockImplementation((_githubId: string, _installation: number, _repository: number, _branch: string, path = '') => Promise.resolve({ path, headSha: 'a'.repeat(40), items: path ? [] : [{ name: 'src', path: 'src', type: 'tree', size: 0 }], page: 1, hasMore: false, truncated: false })) })
 afterEach(() => { mocks.extension = false; cleanup(); localStorage.clear(); window.history.replaceState({}, '', '/'); vi.clearAllMocks() })
 
-it('starts GitHub OAuth in the same tab on the first logged-out click', async () => {
+it('starts GitHub OAuth from the mandatory login popup on the first logged-out click', async () => {
   mocks.me.mockRejectedValue(new ApiError('Authentication is required', 401))
   mocks.bridge.mockRejectedValue(new Error('Extension is unavailable'))
 
   render(<App />)
 
-  fireEvent.click(await screen.findByRole('button', { name: '서버 연결 안내 닫기' }))
-  fireEvent.click(await screen.findByRole('button', { name: /^GitHub 로그인/ }))
+  fireEvent.click(await screen.findByRole('button', { name: 'GitHub 로그인하기' }))
   expect(mocks.navigate).toHaveBeenCalledOnce()
   expect(mocks.navigate).toHaveBeenCalledWith('/api/oauth2/authorization/github')
   expect(screen.queryByRole('dialog', { name: 'GitHub로 로그인' })).toBeNull()

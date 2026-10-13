@@ -17,6 +17,8 @@ const plugin = {
   load(id) { if (id === '\0connection-fixture') return runtime },
   transform(source, id) {
     if (id.endsWith('/src/bridge.ts')) return `import { fixtureRuntime } from 'virtual:connection-fixture';\n${source.replace('options.runtime ?? runtimeFromWindow()', 'options.runtime ?? fixtureRuntime')}`
+    if (id.endsWith('/src/navigation.ts')) return `export function navigateSameTab() { window.dispatchEvent(new CustomEvent('codearchive-login-start', { detail: 'login' })); window.open('/__fixture/login', '_blank'); }`
+    if (id.endsWith('/src/extensionEnvironment.ts')) return source.replace('export function subscribeExtensionLogin(', 'function unusedRealLoginSubscription(') + `\nexport function subscribeExtensionLogin(onComplete) { const listener = event => { if (event.origin === location.origin && event.data === 'synthetic-connection-login-complete') onComplete(''); }; window.addEventListener('message', listener); return () => window.removeEventListener('message', listener); }`
   },
   transformIndexHtml(html) {
     return html.replace('<head>', `<head><script>const fixtureFetch = window.fetch.bind(window); window.fetch = (input, init = {}) => { if (typeof input === 'string' && input.startsWith('/api/')) { const headers = new Headers(init.headers); headers.set('X-Fixture-Scenario', new URL(location.href).searchParams.get('scenario') || 'delay'); return fixtureFetch(input, { ...init, headers }); } return fixtureFetch(input, init); };</script>`)
@@ -31,21 +33,27 @@ const plugin = {
         return res.end('<!doctype html><html lang="ko"><title>합성 응답 제어</title><body><h1>합성 응답 제어</h1><p>실제 서버와 사용자 데이터는 사용하지 않습니다.</p><button onclick="fetch(\'/__fixture/release?phase=auth\', {method:\'POST\'}).then(()=>this.textContent=\'로그인 응답 허용 완료\')">로그인 응답 허용</button><button onclick="fetch(\'/__fixture/release?phase=list\', {method:\'POST\'}).then(()=>this.textContent=\'풀이 응답 허용 완료\')">풀이 응답 허용</button><button onclick="fetch(\'/__fixture/release?phase=recover\', {method:\'POST\'}).then(()=>this.textContent=\'오류 복구 허용 완료\')">오류 복구 허용</button></body></html>')
       }
       if (url.pathname === '/__fixture/release' && req.method === 'POST') { release(url.searchParams.get('phase')); return json({ syntheticOnly: true }) }
+      if (url.pathname === '/__fixture/login') {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8')
+        return res.end('<!doctype html><html lang="ko"><title>합성 로그인 검증</title><body><h1>합성 로그인 검증</h1><p>실제 GitHub 인증·계정·비밀값을 사용하지 않습니다.</p><button onclick="fetch(\'/__fixture/release?phase=login\', {method:\'POST\'}).then(()=>{window.opener.postMessage(\'synthetic-connection-login-complete\', location.origin); this.textContent=\'합성 로그인 승인 완료\';})">합성 로그인 승인</button></body></html>')
+      }
       if (url.pathname === '/__fixture/narrow') {
         res.setHeader('Content-Type', 'text/html; charset=utf-8')
-        return res.end('<!doctype html><html lang="ko"><title>390px 좁은 화면 검증</title><body><h1>390px 좁은 프레임 · 합성 데이터</h1><iframe title="390px 대시보드" src="/?scenario=delay" style="width:390px;height:844px;border:1px solid #ccc"></iframe></body></html>')
+        const scenario = ['delay', 'login', 'signed-out', 'error'].includes(url.searchParams.get('scenario')) ? url.searchParams.get('scenario') : 'delay'
+        return res.end(`<!doctype html><html lang="ko"><title>390px 좁은 화면 검증</title><body><h1>390px 좁은 프레임 · 합성 데이터</h1><iframe title="390px 대시보드" src="/?scenario=${scenario}" style="width:390px;height:844px;border:1px solid #ccc"></iframe></body></html>`)
       }
       if (!url.pathname.startsWith('/api/')) return next()
       const scenario = req.headers['x-fixture-scenario'] ?? 'delay'
       if (url.pathname === '/api/auth/me') {
         if (scenario === 'signed-out') return json({ message: 'Synthetic signed out' }, 401)
+        if (scenario === 'login' && !released.has('login')) return json({ message: 'Synthetic login required' }, 401)
         if (scenario === 'error' && !released.has('recover')) return json({ message: 'Synthetic unavailable' }, 503)
         if (scenario === 'delay') await wait('auth')
         return json(user)
       }
       if (url.pathname === '/api/solutions') {
         if (scenario === 'list-error') return json({ message: 'Synthetic archive unavailable' }, 503)
-        if (scenario === 'delay') await wait('list')
+        if (scenario === 'delay' || scenario === 'login') await wait('list')
         return json(solutions)
       }
       if (url.pathname === '/api/settings') return json(settings)
