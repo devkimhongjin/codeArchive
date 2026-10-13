@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CodeArchive",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Capture accepted algorithm solutions and manage server-registered code with CodeArchive.",
   "minimum_chrome_version": "120",
   "permissions": [
