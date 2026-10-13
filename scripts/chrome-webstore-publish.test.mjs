@@ -3,7 +3,8 @@ import test from 'node:test';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { configuration, publish, redact } from './chrome-webstore-publish.mjs';
+import { spawnSync } from 'node:child_process';
+import { configuration, inspectStatus, publish, redact } from './chrome-webstore-publish.mjs';
 
 const base = { CWS_PUBLISHER_ID: 'publisher-test-id', CWS_STORE_ITEM_ID: 'mlhibjadcbklfdllkonhjjajhmhnoalj', CWS_VERSION: '1.0.0', CWS_ARCHIVE: 'fixture.zip' };
 const revision = (state, version) => ({ state, distributionChannels: [{ crxVersion: version, deployPercentage: 100 }] });
@@ -114,4 +115,35 @@ test('never treats a prior upload status as completion for a malformed or unpoll
 
 test('redacts bearer values from API failures', () => {
   assert.doesNotMatch(redact('Bearer abc.def access_token=xyz'), /abc\.def|xyz/);
+});
+
+test('status uses one GET without an archive and filters credentials and unrelated metadata', async () => {
+  const env = { CWS_PUBLISHER_ID: base.CWS_PUBLISHER_ID, CWS_STORE_ITEM_ID: base.CWS_STORE_ITEM_ID, CWS_ACCESS_TOKEN: 'secret-token' };
+  let calls = 0;
+  const result = await inspectStatus({ env, fetcher: async (url, init) => {
+    calls += 1;
+    assert.match(url, /:fetchStatus$/);
+    assert.equal(init.method, 'GET');
+    assert.equal(init.body, undefined);
+    assert.equal(init.headers.Authorization, 'Bearer secret-token');
+    return response({ publishedItemRevisionStatus: revision('PUBLISHED', '1.0.0'), submittedItemRevisionStatus: revision('PENDING_REVIEW', '1.0.1'), access_token: 'never-output', privateMetadata: 'never-output' });
+  } });
+  assert.equal(calls, 1);
+  assert.deepEqual(result, { itemId: base.CWS_STORE_ITEM_ID, published: { version: '1.0.0', state: 'PUBLISHED' }, submitted: { version: '1.0.1', state: 'PENDING_REVIEW' } });
+  assert.doesNotMatch(JSON.stringify(result), /secret-token|never-output/);
+});
+
+test('status represents absent revisions as unknown and rejects missing auth or malformed responses', async () => {
+  const env = { ...base, CWS_ACCESS_TOKEN: 'secret-token' };
+  assert.deepEqual(await inspectStatus({ env, fetcher: async () => response({}) }), { itemId: base.CWS_STORE_ITEM_ID, published: { version: null, state: null }, submitted: { version: null, state: null } });
+  await assert.rejects(() => inspectStatus({ env: base }), /required for status/);
+  await assert.rejects(() => inspectStatus({ env, fetcher: async () => response('not json') }), /invalid JSON/);
+  await assert.rejects(() => inspectStatus({ env, fetcher: async () => response({ access_token: 'never-output' }, 403) }), /HTTP 403/);
+});
+
+test('an unknown CLI command fails before publication or authentication', () => {
+  const result = spawnSync(process.execPath, [new URL('./chrome-webstore-publish.mjs', import.meta.url).pathname.replace(/^\/(\w:)/, '$1'), 'statu'], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /Expected no command \(publish\) or status/);
 });
