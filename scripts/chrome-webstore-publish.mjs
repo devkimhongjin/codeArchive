@@ -11,13 +11,18 @@ export function redact(value) {
     .replace(/(?:access[_-]?token|authorization)=?[^\s&]+/gi, '[REDACTED]');
 }
 
-export function configuration(env = process.env) {
+function publisherConfiguration(env) {
   const values = {
     publisherId: env.CWS_PUBLISHER_ID ?? '', itemId: env.CWS_STORE_ITEM_ID ?? '',
-    accessToken: env.CWS_ACCESS_TOKEN ?? '', version: env.CWS_VERSION ?? '', archive: env.CWS_ARCHIVE ?? '',
+    accessToken: env.CWS_ACCESS_TOKEN ?? '',
   };
   if (!storeItemIdPattern.test(values.itemId)) throw new Error('CWS_STORE_ITEM_ID must be a Chrome Web Store item ID');
   if (!/^[A-Za-z0-9-]{8,128}$/.test(values.publisherId)) throw new Error('CWS_PUBLISHER_ID must be a Chrome Web Store publisher ID');
+  return values;
+}
+
+export function configuration(env = process.env) {
+  const values = { ...publisherConfiguration(env), version: env.CWS_VERSION ?? '', archive: env.CWS_ARCHIVE ?? '' };
   if (!versionPattern.test(values.version)) throw new Error('CWS_VERSION must be a semantic version');
   if (!values.archive) throw new Error('CWS_ARCHIVE is required');
   return values;
@@ -44,6 +49,16 @@ function revisionVersion(revision) {
 function revisionState(revision) { return typeof revision?.state === 'string' ? revision.state : null; }
 function isSubmittedRevision(revision, version) {
   return revisionVersion(revision) === version && ['PENDING_REVIEW', 'STAGED'].includes(revisionState(revision));
+}
+
+/** Read-only status, exposing only public item/version/state fields in CI. */
+export async function inspectStatus({ env = process.env, fetcher = fetch } = {}) {
+  const config = publisherConfiguration(env);
+  if (!config.accessToken) throw new Error('CWS_ACCESS_TOKEN is required for status');
+  const url = `${api}/v2/publishers/${encodeURIComponent(config.publisherId)}/items/${config.itemId}:fetchStatus`;
+  const status = await request(fetcher, url, { method: 'GET', phase: 'fetch status' }, config.accessToken);
+  const revision = value => ({ version: revisionVersion(value), state: revisionState(value) });
+  return { itemId: config.itemId, published: revision(status.publishedItemRevisionStatus), submitted: revision(status.submittedItemRevisionStatus) };
 }
 
 export async function publish({ env = process.env, fetcher = fetch, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), maxPolls = 20 } = {}) {
@@ -101,6 +116,8 @@ export async function publish({ env = process.env, fetcher = fetch, sleep = ms =
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  publish().then(result => process.stdout.write(`${JSON.stringify({ status: result.status, itemId: result.itemId, version: result.version })}\n`))
+  const operation = process.argv.length > 3 ? null : process.argv[2] === 'status' ? inspectStatus : process.argv[2] === undefined ? publish : null;
+  const result = operation ? operation() : Promise.reject(new Error('Expected no command (publish) or status'));
+  result.then(result => process.stdout.write(`${JSON.stringify(operation === inspectStatus ? result : { status: result.status, itemId: result.itemId, version: result.version })}\n`))
     .catch(error => { process.stderr.write(`${redact(error.message)}\n`); process.exitCode = 1; });
 }
