@@ -23,6 +23,29 @@
   --shadow: 0 20px 55px rgba(58, 43, 119, .07);
 }
 
+.server-connection-dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); margin: auto; padding: 24px; border: 0; border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: 0 18px 64px rgba(29, 27, 50, .2); overflow: auto; }
+.server-connection-dialog::backdrop { background: rgba(23, 22, 47, .28); }
+.server-connection-heading { display: flex; align-items: center; gap: 10px; color: var(--purple-ink); }
+.server-connection-heading h2 { margin: 0; font-size: 20px; color: var(--ink); }
+.server-connection-state { display: flex; align-items: center; gap: 12px; margin: 28px 0 12px; color: var(--purple-ink); font-size: 16px; line-height: 1.5; }
+.server-connection-state svg { flex-shrink: 0; }
+.server-connection-state.is-error { color: #993b4b; }
+.server-connection-dialog > p { margin: 0; color: #575069; font-size: 14px; line-height: 1.8; }
+.server-connection-steps { display: grid; gap: 12px; margin: 24px 0 0; padding: 0; list-style: none; }
+.server-connection-steps li { display: flex; align-items: center; gap: 10px; color: #686176; font-size: 14px; }
+.server-connection-steps .is-current { color: var(--purple-ink); font-weight: 600; }
+.server-connection-steps .is-complete { color: #14715c; }
+.server-connection-step-dot { width: 16px; height: 16px; border: 1px solid #8b849a; border-radius: 50%; }
+.server-connection-spinner { animation: spin 1s linear infinite; }
+.server-connection-footer { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line); }
+.server-connection-footer p { margin: 0; color: #686176; font-size: 14px; line-height: 1.7; }
+.server-connection-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.server-connection-buttons button { min-height: 40px; padding: 9px 16px; font-size: 14px; }
+.server-connection-dialog button:focus-visible { outline: 2px solid var(--purple); outline-offset: 3px; }
+.server-connection-dialog .server-login-error { margin-top: 16px; color: #993b4b; }
+.server-status-label { display: inline-flex; align-items: center; gap: 7px; padding: 8px 10px; color: var(--purple-ink); background: var(--surface-soft); border-radius: 6px; font-size: 12px; line-height: 1.5; text-align: left; }
+@media (prefers-reduced-motion: reduce) { .server-connection-spinner { animation: none; } }
+
 * { box-sizing: border-box; }
 
 body { margin: 0; min-width: 280px; min-height: 100vh; overflow-x: hidden; background: var(--lavender); }
