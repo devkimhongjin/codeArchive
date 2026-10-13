@@ -1,5 +1,6 @@
 import { normalizeDifficulty } from '../../../shared/difficulty'
 import { CodeThemePreview } from './CodeThemePreview'
+import { ServerConnectionDialog, serverConnectionLabel, type ServerConnectionState } from './ServerConnectionDialog'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { HistoricalCollectionScope } from '../../../shared/historicalCollectionScope'
 import { DesktopSettings } from './DesktopSettings'
@@ -261,6 +262,8 @@ export default function App() {
   const modeRef = useRef(mode)
   modeRef.current = mode
   const [authResolved, setAuthResolved] = useState(false)
+  const [serverConnection, setServerConnection] = useState<ServerConnectionState>({ phase: 'checking' })
+  const [serverDialogVisible, setServerDialogVisible] = useState(true)
   const [user, setUser] = useState<User | null>(null)
   const userRef = useRef<User | null>(user)
   userRef.current = user
@@ -426,27 +429,33 @@ export default function App() {
   useEffect(() => {
     let active = true
     const fence: RequestFence = { generation: accountGeneration.current, operation: ++solutionOperation.current }
-    // A successful session silently upgrades the fixture screen to live data.
-    // A missing backend or a 401 intentionally keeps the clearly labelled demo available.
+    // Session checking and solution loading are separate visible phases. A
+    // failed connection cannot be presented as a confirmed signed-out session.
     void getMe()
       .then(async (nextUser) => {
         if (!requestIsCurrent(fence, accountGeneration.current, solutionOperation.current, active)) return
         if (userRef.current && userRef.current.id !== nextUser.id) clearAccountDraft()
         setUser(nextUser)
+        setServerConnection({ phase: 'loading' })
         try {
           const remote = (await getSolutions(nextUser.githubId)).map(normalizeSolution)
           if (!requestIsCurrent(fence, accountGeneration.current, solutionOperation.current, active)) return
           setMode('live')
           setSolutions(remote)
           setSelectedId(remote[0]?.captureId ?? '')
+          setServerConnection({ phase: 'ready' })
         } catch {
           if (requestIsCurrent(fence, accountGeneration.current, solutionOperation.current, active)) {
             setMode('local')
-            setLoadError('라이브 풀이 목록을 불러오지 못했습니다. 이 브라우저의 로컬 기록을 표시합니다.')
+            setServerConnection({ phase: 'error', authenticated: true })
+            setLoadError(extensionRuntime() ? '서버의 풀이 목록을 불러오지 못했습니다. 서버 연결을 다시 시도해 주세요.' : '라이브 풀이 목록을 불러오지 못했습니다. 이 브라우저의 로컬 기록을 표시합니다.')
           }
         }
       })
-      .catch(() => undefined)
+      .catch(error => {
+        if (!requestIsCurrent(fence, accountGeneration.current, solutionOperation.current, active)) return
+        setServerConnection(error instanceof ApiError && error.status === 401 ? { phase: 'signed-out' } : { phase: 'error', authenticated: false })
+      })
       .finally(() => { if (active) setAuthResolved(true) })
     return () => {
       active = false
@@ -610,6 +619,9 @@ export default function App() {
   const connectLive = async () => {
     if (authMutationInFlight.current !== null) return
     let fence: RequestFence = { generation: accountGeneration.current, operation: ++solutionOperation.current }
+    let authenticated = false
+    setServerDialogVisible(true)
+    setServerConnection({ phase: 'checking' })
     setLoading(true)
     setLoadError(null)
     try {
@@ -632,15 +644,19 @@ export default function App() {
         fence = { generation: accountGeneration.current, operation: ++solutionOperation.current }
       }
       setUser(nextUser)
+      authenticated = true
+      setServerConnection({ phase: 'loading' })
       const remote = (await getSolutions(nextUser.githubId)).map(normalizeSolution)
       if (!requestIsCurrent(fence, accountGeneration.current, solutionOperation.current)) return
       setMode('live')
       setSolutions(remote)
       setSelectedId(remote[0]?.captureId ?? '')
+      setServerConnection({ phase: 'ready' })
       showToast('success', '서버 아카이브에 연결했습니다.')
     } catch (error) {
       if (!requestIsCurrent(fence, accountGeneration.current, solutionOperation.current)) return
       if (error instanceof ApiError && error.status === 401) {
+        setServerConnection({ phase: 'signed-out' })
         setMode('local')
         setUser(null)
         setSolutions([])
@@ -648,6 +664,7 @@ export default function App() {
         showToast('info', '먼저 로그인하면 내 풀이를 불러올 수 있습니다.')
         navigateSameTab(GITHUB_LOGIN_URL)
       } else {
+        setServerConnection({ phase: 'error', authenticated })
         setMode('local')
         const message = error instanceof Error ? error.message : '서버에 연결하지 못했습니다.'
         setLoadError(message)
@@ -681,6 +698,10 @@ export default function App() {
     relayHandoffOperation.current += 1
     const resetOperation = ++bridgeOperation.current
     setLoading(false)
+    // An invalidated archive request cannot leave its progress UI spinning.
+    // The caller will set the final signed-out or replacement-account state.
+    setServerConnection(current => current.phase === 'checking' || current.phase === 'loading'
+      ? { phase: 'error', authenticated: Boolean(userRef.current) } : current)
     const capability = bridgeCapabilityRef.current
     const disconnectExtensionId = currentExtensionId.current
     // Capture this before any asynchronous bridge work. A later render for B
@@ -720,6 +741,8 @@ export default function App() {
     clearAccountDraft()
     setUser(null)
     setMode('local')
+    setServerConnection({ phase: 'signed-out' })
+    setServerDialogVisible(false)
     setSolutions([])
     setSelectedId('')
     setView('solutions')
@@ -741,6 +764,8 @@ export default function App() {
     setSelectedId('')
     setUser(null)
     setLoadError('GitHub 연결이 변경되거나 만료되었습니다. 다시 로그인해 주세요.')
+    setServerConnection({ phase: 'signed-out' })
+    setServerDialogVisible(false)
     showToast('info', 'GitHub 연결이 변경되거나 만료되었습니다. 다시 로그인해 주세요.')
   }
 
@@ -783,6 +808,8 @@ export default function App() {
       setLoadError(null)
       clearAccountDraft()
       setUser(null)
+      setServerConnection({ phase: 'signed-out' })
+      setServerDialogVisible(false)
       setMode('local')
       setSolutions([])
       setSelectedId('')
@@ -1148,6 +1175,8 @@ export default function App() {
           await resetBridge()
           setUser(null)
           setMode('local')
+          setServerConnection({ phase: 'signed-out' })
+          setServerDialogVisible(false)
           setSolutions([])
           setSelectedId('')
           showToast('info', '세션이 만료되었습니다. 다시 로그인해 주세요.')
@@ -1331,7 +1360,9 @@ export default function App() {
       : extensionVersion ? `확장 프로그램 연결 완료 · v${extensionVersion}` : '확장 프로그램 연결 완료 · 버전 확인 불가'
     : bridgeStatus === 'connecting' ? '확장 프로그램 연결 중' : '확장 프로그램 연결 끊김'
   const extensionUpdateRequired = bridgeStatus === 'connected' && extensionVersion !== null && !isVersionAtLeast(extensionVersion, EXTENSION_RELEASE.minimumExtensionVersion)
-  const serverStatusLabel = mode === 'live' && user
+  const serverConnecting = serverConnection.phase === 'checking' || serverConnection.phase === 'loading'
+  const serverStatusLabel = serverConnecting || serverConnection.phase === 'error' || serverConnection.phase === 'signed-out'
+    ? serverConnectionLabel(serverConnection) : mode === 'live' && user
     ? `서버 연결 완료 · ${displayUser(user)}`
     : user ? '서버 연결 오류' : 'GitHub 로그인 전'
 
@@ -1382,7 +1413,7 @@ export default function App() {
               <span>{syncing ? '동기화 중' : '동기화'}</span>
               <b className="sync-count" aria-hidden="true">{pendingBadge}</b>
             </button>}
-            {user ? (
+            {!user && (serverConnecting || serverConnection.phase === 'error') ? <button className="server-status-button" onClick={() => setServerDialogVisible(true)}><Icon name="sync" size={14} /><span>{serverConnecting ? serverConnectionLabel(serverConnection) : '연결 상태 확인'}</span></button> : user ? (
               <div className="account-menu">
                 <ProfileAvatar user={user} />
                 <span className="account-identity">{displayUser(user)}</span>
@@ -1411,8 +1442,8 @@ export default function App() {
             <small id="pending-sync-help">{extensionRuntime() ? '풀이는 로그인한 계정의 서버에서 관리합니다.' : pendingDescription}</small>
           </div>
           <div className="connection-actions">
-            {mode === 'local' && !user && <button className="banner-action" onClick={() => navigateSameTab(GITHUB_LOGIN_URL)}>GitHub로 로그인 <Icon name="github" size={14} /></button>}
-            {mode === 'local' && <button className="banner-secondary" onClick={() => void connectLive()} disabled={loading}><Icon name="refresh" size={14} /> 서버 연결 새로고침</button>}
+            {mode === 'local' && !user && serverConnection.phase === 'signed-out' && <button className="banner-action" onClick={() => navigateSameTab(GITHUB_LOGIN_URL)}>GitHub로 로그인 <Icon name="github" size={14} /></button>}
+            {mode === 'local' && <button className="banner-secondary" onClick={() => void connectLive()} disabled={loading || serverConnecting}><Icon name="refresh" size={14} /> 서버 연결 새로고침</button>}
             {extensionUpdateRequired && <a className="banner-secondary update-extension" href={EXTENSION_RELEASE.releaseHistoryUrl} target="_blank" rel="noopener noreferrer">확장 업데이트</a>}
             {bridgeStatus === 'disconnected' && <button className="banner-secondary" onClick={() => void connectBridge()} disabled={loading}>확장 재연결</button>}
             {mode === 'live' && user && <button className="server-refresh" onClick={() => void refreshSolutions(undefined, user.githubId)} disabled={loading} title="서버 아카이브 목록을 다시 읽습니다."><Icon name="refresh" size={14} /> 서버 목록 새로고침</button>}
@@ -1439,7 +1470,7 @@ export default function App() {
             languageFilter={languageFilter}
             languages={languages}
             solutionSort={solutionSort}
-            loading={loading}
+            loading={loading || serverConnecting}
             mode={mode}
             setQuery={value => { setQuery(value); setSolutionPage(1) }}
             setPlatformFilter={value => { setPlatformFilter(value); setSolutionPage(1) }}
@@ -1545,6 +1576,7 @@ export default function App() {
       </footer>
 
       {toast && <ToastView toast={toast} onClose={() => setToast(null)} />}
+      <ServerConnectionDialog state={serverConnection} visible={serverDialogVisible} onDismiss={() => setServerDialogVisible(false)} onRetry={() => void connectLive()} onLogin={() => navigateSameTab(GITHUB_LOGIN_URL)} />
     </div></DesktopStatusProvider>
   )
 }

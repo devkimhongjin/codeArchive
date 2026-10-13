@@ -68,6 +68,7 @@ it('starts GitHub OAuth in the same tab on the first logged-out click', async ()
 
   render(<App />)
 
+  fireEvent.click(await screen.findByRole('button', { name: '서버 연결 안내 닫기' }))
   fireEvent.click(await screen.findByRole('button', { name: /^GitHub 로그인/ }))
   expect(mocks.navigate).toHaveBeenCalledOnce()
   expect(mocks.navigate).toHaveBeenCalledWith('/api/oauth2/authorization/github')

@@ -5,6 +5,7 @@ import App from './App'
 import { EXTENSION_ID, LEGACY_EXTENSION_ID } from './extensionConfig'
 import { BridgeError } from './bridge'
 import { EXTENSION_RELEASE } from './extensionRelease'
+import { ApiError } from './api'
 
 const mocks = vi.hoisted(() => ({
   me: vi.fn(),
@@ -259,13 +260,13 @@ it('shows a read-only local pending count without issuing captures for upload', 
 })
 
 it('separates an unavailable extension from signed-out server state', async () => {
-  mocks.me.mockRejectedValue(new Error('not signed in'))
+  mocks.me.mockRejectedValue(new ApiError('Authentication required', 401))
   mocks.bridge.mockRejectedValue(new Error('extension unavailable'))
 
   render(<App />)
   await waitFor(() => expect(bridgeCalls('CONNECT').length).toBeGreaterThan(0))
   expect(screen.getByText('확장 프로그램 연결 끊김')).toBeTruthy()
-  expect(screen.getByText('GitHub 로그인 전')).toBeTruthy()
+  expect(document.querySelector('.connection-copy')?.textContent).toContain('GitHub 로그아웃 상태')
   expect(screen.getByText('로컬 보관함')).toBeTruthy()
   expect(document.querySelector('.sync-count')?.textContent).toBe('—')
 })
