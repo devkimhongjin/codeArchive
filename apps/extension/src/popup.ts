@@ -3,6 +3,7 @@ import { SUBMISSION_PROGRESS_KEY } from './submissionProgress';
 mountPopup(document, {
   openDashboard: view => { void chrome.tabs.create({ url: chrome.runtime.getURL(`dashboard.html?view=${view}`) }); },
   load: () => chrome.runtime.sendMessage({ type: 'GET_POPUP_STATE' }),
+  loadBatchProgress: () => chrome.runtime.sendMessage({ type: 'GET_POPUP_GITHUB_BATCH' }),
   subscribeProgress: (refresh) => {
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName === 'session' && changes[SUBMISSION_PROGRESS_KEY]) refresh();

@@ -49,6 +49,7 @@ import { CommunityView } from './CommunityView'
 import { HistoricalCollectionView } from './HistoricalCollectionView'
 import { HistoricalGithubCommitView } from './HistoricalGithubCommitView'
 import { GithubBatchProgress } from './GithubBatchProgress'
+import type { GithubSelectionMetric } from './githubBatchSelection'
 import { formatKstDate, formatKstDateTime } from '../../../shared/timePresentation'
 import { readCommunityRoute, readView, urlForView, type CommunityRoute } from './communityRoute'
 import { CommunitySettings } from './CommunitySettings'
@@ -1538,6 +1539,7 @@ export default function App() {
         {(view === 'settings' || view === 'github') && (
           <SettingsView key={user?.id ?? 'local'}
             section={view}
+            commitMetrics={solutions.map(({ captureId, platform, problemNumber, executionTime, memoryValue, memoryUnit }) => ({ captureId, platform, problemNumber, executionTime, memoryValue, memoryUnit }))}
             user={user}
             exportSettings={exportSettings}
             updateExportSettings={updateExportSettings}
@@ -1798,6 +1800,7 @@ function HeaderFieldsPicker({ label, fields, solution, onChange }: { label: stri
 
 function SettingsView({
   section,
+  commitMetrics,
   user,
   exportSettings,
   updateExportSettings,
@@ -1819,6 +1822,7 @@ function SettingsView({
   accountSettingsReady,
 }: {
   section: 'settings' | 'github'
+  commitMetrics: GithubSelectionMetric[]
   user: User | null
   exportSettings: ExportSettings
   updateExportSettings: (settings: ExportSettings) => void
@@ -2173,7 +2177,6 @@ function SettingsView({
   return (
     <section className="settings-page">
       <div className="page-heading"><p className="eyebrow"><span className="eyebrow-dot" /> WORKSPACE / {section === 'github' ? 'GITHUB' : 'SETTINGS'}</p><h1>{section === 'github' ? 'GitHub 관리' : '설정'}</h1><p>{section === 'github' ? '저장소와 자동 커밋을 관리합니다.' : '프로필, 코드 저장 및 자동 동기화를 관리합니다.'}</p></div>
-      {section === 'github' && user && savedTarget && <div className="github-batch-management"><HistoricalGithubCommitView allSolutions user={user} mode={accountSettingsReady ? 'live' : 'local'} revision={accountSettings.version} /></div>}
       {section === 'github' && user && savedTarget && <GithubRepositoryBrowser githubId={user.githubId} target={savedTarget} lightTheme={accountSettings.lightTheme} darkTheme={accountSettings.darkTheme} codeThemeMode={codeThemeMode} onExpectedAccountChange={onExpectedAccountChange} />}
       {section === 'settings' && <DesktopSettings />}
       {section === 'settings' && <CommunitySettings user={user} ready={accountSettingsReady} duplicateVisibility={accountSettings.communityDuplicateVisibility ?? 'all'} onDuplicateChange={communityDuplicateVisibility => updateAccountSettings({ ...accountSettings, communityDuplicateVisibility }, true)} publicByDefault={accountSettings.communityPublicByDefault ?? true} onChange={communityPublicByDefault => updateAccountSettings({ ...accountSettings, communityPublicByDefault }, true)} saving={settingsBusy} onPublished={onCommunityPublished} onAuthInvalid={onExpectedAccountChange} />}
@@ -2250,6 +2253,7 @@ function SettingsView({
             ))}
             {targetBusy && <div className="github-target-overlay" role="status" aria-live="assertive"><Icon name="sync" size={20} /><strong>{targetLoadingText}</strong><span>GitHub에서 안전하게 확인하고 있습니다.</span></div>}
           </article>}
+          {section === 'github' && user && savedTarget && <div className="github-batch-management"><HistoricalGithubCommitView allSolutions user={user} mode={accountSettingsReady ? 'live' : 'local'} revision={accountSettings.version} selectionMetrics={commitMetrics} /></div>}
         </div>
         {section === 'settings' && <aside className="settings-sidebar"><article className="account-card"><span className="card-kicker">ACCOUNT</span>{user ? <><div className="account-large"><ProfileAvatar user={user} large /><div><strong>{displayUser(user)}</strong><span>@{user.githubLogin} · CodeArchive 계정</span></div></div><button className="wide-ghost-button" onClick={onLogout}><Icon name="logout" size={14} /> 로그아웃</button></> : <><div className="account-logged-out"><div className="logged-out-icon"><Icon name="user" size={18} /></div><strong>로그인이 필요합니다</strong><span>내 풀이를 저장하고 동기화하세요.</span></div><button className="primary-button wide" onClick={onLogin}>GitHub로 로그인 <Icon name="github" size={14} /></button></>}</article><article className="privacy-card"><Icon name="check" size={16} /><div><strong>데이터를 직접 통제하세요</strong><p>로그인 후 새 정답 제출은 자동 동기화됩니다. 과거에 수집한 풀이는 일괄 동기화 탭에서 직접 전송합니다.</p></div></article></aside>}
       </div>

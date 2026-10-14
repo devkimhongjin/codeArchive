@@ -4,9 +4,11 @@ import { canonicalLanguageDisplayName } from '../../../shared/language';
 import { formatCaptureMemory, formatExecutionTime, formatSolutionTime } from './capturePresentation';
 import { buildLabel, updatedLabel } from '../../../shared/buildMetadata';
 import type { GithubToggleRequest, GithubToggleResult } from './popupGithubAutomation';
+import type { PopupBatchProgress } from './popupBatchProgress';
 type Preview = Omit<Capture, 'sourceCode'> & { githubCommitStatus?: GithubCommitStatus };
 interface PopupServices {
   load: () => Promise<unknown>;
+  loadBatchProgress?: () => Promise<{ progress?: PopupBatchProgress | null }>;
   subscribeProgress?: (refresh: () => void) => void;
   openDashboard?: (view: 'github') => void;
   copy: (text: string) => Promise<void>;
@@ -79,6 +81,24 @@ export function mountPopup(document: Document, services: PopupServices): void {
   let githubState: { githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; accountId?: string; accountSettingsVersion?: number } | undefined;
   let toggleNotice = '';
   let statusAccount: string | undefined;
+  let batchEpoch = 0, batchAccount: string | undefined;
+  const batchCard = document.querySelector<HTMLElement>('#github-batch-card');
+  async function refreshBatch(): Promise<void> {
+    if (!services.loadBatchProgress || !batchCard) return;
+    const epoch = ++batchEpoch;
+    try {
+      const { progress } = await services.loadBatchProgress();
+      if (epoch !== batchEpoch) return;
+      if (!progress || (statusAccount !== undefined && progress.accountId !== statusAccount)) { batchCard.hidden = true; batchAccount = undefined; return; }
+      batchAccount = progress.accountId; batchCard.hidden = false;
+      const labels = { REQUESTING: '접수 중', TRACKING: '진행 중', DONE: progress.cancelRequested ? '추가 요청 중단' : '처리 완료', PAUSED: '확인 필요' };
+      document.querySelector<HTMLElement>('#github-batch-state')!.textContent = labels[progress.status];
+      const bar = document.querySelector<HTMLProgressElement>('#github-batch-progress')!; bar.max = progress.total; bar.value = progress.processed;
+      document.querySelector<HTMLElement>('#github-batch-counts')!.textContent = `처리 ${progress.processed}/${progress.total}건 (${Math.floor(progress.processed / progress.total * 100)}%)`;
+      document.querySelector<HTMLElement>('#github-batch-detail')!.textContent = `접수 ${progress.requested}건 · 성공 ${progress.completed}건 · 실패 ${progress.failed}건 · 확인 필요 ${progress.unknown}건`;
+    } catch { if (epoch === batchEpoch && !batchCard.hidden) document.querySelector<HTMLElement>('#github-batch-state')!.textContent = '진행 상태 확인 실패'; }
+  }
+  document.querySelector<HTMLButtonElement>('#github-batch-dashboard')?.addEventListener('click', () => services.openDashboard?.('github'));
   let knownStatuses = new Map<string, GithubCommitStatus>();
   let recentRenderKey: string | undefined;
   let visibleCaptures: Preview[] = [];
@@ -118,7 +138,9 @@ export function mountPopup(document: Document, services: PopupServices): void {
       const state = await services.load() as { settings?: NonNullable<typeof githubState> & { relay?: { status?: string } }; recentCaptures?: unknown; error?: unknown } | null;
       if (!state?.settings || state.error) throw new Error('Invalid state');
       if (statusAccount !== state.settings.accountId) {
+        batchEpoch++; if (batchCard && batchAccount !== state.settings.accountId) batchCard.hidden = true;
         knownStatuses.clear(); statusAccount = state.settings.accountId;
+        void refreshBatch();
       }
       const seen = new Set<string>();
       const captures = (Array.isArray(state.recentCaptures) ? state.recentCaptures : []).filter(asSynced)
@@ -176,11 +198,11 @@ export function mountPopup(document: Document, services: PopupServices): void {
     }).catch(() => { toggleNotice = '저장 결과를 확인하지 못했어요. 다시 누르기 전에 대시보드에서 확인해 주세요.'; })
       .finally(() => { githubBusy = false; void load(); });
   });
-  services.subscribeProgress?.(() => void load());
+  services.subscribeProgress?.(() => { void refreshBatch(); void load(); });
   retryRelay.addEventListener('click', () => {
     if (retrying || !services.retryRelay) return;
     retrying = true; retryRelay.disabled = true; retryRelay.textContent = '재시도 중…';
     void services.retryRelay().catch(() => undefined).then(() => load()).finally(() => { retrying = false; retryRelay.disabled = false; retryRelay.textContent = '연결 재시도'; });
   });
-  void load();
+  void refreshBatch(); void load();
 }

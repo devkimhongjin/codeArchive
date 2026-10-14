@@ -23,6 +23,7 @@ import { requestLocalHistoryMessage } from "./localHistoryConnection";
 import { storeCaptureOnServer, loadPopupServerState } from './serverCapture';
 import { registerHistoricalOnServer } from './cloudClient';
 import { restoreCaptureSession } from './captureConnection';
+import { loadPopupBatchProgress } from './popupBatchProgress';
 import { GithubBatchTaskRunner, type GithubBatchTask } from './githubBatchTask';
 
 const store = new IndexedDbCaptureStore();
@@ -214,6 +215,7 @@ type InternalMessage =
   | { type: "STORE_HISTORICAL_CAPTURE"; capture: unknown }
   | { type: "SET_SUBMISSION_PROGRESS"; attemptId: unknown; platform?: unknown; problemNumber?: unknown; title?: unknown; phase: unknown }
   | { type: "GET_POPUP_STATE" }
+  | { type: 'GET_POPUP_GITHUB_BATCH' }
   | { type: "SET_GITHUB_AUTOMATION"; enabled: boolean; accountId: string; settingsVersion: number }
   | { type: "RETRY_RELAY" }
   | { type: "GET_GITHUB_COMMIT_STATUSES"; captureIds: unknown }
@@ -583,6 +585,12 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     return true;
   }
 
+  if (object.type === 'GET_POPUP_GITHUB_BATCH') {
+    if (!isPopupSender(sender) || sender.id !== chrome.runtime.id || (sender.frameId !== undefined && sender.frameId !== 0)) { sendResponse({ progress: null, error: 'UNAUTHORIZED' }); return false; }
+    void loadPopupBatchProgress(store, async () => (await batchTaskStorage.get(GITHUB_BATCH_TASK_KEY))[GITHUB_BATCH_TASK_KEY])
+      .then(progress => sendResponse({ progress })).catch(() => sendResponse({ progress: null, error: 'STORAGE_ERROR' }));
+    return true;
+  }
   if (object.type === "GET_POPUP_STATE") {
     void Promise.all([loadPopupServerState(store), chrome.storage.session.get(SUBMISSION_PROGRESS_KEY).catch(() => ({} as Record<string, unknown>))])
       .then(([state, progress]) => sendResponse({ ...state, submissionProgress: activeSubmissionProgress(progress[SUBMISSION_PROGRESS_KEY]) }))

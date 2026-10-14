@@ -22,6 +22,7 @@ test('only the own popup can submit a boolean, account/version-bound GitHub cons
     const send = (from: unknown, payload: unknown = message) => new Promise<unknown>(done => listener!(payload, from, done));
     for (const from of [{ ...sender, id: 'foreign-extension' }, { ...sender, frameId: 1 }, { ...sender, url: 'https://jungol.co.kr/' }, { ...sender, url: `chrome-extension://${id}/history.html` }]) {
       assert.deepEqual(await send(from), { ok: false, error: 'UNAUTHORIZED' });
+      assert.deepEqual(await send(from, { type: 'GET_POPUP_GITHUB_BATCH' }), { progress: null, error: 'UNAUTHORIZED' });
     }
     for (const invalid of [{ ...message, enabled: 'true' }, { ...message, settingsVersion: -1 }, { ...message, settingsVersion: 0.5 }, { ...message, accountId: 'not-an-account' }]) {
       assert.deepEqual(await send(sender, invalid), { ok: false, error: 'BAD_REQUEST' });
