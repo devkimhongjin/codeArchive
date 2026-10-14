@@ -4,6 +4,8 @@ import { collectAcceptedCaptureAttempt, createCapture, isCaptureRecord } from ".
 import { CAPTURE_RESULT, type Capture, type PlatformAdapter } from "./types";
 import { canonicalLanguageKey } from "../../../shared/language";
 import { BUILD_METADATA } from "../../../shared/buildMetadata";
+import { submissionNotice } from './submissionNotice';
+import type { CaptureConnectionStatus } from './captureConnection';
 import { importVisibleJungolHistory, isJungolHistoryPath, loadJungolHistoryPreview, previewJungolHistory,
   type JungolHistoryCandidate, type JungolHistoryPreview, type JungolHistoryScanProgress } from "./historicalJungol";
 import { authenticatedSweaHistoryIdentity, hydrateSweaCandidateResult, loadSweaHistoryPreview, type SweaHistoryCandidate } from "./historicalSwea";
@@ -388,6 +390,7 @@ export async function storeCaptureWithRetry(
     try {
       response = await send({ type: "STORE_CAPTURE", capture: storedCapture });
       if ((response as { ok?: unknown } | null)?.ok === true) return response;
+      if (['LOGIN_REQUIRED', 'AUTH_EXPIRED', 'ACCOUNT_CHANGED', 'RECONNECT_REQUIRED', 'INVALID_CAPTURE'].includes((response as { error?: string } | null)?.error ?? '')) return response;
     } catch (error) {
       // Reloading an unpacked extension permanently invalidates the old tab's
       // content-script context. Retrying that context cannot reach the worker.
@@ -410,6 +413,30 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
   let resultPoll: ReturnType<typeof setInterval> | null = null;
   let observer: MutationObserver | null = null;
   let activeAttemptId: string | null = null;
+  let blockedCaptureId: string | null = null;
+  let attemptAccountId: string | null = null;
+  let connectionCheck: Promise<boolean> | null = null;
+  function showConnection(status: CaptureConnectionStatus) {
+    if (invalidated) return;
+    submissionNotice(document, status,
+      () => { void sendTracked({ type: 'OPEN_CAPTURE_DASHBOARD', platform: adapter.platform }).catch(() => undefined); },
+      () => { connectionCheck = checkConnection(); void connectionCheck.then(ready => { if (ready) { blockedCaptureId = null; scheduleCaptureCheck(); } }); });
+  }
+  async function checkConnection(): Promise<boolean> {
+    if (invalidated) return false;
+    const attemptId = activeAttemptId;
+    try {
+      const response = await sendTracked({ type: 'CHECK_CAPTURE_CONNECTION', platform: adapter.platform }) as { status?: CaptureConnectionStatus; accountId?: string } | undefined;
+      if (invalidated || attemptId !== activeAttemptId) return false;
+      if (response?.status === 'READY') {
+        if (typeof response.accountId !== 'string' || !/^[1-9]\d{0,15}$/.test(response.accountId)) { showConnection('RECONNECT_REQUIRED'); return false; }
+        if (attemptAccountId && attemptAccountId !== response.accountId) { showConnection('ACCOUNT_CHANGED'); return false; }
+        attemptAccountId = response.accountId;
+      }
+      if (response?.status && ['READY', 'LOGIN_REQUIRED', 'OFFLINE', 'ACCOUNT_CHANGED', 'RECONNECT_REQUIRED'].includes(response.status)) showConnection(response.status);
+      return response?.status === 'READY';
+    } catch { if (!invalidated && attemptId === activeAttemptId) showConnection('OFFLINE'); return false; }
+  }
 
   function markCaptureStage(stage: string, attemptId: string | null = activeAttemptId): void {
     if ((adapter.platform !== "PROGRAMMERS" && adapter.platform !== "JUNGOL") || (attemptId && attemptId !== activeAttemptId)) return;
@@ -479,12 +506,24 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
     }
     const collected = collectAcceptedCaptureAttempt(adapter);
     if (!collected) return;
+    if (collected.capture.captureId === blockedCaptureId) return;
     const progressAttemptId = activeAttemptId;
 
     markCaptureStage("accepted", progressAttemptId);
 
     processing = true;
     try {
+      if (connectionCheck && !await connectionCheck) {
+        if (activeAttemptId === progressAttemptId) {
+          blockedCaptureId = collected.capture.captureId;
+          markCaptureStage('store-unavailable', progressAttemptId);
+          reportProgress(progressAttemptId, 'CLEAR');
+          activeAttemptId = null;
+        }
+        return;
+      }
+      if (invalidated || activeAttemptId !== progressAttemptId) return;
+      const captureAccountId = attemptAccountId;
       if (adapter.confirmCaptureAsync) {
         const confirmed = await adapter.confirmCaptureAsync(collected.capture, collected.detection);
         if (!confirmed) {
@@ -507,14 +546,20 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
           // Optional metrics must never prevent the accepted source capture.
         }
       }
-      const response = await storeCaptureWithRetry(collected.capture, sendTracked);
-      // A capture is consumed only after the service worker confirms local
-      // persistence. Storage or channel failures remain retryable.
+      if (invalidated || activeAttemptId !== progressAttemptId) return;
+      const response = await storeCaptureWithRetry(collected.capture, message => sendTracked({ ...(message as object), expectedAccountId: captureAccountId }));
+      if (invalidated || activeAttemptId !== progressAttemptId) return;
+      // Consume only after the server receipt. A failed attempt stays available
+      // in this live page for an explicit connection check and retry.
       if ((response as { ok?: unknown } | null)?.ok === true) {
         adapter.consumeSubmissionResult(collected.detection);
         markCaptureStage("store-acknowledged", progressAttemptId);
+        if (activeAttemptId === progressAttemptId) showConnection('READY');
       } else {
         markCaptureStage("store-unavailable", progressAttemptId);
+        blockedCaptureId = collected.capture.captureId;
+        const error = (response as { error?: string } | null)?.error;
+        showConnection(error === 'LOGIN_REQUIRED' || error === 'AUTH_EXPIRED' ? 'LOGIN_REQUIRED' : error === 'ACCOUNT_CHANGED' ? 'ACCOUNT_CHANGED' : error === 'RECONNECT_REQUIRED' || error === 'DISABLED' ? 'RECONNECT_REQUIRED' : 'OFFLINE');
       }
       reportProgress(progressAttemptId, "CLEAR");
       if (activeAttemptId === progressAttemptId) activeAttemptId = null;
@@ -558,11 +603,14 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
           // source textarea at this click boundary.
           adapter.beginSubmissionAttempt(new Date());
           activeAttemptId = crypto.randomUUID();
+          blockedCaptureId = null;
+          attemptAccountId = null;
           if (adapter.platform === "PROGRAMMERS" || adapter.platform === "JUNGOL") {
             const snapshot = adapter.getSubmissionSnapshot?.();
             markCaptureStage(!snapshot?.problem || !snapshot.editor ? "snapshot-missing" : "waiting-result");
           }
           reportProgress(activeAttemptId, "CAPTURING");
+          connectionCheck = checkConnection();
           ensureResultPoll();
           scheduleCaptureCheck();
           break;

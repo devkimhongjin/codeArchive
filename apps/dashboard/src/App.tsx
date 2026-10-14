@@ -1025,7 +1025,8 @@ export default function App() {
     } catch (error) {
       if (stillCurrent()) {
         if (await handleExpectedAccountChange(error, account.githubId)) return
-        if (saved.autoSyncEnabled) clearRelay()
+        // A failed refresh is not logout or consent withdrawal. Keep the durable
+        // relay so update/re-enable and transient outages remain recoverable.
         setSettingsError(error instanceof Error ? `자동 동기화 설정에 실패했습니다: ${error.message}` : '자동 동기화 설정에 실패했습니다.')
       }
     } finally {

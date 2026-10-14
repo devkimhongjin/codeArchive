@@ -22,6 +22,7 @@ import { historyPlatformForUrl, isLocalHistoryPageSender, mayRediscoverHistorySo
 import { requestLocalHistoryMessage } from "./localHistoryConnection";
 import { storeCaptureOnServer, loadPopupServerState } from './serverCapture';
 import { registerHistoricalOnServer } from './cloudClient';
+import { restoreCaptureSession } from './captureConnection';
 import { GithubBatchTaskRunner, type GithubBatchTask } from './githubBatchTask';
 
 const store = new IndexedDbCaptureStore();
@@ -208,7 +209,8 @@ chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "codearchive-rel
 requestRelayDrain();
 
 type InternalMessage =
-  | { type: "STORE_CAPTURE"; capture: unknown }
+  | { type: 'CHECK_CAPTURE_CONNECTION' | 'OPEN_CAPTURE_DASHBOARD'; platform: Platform }
+  | { type: "STORE_CAPTURE"; capture: unknown; expectedAccountId?: unknown }
   | { type: "STORE_HISTORICAL_CAPTURE"; capture: unknown }
   | { type: "SET_SUBMISSION_PROGRESS"; attemptId: unknown; platform?: unknown; problemNumber?: unknown; title?: unknown; phase: unknown }
   | { type: "GET_POPUP_STATE" }
@@ -450,6 +452,23 @@ function isSupportedCaptureSender(sender: chrome.runtime.MessageSender, platform
 }
 
 let progressWrite: Promise<void> = Promise.resolve();
+let connectionRestore: ReturnType<typeof restoreCaptureSession> | null = null;
+function restoreConnection() {
+  if (!connectionRestore) connectionRestore = (async () => {
+    if ((await store.getSettings()).autoSyncEnabled !== true) return { status: 'RECONNECT_REQUIRED' as const };
+    return restoreCaptureSession(store, await popupRelayDeviceId());
+  })().finally(() => { connectionRestore = null; });
+  return connectionRestore;
+}
+chrome.runtime.onInstalled?.addListener(() => { void restoreConnection().catch(() => undefined); });
+chrome.runtime.onStartup?.addListener(() => { void restoreConnection().catch(() => undefined); });
+// session storage is cleared on disable/re-enable, reload, update and browser
+// restart. Check once per loaded extension session, not on every alarm wakeup.
+void chrome.storage.session.get('codearchive-connection-bootstrap-checked').then(async saved => {
+  if (saved['codearchive-connection-bootstrap-checked'] === true) return;
+  await chrome.storage.session.set({ 'codearchive-connection-bootstrap-checked': true });
+  await restoreConnection();
+}).catch(() => undefined);
 function mutateProgress(update: Parameters<typeof updateSubmissionProgress>[1]): Promise<void> {
   progressWrite = progressWrite.catch(() => undefined).then(async () => {
     const current = (await chrome.storage.session.get(SUBMISSION_PROGRESS_KEY))[SUBMISSION_PROGRESS_KEY];
@@ -478,6 +497,13 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   const object = asObject(message) as Partial<AnyInternalMessage> | null;
   if (!object?.type) return false;
 
+  if (object.type === 'CHECK_CAPTURE_CONNECTION' || object.type === 'OPEN_CAPTURE_DASHBOARD') {
+    if ((object.platform !== 'SWEA' && object.platform !== 'PROGRAMMERS' && object.platform !== 'JUNGOL') || sender.id !== chrome.runtime.id || !isSupportedCaptureSender(sender, object.platform)) { sendResponse({ status: 'RECONNECT_REQUIRED' }); return false; }
+    if (object.type === 'CHECK_CAPTURE_CONNECTION') void restoreConnection().then(sendResponse).catch(() => sendResponse({ status: 'OFFLINE' }));
+    else void chrome.tabs.create({ url: chrome.runtime.getURL('dashboard.html') }).then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
   if (object.type === "PROGRAMMERS_AUX_READ") {
     void runProgrammersAuxiliary(sender, object as ProgrammersAuxiliaryMessage & { type: "PROGRAMMERS_AUX_READ" })
       .then(sendResponse).catch(() => sendResponse({ ok: false, error: "READ_FAILED" }));
@@ -494,7 +520,10 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       sendResponse({ ok: false, error: "INVALID_CAPTURE" });
       return false;
     }
-    void storeCaptureOnServer(store, capture).then(sendResponse)
+    if (sender.id !== chrome.runtime.id || !isSupportedCaptureSender(sender, capture.platform)) { sendResponse({ ok: false, error: 'INVALID_CAPTURE' }); return false; }
+    const expectedAccountId = object.expectedAccountId;
+    if (typeof expectedAccountId !== 'string' || !/^[1-9]\d{0,15}$/.test(expectedAccountId)) { sendResponse({ ok: false, error: 'LOGIN_REQUIRED' }); return false; }
+    void restoreConnection().then(connection => connection.status === 'READY' ? storeCaptureOnServer(store, capture, fetch, expectedAccountId) : { ok: false, error: connection.status }).then(sendResponse)
       .catch(() => sendResponse({ ok: false, error: "SERVER_UNAVAILABLE" }));
     return true;
   }

@@ -50,7 +50,7 @@ test("a submit click reports collecting immediately and clears a failed attempt"
     consumeSubmissionResult: () => undefined
   };
   try {
-    startCapture(adapter, document, async message => { messages.push(message as { type: string; phase: string }); return { ok: true }; });
+    startCapture(adapter, document, async message => { messages.push(message as { type: string; phase: string }); return { ok: true, status: "READY", accountId: "1" }; });
     (document.querySelector("#submit") as HTMLButtonElement).click();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(messages[0]?.phase, "CAPTURING");
@@ -73,7 +73,7 @@ test("Jungol compact result stores the submitted snapshot once and acknowledges 
   const adapter = createAdapter(document, locationFor('https://jungol.co.kr/problem/5187?cursor=synthetic'))!;
   const messages: Array<{ type: string; capture?: Record<string, unknown> }> = [];
   try {
-    startCapture(adapter, document, async message => { messages.push(message as typeof messages[number]); return { ok: true }; });
+    startCapture(adapter, document, async message => { messages.push(message as typeof messages[number]); return { ok: true, status: "READY", accountId: "1" }; });
     (document.querySelector('#submit') as HTMLButtonElement).click();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(document.documentElement.getAttribute('data-codearchive-capture-stage'), 'waiting-result');
@@ -142,7 +142,7 @@ test("Jungol ignores list-page submit controls but starts collecting after SPA n
   try {
     startCapture(adapter, document, async message => {
       phases.push((message as { phase: string }).phase);
-      return { ok: true };
+      return { ok: true, status: "READY", accountId: "1" };
     });
     (document.querySelector("#submit") as HTMLButtonElement).click();
     assert.equal(begun, 0);
@@ -179,7 +179,7 @@ test("Programmers starts capture after list-to-lesson navigation without a docum
   try {
     startCapture(adapter, document, async message => {
       messages.push(message as { type: string; phase?: string });
-      return { ok: true };
+      return { ok: true, status: "READY", accountId: "1" };
     });
     (document.querySelector("#submit-code") as HTMLButtonElement).click();
     await new Promise(resolve => setImmediate(resolve));
@@ -222,6 +222,14 @@ test("an invalidated extension context stops retrying the old tab", async () => 
   assert.equal(result, undefined);
   assert.equal(calls, 1);
   assert.deepEqual(delays, []);
+});
+
+test('login and account errors are not retried as transient worker failures', async () => {
+  for (const error of ['LOGIN_REQUIRED', 'AUTH_EXPIRED', 'ACCOUNT_CHANGED', 'RECONNECT_REQUIRED']) {
+    let calls = 0;
+    const response = await storeCaptureWithRetry(capture(), async () => { calls++; return { ok: false, error }; }, async () => { throw new Error('must not delay'); });
+    assert.deepEqual(response, { ok: false, error }); assert.equal(calls, 1);
+  }
 });
 
 test("an invalidated content script stops observing and tells the user to refresh the problem tab", async () => {
@@ -281,7 +289,7 @@ test("accepted capture uses the supplied content-script channel for local storag
     consumeSubmissionResult: () => { pending = false; }
   };
   try {
-    startCapture(adapter, document, async message => { messages.push(message as { type: string }); return { ok: true }; });
+    startCapture(adapter, document, async message => { messages.push(message as { type: string }); return { ok: true, status: "READY", accountId: "1" }; });
     (document.querySelector("#submit") as HTMLButtonElement).click();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(messages.filter(message => message.type === "STORE_CAPTURE").length, 1);

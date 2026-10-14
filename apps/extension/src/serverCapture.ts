@@ -7,8 +7,9 @@ const sameAccount = (left: CaptureSettings, right: CaptureSettings) => !!left.ac
   left.relay?.secret === right.relay?.secret && left.relay?.generation === right.relay?.generation;
 
 /** No solution queue or IndexedDB write; success requires the server receipt. */
-export async function storeCaptureOnServer(store: SettingsStore, capture: Capture, fetcher: typeof fetch = fetch): Promise<{ ok: boolean; created?: boolean; error?: string }> {
+export async function storeCaptureOnServer(store: SettingsStore, capture: Capture, fetcher: typeof fetch = fetch, expectedAccountId?: string): Promise<{ ok: boolean; created?: boolean; error?: string }> {
   const settings = await store.getSettings();
+  if (expectedAccountId !== undefined && settings.accountId !== expectedAccountId) return { ok: false, error: 'ACCOUNT_CHANGED' };
   if (!settings.accountId || settings.relay?.accountId !== settings.accountId) return { ok: false, error: 'LOGIN_REQUIRED' };
   let acknowledged = false;
   const checkedFetcher: typeof fetch = async (input, init) => {

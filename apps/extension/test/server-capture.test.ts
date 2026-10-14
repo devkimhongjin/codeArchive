@@ -18,6 +18,12 @@ test('network failure and missing login cannot claim successful storage', async 
   const store = setup(); store.replace({ autoSyncEnabled: true } as CaptureSettings);
   assert.equal((await storeCaptureOnServer(store, capture)).error, 'LOGIN_REQUIRED');
 });
+
+test('a different account after the click-time connection check cannot receive this capture', async () => {
+  let requests = 0;
+  const result = await storeCaptureOnServer(setup(), capture, (async () => { requests++; return new Response('{}'); }) as typeof fetch, '2');
+  assert.equal(result.error, 'ACCOUNT_CHANGED'); assert.equal(requests, 0);
+});
 test('recent solutions use the server and discard unexpected source fields', async () => {
   const result = await loadPopupServerState(setup(), (async (url: URL) => {
     assert.equal(url.pathname, '/api/relay/recent');
