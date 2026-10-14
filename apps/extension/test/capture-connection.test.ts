@@ -33,6 +33,14 @@ test('existing authenticated cookie and durable grant reconnect without rotation
   assert.equal(await restoreCaptureConnection({ ...f.store }, device, f.fetcher), 'READY');
   assert.equal(f.settings(), original); assert.equal(f.calls.includes('/api/relay/grants'), false);
 });
+test('initial session confirmation has a startup budget without lengthening grant or relay requests', async t => {
+  const budgets:number[]=[];
+  t.mock.method(AbortSignal,'timeout',(milliseconds:number)=>{budgets.push(milliseconds);return new AbortController().signal});
+  const f=fixture(), original=f.settings();
+  assert.equal(await restoreCaptureConnection(f.store,device,f.fetcher),'READY');
+  assert.deepEqual(budgets,[30_000,8000,8000]);
+  assert.equal(f.settings(),original);assert.equal(f.calls.includes('/api/relay/grants'),false);
+});
 test('a stale grant is renewed only using a live same-account cookie and matching server settings', async () => {
   const f = fixture(); f.replies['/api/relay/recent'] = 401;
   assert.equal(await restoreCaptureConnection(f.store, device, f.fetcher), 'READY');

@@ -16,7 +16,9 @@ export async function restoreCaptureSession(store: Store, deviceId: string, fetc
   const original = await store.getSettings();
   if (original.autoSyncEnabled !== true || original.relay?.status === 'REVOCATION_PENDING') return reply('RECONNECT_REQUIRED');
   async function request(path: string, init: RequestInit = {}): Promise<Response> {
-    const response = await fetcher(new URL(path, PUBLIC_API_ORIGIN), { ...init, credentials: 'include', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(8000) });
+    // The first cookie check can wake an idle server. Only this read receives
+    // the longer startup budget; grants and other requests retain their limit.
+    const response = await fetcher(new URL(path, PUBLIC_API_ORIGIN), { ...init, credentials: 'include', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(path === '/api/auth/me' ? 30_000 : 8000) });
     if (!response.ok) throw new RequestError(response.status);
     return response;
   }

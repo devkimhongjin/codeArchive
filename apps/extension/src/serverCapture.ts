@@ -29,7 +29,13 @@ export async function storeCaptureOnServer(store: SettingsStore, capture: Captur
 
 export async function loadPopupServerState(store: Pick<CaptureStore, 'getSettings'>, fetcher: typeof fetch = fetch) {
   const settings = await store.getSettings();
-  const recentCaptures = await fetchRecentServerCaptures(settings, fetcher);
+  let recentCaptures: Omit<Capture, 'sourceCode'>[] = [];
+  let recentUnavailable = false;
+  try { recentCaptures = await fetchRecentServerCaptures(settings, fetcher); }
+  catch { recentUnavailable = true; }
   const current = await store.getSettings();
-  return { pendingCount: 0, syncedProblemCount: 0, settings: current, recentCaptures: sameAccount(settings, current) ? recentCaptures : [] };
+  const currentAccount = sameAccount(settings, current);
+  // A recent-list outage is not a failed settings read or consent withdrawal.
+  return { pendingCount: 0, syncedProblemCount: 0, settings: current, recentCaptures: currentAccount ? recentCaptures : [],
+    ...(recentUnavailable && currentAccount ? { recentError: 'SERVER_UNAVAILABLE' as const } : {}) };
 }

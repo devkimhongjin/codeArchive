@@ -287,7 +287,7 @@ export default function App() {
   const [savedTarget, setSavedTarget] = useState<GithubSavedTarget | null>(null)
   const [settingsBusy, setSettingsBusy] = useState(false)
   const [settingsError, setSettingsError] = useState<string | null>(null)
-  const [bridgeStatus, setBridgeStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
+  const [bridgeStatus, setBridgeStatus] = useState<'disconnected' | 'connecting' | 'connected'>('connecting')
   const [bridgeCapability, setBridgeCapability] = useState<string | null>(null)
   const [extensionVersion, setExtensionVersion] = useState<string | null>(null)
   const [historySupported, setHistorySupported] = useState(false)
@@ -1368,7 +1368,8 @@ export default function App() {
           : pendingCountState === 'error' ? '로컬 대기 건수를 확인하지 못했습니다.'
             : pendingCountState === 'ready' ? `로컬 대기 풀이 ${pendingCount ?? 0}개`
               : '확장 프로그램이 연결되면 로컬 대기 건수를 확인합니다.'
-  const extensionStatusLabel = bridgeStatus === 'connected'
+  const displayedBridgeStatus = !authResolved && autoConnect ? 'connecting' : bridgeStatus
+  const extensionStatusLabel = !authResolved && autoConnect ? '확장 프로그램 연결 확인 중' : bridgeStatus === 'connected'
     ? extensionVersion && !isVersionAtLeast(extensionVersion, EXTENSION_RELEASE.minimumExtensionVersion)
       ? `확장 프로그램 업데이트 필요 · v${extensionVersion}`
       : extensionVersion ? `확장 프로그램 연결 완료 · v${extensionVersion}` : '확장 프로그램 연결 완료 · 버전 확인 불가'
@@ -1446,8 +1447,8 @@ export default function App() {
 
       <main className="page-content">
         <DesktopVersion /><DesktopUpdateNotice />
-        <section className={`connection-banner is-${bridgeStatus} ${extensionUpdateRequired ? 'needs-update' : ''}`} role="status">
-          <div className="connection-icon"><Icon name={bridgeStatus === 'connected' ? 'check' : bridgeStatus === 'connecting' ? 'sync' : 'link'} size={17} /></div>
+        <section className={`connection-banner is-${displayedBridgeStatus} ${extensionUpdateRequired ? 'needs-update' : ''}`} role="status">
+          <div className="connection-icon"><Icon name={displayedBridgeStatus === 'connected' ? 'check' : displayedBridgeStatus === 'connecting' ? 'sync' : 'link'} size={17} /></div>
           <div className="connection-copy">
             <strong>{extensionStatusLabel}</strong>
             <span>{serverStatusLabel}</span>
@@ -1458,7 +1459,7 @@ export default function App() {
             {mode === 'local' && !user && serverConnection.phase === 'signed-out' && <button className="banner-action" onClick={() => navigateSameTab(GITHUB_LOGIN_URL)}>GitHub로 로그인 <Icon name="github" size={14} /></button>}
             {mode === 'local' && <button className="banner-secondary" onClick={() => void connectLive()} disabled={loading || serverConnecting}><Icon name="refresh" size={14} /> 서버 연결 새로고침</button>}
             {extensionUpdateRequired && <a className="banner-secondary update-extension" href={EXTENSION_RELEASE.releaseHistoryUrl} target="_blank" rel="noopener noreferrer">확장 업데이트</a>}
-            {bridgeStatus === 'disconnected' && <button className="banner-secondary" onClick={() => void connectBridge()} disabled={loading}>확장 재연결</button>}
+            {authResolved && bridgeStatus === 'disconnected' && <button className="banner-secondary" onClick={() => void connectBridge()} disabled={loading}>확장 재연결</button>}
             {mode === 'live' && user && <button className="server-refresh" onClick={() => void refreshSolutions(undefined, user.githubId)} disabled={loading} title="서버 아카이브 목록을 다시 읽습니다."><Icon name="refresh" size={14} /> 서버 목록 새로고침</button>}
           </div>
         </section>

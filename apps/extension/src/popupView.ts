@@ -78,6 +78,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
   const automationStatus = document.querySelector<HTMLElement>('#automation-status')!;
   const retryRelay = document.querySelector<HTMLButtonElement>('#retry-relay')!;
   let loading = false, retrying = false, reloadPending = false, githubBusy = false;
+  let localEpoch = 0;
   let localReady = false;
   let githubState: { githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; accountId?: string; accountSettingsVersion?: number } | undefined;
   let toggleNotice = '';
@@ -170,10 +171,12 @@ export function mountPopup(document: Document, services: PopupServices): void {
   async function load(): Promise<void> {
     if (githubBusy) { reloadPending = true; return; }
     if (loading) { reloadPending = true; return; }
-    loading = true; localReady = false;
+    loading = true;
+    const epoch = localEpoch;
     error.hidden = true; recentError.hidden = true; recentCard.setAttribute('aria-busy', 'true');
     try {
-      const state = await services.load() as { settings?: NonNullable<typeof githubState> & { relay?: { status?: string } }; recentCaptures?: unknown; error?: unknown } | null;
+      const state = await services.load() as { settings?: NonNullable<typeof githubState> & { relay?: { status?: string } }; recentCaptures?: unknown; recentError?: unknown; error?: unknown } | null;
+      if (epoch !== localEpoch || githubBusy) { reloadPending = true; return; }
       if (!state?.settings || state.error) throw new Error('Invalid state');
       if (statusAccount !== state.settings.accountId) {
         batchEpoch++; if (batchCard && batchAccount !== state.settings.accountId) { batchCard.hidden = true; lastBatch = null; seenBatchKey = undefined; }
@@ -196,13 +199,16 @@ export function mountPopup(document: Document, services: PopupServices): void {
       localReady = true;
       githubAuto.disabled = false;
       const relayStatus = state.settings.relay?.status;
-      automationStatus.textContent = relayStatus === 'CONFIRMED' ? '자동 동기화 중' : relayStatus === 'OFFLINE' ? '오프라인' : relayStatus === 'RELAY_ERROR' ? '동기화 오류' : '대시보드 로그인 필요';
-      retryRelay.hidden = !services.retryRelay || (relayStatus !== 'OFFLINE' && relayStatus !== 'RELAY_ERROR');
+      automationStatus.textContent = state.recentError ? '서버 연결 확인 필요' : relayStatus === 'CONFIRMED' ? '자동 동기화 중' : relayStatus === 'OFFLINE' ? '오프라인' : relayStatus === 'RELAY_ERROR' ? '동기화 오류' : '대시보드 로그인 필요';
+      retryRelay.hidden = !services.retryRelay || (!state.recentError && relayStatus !== 'OFFLINE' && relayStatus !== 'RELAY_ERROR');
       if (toggleNotice) { error.hidden = false; error.textContent = toggleNotice; }
       recentCount.textContent = captures.length ? `${captures.length}문제` : '없음'; showCurrentRecent();
+      if (state.recentError) { recentError.hidden = false; recentEmpty.hidden = true; recentCount.textContent = '확인 실패'; }
+      else recentEmpty.hidden = captures.length > 0;
       // Remote polling coalesces independently: local captures and controls stay responsive.
       void refreshStatuses();
     } catch {
+      if (epoch !== localEpoch || githubBusy) { reloadPending = true; return; }
       githubState = undefined; githubAuto.disabled = true;
       localReady = false;
       knownStatuses.clear(); statusAccount = undefined; recentRenderKey = undefined;
@@ -224,7 +230,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
     if (!services.updateGithubAutomation) return;
     const command: GithubToggleRequest = { enabled: !githubState.githubAutoCommitEnabled,
       accountId: githubState.accountId, settingsVersion: githubState.accountSettingsVersion! };
-    githubBusy = true; statusEpoch++; githubAuto.disabled = true; toggleNotice = ''; error.hidden = true;
+    githubBusy = true; localEpoch++; statusEpoch++; githubAuto.disabled = true; toggleNotice = ''; error.hidden = true;
     automationStatus.textContent = 'GitHub 설정 저장 중…';
     void services.updateGithubAutomation(command).then(result => {
       if (result.needsTarget) { services.openDashboard?.('github'); return; }
