@@ -48,7 +48,6 @@ import { formatExecutionTime, formatMemory } from './performancePresentation'
 import { CommunityView } from './CommunityView'
 import { HistoricalCollectionView } from './HistoricalCollectionView'
 import { HistoricalGithubCommitView } from './HistoricalGithubCommitView'
-import { GithubBatchProgress } from './GithubBatchProgress'
 import type { GithubSelectionMetric } from './githubBatchSelection'
 import { formatKstDate, formatKstDateTime } from '../../../shared/timePresentation'
 import { readCommunityRoute, readView, urlForView, type CommunityRoute } from './communityRoute'
@@ -1446,7 +1445,6 @@ export default function App() {
       </header>
 
       <main className="page-content">
-        <GithubBatchProgress user={user} />
         <DesktopVersion /><DesktopUpdateNotice />
         <section className={`connection-banner is-${bridgeStatus} ${extensionUpdateRequired ? 'needs-update' : ''}`} role="status">
           <div className="connection-icon"><Icon name={bridgeStatus === 'connected' ? 'check' : bridgeStatus === 'connecting' ? 'sync' : 'link'} size={17} /></div>

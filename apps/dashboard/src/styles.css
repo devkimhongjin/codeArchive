@@ -419,11 +419,6 @@ h1, h2, p { margin-top: 0; }
 .github-batch-management .historical-import-actions { flex-wrap: wrap; }
 .github-batch-management select { min-height: 40px; max-width: 100%; }
 .github-batch-policy-help { color: var(--muted); line-height: 1.6; }
-.github-batch-progress { max-width: 960px; margin: 0 auto 24px; padding: 16px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
-.github-batch-progress > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 16px; }
-.github-batch-progress span, .github-batch-progress p { color: #514866; font-size: 13px; line-height: 1.6; }
-.github-batch-progress progress { width: 100%; height: 10px; accent-color: var(--purple); }
-.github-batch-progress .ghost-button { margin-right: 8px; min-height: 40px; }
 .github-batch-management .historical-import-actions button, .github-batch-management .history-commit-preview button { min-height: 40px; padding: 9px 14px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); color: var(--purple-ink); font-weight: 600; }
 .github-batch-management button:disabled { opacity: .55; cursor: not-allowed; }
 .history-work-button:disabled { opacity: .55; cursor: not-allowed; }

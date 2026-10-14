@@ -113,3 +113,5 @@ footer {
 .github-batch-card p { margin: 6px 0; font-size: 12px; line-height: 1.6; color: #514866; }
 .github-batch-card #github-batch-state { font-size: 12px; }
 .github-batch-card button { margin-top: 8px; }
+.github-batch-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.github-batch-card button:disabled { opacity: .55; cursor: wait; }

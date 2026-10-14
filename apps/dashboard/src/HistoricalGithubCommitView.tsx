@@ -28,7 +28,7 @@ export function HistoricalGithubCommitView({ user, mode, revision = 0, selection
   const [records, setRecords] = useState<GithubCommitCandidate[]>([]), [selected, setSelected] = useState<string[]>([])
   const [filter, setFilter] = useState<Platform | 'ALL'>('ALL'), [settings, setSettings] = useState<AccountSettings | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null), [message, setMessage] = useState('')
-  const [busy, setBusy] = useState(false), [loading, setLoading] = useState(false), [requested, setRequested] = useState<string[]>([])
+  const [busy, setBusy] = useState(false), [loading, setLoading] = useState(false)
   const [recoverable, setRecoverable] = useState<string[]>([])
   const [selectionMode, setSelectionMode] = useState<HistoricalSelectionMode>('all')
   const selectionModeRef = useRef(selectionMode); selectionModeRef.current = selectionMode
@@ -66,7 +66,7 @@ export function HistoricalGithubCommitView({ user, mode, revision = 0, selection
   useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false) }, [busy, onBusyChange])
   useEffect(() => {
     mounted.current = true; run.current += 1; load.current += 1; inFlight.current = false; cancel.current = true
-    setRecords([]); setSelected([]); setSettings(null); setPreview(null); setMessage(''); setBusy(false); setRequested([]); setRecoverable([])
+    setRecords([]); setSelected([]); setSettings(null); setPreview(null); setMessage(''); setBusy(false); setRecoverable([])
     previewedRequest.current = 0
     loadedContext.current = null
     void refresh(true)
@@ -130,7 +130,7 @@ export function HistoricalGithubCommitView({ user, mode, revision = 0, selection
           installationId: saved.githubInstallationId!, owner: saved.githubOwner!, repository: saved.githubRepository!, branch: saved.githubBranch! })
         if (!active()) return
         if (!result || Object.keys(result).length !== ids.length || ids.some(id => !Object.prototype.hasOwnProperty.call(result, id) || !Object.prototype.hasOwnProperty.call(stateLabel, result[id]))) throw new Error('커밋 요청 결과를 확인하지 못했습니다. 상태를 새로고침해 주세요.')
-        accepted.push(...ids); setRequested([...accepted])
+        accepted.push(...ids)
         setRecords(previous => previous.map(record => Object.prototype.hasOwnProperty.call(result, record.captureId) ? { ...record, state: result[record.captureId] } : record))
         setSelected(previous => previous.filter(id => !ids.includes(id))); setMessage(`커밋 요청 ${accepted.length}/${fixed.records.length}건 확인`)
       }
@@ -158,7 +158,6 @@ export function HistoricalGithubCommitView({ user, mode, revision = 0, selection
     finally { if (active()) { inFlight.current = false; setBusy(false) } }
   }
   const visible = records.filter(record => selectionScope || filter === 'ALL' || record.platform === filter), available = visible.filter(record => selectable(record) && eligibleIds.has(record.captureId))
-  const completed = records.filter(record => requested.includes(record.captureId) && record.state === 'SUCCEEDED').length
   return <section className="historical-import" aria-label={allSolutions ? '전체 풀이 GitHub 일괄 커밋' : '과거 풀이 GitHub 일괄 커밋'}>
     <h2>GitHub 일괄 커밋</h2><p>{allSolutions ? '전체 서버 풀이에서 아직 커밋하지 않은 제출을 선택하세요. 완료·진행 중인 제출은 제외합니다.' : selectionScope ? '이번 수집에서 서버에 등록한 제출의 커밋 대상을 확인합니다.' : '서버에 등록된 과거 풀이를 선택해 한 번에 커밋을 요청할 수 있습니다.'} 자동 커밋 설정과 관계없이 동작합니다.</p>
     {!user || mode !== 'live' ? <p>CodeArchive 로그인 후 서버 기록에서 커밋할 제출을 선택할 수 있습니다.</p> : <>
@@ -177,7 +176,6 @@ export function HistoricalGithubCommitView({ user, mode, revision = 0, selection
       {settings && targetReady && <p>대상: {settings.githubOwner}/{settings.githubRepository} · {settings.githubBranch} · {settings.githubRootPath || '저장소 루트'}</p>}
       <div className="historical-import-actions"><button type="button" disabled={busy || loading || !targetReady || !scopeComplete || loadedContext.current !== context || !chosen.length} onClick={() => { if (settings) setPreview({ records: chosen, settings, context, selectionKey }) }}>선택한 {chosen.length}건 커밋 대상 확인</button>{busy && <button type="button" onClick={() => { cancel.current = true; setMessage('진행 중인 요청 확인 후 추가 요청을 중단합니다. 이미 접수된 커밋은 계속 진행합니다.') }}>추가 요청 중단</button>}</div>
       {preview && <div className="history-commit-preview"><h3>커밋 요청 확인</h3><p>계정 {user.githubLogin} · {preview.settings.githubOwner}/{preview.settings.githubRepository} · 브랜치 {preview.settings.githubBranch}</p><p>문제 {historyProblemCount(preview.records)}건 · 제출 {preview.records.length}건 · 최대 {preview.records.length}개 커밋. 제출마다 별도 커밋 작업을 요청합니다.</p><ul>{preview.records.map(record => <li key={record.captureId}>{historyPlatformLabel[record.platform]} {record.problemNumber} · {pathFor(record, preview.settings) ?? '유효하지 않은 경로'}</li>)}</ul><p>이미 같은 파일이 있으면 기존 내용은 보존하며 제출별 경로가 추가될 수 있습니다. 결과 확인이 필요한 제출은 자동 재시도하지 않습니다.</p><button type="button" disabled={busy || loading || !scopeComplete || loadedContext.current !== context || preview.context !== context || preview.selectionKey !== selectionKey || preview.records.some(record => !pathFor(record, preview.settings))} onClick={() => void commit()}>GitHub 커밋 {preview.records.length}건 요청</button><button type="button" onClick={() => setPreview(null)}>닫기</button></div>}
-      {!!requested.length && <div className="history-batch-progress"><progress aria-label="GitHub 커밋 완료 진행률" max={requested.length} value={completed} /><span>{completed}/{requested.length}건 완료</span></div>}
     </>}{message && <p role="status">{message}</p>}
   </section>
 }

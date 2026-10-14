@@ -110,6 +110,7 @@ it('previews saved account, repository, branch and paths before manual commits w
   expect(screen.getByText(/solutions\/SWEA\/1\//)).toBeTruthy(); expect(mocks.commit).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: 'GitHub 커밋 2건 요청' }))
   await screen.findByText(/일괄 커밋 요청 완료 · 2건/)
+  expect(screen.queryByRole('progressbar')).toBeNull()
   expect(mocks.commit).toHaveBeenCalledWith('g', expect.objectContaining({ captureIds: [record(1).captureId, record(2).captureId], settingsVersion: 7, installationId: 77, owner: 'owner', repository: 'archive', branch: 'main' }))
 })
 it('selects only NONE and FAILED and never retries UNKNOWN or active/completed work', async () => {

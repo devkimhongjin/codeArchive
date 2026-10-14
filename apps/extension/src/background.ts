@@ -23,7 +23,7 @@ import { requestLocalHistoryMessage } from "./localHistoryConnection";
 import { storeCaptureOnServer, loadPopupServerState } from './serverCapture';
 import { registerHistoricalOnServer } from './cloudClient';
 import { restoreCaptureSession } from './captureConnection';
-import { loadPopupBatchProgress } from './popupBatchProgress';
+import { actOnPopupBatch, loadPopupBatchProgress } from './popupBatchProgress';
 import { GithubBatchTaskRunner, type GithubBatchTask } from './githubBatchTask';
 
 const store = new IndexedDbCaptureStore();
@@ -216,6 +216,7 @@ type InternalMessage =
   | { type: "SET_SUBMISSION_PROGRESS"; attemptId: unknown; platform?: unknown; problemNumber?: unknown; title?: unknown; phase: unknown }
   | { type: "GET_POPUP_STATE" }
   | { type: 'GET_POPUP_GITHUB_BATCH' }
+  | { type: 'POPUP_GITHUB_BATCH_ACTION'; action?: unknown; taskId?: unknown; accountId?: unknown }
   | { type: "SET_GITHUB_AUTOMATION"; enabled: boolean; accountId: string; settingsVersion: number }
   | { type: "RETRY_RELAY" }
   | { type: "GET_GITHUB_COMMIT_STATUSES"; captureIds: unknown }
@@ -585,6 +586,13 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     return true;
   }
 
+  if (object.type === 'POPUP_GITHUB_BATCH_ACTION') {
+    if (!isPopupSender(sender) || sender.id !== chrome.runtime.id || (sender.frameId !== undefined && sender.frameId !== 0)) { sendResponse({ ok: false, error: 'UNAUTHORIZED' }); return false; }
+    if ((object.action !== 'CANCEL' && object.action !== 'RESUME') || typeof object.taskId !== 'string' || !isUuid(object.taskId) || typeof object.accountId !== 'string' || !/^[1-9]\d{0,15}$/.test(object.accountId)) { sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false; }
+    void actOnPopupBatch(store, async () => (await batchTaskStorage.get(GITHUB_BATCH_TASK_KEY))[GITHUB_BATCH_TASK_KEY], githubBatchRunner,
+      { action: object.action, taskId: object.taskId, accountId: object.accountId }).then(sendResponse).catch(() => sendResponse({ ok: false, error: 'ACTION_FAILED' }));
+    return true;
+  }
   if (object.type === 'GET_POPUP_GITHUB_BATCH') {
     if (!isPopupSender(sender) || sender.id !== chrome.runtime.id || (sender.frameId !== undefined && sender.frameId !== 0)) { sendResponse({ progress: null, error: 'UNAUTHORIZED' }); return false; }
     void loadPopupBatchProgress(store, async () => (await batchTaskStorage.get(GITHUB_BATCH_TASK_KEY))[GITHUB_BATCH_TASK_KEY])

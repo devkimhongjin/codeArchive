@@ -79,6 +79,31 @@ test('a paused task with stale target settings can be cancelled before starting 
   await runner.cancel('1:1'); await runner.start('1:1', { ...target, settingsVersion: 8, captureIds: ids.slice(0,1) }); await runner.resume();
   assert.equal((await runner.get('1:1'))?.status, 'DONE');
 });
+test('a stale popup task identifier cannot cancel or resume a replacement task', async () => {
+  const base=storage(), value={...target,account:'1:1',taskId:'new',status:'PAUSED' as const,offset:0,states:{},cancelRequested:false,updatedAt:1};
+  await base.set(value);let fetches=0;
+  const runner=new GithubBatchTaskRunner(base,(async()=>{fetches++;throw new Error('not expected')}) as typeof fetch);
+  assert.equal(await runner.cancel('1:1','old'),false);assert.equal(await runner.retry('1:1','old'),false);
+  assert.deepEqual(await base.get(),value);assert.equal(fetches,0);
+  let first=true;
+  const raced=new GithubBatchTaskRunner({set:base.set,get:async()=>{const observed=await base.get();if(first){first=false;await base.set({...value,taskId:'replacement'})}return observed}},fake().fetcher);
+  assert.equal(await raced.cancel('1:1','new'),false);
+  assert.equal((await base.get())?.taskId,'replacement');assert.equal((await base.get())?.cancelRequested,false);
+});
+test('popup resume leaves a paused task untouched when its cloud account changes during verification', async () => {
+  const store=storage(), task={...target,account:'1:1',taskId:'paused',status:'PAUSED' as const,offset:0,states:{},cancelRequested:false,updatedAt:1};
+  await store.set(task);
+  let release!:(response:Response)=>void, entered!:()=>void;
+  const started=new Promise<void>(resolve=>{entered=resolve});
+  const account=new Promise<Response>(resolve=>{release=resolve});
+  const paths:string[]=[];
+  const runner=new GithubBatchTaskRunner(store,(async(url:URL)=>{paths.push(url.pathname);entered();return account}) as typeof fetch);
+  const retry=runner.retry('1:1','paused');
+  await started;release(Response.json({id:2,githubId:'2'}));
+  await assert.rejects(retry);
+  assert.deepEqual(await store.get(),task);
+  assert.deepEqual(paths,['/api/auth/me']);
+});
 test('historical registration compares server membership and does not require an IndexedDB capture', async () => {
   const capture = createCapture({ platform: 'JUNGOL', problemNumber: '1', title: 'T', language: 'Java', problemUrl: 'https://jungol.co.kr/problem/1', sourceCode: 'class X{}',
     result: 'ACCEPTED', historicalImport: true, historicalSubmissionId: '101', solvedAt: '2026-10-12T00:00:00.000Z', observedAt: '2026-10-12T00:00:00.000Z' })!;
