@@ -6,6 +6,29 @@ import { mountPopup } from '../src/popupView';
 import type { GithubCommitStatus } from '../src/relay';
 const html = readFileSync(new URL('../src/popup.html', import.meta.url), 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('pending sources show temporary storage separately from synchronized rows and clear after delivery', async () => {
+  const { document } = parseHTML(html);
+  let pendingCount = 2, refresh!: () => void;
+  mountPopup(document, { load: async () => ({ pendingCount, settings: { accountId: '1', autoSyncEnabled: true, relay: { status: 'OFFLINE' } }, recentCaptures: [] }),
+    copy: async () => {}, subscribeProgress: callback => { refresh = callback; } });
+  await settle();
+  assert.equal(document.querySelector<HTMLElement>('#pending-uploads')!.hidden, false);
+  assert.match(document.querySelector('#pending-uploads')!.textContent!, /임시 저장 2개.*브라우저를 다시 켜도/);
+  assert.equal(document.querySelectorAll('.recent-item').length, 0);
+  pendingCount = 0; refresh(); await settle();
+  assert.equal(document.querySelector<HTMLElement>('#pending-uploads')!.hidden, true);
+});
+
+test('pending UI advises login or consent instead of claiming completed synchronization', async () => {
+  for (const settings of [{ accountId: '1', autoSyncEnabled: true, relay: { status: 'AUTH_EXPIRED' } },
+    { accountId: '1', autoSyncEnabled: false, relay: { status: 'CONFIRMED' } }]) {
+    const { document } = parseHTML(html);
+    mountPopup(document, { load: async () => ({ pendingCount: 1, settings }), copy: async () => {} }); await settle();
+    assert.match(document.querySelector('#pending-uploads')!.textContent!, settings.autoSyncEnabled ? /같은 계정으로 로그인/ : /자동 동기화를 켜면/);
+    assert.equal(document.querySelectorAll('.recent-item').length, 0);
+  }
+});
 test('recent problem actions retrieve server code and show copy/download feedback', async () => {
   const { document } = parseHTML(html), copied: string[] = [], requested: string[] = [];
   mountPopup(document, { load: async () => ({ settings: {}, recentCaptures: [record('one')] }),

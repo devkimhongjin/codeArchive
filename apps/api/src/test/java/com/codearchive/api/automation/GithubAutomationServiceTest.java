@@ -19,6 +19,26 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class GithubAutomationServiceTest {
+  @Test void replayAfterLostCaptureReceiptReusesTheDurableGithubJob() throws Exception {
+    var jobs = mock(GithubCommitJobRepository.class); var settingsRepo = mock(UserSettingsRepository.class);
+    var solutions = mock(SolutionRepository.class); var provider = mock(GithubProvider.class);
+    AppUser user = AppUser.fromGithub("1", "owner", "Owner", null); set(user, "id", 1L);
+    UserSettings current = settings(user, 7, Instant.EPOCH);
+    Solution capture = solution(user, "same-capture", Instant.parse("2026-10-14T00:00:00Z"));
+    var retained = new java.util.concurrent.atomic.AtomicReference<GithubCommitJob>();
+    when(settingsRepo.findByUserId(1L)).thenReturn(Optional.of(current));
+    when(jobs.findByUserIdAndCaptureId(1L, "same-capture")).thenAnswer(invocation -> Optional.ofNullable(retained.get()));
+    when(jobs.save(any(GithubCommitJob.class))).thenAnswer(invocation -> { var job = (GithubCommitJob) invocation.getArgument(0); retained.set(job); return job; });
+    new GithubAutomationService(jobs, settingsRepo, solutions, provider).consider(user, capture);
+    // A new worker and retransmitted HTTP request must retain the existing job,
+    // including a terminal result, instead of creating another GitHub request.
+    retained.get().terminal(CommitJobState.SUCCEEDED);
+    new GithubAutomationService(jobs, settingsRepo, solutions, provider).consider(user, capture);
+    verify(jobs, times(1)).save(any(GithubCommitJob.class));
+    assertThat(retained.get().getState()).isEqualTo(CommitJobState.SUCCEEDED);
+    verifyNoInteractions(provider);
+  }
+
   @Test void extensionSyncActivationExcludesCapturesFromTheOffIntervalAndIsIdempotent() throws Exception {
     var jobs = mock(GithubCommitJobRepository.class); var settingsRepo = mock(UserSettingsRepository.class);
     AppUser user = AppUser.fromGithub("1", "owner", "Owner", null); set(user, "id", 1L);

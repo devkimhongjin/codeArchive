@@ -76,6 +76,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
   const recentError = document.querySelector<HTMLElement>('#recent-error')!;
   const githubAuto = document.querySelector<HTMLInputElement>('#github-auto')!;
   const automationStatus = document.querySelector<HTMLElement>('#automation-status')!;
+  const pendingUploads = document.querySelector<HTMLElement>('#pending-uploads');
   const retryRelay = document.querySelector<HTMLButtonElement>('#retry-relay')!;
   let loading = false, retrying = false, reloadPending = false, githubBusy = false;
   let localEpoch = 0;
@@ -175,7 +176,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
     const epoch = localEpoch;
     error.hidden = true; recentError.hidden = true; recentCard.setAttribute('aria-busy', 'true');
     try {
-      const state = await services.load() as { settings?: NonNullable<typeof githubState> & { relay?: { status?: string } }; recentCaptures?: unknown; recentError?: unknown; error?: unknown } | null;
+      const state = await services.load() as { settings?: NonNullable<typeof githubState> & { autoSyncEnabled?: boolean; relay?: { status?: string } }; pendingCount?: unknown; recentCaptures?: unknown; recentError?: unknown; error?: unknown } | null;
       if (epoch !== localEpoch || githubBusy) { reloadPending = true; return; }
       if (!state?.settings || state.error) throw new Error('Invalid state');
       if (statusAccount !== state.settings.accountId) {
@@ -199,6 +200,11 @@ export function mountPopup(document: Document, services: PopupServices): void {
       localReady = true;
       githubAuto.disabled = false;
       const relayStatus = state.settings.relay?.status;
+      if (pendingUploads) {
+        const count = Number.isSafeInteger(state.pendingCount) && (state.pendingCount as number) > 0 ? state.pendingCount as number : 0;
+        pendingUploads.hidden = count === 0;
+        pendingUploads.textContent = count ? `임시 저장 ${count}개 · ${!state.settings.autoSyncEnabled ? '자동 동기화를 켜면 전송됩니다.' : relayStatus === 'AUTH_EXPIRED' ? '같은 계정으로 로그인하면 자동 전송됩니다.' : '연결되면 자동 전송됩니다. 브라우저를 다시 켜도 이어집니다.'}` : '';
+      }
       automationStatus.textContent = state.recentError ? '서버 연결 확인 필요' : relayStatus === 'CONFIRMED' ? '자동 동기화 중' : relayStatus === 'OFFLINE' ? '오프라인' : relayStatus === 'RELAY_ERROR' ? '동기화 오류' : '대시보드 로그인 필요';
       retryRelay.hidden = !services.retryRelay || (!state.recentError && relayStatus !== 'OFFLINE' && relayStatus !== 'RELAY_ERROR');
       if (toggleNotice) { error.hidden = false; error.textContent = toggleNotice; }
@@ -213,6 +219,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
       localReady = false;
       knownStatuses.clear(); statusAccount = undefined; recentRenderKey = undefined;
       visibleCaptures = []; statusEpoch++; statusContext = '';
+      if (pendingUploads) { pendingUploads.hidden = true; pendingUploads.textContent = ''; }
       error.hidden = false; recentError.hidden = false; automationStatus.textContent = '확인 필요'; retryRelay.hidden = true;
       error.textContent = '동기화 상태를 불러오지 못했어요. 팝업을 다시 열어 주세요.';
       recentList.replaceChildren(); recentCount.textContent = '확인 실패'; recentEmpty.hidden = true;

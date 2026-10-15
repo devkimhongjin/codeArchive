@@ -14,7 +14,7 @@ test('a failed connection warns without blocking the judge, pauses upload, and r
   try {
     startCapture(adapter, document, async value => {
       const message = value as { type: string; expectedAccountId?: string };
-      if (message.type === 'CHECK_CAPTURE_CONNECTION') return ready ? { status: 'READY', accountId: '1' } : { status: 'LOGIN_REQUIRED' };
+      if (message.type === 'CHECK_CAPTURE_OWNER') return ready ? { status: 'READY', accountId: '1' } : { status: 'LOGIN_REQUIRED' };
       if (message.type === 'STORE_CAPTURE') stores.push(message);
       return { ok: true };
     });
@@ -45,7 +45,7 @@ test('an old storage failure cannot replace the newer attempt connection state o
   try {
     startCapture(adapter, document, async value => {
       const message = value as { type: string };
-      if (message.type === 'CHECK_CAPTURE_CONNECTION') return { status: 'READY', accountId: '1' };
+      if (message.type === 'CHECK_CAPTURE_OWNER') return { status: 'READY', accountId: '1' };
       if (message.type === 'STORE_CAPTURE' && ++stores === 1) { await oldRequest; return { ok: false, error: 'ACCOUNT_CHANGED' }; }
       return { ok: true };
     });

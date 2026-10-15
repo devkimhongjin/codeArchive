@@ -1,11 +1,13 @@
 import type { CaptureConnectionStatus } from './captureConnection';
-const messages: Record<Exclude<CaptureConnectionStatus, 'READY'>, string> = {
+export type SubmissionNoticeStatus = CaptureConnectionStatus | 'STORAGE_ERROR';
+const messages: Record<Exclude<SubmissionNoticeStatus, 'READY'>, string> = {
+  STORAGE_ERROR: '풀이를 기기에 임시 저장하지 못했습니다. 코드를 따로 보관하고 브라우저 저장 공간과 확장 상태를 확인해 주세요.',
   LOGIN_REQUIRED: 'GitHub 로그인이 필요합니다. 대시보드에서 로그인한 뒤 연결을 다시 확인해 주세요.',
   OFFLINE: '서버에 연결할 수 없습니다. 네트워크를 확인한 뒤 연결을 다시 확인해 주세요.',
   ACCOUNT_CHANGED: 'CodeArchive 로그인 계정이 변경됐습니다. 대시보드에서 연결을 확인해 주세요.',
   RECONNECT_REQUIRED: 'CodeArchive 연결을 확인하지 못했습니다. 대시보드에서 연결 상태를 확인해 주세요.',
 };
-export function submissionNotice(document: Document, status: CaptureConnectionStatus, open: () => void, retry: () => void): void {
+export function submissionNotice(document: Document, status: SubmissionNoticeStatus, open: () => void, retry: () => void): void {
   let notice = document.getElementById('codearchive-connection-notice');
   if (status === 'READY') { notice?.remove(); return; }
   if (notice?.dataset.status === status) return;
