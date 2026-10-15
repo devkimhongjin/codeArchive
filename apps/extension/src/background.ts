@@ -5,7 +5,7 @@ import { isCaptureRecord, isUuid } from "./capture";
 import { DashboardBridge } from "./bridge";
 import { dashboardSender, dashboardExternalUrl, validDashboardLoginNonce, beginDashboardLogin, completeDashboardLogin } from './dashboardNavigation';
 import { IndexedDbCaptureStore } from "./storage";
-import { prepareCaptureDownload, retryRelayConnection } from "./backgroundActions";
+import { prepareCaptureDownload } from "./backgroundActions";
 import { exportCode } from "./export";
 import { normalizedHeaderFields } from "../../../shared/headerFields";
 import { fetchGithubCommitStatuses, fetchRecentServerCapture, migrateLegacyRelayEndpoint, revokeRelay } from "./relay";
@@ -20,8 +20,11 @@ import { isJungolHistoryPath } from "./historicalJungol";
 import { isHistoricalSubmissionId } from "./historicalIdentity";
 import { historyPlatformForUrl, isLocalHistoryPageSender, mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
 import { requestLocalHistoryMessage } from "./localHistoryConnection";
-import { storeCaptureOnServer, loadPopupServerState } from './serverCapture';
+import { loadPopupServerState } from './serverCapture';
+import { captureOwner, drainCaptureOutbox, retainCaptureForRetry } from './captureOutbox';
 import { registerHistoricalOnServer } from './cloudClient';
+import { restoreCaptureSession } from './captureConnection';
+import { actOnPopupBatch, loadPopupBatchProgress } from './popupBatchProgress';
 import { GithubBatchTaskRunner, type GithubBatchTask } from './githubBatchTask';
 
 const store = new IndexedDbCaptureStore();
@@ -176,8 +179,7 @@ async function drainRelay(): Promise<void> {
     await finishSelfRevocation(settings);
     return;
   }
-  // Existing device records are not upload authority. New captures go straight
-  // to the server; the legacy store is retained only to preserve user data.
+  await drainCaptureOutbox(store, restoreConnection);
 }
 
 let relayDrainPromise: Promise<void> | null = null;
@@ -208,10 +210,14 @@ chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "codearchive-rel
 requestRelayDrain();
 
 type InternalMessage =
-  | { type: "STORE_CAPTURE"; capture: unknown }
+  | { type: 'CHECK_CAPTURE_CONNECTION' | 'OPEN_CAPTURE_DASHBOARD'; platform: Platform }
+  | { type: 'CHECK_CAPTURE_OWNER'; platform: Platform }
+  | { type: "STORE_CAPTURE"; capture: unknown; expectedAccountId?: unknown }
   | { type: "STORE_HISTORICAL_CAPTURE"; capture: unknown }
   | { type: "SET_SUBMISSION_PROGRESS"; attemptId: unknown; platform?: unknown; problemNumber?: unknown; title?: unknown; phase: unknown }
   | { type: "GET_POPUP_STATE" }
+  | { type: 'GET_POPUP_GITHUB_BATCH' }
+  | { type: 'POPUP_GITHUB_BATCH_ACTION'; action?: unknown; taskId?: unknown; accountId?: unknown }
   | { type: "SET_GITHUB_AUTOMATION"; enabled: boolean; accountId: string; settingsVersion: number }
   | { type: "RETRY_RELAY" }
   | { type: "GET_GITHUB_COMMIT_STATUSES"; captureIds: unknown }
@@ -450,6 +456,27 @@ function isSupportedCaptureSender(sender: chrome.runtime.MessageSender, platform
 }
 
 let progressWrite: Promise<void> = Promise.resolve();
+let connectionRestore: ReturnType<typeof restoreCaptureSession> | null = null;
+function restoreConnection() {
+  if (!connectionRestore) connectionRestore = (async () => {
+    if ((await store.getSettings()).autoSyncEnabled !== true) return { status: 'RECONNECT_REQUIRED' as const };
+    return restoreCaptureSession(store, await popupRelayDeviceId());
+  })().finally(() => { connectionRestore = null; });
+  return connectionRestore;
+}
+function restoreAndDrain(): void {
+  void restoreConnection().then(connection => { if (connection.status === 'READY') void requestRelayDrain(); }).catch(() => undefined);
+}
+chrome.runtime.onInstalled?.addListener(restoreAndDrain);
+chrome.runtime.onStartup?.addListener(restoreAndDrain);
+// session storage is cleared on disable/re-enable, reload, update and browser
+// restart. Check once per loaded extension session, not on every alarm wakeup.
+void chrome.storage.session.get('codearchive-connection-bootstrap-checked').then(async saved => {
+  if (saved['codearchive-connection-bootstrap-checked'] === true) return;
+  await chrome.storage.session.set({ 'codearchive-connection-bootstrap-checked': true });
+  const connection = await restoreConnection();
+  if (connection.status === 'READY') await requestRelayDrain();
+}).catch(() => undefined);
 function mutateProgress(update: Parameters<typeof updateSubmissionProgress>[1]): Promise<void> {
   progressWrite = progressWrite.catch(() => undefined).then(async () => {
     const current = (await chrome.storage.session.get(SUBMISSION_PROGRESS_KEY))[SUBMISSION_PROGRESS_KEY];
@@ -478,6 +505,17 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   const object = asObject(message) as Partial<AnyInternalMessage> | null;
   if (!object?.type) return false;
 
+  if (object.type === 'CHECK_CAPTURE_CONNECTION' || object.type === 'CHECK_CAPTURE_OWNER' || object.type === 'OPEN_CAPTURE_DASHBOARD') {
+    if ((object.platform !== 'SWEA' && object.platform !== 'PROGRAMMERS' && object.platform !== 'JUNGOL') || sender.id !== chrome.runtime.id || !isSupportedCaptureSender(sender, object.platform)) { sendResponse({ status: 'RECONNECT_REQUIRED' }); return false; }
+    if (object.type === 'CHECK_CAPTURE_OWNER') void store.getSettings().then(settings => {
+      const accountId = captureOwner(settings);
+      sendResponse(accountId ? { status: 'READY', accountId } : { status: 'RECONNECT_REQUIRED' });
+    }).catch(() => sendResponse({ status: 'RECONNECT_REQUIRED' }));
+    else if (object.type === 'CHECK_CAPTURE_CONNECTION') void restoreConnection().then(sendResponse).catch(() => sendResponse({ status: 'OFFLINE' }));
+    else void chrome.tabs.create({ url: chrome.runtime.getURL('dashboard.html') }).then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
   if (object.type === "PROGRAMMERS_AUX_READ") {
     void runProgrammersAuxiliary(sender, object as ProgrammersAuxiliaryMessage & { type: "PROGRAMMERS_AUX_READ" })
       .then(sendResponse).catch(() => sendResponse({ ok: false, error: "READ_FAILED" }));
@@ -494,8 +532,11 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       sendResponse({ ok: false, error: "INVALID_CAPTURE" });
       return false;
     }
-    void storeCaptureOnServer(store, capture).then(sendResponse)
-      .catch(() => sendResponse({ ok: false, error: "SERVER_UNAVAILABLE" }));
+    if (sender.id !== chrome.runtime.id || !isSupportedCaptureSender(sender, capture.platform)) { sendResponse({ ok: false, error: 'INVALID_CAPTURE' }); return false; }
+    const expectedAccountId = object.expectedAccountId;
+    if (typeof expectedAccountId !== 'string' || !/^[1-9]\d{0,15}$/.test(expectedAccountId)) { sendResponse({ ok: false, error: 'LOGIN_REQUIRED' }); return false; }
+    void retainCaptureForRetry(store, capture, expectedAccountId, () => { void requestRelayDrain(); }).then(sendResponse)
+      .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;
   }
 
@@ -554,9 +595,22 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     return true;
   }
 
+  if (object.type === 'POPUP_GITHUB_BATCH_ACTION') {
+    if (!isPopupSender(sender) || sender.id !== chrome.runtime.id || (sender.frameId !== undefined && sender.frameId !== 0)) { sendResponse({ ok: false, error: 'UNAUTHORIZED' }); return false; }
+    if ((object.action !== 'CANCEL' && object.action !== 'RESUME') || typeof object.taskId !== 'string' || !isUuid(object.taskId) || typeof object.accountId !== 'string' || !/^[1-9]\d{0,15}$/.test(object.accountId)) { sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false; }
+    void actOnPopupBatch(store, async () => (await batchTaskStorage.get(GITHUB_BATCH_TASK_KEY))[GITHUB_BATCH_TASK_KEY], githubBatchRunner,
+      { action: object.action, taskId: object.taskId, accountId: object.accountId }).then(sendResponse).catch(() => sendResponse({ ok: false, error: 'ACTION_FAILED' }));
+    return true;
+  }
+  if (object.type === 'GET_POPUP_GITHUB_BATCH') {
+    if (!isPopupSender(sender) || sender.id !== chrome.runtime.id || (sender.frameId !== undefined && sender.frameId !== 0)) { sendResponse({ progress: null, error: 'UNAUTHORIZED' }); return false; }
+    void loadPopupBatchProgress(store, async () => (await batchTaskStorage.get(GITHUB_BATCH_TASK_KEY))[GITHUB_BATCH_TASK_KEY])
+      .then(progress => sendResponse({ progress })).catch(() => sendResponse({ progress: null, error: 'STORAGE_ERROR' }));
+    return true;
+  }
   if (object.type === "GET_POPUP_STATE") {
     void Promise.all([loadPopupServerState(store), chrome.storage.session.get(SUBMISSION_PROGRESS_KEY).catch(() => ({} as Record<string, unknown>))])
-      .then(([state, progress]) => sendResponse({ ...state, submissionProgress: activeSubmissionProgress(progress[SUBMISSION_PROGRESS_KEY]) }))
+      .then(async ([state, progress]) => sendResponse({ ...state, pendingCount: state.settings.accountId ? await store.countQueuedCaptures(state.settings.accountId) : 0, submissionProgress: activeSubmissionProgress(progress[SUBMISSION_PROGRESS_KEY]) }))
       .catch(() => sendResponse({ pendingCount: 0, settings: null, recentCaptures: [], error: "STORAGE_ERROR" }));
     return true;
   }
@@ -640,8 +694,11 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       sendResponse({ ok: false, error: "UNAUTHORIZED" });
       return false;
     }
-    void retryRelayConnection(store, requestRelayDrain)
-      .then(sendResponse)
+    void requestRelayDrain().then(async () => {
+      const settings = await store.getSettings();
+      sendResponse({ ok: settings.relay?.status === 'CONFIRMED', status: settings.relay?.status ?? null,
+        pendingCount: settings.accountId ? await store.countQueuedCaptures(settings.accountId) : 0 });
+    })
       .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;
   }

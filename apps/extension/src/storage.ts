@@ -4,9 +4,11 @@ import type { SweaProblemContext } from "./sweaProblemContext";
 import { canonicalLanguageKey } from "../../../shared/language";
 import { LIGHT_THEMES, DARK_THEMES } from "../../../shared/codeThemes";
 import { normalizedHeaderFields } from "../../../shared/headerFields";
+import { captureOwner, queuedCapture, sameQueuedSubmission, type CaptureOutboxStore, type QueuedCapture, type QueueCaptureResult } from './captureOutbox';
 
 export const DATABASE_NAME = "codearchive-local";
-export const DATABASE_VERSION = 3;
+export const DATABASE_VERSION = 4;
+export const CAPTURE_OUTBOX_STORE_NAME = 'pendingUploads';
 export const CAPTURE_STORE_NAME = "captures";
 export const SETTINGS_STORE_NAME = "settings";
 export const SWEA_PROBLEM_CONTEXT_STORE_NAME = "sweaProblemContexts";
@@ -163,7 +165,7 @@ export interface IndexedDbCaptureStoreOptions {
   indexedDb?: IDBFactory;
 }
 
-export class IndexedDbCaptureStore implements CaptureStore {
+export class IndexedDbCaptureStore implements CaptureStore, CaptureOutboxStore {
   private readonly databaseName: string;
   private readonly databaseVersion: number;
   private readonly indexedDb: IDBFactory;
@@ -176,6 +178,57 @@ export class IndexedDbCaptureStore implements CaptureStore {
     const indexedDb = options.indexedDb ?? globalThis.indexedDB;
     if (!indexedDb) throw new Error("IndexedDB is unavailable");
     this.indexedDb = indexedDb;
+  }
+
+  async enqueueCapture(capture: Capture, expectedAccountId: string): Promise<QueueCaptureResult> {
+    if (capture.historicalImport === true) return { ok: false, error: 'INVALID_CAPTURE' };
+    const database = await this.open();
+    // Settings and owner-bound payload commit together. A concurrent OFF or
+    // account switch cannot authorize a queued write from an old page.
+    const transaction = database.transaction([SETTINGS_STORE_NAME, CAPTURE_OUTBOX_STORE_NAME], 'readwrite', { durability: 'strict' });
+    const complete = transactionComplete(transaction);
+    try {
+      const current = settingsWithDefaults(await requestResult(transaction.objectStore(SETTINGS_STORE_NAME).get(SETTINGS_KEY)));
+      const owner = captureOwner(current);
+      let result: QueueCaptureResult;
+      if (current.accountId !== expectedAccountId) result = { ok: false, error: 'ACCOUNT_CHANGED' };
+      else if (!owner) result = { ok: false, error: 'RECONNECT_REQUIRED' };
+      else {
+        const outbox = transaction.objectStore(CAPTURE_OUTBOX_STORE_NAME);
+        const existing = await requestResult(outbox.get([owner, capture.captureId])) as QueuedCapture | undefined;
+        if (existing && !sameQueuedSubmission(existing.capture, capture)) result = { ok: false, error: 'CAPTURE_CONFLICT' };
+        else {
+          if (!existing) outbox.add(queuedCapture(capture, owner));
+          result = { ok: true, created: !existing, queued: true };
+        }
+      }
+      await complete;
+      return result;
+    } catch (error) {
+      try { transaction.abort(); } catch { /* Already aborted/completed. */ }
+      await complete.catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async listQueuedCaptures(accountId: string, limit = 10): Promise<QueuedCapture[]> {
+    const database = await this.open();
+    const transaction = database.transaction(CAPTURE_OUTBOX_STORE_NAME, 'readonly');
+    const entries = await requestResult(transaction.objectStore(CAPTURE_OUTBOX_STORE_NAME).index('byAccount').getAll(accountId)) as QueuedCapture[];
+    return entries.sort((left, right) => left.capture.observedAt.localeCompare(right.capture.observedAt) || left.capture.captureId.localeCompare(right.capture.captureId))
+      .slice(0, clampLimit(limit)).map(entry => structuredClone(entry));
+  }
+
+  async countQueuedCaptures(accountId: string): Promise<number> {
+    const database = await this.open();
+    return requestResult(database.transaction(CAPTURE_OUTBOX_STORE_NAME, 'readonly').objectStore(CAPTURE_OUTBOX_STORE_NAME).index('byAccount').count(accountId));
+  }
+
+  async acknowledgeQueuedCapture(accountId: string, captureId: string): Promise<void> {
+    const database = await this.open();
+    const transaction = database.transaction(CAPTURE_OUTBOX_STORE_NAME, 'readwrite');
+    transaction.objectStore(CAPTURE_OUTBOX_STORE_NAME).delete([accountId, captureId]);
+    await transactionComplete(transaction);
   }
 
   async putCapture(capture: Capture): Promise<CaptureWriteResult> {
@@ -372,6 +425,10 @@ export class IndexedDbCaptureStore implements CaptureStore {
         if (!database.objectStoreNames.contains(SWEA_PROBLEM_CONTEXT_STORE_NAME)) {
           database.createObjectStore(SWEA_PROBLEM_CONTEXT_STORE_NAME, { keyPath: "problemUrl" });
         }
+        if (!database.objectStoreNames.contains(CAPTURE_OUTBOX_STORE_NAME)) {
+          database.createObjectStore(CAPTURE_OUTBOX_STORE_NAME, { keyPath: ['accountId', 'capture.captureId'] })
+            .createIndex('byAccount', 'accountId', { unique: false });
+        }
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error ?? new Error("IndexedDB open failed"));
@@ -391,11 +448,39 @@ export class IndexedDbCaptureStore implements CaptureStore {
 }
 
 /** Small deterministic store used by unit tests and non-browser callers. */
-export class MemoryCaptureStore implements CaptureStore {
+export class MemoryCaptureStore implements CaptureStore, CaptureOutboxStore {
+  private readonly outbox = new Map<string, QueuedCapture>();
   private readonly captures = new Map<string, Capture>();
   private readonly sweaProblemContexts = new Map<string, SweaProblemContext>();
   private settings: CaptureSettings = { ...DEFAULT_CAPTURE_SETTINGS };
   private settingsSerial: Promise<void> = Promise.resolve();
+
+  async enqueueCapture(capture: Capture, expectedAccountId: string): Promise<QueueCaptureResult> {
+    return this.serializeSettings(async () => {
+      if (capture.historicalImport === true) return { ok: false, error: 'INVALID_CAPTURE' };
+      if (this.settings.accountId !== expectedAccountId) return { ok: false, error: 'ACCOUNT_CHANGED' };
+      const owner = captureOwner(this.settings);
+      if (!owner) return { ok: false, error: 'RECONNECT_REQUIRED' };
+      const key = JSON.stringify([owner, capture.captureId]), existing = this.outbox.get(key);
+      if (existing && !sameQueuedSubmission(existing.capture, capture)) return { ok: false, error: 'CAPTURE_CONFLICT' };
+      if (!existing) this.outbox.set(key, structuredClone(queuedCapture(capture, owner)));
+      return { ok: true, created: !existing, queued: true };
+    });
+  }
+
+  async listQueuedCaptures(accountId: string, limit = 10): Promise<QueuedCapture[]> {
+    return [...this.outbox.values()].filter(entry => entry.accountId === accountId)
+      .sort((left, right) => left.capture.observedAt.localeCompare(right.capture.observedAt) || left.capture.captureId.localeCompare(right.capture.captureId))
+      .slice(0, clampLimit(limit)).map(entry => structuredClone(entry));
+  }
+
+  async countQueuedCaptures(accountId: string): Promise<number> {
+    return [...this.outbox.values()].filter(entry => entry.accountId === accountId).length;
+  }
+
+  async acknowledgeQueuedCapture(accountId: string, captureId: string): Promise<void> {
+    this.outbox.delete(JSON.stringify([accountId, captureId]));
+  }
 
   async putCapture(capture: Capture): Promise<CaptureWriteResult> {
     if (this.captures.has(capture.captureId)) return { created: false };

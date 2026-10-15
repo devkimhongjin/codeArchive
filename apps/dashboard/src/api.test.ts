@@ -1,5 +1,42 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { accountAssertionHeaders, bulkUpload, GITHUB_LOGIN_URL, getAccountSettings, getAuthProviders, getGithubBranches, getGithubDirectories, getGithubInstallations, getGithubRepositories, startGithubInstallation, getSolutions, expectedGithubIdHeaders } from './api'
+import { accountAssertionHeaders, bulkUpload, GITHUB_LOGIN_URL, getAccountSettings, getAuthProviders, getGithubBranches, getGithubDirectories, getGithubInstallations, getGithubRepositories, startGithubInstallation, getSolutions, expectedGithubIdHeaders, getMe } from './api'
+
+describe('session checks recover from transient reads without replaying authentication failures',()=>{
+  afterEach(()=>vi.unstubAllGlobals())
+  const session=()=>new Response(JSON.stringify({id:1,githubId:'123',githubLogin:'synthetic'}),{headers:{'content-type':'application/json'}})
+  it.each([new TypeError('offline'),new DOMException('timeout','TimeoutError')])('retries a failed read once (%s)',async error=>{
+    const request=vi.fn<typeof fetch>().mockRejectedValueOnce(error).mockResolvedValueOnce(session());vi.stubGlobal('fetch',request)
+    await expect(getMe()).resolves.toMatchObject({id:1});expect(request).toHaveBeenCalledTimes(2)
+    expect(request.mock.calls.every(([url,init])=>url==='/api/auth/me'&&(!init?.method||init.method==='GET')&&init?.signal)).toBe(true)
+  })
+  it('recovers from a transient service response',async()=>{
+    const request=vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(null,{status:503})).mockResolvedValueOnce(session());vi.stubGlobal('fetch',request)
+    await expect(getMe()).resolves.toMatchObject({id:1});expect(request).toHaveBeenCalledTimes(2)
+  })
+  it.each([401,403])('does not retry a confirmed denial (%s)',async status=>{
+    const request=vi.fn<typeof fetch>().mockResolvedValue(new Response(null,{status}));vi.stubGlobal('fetch',request)
+    await expect(getMe()).rejects.toMatchObject({status});expect(request).toHaveBeenCalledTimes(1)
+  })
+  it('stops after the second transient failure',async()=>{
+    const request=vi.fn<typeof fetch>().mockRejectedValue(new TypeError('offline'));vi.stubGlobal('fetch',request)
+    await expect(getMe()).rejects.toThrow('offline');expect(request).toHaveBeenCalledTimes(2)
+  })
+  it('retries a truncated successful response without treating it as authentication',async()=>{
+    const truncated=new Response('{"id":',{headers:{'content-type':'application/json'}})
+    const request=vi.fn<typeof fetch>().mockResolvedValueOnce(truncated).mockResolvedValueOnce(session());vi.stubGlobal('fetch',request)
+    await expect(getMe()).resolves.toMatchObject({id:1});expect(request).toHaveBeenCalledTimes(2)
+  })
+  it('recovers when the successful response body aborts after its headers',async()=>{
+    const interrupted=new Response(null,{headers:{'content-type':'application/json'}})
+    vi.spyOn(interrupted,'json').mockRejectedValue(new DOMException('timeout','TimeoutError'))
+    const request=vi.fn<typeof fetch>().mockResolvedValueOnce(interrupted).mockResolvedValueOnce(session());vi.stubGlobal('fetch',request)
+    await expect(getMe()).resolves.toMatchObject({id:1});expect(request).toHaveBeenCalledTimes(2)
+  })
+  it('rejects invalid sessions after two responses without manufacturing a signed-out status',async()=>{
+    const request=vi.fn<typeof fetch>().mockImplementation(async()=>new Response('{}',{headers:{'content-type':'application/json'}}));vi.stubGlobal('fetch',request)
+    await expect(getMe()).rejects.toMatchObject({status:0});expect(request).toHaveBeenCalledTimes(2)
+  })
+})
 
 describe('GitHub authentication contract', () => {
   const fetchMock = vi.fn<typeof fetch>()

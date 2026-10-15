@@ -39,9 +39,9 @@ node scripts/extension-store-package.mjs prepare
 
 Chrome이 HttpOnly 인증 쿠키를 관리하며 확장은 쿠키 값을 읽지 않습니다. GitHub OAuth/App token, 개인 키, 소스 코드와 자격 증명은 패키지나 release metadata에 넣지 않습니다. 자세한 항목은 [데이터 처리 안내](extension-privacy.md)에 있습니다.
 
-## 자동 심사 제출 파이프라인
+## 수동 심사 제출 파이프라인
 
-`.github/workflows/chrome-webstore-release.yml`은 `master` 첫 부모 이력의 `extension-v<version>` 태그만 처리합니다. 동일 Cloud Web Store item은 하나의 고정 concurrency 그룹으로 직렬화합니다.
+자동 제출과 게시 예약은 취소했습니다. `.github/workflows/chrome-webstore-release.yml`은 `master`에서 사용자가 수동 실행할 때만 처리하며, 릴리스 태그 생성으로 실행되지 않습니다. 기본값은 업로드 없는 dry run입니다. 동일 Cloud Web Store item은 하나의 고정 concurrency 그룹으로 직렬화합니다.
 
 1. release source, 태그와 버전, dashboard/extension 테스트·빌드, ZIP 계약을 검증합니다.
 2. 같은 master SHA의 성공한 `Verify` workflow를 확인합니다.

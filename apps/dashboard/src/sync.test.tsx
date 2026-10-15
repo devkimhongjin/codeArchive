@@ -67,6 +67,22 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
+it('a failed relay refresh preserves the existing durable connection instead of revoking it', async () => {
+  mocks.me.mockResolvedValue(user)
+  mocks.list.mockResolvedValue([])
+  mocks.settings.mockResolvedValue(liveSettings)
+  mocks.grant.mockRejectedValue(new TypeError('network unavailable'))
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => {
+    if (message.type === 'CONNECT') return Promise.resolve({ capability: 'cap-restore' })
+    if (message.type === 'REUSE_RELAY') return Promise.resolve({ reused: false })
+    return Promise.resolve({ ok: true })
+  })
+  await openConnectedSettings()
+  await screen.findByText(/자동 동기화 설정에 실패했습니다: network unavailable/)
+  expect(mocks.grant).toHaveBeenCalledTimes(1)
+  expect(bridgeCalls('CONFIGURE_RELAY').filter(([, message]) => message.relay === null)).toHaveLength(0)
+})
+
 it('auto-connects only known IDs, falls back for migration and transfers no code until sync', async () => {
   localStorage.setItem('codearchive-extension-id', 'a'.repeat(32))
   mocks.me.mockResolvedValue(user)
