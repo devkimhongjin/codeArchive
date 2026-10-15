@@ -6,11 +6,12 @@ test('only the own popup can submit a boolean, account/version-bound GitHub cons
   const id = 'test-extension';
   let listener: ((message: unknown, sender: unknown, reply: (value: unknown) => void) => boolean) | undefined;
   let storageCalls = 0;
+  let batchReads = 0;
   const fakeChrome = {
     runtime: { id, onMessage: { addListener(callback: typeof listener) { listener = callback; } }, onMessageExternal: { addListener() {} } },
     alarms: { clear: async () => true, create() {}, onAlarm: { addListener() {} } },
     storage: { session: { get: async () => ({}), set: async () => {}, remove: async () => {} },
-      local: { get: async (key: string) => { if (key === 'codearchive-popup-relay-device-id') storageCalls++; return { 'codearchive-popup-relay-device-id': 'test-device-fixture' }; }, set: async () => {} } },
+      local: { get: async (key: string) => { if (key === 'codearchive-popup-relay-device-id') storageCalls++; if(key==='codearchive-github-batch-task') batchReads++; return { 'codearchive-popup-relay-device-id': 'test-device-fixture' }; }, set: async () => {} } },
     tabs: { onUpdated: { addListener() {} } },
   };
   const previous = { chrome: globalThis.chrome, indexedDB: globalThis.indexedDB, IDBKeyRange: globalThis.IDBKeyRange };
@@ -20,9 +21,13 @@ test('only the own popup can submit a boolean, account/version-bound GitHub cons
     const sender = { id, frameId: 0, url: `chrome-extension://${id}/popup.html` };
     const message = { type: 'SET_GITHUB_AUTOMATION', enabled: true, accountId: '9', settingsVersion: 7 };
     const send = (from: unknown, payload: unknown = message) => new Promise<unknown>(done => listener!(payload, from, done));
+    const initialBatchReads=batchReads;
     for (const from of [{ ...sender, id: 'foreign-extension' }, { ...sender, frameId: 1 }, { ...sender, url: 'https://jungol.co.kr/' }, { ...sender, url: `chrome-extension://${id}/history.html` }]) {
       assert.deepEqual(await send(from), { ok: false, error: 'UNAUTHORIZED' });
+      assert.deepEqual(await send(from, { type: 'GET_POPUP_GITHUB_BATCH' }), { progress: null, error: 'UNAUTHORIZED' });
+      assert.deepEqual(await send(from, {type:'POPUP_GITHUB_BATCH_ACTION',action:'CANCEL',taskId:'00000000-0000-4000-8000-000000000001',accountId:'9'}),{ok:false,error:'UNAUTHORIZED'});
     }
+    assert.equal(batchReads,initialBatchReads);
     for (const invalid of [{ ...message, enabled: 'true' }, { ...message, settingsVersion: -1 }, { ...message, settingsVersion: 0.5 }, { ...message, accountId: 'not-an-account' }]) {
       assert.deepEqual(await send(sender, invalid), { ok: false, error: 'BAD_REQUEST' });
     }

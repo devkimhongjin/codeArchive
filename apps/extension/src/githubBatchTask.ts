@@ -44,19 +44,20 @@ export class GithubBatchTaskRunner {
     } finally { this.starting = false; }
   }
   async get(account: string): Promise<GithubBatchTask | null> { const task = await this.storage.get(); return task?.account === account ? task : null; }
-  async cancel(account: string) {
+  async cancel(account: string, expectedTaskId?: string) {
     const observed = await this.get(account);
-    if (!observed) return;
-    await this.update(task => {
+    if (!observed || (expectedTaskId !== undefined && observed.taskId !== expectedTaskId)) return false;
+    const changed = await this.update(task => {
       if (!task || task.account !== account || task.taskId !== observed.taskId) return null;
       task.cancelRequested = true;
       if (task.status === 'PAUSED') task.status = task.offset ? 'TRACKING' : 'DONE';
       task.updatedAt = Date.now(); return task;
     });
+    return changed !== null;
   }
-  async retry(account: string) {
+  async retry(account: string, expectedTaskId?: string) {
     const observed = await this.get(account);
-    if (!observed || observed.status !== 'PAUSED') return;
+    if (!observed || observed.status !== 'PAUSED' || (expectedTaskId !== undefined && observed.taskId !== expectedTaskId)) return false;
     await confirmCloudAccount(account, this.fetcher);
     const changed = await this.update(task => {
       if (!task || task.account !== account || task.taskId !== observed.taskId || task.status !== 'PAUSED') return null;
@@ -64,6 +65,7 @@ export class GithubBatchTaskRunner {
       delete task.error; task.updatedAt = Date.now(); return task;
     });
     if (changed) void this.resume();
+    return changed !== null;
   }
   async resume(): Promise<void> {
     if (this.work) return this.work;

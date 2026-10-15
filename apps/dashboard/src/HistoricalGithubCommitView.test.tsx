@@ -24,6 +24,35 @@ async function preview(count = 2) {
   await waitFor(() => expect((screen.getByRole('button', { name: `선택한 ${count}건 커밋 대상 확인` }) as HTMLButtonElement).disabled).toBe(false))
   fireEvent.click(screen.getByRole('button', { name: `선택한 ${count}건 커밋 대상 확인` }))
 }
+it('previews and requests only the duplicate-policy winners and invalidates on platform or policy change', async () => {
+  const older = { ...record(1), solvedAt: '2026-10-01T00:00:00Z' }, newer = { ...record(3), problemNumber: older.problemNumber, solvedAt: '2026-10-02T00:00:00Z' }
+  const separate = { ...record(2), problemNumber: older.problemNumber }
+  mocks.candidates.mockResolvedValue([older, newer, separate, { ...record(5, 'SUCCEEDED'), problemNumber: older.problemNumber }])
+  render(<HistoricalGithubCommitView user={user} mode="live" allSolutions selectionMetrics={[{ ...older, executionTime: 1 }, { ...newer, executionTime: 2 }]} />)
+  await preview(3)
+  fireEvent.change(screen.getByLabelText('커밋 중복 문제 처리'), { target: { value: 'latest' } })
+  expect(screen.queryByRole('button', { name: 'GitHub 커밋 3건 요청' })).toBeNull()
+  await preview(2)
+  fireEvent.change(screen.getByLabelText('커밋 플랫폼'), { target: { value: 'SWEA' } })
+  expect(screen.queryByRole('button', { name: 'GitHub 커밋 2건 요청' })).toBeNull()
+  fireEvent.change(screen.getByLabelText('커밋 중복 문제 처리'), { target: { value: 'fastest' } })
+  await preview(1)
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 커밋 1건 요청' }))
+  await waitFor(() => expect(mocks.commit).toHaveBeenCalledOnce())
+  expect(mocks.commit.mock.calls[0][1].captureIds).toEqual([older.captureId])
+})
+it('rejects a stale preview if refreshed metrics choose a different submission', async () => {
+  const first = record(1), second = { ...record(3), problemNumber: first.problemNumber }
+  mocks.candidates.mockResolvedValue([first, second])
+  const view = render(<HistoricalGithubCommitView user={user} mode="live" allSolutions selectionMetrics={[{ ...first, executionTime: 1 }, { ...second, executionTime: 2 }]} />)
+  await preview(2)
+  fireEvent.change(screen.getByLabelText('커밋 중복 문제 처리'), { target: { value: 'fastest' } })
+  await preview(1)
+  view.rerender(<HistoricalGithubCommitView user={user} mode="live" allSolutions selectionMetrics={[{ ...first, executionTime: 3 }, { ...second, executionTime: 2 }]} />)
+  expect((screen.getByRole('button', { name: 'GitHub 커밋 1건 요청' }) as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 커밋 1건 요청' }))
+  expect(mocks.commit).not.toHaveBeenCalled()
+})
 it('maps only selected native submission IDs to server capture IDs before commit confirmation', async () => {
   const chosen = record(1), outside = { ...record(2), historicalSubmissionId: chosen.historicalSubmissionId }
   mocks.candidates.mockResolvedValue([chosen, outside, record(3)])
@@ -81,6 +110,7 @@ it('previews saved account, repository, branch and paths before manual commits w
   expect(screen.getByText(/solutions\/SWEA\/1\//)).toBeTruthy(); expect(mocks.commit).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: 'GitHub 커밋 2건 요청' }))
   await screen.findByText(/일괄 커밋 요청 완료 · 2건/)
+  expect(screen.queryByRole('progressbar')).toBeNull()
   expect(mocks.commit).toHaveBeenCalledWith('g', expect.objectContaining({ captureIds: [record(1).captureId, record(2).captureId], settingsVersion: 7, installationId: 77, owner: 'owner', repository: 'archive', branch: 'main' }))
 })
 it('selects only NONE and FAILED and never retries UNKNOWN or active/completed work', async () => {

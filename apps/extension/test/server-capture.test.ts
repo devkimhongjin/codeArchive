@@ -18,6 +18,12 @@ test('network failure and missing login cannot claim successful storage', async 
   const store = setup(); store.replace({ autoSyncEnabled: true } as CaptureSettings);
   assert.equal((await storeCaptureOnServer(store, capture)).error, 'LOGIN_REQUIRED');
 });
+
+test('a different account after the click-time connection check cannot receive this capture', async () => {
+  let requests = 0;
+  const result = await storeCaptureOnServer(setup(), capture, (async () => { requests++; return new Response('{}'); }) as typeof fetch, '2');
+  assert.equal(result.error, 'ACCOUNT_CHANGED'); assert.equal(requests, 0);
+});
 test('recent solutions use the server and discard unexpected source fields', async () => {
   const result = await loadPopupServerState(setup(), (async (url: URL) => {
     assert.equal(url.pathname, '/api/relay/recent');
@@ -31,4 +37,19 @@ test('an account switch while reading previews cannot disclose the previous acco
   const store = setup();
   const result = await loadPopupServerState(store, (async () => { store.replace({ accountId: '2' } as CaptureSettings); return new Response(JSON.stringify({ captures: [capture] })); }) as typeof fetch);
   assert.deepEqual(result.recentCaptures, []);
+});
+test('a failed recent lookup preserves saved account, GitHub consent and relay without returning stale rows', async () => {
+  const store=setup(), original=await store.getSettings();
+  store.replace({...original,githubAutoCommitEnabled:true,githubTargetConfigured:true});
+  const saved=await store.getSettings();
+  for(const fetcher of [async()=>{throw new TypeError('offline')},async()=>new Response(null,{status:503})]) {
+    const result=await loadPopupServerState(store,fetcher as typeof fetch);
+    assert.equal(result.settings,saved);assert.equal(await store.getSettings(),saved);
+    assert.equal(result.recentError,'SERVER_UNAVAILABLE');assert.deepEqual(result.recentCaptures,[]);
+  }
+});
+test('a failed old-account lookup cannot attach its error to a replacement account', async () => {
+  const store=setup();
+  const result=await loadPopupServerState(store,(async()=>{store.replace({accountId:'2'} as CaptureSettings);throw new TypeError('offline')}) as typeof fetch);
+  assert.equal(result.settings.accountId,'2');assert.equal(result.recentError,undefined);assert.deepEqual(result.recentCaptures,[]);
 });

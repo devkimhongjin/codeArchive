@@ -6,6 +6,29 @@ import { mountPopup } from '../src/popupView';
 import type { GithubCommitStatus } from '../src/relay';
 const html = readFileSync(new URL('../src/popup.html', import.meta.url), 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('pending sources show temporary storage separately from synchronized rows and clear after delivery', async () => {
+  const { document } = parseHTML(html);
+  let pendingCount = 2, refresh!: () => void;
+  mountPopup(document, { load: async () => ({ pendingCount, settings: { accountId: '1', autoSyncEnabled: true, relay: { status: 'OFFLINE' } }, recentCaptures: [] }),
+    copy: async () => {}, subscribeProgress: callback => { refresh = callback; } });
+  await settle();
+  assert.equal(document.querySelector<HTMLElement>('#pending-uploads')!.hidden, false);
+  assert.match(document.querySelector('#pending-uploads')!.textContent!, /임시 저장 2개.*브라우저를 다시 켜도/);
+  assert.equal(document.querySelectorAll('.recent-item').length, 0);
+  pendingCount = 0; refresh(); await settle();
+  assert.equal(document.querySelector<HTMLElement>('#pending-uploads')!.hidden, true);
+});
+
+test('pending UI advises login or consent instead of claiming completed synchronization', async () => {
+  for (const settings of [{ accountId: '1', autoSyncEnabled: true, relay: { status: 'AUTH_EXPIRED' } },
+    { accountId: '1', autoSyncEnabled: false, relay: { status: 'CONFIRMED' } }]) {
+    const { document } = parseHTML(html);
+    mountPopup(document, { load: async () => ({ pendingCount: 1, settings }), copy: async () => {} }); await settle();
+    assert.match(document.querySelector('#pending-uploads')!.textContent!, settings.autoSyncEnabled ? /같은 계정으로 로그인/ : /자동 동기화를 켜면/);
+    assert.equal(document.querySelectorAll('.recent-item').length, 0);
+  }
+});
 test('recent problem actions retrieve server code and show copy/download feedback', async () => {
   const { document } = parseHTML(html), copied: string[] = [], requested: string[] = [];
   mountPopup(document, { load: async () => ({ settings: {}, recentCaptures: [record('one')] }),
@@ -101,6 +124,51 @@ test('state error clears old rows instead of implying successful sync', async ()
   const { document } = parseHTML(html); let refresh: (() => void) | undefined; let failed = false;
   mountPopup(document, { load: async () => failed ? { error: 'STORAGE_ERROR' } : { settings: {}, recentCaptures: [record('one')] }, copy: async () => {}, subscribeProgress: callback => { refresh = callback; } }); await settle();
   failed = true; refresh?.(); await settle(); assert.equal(document.querySelector('.recent-item'), null); assert.equal(document.querySelector<HTMLElement>('#error')!.hidden, false);
+});
+test('recent-server failure retains the GitHub switch and saved target, then recovers on refresh', async () => {
+  const {document}=parseHTML(html);let refresh!:()=>void, failed=false;
+  const settings={accountId:'9',accountSettingsVersion:7,githubAutoCommitEnabled:true,githubTargetConfigured:true,relay:{status:'CONFIRMED'}};
+  const opened:string[]=[],commands:unknown[]=[];
+  mountPopup(document,{load:async()=>({settings,recentCaptures:failed?[]:[record('one')],...(failed?{recentError:'SERVER_UNAVAILABLE'}:{})}),copy:async()=>{},
+    subscribeProgress:callback=>{refresh=callback},openDashboard:view=>opened.push(view),
+    updateGithubAutomation:async command=>{commands.push(command);return {ok:false,error:'SAVE_FAILED'}},retryRelay:async()=>{}});
+  await settle();failed=true;refresh();await settle();
+  const toggle=document.querySelector<HTMLInputElement>('#github-auto')!;
+  assert.equal(toggle.checked,true);assert.equal(toggle.disabled,false);
+  assert.equal(document.querySelector('.recent-item'),null);
+  assert.equal(document.querySelector<HTMLElement>('#recent-error')!.hidden,false);
+  assert.equal(document.querySelector('#automation-status')!.textContent,'서버 연결 확인 필요');
+  toggle.dispatchEvent(new document.defaultView!.Event('click',{cancelable:true}));await settle();await settle();
+  assert.deepEqual(opened,[]);assert.deepEqual(commands,[{enabled:false,accountId:'9',settingsVersion:7}]);
+  failed=false;refresh();await settle();
+  assert.equal(document.querySelector<HTMLElement>('#recent-error')!.hidden,true);
+  assert.equal(document.querySelector('#automation-status')!.textContent,'자동 동기화 중');
+  assert.match(document.querySelector('#recent-list')!.textContent!,/Problem one/);
+});
+test('a slow popup refresh cannot block a verified GitHub toggle or overwrite its newer acknowledgement', async () => {
+  const {document}=parseHTML(html);let refresh!:()=>void, release!:(value:unknown)=>void, loads=0, calls=0;
+  let enabled=true, version=7;
+  const snapshot=()=>({settings:{accountId:'9',accountSettingsVersion:version,githubAutoCommitEnabled:enabled,githubTargetConfigured:true},recentCaptures:[]});
+  const old=snapshot();
+  mountPopup(document,{load:()=>++loads===2?new Promise(resolve=>{release=resolve}):Promise.resolve(snapshot()),copy:async()=>{},
+    subscribeProgress:callback=>{refresh=callback},updateGithubAutomation:async command=>{
+      calls++;assert.deepEqual(command,{enabled:false,accountId:'9',settingsVersion:7});enabled=false;version=8;return {ok:true,relayReady:true};
+    }});
+  await settle();refresh();await settle();
+  const toggle=document.querySelector<HTMLInputElement>('#github-auto')!;
+  toggle.dispatchEvent(new document.defaultView!.Event('click',{cancelable:true}));await settle();
+  assert.equal(calls,1);
+  release(old);await settle();await settle();
+  assert.equal(toggle.checked,false);assert.equal(toggle.disabled,false);assert.ok(loads>=3);assert.equal(calls,1);
+});
+test('an empty server archive restores its empty-state message after a failed read recovers',async()=>{
+  const {document}=parseHTML(html);let refresh!:()=>void, failed=false;
+  mountPopup(document,{load:async()=>({settings:{accountId:'9'},recentCaptures:[],...(failed?{recentError:'SERVER_UNAVAILABLE'}:{})}),copy:async()=>{},subscribeProgress:callback=>{refresh=callback}});
+  await settle();failed=true;refresh();await settle();
+  assert.equal(document.querySelector<HTMLElement>('#recent-empty')!.hidden,true);
+  failed=false;refresh();await settle();
+  assert.equal(document.querySelector<HTMLElement>('#recent-error')!.hidden,true);
+  assert.equal(document.querySelector<HTMLElement>('#recent-empty')!.hidden,false);
 });
 
 test('remote status polling retains confirmed labels and DOM while delayed or unavailable', async () => {

@@ -84,7 +84,20 @@ export async function requestJson<T>(path: string, init: RequestInit = {}, retry
 }
 
 export async function getMe(): Promise<User> {
-  return requestJson<User>('/api/auth/me')
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const user = await requestJson<User>('/api/auth/me', { signal: AbortSignal.timeout(30_000) })
+      if (!user || !Number.isSafeInteger(user.id) || user.id <= 0 || typeof user.githubId !== 'string' || !user.githubId ||
+        typeof user.githubLogin !== 'string' || !user.githubLogin) throw new ApiError('로그인 상태 응답을 확인하지 못했습니다.', 0)
+      return user
+    }
+    catch (error) {
+      const transient = error instanceof ApiError ? [0, 408, 429, 502, 503, 504].includes(error.status)
+        : error instanceof TypeError || (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name))
+      // Retry this read once, never a settings write or confirmed auth denial.
+      if (attempt !== 0 || !transient) throw error
+    }
+  }
 }
 
 export async function getAuthProviders(): Promise<AuthProviders> {

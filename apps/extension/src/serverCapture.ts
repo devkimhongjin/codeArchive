@@ -6,9 +6,10 @@ type SettingsStore = Pick<CaptureStore, 'getSettings' | 'mutateRelayIfCurrent'>;
 const sameAccount = (left: CaptureSettings, right: CaptureSettings) => !!left.accountId && left.accountId === right.accountId &&
   left.relay?.secret === right.relay?.secret && left.relay?.generation === right.relay?.generation;
 
-/** No solution queue or IndexedDB write; success requires the server receipt. */
-export async function storeCaptureOnServer(store: SettingsStore, capture: Capture, fetcher: typeof fetch = fetch): Promise<{ ok: boolean; created?: boolean; error?: string }> {
+/** Sends one retained submission. Success requires the exact server receipt. */
+export async function storeCaptureOnServer(store: SettingsStore, capture: Capture, fetcher: typeof fetch = fetch, expectedAccountId?: string): Promise<{ ok: boolean; created?: boolean; error?: string }> {
   const settings = await store.getSettings();
+  if (expectedAccountId !== undefined && settings.accountId !== expectedAccountId) return { ok: false, error: 'ACCOUNT_CHANGED' };
   if (!settings.accountId || settings.relay?.accountId !== settings.accountId) return { ok: false, error: 'LOGIN_REQUIRED' };
   let acknowledged = false;
   const checkedFetcher: typeof fetch = async (input, init) => {
@@ -28,7 +29,13 @@ export async function storeCaptureOnServer(store: SettingsStore, capture: Captur
 
 export async function loadPopupServerState(store: Pick<CaptureStore, 'getSettings'>, fetcher: typeof fetch = fetch) {
   const settings = await store.getSettings();
-  const recentCaptures = await fetchRecentServerCaptures(settings, fetcher);
+  let recentCaptures: Omit<Capture, 'sourceCode'>[] = [];
+  let recentUnavailable = false;
+  try { recentCaptures = await fetchRecentServerCaptures(settings, fetcher); }
+  catch { recentUnavailable = true; }
   const current = await store.getSettings();
-  return { pendingCount: 0, syncedProblemCount: 0, settings: current, recentCaptures: sameAccount(settings, current) ? recentCaptures : [] };
+  const currentAccount = sameAccount(settings, current);
+  // A recent-list outage is not a failed settings read or consent withdrawal.
+  return { pendingCount: 0, syncedProblemCount: 0, settings: current, recentCaptures: currentAccount ? recentCaptures : [],
+    ...(recentUnavailable && currentAccount ? { recentError: 'SERVER_UNAVAILABLE' as const } : {}) };
 }

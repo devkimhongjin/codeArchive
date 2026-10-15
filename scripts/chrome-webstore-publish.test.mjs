@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -8,6 +8,16 @@ import { configuration, inspectStatus, publish, redact } from './chrome-webstore
 
 const base = { CWS_PUBLISHER_ID: 'publisher-test-id', CWS_STORE_ITEM_ID: 'mlhibjadcbklfdllkonhjjajhmhnoalj', CWS_VERSION: '1.0.0', CWS_ARCHIVE: 'fixture.zip' };
 const revision = (state, version) => ({ state, distributionChannels: [{ crxVersion: version, deployPercentage: 100 }] });
+
+test('Store submission requires a manual master request and defaults to a no-upload dry run', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/chrome-webstore-release.yml', import.meta.url), 'utf8');
+  const triggers = workflow.split(/^on:\s*$/m)[1]?.split(/^permissions:/m)[0];
+  assert.ok(triggers);
+  assert.deepEqual([...triggers.matchAll(/^  (\w+):\s*$/gm)].map(match => match[1]), ['workflow_dispatch']);
+  assert.match(triggers, /      dry_run:\s*[\s\S]*?        default: true/);
+  assert.match(workflow, /  publish:\s*\n    if: github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/master' && inputs\.status_only != true/);
+  assert.match(workflow, /CWS_DRY_RUN: \$\{\{ inputs\.dry_run && 'true' \|\| 'false' \}\}/);
+});
 
 async function archiveFixture(t) {
   const directory = await mkdtemp(resolve(tmpdir(), 'cws-publish-'));
