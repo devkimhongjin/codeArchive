@@ -159,7 +159,7 @@ export function HistoricalGithubCommitView({ user, mode, revision = 0, selection
   }
   const visible = records.filter(record => selectionScope || filter === 'ALL' || record.platform === filter), available = visible.filter(record => selectable(record) && eligibleIds.has(record.captureId))
   return <section className="historical-import" aria-label={allSolutions ? '전체 풀이 GitHub 일괄 커밋' : '과거 풀이 GitHub 일괄 커밋'}>
-    <h2>GitHub 일괄 커밋</h2><p>{allSolutions ? '전체 서버 풀이에서 아직 커밋하지 않은 제출을 선택하세요. 완료·진행 중인 제출은 제외합니다.' : selectionScope ? '이번 수집에서 서버에 등록한 제출의 커밋 대상을 확인합니다.' : '서버에 등록된 과거 풀이를 선택해 한 번에 커밋을 요청할 수 있습니다.'} 자동 커밋 설정과 관계없이 동작합니다.</p>
+    {allSolutions && <span className="card-kicker">BATCH COMMIT</span>}<h2>GitHub 일괄 커밋</h2><p>{allSolutions ? '전체 서버 풀이에서 아직 커밋하지 않은 제출을 선택하세요. 완료·진행 중인 제출은 제외합니다.' : selectionScope ? '이번 수집에서 서버에 등록한 제출의 커밋 대상을 확인합니다.' : '서버에 등록된 과거 풀이를 선택해 한 번에 커밋을 요청할 수 있습니다.'} 자동 커밋 설정과 관계없이 동작합니다.</p>
     {!user || mode !== 'live' ? <p>CodeArchive 로그인 후 서버 기록에서 커밋할 제출을 선택할 수 있습니다.</p> : <>
       <div className="historical-import-actions"><button type="button" disabled={busy || loading} onClick={() => void refresh(false)}>서버·커밋 상태 새로고침</button>{!selectionScope && <label>플랫폼 <select aria-label="커밋 플랫폼" value={filter} disabled={busy || loading} onChange={event => { setPreview(null); setFilter(event.target.value as typeof filter) }}><option value="ALL">전체</option>{HISTORY_PLATFORMS.map(platform => <option key={platform} value={platform}>{historyPlatformLabel[platform]}</option>)}</select></label>}{allSolutions && !selectionScope && <label>중복 문제 처리 <select aria-label="커밋 중복 문제 처리" value={selectionMode} disabled={busy || loading} onChange={event => {
         const next = event.target.value as HistoricalSelectionMode
