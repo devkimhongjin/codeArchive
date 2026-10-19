@@ -37,6 +37,7 @@
 .server-connection-steps .is-complete { color: #14715c; }
 .server-connection-step-dot { width: 16px; height: 16px; border: 1px solid #8b849a; border-radius: 50%; }
 .server-connection-spinner { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .server-connection-footer { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line); }
 .server-connection-footer p { margin: 0; color: #686176; font-size: 14px; line-height: 1.7; }
 .server-connection-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
