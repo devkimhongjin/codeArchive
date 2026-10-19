@@ -218,3 +218,38 @@ test('GitHub toggles remain usable during remote polling and discard pre-toggle 
   resolve({ statuses: { one: 'SUCCEEDED' } }); await settle(); await settle();
   assert.equal(document.querySelector('.github-label'), null);
 });
+
+test('GitHub switch shows a checking state, not a stale OFF, until settings are read', async () => {
+  const { document } = parseHTML(html); let resolve!: (value: unknown) => void;
+  mountPopup(document, { load: () => new Promise(done => { resolve = done; }), copy: async () => {} }); await settle();
+  const toggle = document.querySelector<HTMLInputElement>('#github-auto')!;
+  assert.equal(toggle.getAttribute('aria-busy'), 'true'); assert.equal(toggle.closest('.switch-row')!.classList.contains('is-checking'), true);
+  resolve({ settings: { githubAutoCommitEnabled: true, relay: { status: 'CONFIRMED' } }, recentCaptures: [] }); await settle();
+  assert.equal(toggle.getAttribute('aria-busy'), null); assert.equal(toggle.closest('.switch-row')!.classList.contains('is-checking'), false);
+  assert.equal(toggle.checked, true); assert.equal(toggle.disabled, false);
+});
+
+test('local settings enable the GitHub switch while a cold server recent list is still pending', async () => {
+  const { document } = parseHTML(html); const commands: unknown[] = []; let resolve!: (value: unknown) => void;
+  const settings = { githubAutoCommitEnabled: false, githubTargetConfigured: true, accountId: '9', accountSettingsVersion: 7, relay: { status: 'CONFIRMED' } };
+  mountPopup(document, { load: () => new Promise(done => { resolve = done; }), loadLocal: async () => ({ settings, pendingCount: 0 }), copy: async () => {},
+    updateGithubAutomation: async command => { commands.push(command); return { ok: true, relayReady: true }; } });
+  await settle();
+  const toggle = document.querySelector<HTMLInputElement>('#github-auto')!;
+  assert.equal(toggle.disabled, false); assert.equal(toggle.getAttribute('aria-busy'), null);
+  assert.equal(document.querySelector('#automation-status')!.textContent, '서버 확인 중');
+  assert.equal(document.querySelector('#recent-card')!.getAttribute('aria-busy'), 'true');
+  toggle.dispatchEvent(new document.defaultView!.Event('click', { cancelable: true }));
+  assert.deepEqual(commands, [{ enabled: true, accountId: '9', settingsVersion: 7 }]);
+  resolve({ settings, recentCaptures: [] }); await settle();
+});
+
+test('a late local read cannot re-enable the switch after the full state read failed', async () => {
+  const { document } = parseHTML(html); let resolveLocal!: (value: unknown) => void;
+  mountPopup(document, { load: async () => { throw new Error('offline'); }, loadLocal: () => new Promise(done => { resolveLocal = done; }), copy: async () => {} });
+  await settle();
+  resolveLocal({ settings: { githubAutoCommitEnabled: true, relay: { status: 'CONFIRMED' } } }); await settle();
+  const toggle = document.querySelector<HTMLInputElement>('#github-auto')!;
+  assert.equal(toggle.disabled, true); assert.notEqual(toggle.checked, true);
+  assert.match(document.querySelector('#error')!.textContent!, /불러오지 못했어요/);
+});

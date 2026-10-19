@@ -8,6 +8,8 @@ import type { PopupBatchAction, PopupBatchProgress } from './popupBatchProgress'
 type Preview = Omit<Capture, 'sourceCode'> & { githubCommitStatus?: GithubCommitStatus };
 interface PopupServices {
   load: () => Promise<unknown>;
+  /** Local settings only: no server round trip, so the switch is not held behind a cold API. */
+  loadLocal?: () => Promise<unknown>;
   loadBatchProgress?: () => Promise<{ progress?: PopupBatchProgress | null }>;
   batchAction?: (command: PopupBatchAction) => Promise<{ ok?: boolean; error?: string }>;
   subscribeProgress?: (refresh: () => void) => void;
@@ -78,6 +80,13 @@ export function mountPopup(document: Document, services: PopupServices): void {
   const automationStatus = document.querySelector<HTMLElement>('#automation-status')!;
   const pendingUploads = document.querySelector<HTMLElement>('#pending-uploads');
   const retryRelay = document.querySelector<HTMLButtonElement>('#retry-relay')!;
+  const githubAutoRow = githubAuto.closest<HTMLElement>('.switch-row');
+  // Until settings are read the switch shows a checking state rather than a stale OFF or a disabled look.
+  const setChecking = (checking: boolean) => {
+    githubAutoRow?.classList.toggle('is-checking', checking);
+    if (checking) githubAuto.setAttribute('aria-busy', 'true'); else githubAuto.removeAttribute('aria-busy');
+  };
+  setChecking(true); githubAuto.disabled = true;
   let loading = false, retrying = false, reloadPending = false, githubBusy = false;
   let localEpoch = 0;
   let localReady = false;
@@ -169,14 +178,39 @@ export function mountPopup(document: Document, services: PopupServices): void {
       if (statusRefreshPending) { statusRefreshPending = false; void refreshStatuses(); }
     }
   }
+  type PopupSettings = NonNullable<typeof githubState> & { autoSyncEnabled?: boolean; relay?: { status?: string } };
+  function applySettings(settings: PopupSettings, pendingCount: unknown, recentError: boolean): void {
+    githubAuto.checked = settings.githubAutoCommitEnabled === true; githubAuto.setAttribute('aria-checked', String(githubAuto.checked));
+    githubState = settings;
+    localReady = true;
+    githubAuto.disabled = false; setChecking(false);
+    const relayStatus = settings.relay?.status;
+    if (pendingUploads) {
+      const count = Number.isSafeInteger(pendingCount) && (pendingCount as number) > 0 ? pendingCount as number : 0;
+      pendingUploads.hidden = count === 0;
+      pendingUploads.textContent = count ? `임시 저장 ${count}개 · ${!settings.autoSyncEnabled ? '자동 동기화를 켜면 전송됩니다.' : relayStatus === 'AUTH_EXPIRED' ? '같은 계정으로 로그인하면 자동 전송됩니다.' : '연결되면 자동 전송됩니다. 브라우저를 다시 켜도 이어집니다.'}` : '';
+    }
+    automationStatus.textContent = recentError ? '서버 연결 확인 필요' : relayStatus === 'CONFIRMED' ? '자동 동기화 중' : relayStatus === 'OFFLINE' ? '오프라인' : relayStatus === 'RELAY_ERROR' ? '동기화 오류' : '대시보드 로그인 필요';
+    retryRelay.hidden = !services.retryRelay || (!recentError && relayStatus !== 'OFFLINE' && relayStatus !== 'RELAY_ERROR');
+  }
   async function load(): Promise<void> {
     if (githubBusy) { reloadPending = true; return; }
     if (loading) { reloadPending = true; return; }
     loading = true;
     const epoch = localEpoch;
+    let settled = false;
     error.hidden = true; recentError.hidden = true; recentCard.setAttribute('aria-busy', 'true');
+    if (!localReady && services.loadLocal) {
+      // The server recent list can wait on a cold API; the switch only needs local settings.
+      void services.loadLocal().then(value => {
+        const local = value as { settings?: PopupSettings; pendingCount?: unknown; error?: unknown } | null;
+        if (settled || localReady || epoch !== localEpoch || githubBusy || !local?.settings || local.error) return;
+        applySettings(local.settings, local.pendingCount, false);
+        if (local.settings.relay?.status === 'CONFIRMED') automationStatus.textContent = '서버 확인 중';
+      }).catch(() => undefined);
+    }
     try {
-      const state = await services.load() as { settings?: NonNullable<typeof githubState> & { autoSyncEnabled?: boolean; relay?: { status?: string } }; pendingCount?: unknown; recentCaptures?: unknown; recentError?: unknown; error?: unknown } | null;
+      const state = await services.load() as { settings?: PopupSettings; pendingCount?: unknown; recentCaptures?: unknown; recentError?: unknown; error?: unknown } | null;
       if (epoch !== localEpoch || githubBusy) { reloadPending = true; return; }
       if (!state?.settings || state.error) throw new Error('Invalid state');
       if (statusAccount !== state.settings.accountId) {
@@ -195,18 +229,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
       visibleCaptures = captures;
       const nextStatusContext = JSON.stringify([state.settings.accountId, state.settings.accountSettingsVersion, captures.map(capture => capture.captureId)]);
       if (nextStatusContext !== statusContext) { statusContext = nextStatusContext; statusEpoch++; }
-      githubAuto.checked = state.settings.githubAutoCommitEnabled === true; githubAuto.setAttribute('aria-checked', String(githubAuto.checked));
-      githubState = state.settings;
-      localReady = true;
-      githubAuto.disabled = false;
-      const relayStatus = state.settings.relay?.status;
-      if (pendingUploads) {
-        const count = Number.isSafeInteger(state.pendingCount) && (state.pendingCount as number) > 0 ? state.pendingCount as number : 0;
-        pendingUploads.hidden = count === 0;
-        pendingUploads.textContent = count ? `임시 저장 ${count}개 · ${!state.settings.autoSyncEnabled ? '자동 동기화를 켜면 전송됩니다.' : relayStatus === 'AUTH_EXPIRED' ? '같은 계정으로 로그인하면 자동 전송됩니다.' : '연결되면 자동 전송됩니다. 브라우저를 다시 켜도 이어집니다.'}` : '';
-      }
-      automationStatus.textContent = state.recentError ? '서버 연결 확인 필요' : relayStatus === 'CONFIRMED' ? '자동 동기화 중' : relayStatus === 'OFFLINE' ? '오프라인' : relayStatus === 'RELAY_ERROR' ? '동기화 오류' : '대시보드 로그인 필요';
-      retryRelay.hidden = !services.retryRelay || (!state.recentError && relayStatus !== 'OFFLINE' && relayStatus !== 'RELAY_ERROR');
+      applySettings(state.settings, state.pendingCount, !!state.recentError);
       if (toggleNotice) { error.hidden = false; error.textContent = toggleNotice; }
       recentCount.textContent = captures.length ? `${captures.length}문제` : '없음'; showCurrentRecent();
       if (state.recentError) { recentError.hidden = false; recentEmpty.hidden = true; recentCount.textContent = '확인 실패'; }
@@ -215,7 +238,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
       void refreshStatuses();
     } catch {
       if (epoch !== localEpoch || githubBusy) { reloadPending = true; return; }
-      githubState = undefined; githubAuto.disabled = true;
+      githubState = undefined; githubAuto.disabled = true; setChecking(false);
       localReady = false;
       knownStatuses.clear(); statusAccount = undefined; recentRenderKey = undefined;
       visibleCaptures = []; statusEpoch++; statusContext = '';
@@ -224,6 +247,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
       error.textContent = '동기화 상태를 불러오지 못했어요. 팝업을 다시 열어 주세요.';
       recentList.replaceChildren(); recentCount.textContent = '확인 실패'; recentEmpty.hidden = true;
     } finally {
+      settled = true;
       loading = false; recentCard.setAttribute('aria-busy', 'false');
       if (reloadPending) { reloadPending = false; queueMicrotask(() => void load()); }
     }
