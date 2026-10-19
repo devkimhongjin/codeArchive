@@ -110,7 +110,7 @@ a { color: inherit; }
 .nav-item.active { color: var(--purple-ink); }
 .nav-item.active::after { content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; background: var(--purple); border-radius: 2px 2px 0 0; }
 .detail-heading-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.detail-heading-actions button.problem-link { font: inherit; }
+.detail-heading-actions button.problem-link { font-family: inherit; font-size: var(--text-xs); font-weight: 700; }
 .nav-count { margin-left: 4px; color: var(--text-faint); font: 500 var(--text-xs) 'DM Mono', monospace; }
 .topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 13px; }
 .sync-button, .login-button { display: inline-flex; align-items: center; gap: 7px; border-radius: var(--radius-md); font-size: var(--text-sm); font-weight: 700; }
@@ -488,3 +488,15 @@ h1, h2, p { margin-top: 0; }
 .template-preview > span { flex: none; font-weight: 600; }
 .template-preview output { min-width: 0; color: var(--text-strong); font: 500 var(--text-sm) 'DM Mono', monospace; overflow-wrap: anywhere; }
 .export-settings > .card-kicker, .github-batch-management .card-kicker { display: block; margin-bottom: var(--space-1); }
+
+/* D5: quieter per-row action, consistent detail header buttons, compact mobile filters */
+.solution-group-community { color: var(--text-muted); background: var(--surface); border: 1px solid var(--line); cursor: pointer; transition: background .15s, color .15s, border-color .15s; }
+.solution-group-entry:hover .solution-group-community, .solution-row.selected + .solution-group-community, .solution-group-community:focus-visible { color: var(--purple-ink); background: var(--purple-soft); border-color: #d9d3fb; }
+button.problem-link { background: var(--surface); font-family: inherit; font-size: var(--text-xs); line-height: 1.2; cursor: pointer; }
+.detail-heading-actions .problem-link { padding: 7px 10px; }
+@media (max-width: 800px) {
+  .filter-label { display: none; }
+  .archive-theme-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .search-toolbar select, .search-toolbar .archive-theme-picker { flex: 1 1 0; min-width: 0; }
+  .search-toolbar .archive-theme-picker select { width: 100%; max-width: none; }
+}
