@@ -15,7 +15,7 @@ import {
 } from "./sweaProblemContext";
 import { SWEA_ORIGIN, SWEA_SOLVING_PATH } from "./adapters/sweaSelectors";
 import { activeSubmissionProgress, SUBMISSION_PROGRESS_KEY, updateSubmissionProgress } from "./submissionProgress";
-import type { Platform } from "./types";
+import type { CaptureSettings, Platform } from "./types";
 import { isJungolHistoryPath } from "./historicalJungol";
 import { isHistoricalSubmissionId } from "./historicalIdentity";
 import { historyPlatformForUrl, isLocalHistoryPageSender, mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
@@ -216,6 +216,7 @@ type InternalMessage =
   | { type: "STORE_HISTORICAL_CAPTURE"; capture: unknown }
   | { type: "SET_SUBMISSION_PROGRESS"; attemptId: unknown; platform?: unknown; problemNumber?: unknown; title?: unknown; phase: unknown }
   | { type: "GET_POPUP_STATE" }
+  | { type: 'GET_POPUP_LOCAL_STATE' }
   | { type: 'GET_POPUP_GITHUB_BATCH' }
   | { type: 'POPUP_GITHUB_BATCH_ACTION'; action?: unknown; taskId?: unknown; accountId?: unknown }
   | { type: "SET_GITHUB_AUTOMATION"; enabled: boolean; accountId: string; settingsVersion: number }
@@ -418,6 +419,12 @@ function isArchivePageSender(sender: chrome.runtime.MessageSender): boolean {
   }
 }
 
+function popupLocalSettings(settings: CaptureSettings) {
+  return { accountId: settings.accountId, accountSettingsVersion: settings.accountSettingsVersion, autoSyncEnabled: settings.autoSyncEnabled,
+    githubAutoCommitEnabled: settings.githubAutoCommitEnabled, githubTargetConfigured: settings.githubTargetConfigured,
+    relay: settings.relay ? { status: settings.relay.status } : undefined };
+}
+
 function isPopupSender(sender: chrome.runtime.MessageSender): boolean {
   if (typeof sender.url !== "string") return false;
   try { const url = new URL(sender.url); return url.protocol === "chrome-extension:" && url.hostname === chrome.runtime.id && url.pathname === "/popup.html"; } catch { return false; }
@@ -606,6 +613,14 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     if (!isPopupSender(sender) || sender.id !== chrome.runtime.id || (sender.frameId !== undefined && sender.frameId !== 0)) { sendResponse({ progress: null, error: 'UNAUTHORIZED' }); return false; }
     void loadPopupBatchProgress(store, async () => (await batchTaskStorage.get(GITHUB_BATCH_TASK_KEY))[GITHUB_BATCH_TASK_KEY])
       .then(progress => sendResponse({ progress })).catch(() => sendResponse({ progress: null, error: 'STORAGE_ERROR' }));
+    return true;
+  }
+  if (object.type === 'GET_POPUP_LOCAL_STATE') {
+    if (!isPopupSender(sender) || sender.id !== chrome.runtime.id || (sender.frameId !== undefined && sender.frameId !== 0)) { sendResponse({ settings: null, error: 'UNAUTHORIZED' }); return false; }
+    // No network: the popup switch must not wait for a cold server before showing the saved value.
+    void store.getSettings().then(async settings => sendResponse({ settings: popupLocalSettings(settings),
+      pendingCount: settings.accountId ? await store.countQueuedCaptures(settings.accountId) : 0 }))
+      .catch(() => sendResponse({ settings: null, error: 'STORAGE_ERROR' }));
     return true;
   }
   if (object.type === "GET_POPUP_STATE") {

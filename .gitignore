@@ -51,3 +51,6 @@ data/
 
 # Local Netlify folder
 .netlify
+
+# Claude local instructions
+CLAUDE.md
