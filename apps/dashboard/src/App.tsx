@@ -1502,13 +1502,17 @@ export default function App() {
         </>}
         <section hidden={view !== 'history'} className="history-management" aria-label="과거 풀이 관리">
           <div className="page-heading">
+            <p className="eyebrow"><span className="eyebrow-dot" /> WORKSPACE / HISTORY</p>
             <h1>과거 풀이 관리</h1>
             <p>사이트별 과거 풀이를 서버에 등록하고, 원하는 제출을 GitHub에 커밋하세요.</p>
           </div>
-          <div className="history-storage-guide">
+          <div className="history-storage-guide history-card">
             <h2>저장 안내</h2>
-            <p>후보를 선택하고 <strong>서버 등록</strong>을 누르면 본인 제출의 원본을 확인해 로그인한 계정에 저장합니다. 이미 서버에 있는 제출은 제외합니다.</p>
-            <p>서버 등록 완료 후 이 화면 상단에서 <strong>일괄 GitHub 커밋</strong>을 진행할 수 있습니다. 커밋할 저장소와 제출을 확인한 뒤 요청합니다.</p>
+            <ol className="history-steps">
+              <li><b>1</b><span><strong>후보 선택</strong>수집 화면에서 플랫폼과 같은 문제 제출 기준을 고릅니다.</span></li>
+              <li><b>2</b><span><strong>서버 등록</strong>본인 제출의 원본을 확인해 로그인한 계정에 저장합니다. 이미 서버에 있는 제출은 제외합니다.</span></li>
+              <li><b>3</b><span><strong>일괄 GitHub 커밋</strong>등록이 끝나면 이 화면 상단에서 저장소와 제출을 확인한 뒤 요청합니다.</span></li>
+            </ol>
           </div>
           {historicalOpened && <>
           <div className="history-result-actions" aria-label="수집 후 작업">

@@ -67,15 +67,15 @@ export function HistoricalCollectionView({ extensionId, capability, supported, d
     } catch { if (current.current === expected) setMessage('수집 화면을 열지 못했습니다. 확장 연결을 확인해 주세요.') }
     finally { setOpening(false) }
   }
-  return <section className="historical-collection" aria-label="과거 풀이 수집">
+  return <section className="historical-collection history-card" aria-label="과거 풀이 수집">
     <h2>과거 풀이 수집</h2>
     {extensionRuntime()
       ? <><iframe key={account} ref={frame} onLoad={requestSnapshot} inert={disabled} style={{ height }} className="historical-collection-frame" src={`history.html?embedded=1${serverContext ? '&server=1' : ''}`} title="과거 풀이 수집 화면" />
         {message && <p role="status">{message}</p>}
         {disabled && <p role="status">커밋 요청을 마친 뒤 새 수집을 시작할 수 있습니다.</p>}</>
       : <><p>설치된 확장의 수집 화면에서 플랫폼과 같은 문제 제출 기준을 선택하세요.</p>
-        <button type="button" disabled={!capability || !supported || opening} onClick={() => void openCollection()}>수집 화면 열기</button>
-        {!capability && <p>확장 프로그램을 연결해 주세요.</p>}
+        <button type="button" className="history-work-button active" disabled={!capability || !supported || opening} onClick={() => void openCollection()}>{opening ? '여는 중…' : '수집 화면 열기'}</button>
+        {!capability && <p className="historical-collection-hint">확장 프로그램을 연결하면 수집 화면을 열 수 있습니다.</p>}
         {message && <p role="status">{message}</p>}</>}
   </section>
 }
