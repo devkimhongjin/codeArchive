@@ -6,18 +6,22 @@ export type RelayAttemptResult = "ACK" | "OFFLINE" | "AUTH_EXPIRED" | "RELAY_ERR
 export type GithubCommitStatus = "NOT_REQUESTED" | "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "UNKNOWN";
 export const RELAY_REQUEST_TIMEOUT_MS = 8_000;
 
-function trustedRelayEndpoint(value: string): URL | null {
+function relayEndpoint(value: string): URL | null {
   try {
     const endpoint = new URL(value, PUBLIC_API_ORIGIN);
-    if (endpoint.username || endpoint.password || !endpoint.pathname.startsWith('/api/relay/')) return null;
-    return endpoint.origin === PUBLIC_API_ORIGIN || (LEGACY_RELAY_ORIGINS as readonly string[]).includes(endpoint.origin) ? endpoint : null;
+    return endpoint.username || endpoint.password || !endpoint.pathname.startsWith('/api/relay/') ? null : endpoint;
   } catch { return null; }
+}
+
+function trustedRelayEndpoint(value: string): URL | null {
+  const endpoint = relayEndpoint(value);
+  return endpoint && (endpoint.origin === PUBLIC_API_ORIGIN || (LEGACY_RELAY_ORIGINS as readonly string[]).includes(endpoint.origin)) ? endpoint : null;
 }
 
 /** Moves an existing opaque grant to the direct host only for the exact persisted
  * account/version snapshot. The grant's scope and secret are unchanged. */
 export async function migrateLegacyRelayEndpoint(store: Pick<CaptureStore, 'mutateRelayIfCurrent'>, settings: CaptureSettings): Promise<boolean> {
-  const relay = settings.relay, endpoint = relay && trustedRelayEndpoint(relay.endpoint);
+  const relay = settings.relay, endpoint = relay && relayEndpoint(relay.endpoint);
   // localhost grants can belong to a developer's unrelated local API. Only
   // the old published dashboard proxy is known to address the same service.
   if (!relay || !endpoint || endpoint.origin !== LEGACY_DASHBOARD_ORIGIN) return false;

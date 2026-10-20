@@ -7,11 +7,11 @@ import { normalizedHeaderFields, type HeaderField } from "../../../shared/header
 import { isHistoricalSubmissionId } from "./historicalIdentity";
 import { dashboardSender, type DashboardPageSender } from './dashboardNavigation';
 
-export const DASHBOARD_ORIGIN = "https://codearchive-dashboard-beta.netlify.app";
-export const DASHBOARD_ORIGINS = [
-  DASHBOARD_ORIGIN,
-  "http://localhost:5173"
-] as const;
+// The retired Netlify dashboard no longer connects. External web messages are
+// accepted only from the local development dashboard, which the store build
+// cannot reach (it ships without externally_connectable).
+export const DASHBOARD_ORIGIN = "http://localhost:5173";
+export const DASHBOARD_ORIGINS = [DASHBOARD_ORIGIN] as const;
 export const SESSION_IDLE_TTL_MS = 5 * 60 * 1_000;
 export const SESSION_ABSOLUTE_TTL_MS = 15 * 60 * 1_000;
 export const MAX_PENDING_PAGE_SIZE = 50;

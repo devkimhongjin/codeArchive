@@ -13,17 +13,13 @@ test('development manifest key retains the local identity while the web fallback
   assert.equal(LEGACY_EXTENSION_ID, LEGACY_LOCAL_EXTENSION_ID);
   assert.equal(EXTENSION_ID, STORE_EXTENSION_ID);
   assert.deepEqual(EXTENSION_CANDIDATES, [STORE_EXTENSION_ID, LEGACY_LOCAL_EXTENSION_ID]);
-  assert.deepEqual(manifest.externally_connectable.matches, [
-    'https://codearchive-dashboard-beta.netlify.app/*',
-    'http://localhost:5173/*'
-  ]);
+  assert.deepEqual(manifest.externally_connectable.matches, ['http://localhost:5173/*']);
   assert.deepEqual(manifest.host_permissions, [
     'https://swexpertacademy.com/*',
     'https://school.programmers.co.kr/*',
     'https://jungol.co.kr/*',
     'https://api.github.com/*',
     'https://codearchive-api-stg-e3q54l32da-as.a.run.app/*',
-    'https://codearchive-dashboard-beta.netlify.app/*',
     'http://localhost:5173/*'
   ]);
   const isolated = manifest.content_scripts.find((script: { world?: string }) => script.world === 'ISOLATED');
