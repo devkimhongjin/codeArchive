@@ -47,7 +47,17 @@ Chrome이 HttpOnly 인증 쿠키를 관리하며 확장은 쿠키 값을 읽지 
 2. 같은 master SHA의 성공한 `Verify` workflow를 확인합니다.
 3. `CWS_WIF_PROVIDER`, `CWS_SERVICE_ACCOUNT`, `CWS_PUBLISHER_ID` repository variable이 있는지 확인합니다.
 4. Google workload identity로 짧은 수명의 Chrome Web Store API token을 얻어 key-free ZIP을 업로드합니다.
-5. API v2 상태가 후보 버전을 확인하면 `DEFAULT_PUBLISH`로 심사를 제출합니다.
+5. API v2 상태가 후보 버전을 확인하면 `STAGED_PUBLISH`로 심사를 제출합니다. 심사를 통과해도 자동 공개되지 않고 `STAGED` 상태로 대기합니다.
+
+### 단계적 게시와 백엔드 배포 순서
+
+심사 기간에는 사용자 설치본이 이전 스토어 버전이므로, 백엔드(API·worker·shared 계약) 변경은 공개된 스토어 버전과의 호환성을 먼저 확인합니다.
+
+1. 백엔드 변경이 이전 스토어 버전과 호환되면(필드 추가만, 기존 응답 유지) 게시 전에 배포해도 됩니다. 기존 필드 제거 같은 정리는 새 확장 공개 뒤 다음 배포로 미룹니다.
+2. 호환되지 않으면 `status_only` 실행 또는 Developer Dashboard에서 후보 버전이 `STAGED`인지 확인한 뒤, Dashboard에서 게시하고 곧바로 `Deploy GCP Staging`을 실행합니다.
+3. 심사 완료 후 30일 안에 게시하지 않으면 초안으로 돌아가 다시 심사를 받아야 합니다. Dashboard 계정 설정에서 게시·staged 알림 메일을 켜 두면 상태를 반복 확인하지 않아도 됩니다.
+
+API v2 문서는 `STAGED` 항목을 API로 공개하는 호출을 명시하지 않으므로, 공개 단계는 Dashboard에서 수행합니다.
 
 이 워크플로는 장기 키를 사용하지 않고, token이나 API 응답 본문을 로그에 출력하지 않습니다. 업로드, 심사 대기, 공개 상태를 구분하며 다른 대기 심사본을 바꾸지 않습니다. 수동 실행의 dry run은 패키지와 구성만 검증합니다. Publisher service account의 Dashboard 등록과 repository variables는 구성되어 있지만, 실제 CI token/API 호출 결과가 기록되기 전까지 연결 성공이나 게시 완료를 주장하지 않습니다.
 
