@@ -29,9 +29,10 @@ test('login navigation pins provider URLs and copies no OAuth secrets into the e
   assert.equal(dashboardExternalUrl('/api/oauth2/authorization/github'), 'https://codearchive-api-stg-e3q54l32da-as.a.run.app/api/oauth2/authorization/github');
   assert.ok(dashboardExternalUrl('https://github.com/apps/codearchive/installations/new?state=public-state'));
   for (const unsafe of ['https://evil.test/', '//evil.test/api/oauth2/authorization/github', 'https://name:secret@github.com/apps/codearchive/installations/new', '/api/oauth2/authorization/github?redirect=https://evil.test']) assert.equal(dashboardExternalUrl(unsafe), null);
-  assert.equal(dashboardLoginReturn('https://codearchive-dashboard-beta.netlify.app/'), true);
+  assert.equal(dashboardLoginReturn('https://codearchive-api-stg-e3q54l32da-as.a.run.app/api/extension-login/complete'), true);
+  assert.equal(dashboardLoginReturn('https://codearchive-dashboard-beta.netlify.app/'), false, 'the retired dashboard no longer completes a login');
   assert.equal(dashboardLoginReturn('https://evil.test/'), false);
-  assert.equal(dashboardReturnQuery('https://codearchive-dashboard-beta.netlify.app/?githubInstall=success&installationId=12&code=private&state=private'), 'githubInstall=success&installationId=12');
+  assert.equal(dashboardReturnQuery('https://codearchive-api-stg-e3q54l32da-as.a.run.app/api/extension-login/complete?githubInstall=success&installationId=12&code=private&state=private'), 'githubInstall=success&installationId=12');
 });
 
 test('own dashboard sees more than 50 retained captures while external web remains bounded and cannot ACK them', async () => {
@@ -44,7 +45,7 @@ test('own dashboard sees more than 50 retained captures while external web remai
   const own = await bridge.handleExtensionMessage({ type: 'CONNECT' }, sender, id); assert.ok('capability' in own);
   const result = await bridge.handleExtensionMessage({ type: 'GET_LOCAL_ARCHIVE', capability: own.capability, limit: 50 }, sender, id);
   assert.equal('captures' in result && result.captures.length, 61); assert.equal('hasMore' in result && result.hasMore, false);
-  const web = { url: 'https://codearchive-dashboard-beta.netlify.app/', frameId: 0, documentId: 'web', tab: { id: 2, url: 'https://codearchive-dashboard-beta.netlify.app/' } };
+  const web = { url: 'http://localhost:5173/', frameId: 0, documentId: 'web', tab: { id: 2, url: 'http://localhost:5173/' } };
   const remote = await bridge.handleMessage({ type: 'CONNECT' }, web); assert.ok('capability' in remote);
   const bounded = await bridge.handleMessage({ type: 'GET_LOCAL_ARCHIVE', capability: remote.capability, limit: 999 }, web);
   assert.equal('captures' in bounded && bounded.captures.length, 50);

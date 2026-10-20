@@ -289,6 +289,10 @@ test("bridge accepts both exact dashboard origins and rejects lookalikes or mixe
   }), { error: "UNAUTHORIZED" });
   assert.deepEqual(await bridge.handleMessage({ type: "CONNECT" }, {
     url: "https://codearchive-dashboard-beta.netlify.app/app",
+    documentId: "retired", frameId: 0, tab: { id: 7, url: "https://codearchive-dashboard-beta.netlify.app/app" }
+  }), { error: "UNAUTHORIZED" }, "the retired Netlify dashboard can no longer connect");
+  assert.deepEqual(await bridge.handleMessage({ type: "CONNECT" }, {
+    url: "https://codearchive-dashboard-beta.netlify.app/app",
     documentId: "mixed", frameId: 0, tab: { id: 7, url: "http://localhost:5173/app" }
   }), { error: "UNAUTHORIZED" });
 });

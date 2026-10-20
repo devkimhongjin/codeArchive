@@ -2,7 +2,7 @@
 
 [CodeArchive Chrome 웹스토어 항목](https://chromewebstore.google.com/detail/codearchive/mlhibjadcbklfdllkonhjjajhmhnoalj)의 Item ID는 `mlhibjadcbklfdllkonhjjajhmhnoalj`입니다. 현재 스토어에 공개된 버전과 이 저장소의 다음 후보 버전은 구분합니다. 소스의 `1.0.0`은 `master` 검증 뒤에만 심사 제출하며, 제출 성공은 공개 완료를 뜻하지 않습니다.
 
-새 확장 대시보드·팝업·캡처·Relay 요청은 고정 Cloud Run API `https://codearchive-api-stg-e3q54l32da-as.a.run.app`를 직접 사용합니다. `codearchive-dashboard-beta.netlify.app`은 기존 설치본의 bridge와 로그인 반환을 위한 호환 경로로만 남아 있습니다.
+새 확장 대시보드·팝업·캡처·Relay 요청은 고정 Cloud Run API `https://codearchive-api-stg-e3q54l32da-as.a.run.app`를 직접 사용합니다. 레거시 Netlify Dashboard(`codearchive-dashboard-beta.netlify.app`)는 더 이상 사용하지 않아 host 권한, 외부 연결, 로그인 반환 경로에서 제거했습니다(#462). 기존 설치본에 저장된 Netlify relay 주소는 업로드 없이 API 주소로만 이전합니다. 스토어 빌드에는 `externally_connectable`이 없어 어떤 웹 페이지도 확장에 메시지를 보낼 수 없습니다.
 
 ## 패키지 생성
 
