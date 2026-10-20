@@ -40,7 +40,7 @@ test('dry run does not require a token or call the Chrome Web Store API', async 
   assert.deepEqual(result, { status: 'DRY_RUN', itemId: base.CWS_STORE_ITEM_ID, version: '1.0.0' });
 });
 
-test('upload submits DEFAULT_PUBLISH and observes the candidate nested revision', async t => {
+test('upload submits STAGED_PUBLISH and observes the candidate nested revision', async t => {
   const archive = await archiveFixture(t);
   const calls = [];
   const responses = [
@@ -56,7 +56,7 @@ test('upload submits DEFAULT_PUBLISH and observes the candidate nested revision'
   assert.match(calls[1][0], /:upload$/);
   const publishCall = calls.find(([url]) => url.endsWith(':publish'));
   assert.ok(publishCall);
-  assert.match(String(publishCall[1].body), /DEFAULT_PUBLISH/);
+  assert.deepEqual(JSON.parse(String(publishCall[1].body)), { publishType: 'STAGED_PUBLISH' });
   assert.match(String(calls[1][1].headers.Authorization), /secret-token/);
 });
 
