@@ -33,11 +33,11 @@ test("Jungol prefers an exact judge request when available", async () => {
   const detection = adapter.detectSubmissionResult();
   assert.equal(detection?.accepted, true);
   assert.deepEqual(adapter.getSubmissionSnapshot()?.editor, { language: "Java 8", sourceCode: "class Request {}" });
-  assert.deepEqual(adapter.collectPerformance(), { executionTime: 474, memoryValue: 34544, memoryUnit: "MB", memoryUsage: 34544 });
+  assert.deepEqual(adapter.collectPerformance(), { executionTime: 474, memoryValue: 34544, memoryUnit: "KiB", memoryUsage: 34544 / 1024 });
   const capture = { problemNumber: "4577", language: "Java 8", sourceCode: "class Request {}" } as Parameters<NonNullable<typeof adapter.confirmCaptureAsync>>[0];
   const confirmed = await adapter.confirmCaptureAsync(capture, detection!);
   assert.equal(confirmed?.solvedAt, new Date(now - 250).toISOString());
-  assert.equal(confirmed?.memoryUnit, "MB");
+  assert.equal(confirmed?.memoryUnit, "KiB");
   assert.equal(await adapter.confirmCaptureAsync({ ...capture, sourceCode: "other" }, detection!), null);
   adapter.consumeSubmissionResult(detection!);
   assert.equal(adapter.detectSubmissionResult(), null);
@@ -60,7 +60,7 @@ test("Jungol saves a fresh accepted dialog with the matching click-time Monaco s
   assert.equal(detection?.accepted, true);
   const capture = { problemNumber: "1520", language: "Java 8", sourceCode: "class Main {}" } as Parameters<NonNullable<typeof adapter.confirmCaptureAsync>>[0];
   assert.deepEqual(await adapter.confirmCaptureAsync(capture, detection!), {
-    ...capture, executionTime: 474, memoryValue: 34544, memoryUnit: "MB", memoryUsage: 34544,
+    ...capture, executionTime: 474, memoryValue: 34544, memoryUnit: "KiB", memoryUsage: 34544 / 1024,
     solvedAt: new Date(now).toISOString()
   });
   assert.equal(await adapter.confirmCaptureAsync({ ...capture, sourceCode: "other" }, detection!), null);
@@ -96,17 +96,23 @@ test("Jungol result requires one visible complete success dialog", () => {
   const { document } = parseHTML('<html><body><h5>정답이에요!</h5><table><tr><td>정답 100점</td></tr></table></body></html>');
   assert.equal(jungolAcceptedResult(document), null);
   document.body.insertAdjacentHTML("beforeend", '<div id="result" role="dialog" aria-modal="true" aria-labelledby="dialog-title-0" aria-describedby="dialog-desc-0"><button aria-label="닫기"></button><div class="content"><h2 id="dialog-title-0">정답이에요!</h2><div id="dialog-desc-0"><span>정답</span><b>100점</b><span>474ms</span><span>34,544MB</span></div></div><footer><button>닫기</button></footer></div>');
-  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 474, memoryValue: 34544, memoryUnit: "MB", memoryUsage: 34544 });
+  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 474, memoryValue: 34544, memoryUnit: "KiB", memoryUsage: 34544 / 1024 });
   const close = document.querySelector("#result footer button")!;
   close.innerHTML = '<span class="material-symbols-outlined">close</span>닫기';
-  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 474, memoryValue: 34544, memoryUnit: "MB", memoryUsage: 34544 }, "the live dialog has both an icon close control and a footer close button");
+  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 474, memoryValue: 34544, memoryUnit: "KiB", memoryUsage: 34544 / 1024 }, "the live dialog has both an icon close control and a footer close button");
   const description = document.querySelector("#dialog-desc-0")!;
   description.innerHTML = '<span>정답 100점 474ms 34,544MB</span><div>다음 문제도 풀어볼까요?</div><button>다음 문제</button>';
-  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 474, memoryValue: 34544, memoryUnit: "MB", memoryUsage: 34544 }, "a next-problem button must not be mistaken for the dialog close control");
+  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 474, memoryValue: 34544, memoryUnit: "KiB", memoryUsage: 34544 / 1024 }, "a next-problem button must not be mistaken for the dialog close control");
   description.textContent = "정답 100점 530ms 35,080MB 다음 문제도 풀어볼까요? 다음 문제 배낭채우기 #1077";
-  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 530, memoryValue: 35080, memoryUnit: "MB", memoryUsage: 35080 }, "the reported success dialog remains accepted with its next-problem suggestion");
+  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 530, memoryValue: 35080, memoryUnit: "KiB", memoryUsage: 35080 / 1024 }, "the reported success dialog remains accepted with its next-problem suggestion");
   description.textContent = "정답 100점 213 ms 34,184 MB 다음 문제도 풀어볼까요? 다음 문제 요플레 공장 #2194";
-  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 213, memoryValue: 34184, memoryUnit: "MB", memoryUsage: 34184 }, "the live dialog includes a next-problem suggestion after the metrics");
+  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 213, memoryValue: 34184, memoryUnit: "KiB", memoryUsage: 34184 / 1024 }, "the live dialog includes a next-problem suggestion after the metrics");
+  description.textContent = "정답 100점 1,511ms 61,952MB";
+  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 1511, memoryValue: 61952, memoryUnit: "KiB", memoryUsage: 61952 / 1024 },
+    "runs over one second use the site's locale thousands separator");
+  description.textContent = "정답 100점 474ms 33.0MB";
+  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 474, memoryValue: 33, memoryUnit: "MB", memoryUsage: 33 },
+    "a decimal MB value is already the listing's real megabytes");
   for (const invalid of ["오답 100점 474ms 34,544MB", "정답 99점 474ms 34,544MB", "정답 100점 미측정 34,544MB", "정답 100점 474ms 34,544", "정답 100점 474ms 34,544MB 오답"]) {
     description.textContent = invalid;
     assert.equal(jungolAcceptedResult(document), null, invalid);
@@ -122,7 +128,7 @@ test("Jungol result requires one visible complete success dialog", () => {
 test("Jungol accepts the observed compact result sheet and rejects uncertain identities", () => {
   const sheet = '<div role="dialog" aria-modal="true" aria-label="정답이에요!" aria-describedby="dialog-desc-2" data-dialog-id="2"><button aria-label="닫기"></button><div id="dialog-desc-2">정답 100점 288ms 47,908MB 다음 문제도 풀어볼까요? 다음 문제 지하철 #2097</div><footer><button>닫기</button><button>다음 문제</button></footer></div>';
   const { document } = parseHTML(`<html><body>${sheet}</body></html>`);
-  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 288, memoryValue: 47908, memoryUnit: "MB", memoryUsage: 47908 });
+  assert.deepEqual(jungolAcceptedResult(document)?.performance, { executionTime: 288, memoryValue: 47908, memoryUnit: "KiB", memoryUsage: 47908 / 1024 });
   const dialog = document.querySelector('[role="dialog"]')!;
   for (const [name, value] of [["aria-label", "오답이에요!"], ["aria-describedby", "dialog-desc-3"], ["data-dialog-id", "3"], ["data-dialog-id", ""], ["aria-modal", "false"], ["aria-labelledby", "missing-title"]]) {
     const original = dialog.getAttribute(name!);
