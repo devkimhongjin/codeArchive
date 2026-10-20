@@ -5,15 +5,26 @@ import { describeLanguage } from '../../../shared/language'
 import { DARK_THEMES, LIGHT_THEMES, type DarkTheme, type LightTheme } from './types'
 import { isDarkTheme, isLightTheme, type CodeTheme, type CodeThemeMode } from '../../../shared/codeThemes'
 
+// Each grammar is fetched only when code in that language is shown. Loading
+// all fourteen at once pulled ~2.5MB (cpp alone is ~800kB) into every viewer.
+const grammars: Record<string, () => Promise<{ default: unknown }>> = {
+  java: () => import('shiki/langs/java.mjs'), python: () => import('shiki/langs/python.mjs'), cpp: () => import('shiki/langs/cpp.mjs'),
+  c: () => import('shiki/langs/c.mjs'), javascript: () => import('shiki/langs/javascript.mjs'), typescript: () => import('shiki/langs/typescript.mjs'),
+  kotlin: () => import('shiki/langs/kotlin.mjs'), csharp: () => import('shiki/langs/csharp.mjs'), sql: () => import('shiki/langs/sql.mjs'),
+  go: () => import('shiki/langs/go.mjs'), rust: () => import('shiki/langs/rust.mjs'), ruby: () => import('shiki/langs/ruby.mjs'),
+  swift: () => import('shiki/langs/swift.mjs'), scala: () => import('shiki/langs/scala.mjs'),
+}
 let highlighter: ReturnType<typeof loadHighlighter> | undefined
 async function loadHighlighter() {
   const { createHighlighterCore } = await import('shiki/core')
   const { createJavaScriptRegexEngine } = await import('shiki/engine/javascript')
-  return createHighlighterCore({
-    themes: [],
-    langs: [import('shiki/langs/java.mjs'), import('shiki/langs/python.mjs'), import('shiki/langs/cpp.mjs'), import('shiki/langs/c.mjs'), import('shiki/langs/javascript.mjs'), import('shiki/langs/typescript.mjs'), import('shiki/langs/kotlin.mjs'), import('shiki/langs/csharp.mjs'), import('shiki/langs/sql.mjs'), import('shiki/langs/go.mjs'), import('shiki/langs/rust.mjs'), import('shiki/langs/ruby.mjs'), import('shiki/langs/swift.mjs'), import('shiki/langs/scala.mjs')],
-    engine: createJavaScriptRegexEngine(),
-  })
+  return createHighlighterCore({ themes: [], langs: [], engine: createJavaScriptRegexEngine() })
+}
+async function ensureLanguage(engine: Awaited<ReturnType<typeof loadHighlighter>>, lang: string): Promise<string> {
+  const grammar = grammars[lang]
+  if (!grammar) return 'text'
+  if (!engine.getLoadedLanguages().includes(lang)) await engine.loadLanguage((await grammar()).default as Parameters<typeof engine.loadLanguage>[0])
+  return lang
 }
 export function highlightLanguage(language: string) {
   return describeLanguage(language).shikiLanguage ?? 'text'
@@ -37,7 +48,8 @@ export function CodeBlock({ code, language, lightTheme = 'github-light', darkThe
     highlighter ??= loadHighlighter().catch(error => { highlighter = undefined; throw error })
     void highlighter.then(async engine => {
       if (!engine.getLoadedThemes().includes(theme)) await engine.loadTheme(bundledThemes[theme]())
-      const tokens = engine.codeToTokens(code, { lang: highlightLanguage(language), theme }).tokens
+      const lang = await ensureLanguage(engine, highlightLanguage(language))
+      const tokens = engine.codeToTokens(code, { lang, theme }).tokens
       const palette = engine.getTheme(theme) as { fg?: string; bg?: string }
       if (active) setResult({ code, language, theme, tokens, foreground: palette.fg, background: palette.bg })
     }).catch(() => { if (active) setResult(null) })
