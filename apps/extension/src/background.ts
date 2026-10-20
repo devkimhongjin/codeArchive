@@ -21,7 +21,7 @@ import { isHistoricalSubmissionId } from "./historicalIdentity";
 import { historyPlatformForUrl, isLocalHistoryPageSender, mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
 import { requestLocalHistoryMessage } from "./localHistoryConnection";
 import { loadPopupServerState } from './serverCapture';
-import { captureOwner, drainCaptureOutbox, retainCaptureForRetry } from './captureOutbox';
+import { drainCaptureOutbox, retainCaptureForRetry } from './captureOutbox';
 import { registerHistoricalOnServer } from './cloudClient';
 import { restoreCaptureSession } from './captureConnection';
 import { actOnPopupBatch, loadPopupBatchProgress } from './popupBatchProgress';
@@ -76,7 +76,93 @@ async function writeLocalHistoryRoute(route: LocalHistoryRoute | null): Promise<
   else await chrome.storage.session.remove(LOCAL_HISTORY_ROUTE_KEY);
 }
 
-async function resolveLocalHistoryTab(platform: Platform, allowNewSource = false): Promise<{ tabId: number; url: string; platform: Platform } | { error: "TAB_NOT_FOUND" | "MULTIPLE_TABS" }> {
+// A Jungol list the extension opened itself in an inactive tab, so collection
+// never depends on the user's window size or on a tab they left open.
+const JUNGOL_OWNED_TAB_KEY = "codearchive-jungol-owned-history-tab";
+const JUNGOL_OWNED_TAB_IDLE_MS = 10 * 60_000;
+type OwnedJungolTab = { tabId: number; historyPageTabId?: number; lastUsedAt: number };
+const OWNED_TAB_KEEP_STATUSES = new Set(["READY", "SCANNING", "IMPORTING", "CANCELLING"]);
+
+async function readOwnedJungolTab(): Promise<OwnedJungolTab | null> {
+  const value = (await chrome.storage.session.get(JUNGOL_OWNED_TAB_KEY))[JUNGOL_OWNED_TAB_KEY] as Partial<OwnedJungolTab> | undefined;
+  return value && Number.isSafeInteger(value.tabId) && Number.isFinite(value.lastUsedAt) ? value as OwnedJungolTab : null;
+}
+
+async function closeOwnedJungolTab(tabId?: number): Promise<void> {
+  const owned = await readOwnedJungolTab();
+  if (!owned || (tabId !== undefined && owned.tabId !== tabId)) return;
+  await chrome.storage.session.remove(JUNGOL_OWNED_TAB_KEY);
+  await chrome.tabs.remove(owned.tabId).catch(() => undefined);
+}
+
+function waitForTabLoad(tabId: number, pathname: string, timeoutMs = 30_000): Promise<boolean> {
+  return new Promise(resolve => {
+    let settled = false;
+    const loaded = (tab: chrome.tabs.Tab) => {
+      try { return tab.status === "complete" && new URL(tab.url ?? "").pathname === pathname; } catch { return false; }
+    };
+    const finish = (value: boolean) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer); chrome.tabs.onUpdated.removeListener(listener); resolve(value);
+    };
+    const listener = (id: number, _info: unknown, tab: chrome.tabs.Tab) => { if (id === tabId && loaded(tab)) finish(true); };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    chrome.tabs.onUpdated.addListener(listener);
+    void chrome.tabs.get(tabId).then(tab => { if (loaded(tab)) finish(true); }).catch(() => finish(false));
+  });
+}
+
+/** Reads the signed-in account from Jungol's home page and opens its own submission list. */
+async function openOwnedJungolHistoryTab(historyPageTabId?: number): Promise<{ tabId: number; url: string } | null> {
+  let tabId: number | undefined;
+  try {
+    tabId = (await chrome.tabs.create({ url: "https://jungol.co.kr/", active: false })).id;
+    if (tabId === undefined || !Number.isSafeInteger(tabId)) return null;
+    const id = tabId;
+    await chrome.tabs.update(id, { autoDiscardable: false }).catch(() => undefined);
+    if (!await waitForTabLoad(id, "/")) throw new Error("home");
+    const [probe] = await chrome.scripting.executeScript({ target: { tabId: id, frameIds: [0] }, world: "ISOLATED", func: async () => {
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const ids = [...new Set([...document.querySelectorAll("a[href^='/account/']")]
+          .map(link => link.getAttribute("href")?.match(/^\/account\/(\d{1,40})$/)?.[1]).filter((value): value is string => !!value))];
+        if (ids.length) return ids;
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      return [] as string[];
+    } });
+    const ids = probe?.result;
+    // Ownership is verified again on the list itself (its edit tab only renders
+    // for the signed-in user), so an ambiguous home page is simply refused.
+    if (!Array.isArray(ids) || ids.length !== 1 || !/^\d{1,40}$/.test(String(ids[0]))) throw new Error("account");
+    const path = `/account/${ids[0]}/submission`;
+    await chrome.tabs.update(id, { url: `https://jungol.co.kr${path}` });
+    if (!await waitForTabLoad(id, path)) throw new Error("list");
+    const owned: OwnedJungolTab = { tabId: id, historyPageTabId, lastUsedAt: Date.now() };
+    await chrome.storage.session.set({ [JUNGOL_OWNED_TAB_KEY]: owned });
+    return { tabId: id, url: `https://jungol.co.kr${path}` };
+  } catch {
+    if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
+    return null;
+  }
+}
+
+chrome.tabs.onRemoved.addListener(tabId => {
+  void readOwnedJungolTab().then(owned => {
+    if (!owned) return;
+    if (owned.tabId === tabId) return chrome.storage.session.remove(JUNGOL_OWNED_TAB_KEY);
+    if (owned.historyPageTabId === tabId) return closeOwnedJungolTab(owned.tabId);
+  }).catch(() => undefined);
+});
+chrome.alarms.create("codearchive-jungol-owned-tab", { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name !== "codearchive-jungol-owned-tab") return;
+  void Promise.all([readOwnedJungolTab(), readLocalHistoryRoute()]).then(([owned, route]) => {
+    const busy = !!owned && route?.tabId === owned.tabId && (route.status === "SCANNING" || route.status === "IMPORTING");
+    if (owned && !busy && Date.now() - owned.lastUsedAt > JUNGOL_OWNED_TAB_IDLE_MS) return closeOwnedJungolTab(owned.tabId);
+  }).catch(() => undefined);
+});
+
+async function resolveLocalHistoryTab(platform: Platform, allowNewSource = false, historyPageTabId?: number): Promise<{ tabId: number; url: string; platform: Platform } | { error: "TAB_NOT_FOUND" | "MULTIPLE_TABS" }> {
   const route = await readLocalHistoryRoute();
   if (route) {
     // history.html initially mounts the compatible Jungol view while a different
@@ -100,22 +186,32 @@ async function resolveLocalHistoryTab(platform: Platform, allowNewSource = false
   const matches = tabs.filter(tab => Number.isSafeInteger(tab.id) && tab.url && (() => {
     try { return historyPlatformForUrl(tab.url!) === platform; } catch { return false; }
   })());
-  if (matches.length !== 1) return { error: matches.length === 0 ? "TAB_NOT_FOUND" : "MULTIPLE_TABS" };
-  const match = matches[0]!;
-  return { tabId: match.id!, url: match.url!, platform };
+  if (matches.length > 1) return { error: "MULTIPLE_TABS" };
+  if (matches.length === 1) return { tabId: matches[0]!.id!, url: matches[0]!.url!, platform };
+  if (platform === "JUNGOL") {
+    const owned = await openOwnedJungolHistoryTab(historyPageTabId);
+    if (owned) return { ...owned, platform };
+  }
+  return { error: "TAB_NOT_FOUND" };
 }
 
 let localHistoryCommands: Promise<unknown> = Promise.resolve();
-function localHistoryCommand(type: LocalHistoryCommand, platform: Platform = "JUNGOL", submissionIds?: string[]): Promise<unknown> {
+function localHistoryCommand(type: LocalHistoryCommand, platform: Platform = "JUNGOL", submissionIds?: string[], historyPageTabId?: number): Promise<unknown> {
   // Serialize connection setup so simultaneous clicks cannot inject two listeners.
-  const command = localHistoryCommands.catch(() => undefined).then(() => runLocalHistoryCommand(type, platform, submissionIds));
+  const command = localHistoryCommands.catch(() => undefined).then(() => runLocalHistoryCommand(type, platform, submissionIds, historyPageTabId));
   localHistoryCommands = command;
   return command;
 }
 
-async function runLocalHistoryCommand(type: LocalHistoryCommand, platform: Platform, submissionIds?: string[]): Promise<unknown> {
-  const target = await resolveLocalHistoryTab(platform, mayRediscoverHistorySource(type));
+async function runLocalHistoryCommand(type: LocalHistoryCommand, platform: Platform, submissionIds?: string[], historyPageTabId?: number): Promise<unknown> {
+  const target = await resolveLocalHistoryTab(platform, mayRediscoverHistorySource(type), historyPageTabId);
   if ("error" in target) return { status: target.error };
+  const owned = await readOwnedJungolTab();
+  const ownedTarget = owned?.tabId === target.tabId;
+  if (owned && ownedTarget) {
+    const touched: OwnedJungolTab = { ...owned, lastUsedAt: Date.now(), historyPageTabId: historyPageTabId ?? owned.historyPageTabId };
+    await chrome.storage.session.set({ [JUNGOL_OWNED_TAB_KEY]: touched });
+  }
   // The content script can request an owned auxiliary tab before this command
   // replies. Persist that intent first, so the auxiliary service has a route
   // to bind to from its very first request.
@@ -131,6 +227,12 @@ async function runLocalHistoryCommand(type: LocalHistoryCommand, platform: Platf
     }) as { status?: unknown };
     const status = typeof response?.status === "string" ? response.status : "FAILED";
     await writeLocalHistoryRoute({ ...target, status });
+    // An import always needs a fresh READY scan, so a finished or failed run
+    // has no further use for the hidden tab. Status reads close it only once
+    // the import itself has ended.
+    if (ownedTarget && (type === "LOCAL_HISTORY_STATUS" ? ["DONE", "FAILED", "INTERRUPTED"].includes(status) : !OWNED_TAB_KEEP_STATUSES.has(status))) {
+      await closeOwnedJungolTab(target.tabId);
+    }
     const run = (await chrome.storage.session.get(SERVER_HISTORY_RUN_KEY))[SERVER_HISTORY_RUN_KEY] as ServerHistoryRun | undefined;
     return run && run.platform === platform ? { ...response, serverAccount: run.account, serverRunId: run.runId } : response;
   } catch {
@@ -210,9 +312,7 @@ chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "codearchive-rel
 requestRelayDrain();
 
 type InternalMessage =
-  | { type: 'CHECK_CAPTURE_CONNECTION' | 'OPEN_CAPTURE_DASHBOARD'; platform: Platform }
-  | { type: 'CHECK_CAPTURE_OWNER'; platform: Platform }
-  | { type: "STORE_CAPTURE"; capture: unknown; expectedAccountId?: unknown }
+  | { type: "STORE_CAPTURE"; capture: unknown }
   | { type: "STORE_HISTORICAL_CAPTURE"; capture: unknown }
   | { type: "SET_SUBMISSION_PROGRESS"; attemptId: unknown; platform?: unknown; problemNumber?: unknown; title?: unknown; phase: unknown }
   | { type: "GET_POPUP_STATE" }
@@ -459,7 +559,7 @@ function isSupportedCaptureSender(sender: chrome.runtime.MessageSender, platform
   if (!url || !Number.isSafeInteger(sender.tab?.id) || sender.frameId !== 0) return false;
   if (platform === "SWEA") return url.origin === SWEA_ORIGIN && url.pathname === SWEA_SOLVING_PATH;
   if (platform === "PROGRAMMERS") return url.origin === "https://school.programmers.co.kr" && /^\/learn\/courses\/30\/lessons\/\d+$/.test(url.pathname);
-  return url.origin === "https://jungol.co.kr" && /^\/problem\/\d+$/.test(url.pathname);
+  return url.origin === "https://jungol.co.kr" && /^\/problem\/\d+\/?$/.test(url.pathname);
 }
 
 let progressWrite: Promise<void> = Promise.resolve();
@@ -512,17 +612,6 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   const object = asObject(message) as Partial<AnyInternalMessage> | null;
   if (!object?.type) return false;
 
-  if (object.type === 'CHECK_CAPTURE_CONNECTION' || object.type === 'CHECK_CAPTURE_OWNER' || object.type === 'OPEN_CAPTURE_DASHBOARD') {
-    if ((object.platform !== 'SWEA' && object.platform !== 'PROGRAMMERS' && object.platform !== 'JUNGOL') || sender.id !== chrome.runtime.id || !isSupportedCaptureSender(sender, object.platform)) { sendResponse({ status: 'RECONNECT_REQUIRED' }); return false; }
-    if (object.type === 'CHECK_CAPTURE_OWNER') void store.getSettings().then(settings => {
-      const accountId = captureOwner(settings);
-      sendResponse(accountId ? { status: 'READY', accountId } : { status: 'RECONNECT_REQUIRED' });
-    }).catch(() => sendResponse({ status: 'RECONNECT_REQUIRED' }));
-    else if (object.type === 'CHECK_CAPTURE_CONNECTION') void restoreConnection().then(sendResponse).catch(() => sendResponse({ status: 'OFFLINE' }));
-    else void chrome.tabs.create({ url: chrome.runtime.getURL('dashboard.html') }).then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
-    return true;
-  }
-
   if (object.type === "PROGRAMMERS_AUX_READ") {
     void runProgrammersAuxiliary(sender, object as ProgrammersAuxiliaryMessage & { type: "PROGRAMMERS_AUX_READ" })
       .then(sendResponse).catch(() => sendResponse({ ok: false, error: "READ_FAILED" }));
@@ -540,10 +629,15 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       return false;
     }
     if (sender.id !== chrome.runtime.id || !isSupportedCaptureSender(sender, capture.platform)) { sendResponse({ ok: false, error: 'INVALID_CAPTURE' }); return false; }
-    const expectedAccountId = object.expectedAccountId;
-    if (typeof expectedAccountId !== 'string' || !/^[1-9]\d{0,15}$/.test(expectedAccountId)) { sendResponse({ ok: false, error: 'LOGIN_REQUIRED' }); return false; }
-    void retainCaptureForRetry(store, capture, expectedAccountId, () => { void requestRelayDrain(); }).then(sendResponse)
-      .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
+    // Bind to the signed-in account at store time and queue it whatever the
+    // relay state; the outbox uploads once the connection is ready, so the
+    // submission page never asks the user to confirm anything.
+    void store.getSettings().then(settings => {
+      const accountId = settings.accountId;
+      if (settings.autoSyncEnabled !== true) return { ok: false, error: 'DISABLED' };
+      if (!accountId || !/^[1-9]\d{0,15}$/.test(accountId)) return { ok: false, error: 'LOGIN_REQUIRED' };
+      return retainCaptureForRetry(store, capture, accountId, () => { void requestRelayDrain(); });
+    }).then(sendResponse).catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;
   }
 
@@ -686,7 +780,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
         if (!route || route.platform !== platform || route.status !== 'READY') return { status: 'INTERRUPTED' };
         await chrome.storage.session.set({ [SERVER_HISTORY_RUN_KEY]: { runId: object.serverRunId, platform, submissionIds: ids, account: object.serverAccount } });
       }
-      return localHistoryCommand(object.type as LocalHistoryCommand, platform, ids as string[] | undefined);
+      return localHistoryCommand(object.type as LocalHistoryCommand, platform, ids as string[] | undefined, sender.tab?.id);
     })().then(sendResponse).catch(() => sendResponse({ status: "FAILED" }));
     return true;
   }

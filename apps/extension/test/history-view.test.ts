@@ -378,7 +378,7 @@ test("history view remains retryable before entering submissions and after conne
   });
   await tick(); await tick();
   const scan = view.document.querySelector<HTMLButtonElement>("#scan")!;
-  for (const expected of [/프로필 → 내 정보 → 제출현황/, /연결하지 못했습니다/]) {
+  for (const expected of [/정올에 로그인한 뒤 후보 찾기를 다시/, /연결하지 못했습니다/]) {
     emit(scan, "click"); await tick(); await tick();
     assert.equal(scan.disabled, false);
     assert.match(view.document.querySelector("#status")!.textContent!, expected);

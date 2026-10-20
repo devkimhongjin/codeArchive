@@ -58,6 +58,27 @@ export interface JungolHistoryVerified extends JungolHistoryCandidate {
   solvedAt: string;
 }
 
+/**
+ * Jungol measures its table and folds the number, code length, memory and
+ * time columns into one "…" cell when the window is narrow. The folded cell
+ * keeps the exact values as screen-reader text ("번호 1 · 시간 2ms · …"), so a
+ * column that is absent is read from there instead of depending on width.
+ */
+function foldedRowValues(row: HTMLTableRowElement): Map<string, string> {
+  const values = new Map<string, string>();
+  const text = row.querySelector('td.sl-td-folded .sr-only, td[data-col="folded"] .sr-only')?.textContent ?? "";
+  for (const part of text.split("·")) {
+    const match = part.replace(/\s+/g, " ").trim().match(/^(.+?) (\S+)$/);
+    if (match && !values.has(match[1]!)) values.set(match[1]!, match[2]!);
+  }
+  return values;
+}
+
+function rowColumnText(row: HTMLTableRowElement, column: string): string {
+  const cell = row.querySelector(`td[data-col="${column}"]`);
+  return cell ? cell.textContent ?? "" : foldedRowValues(row).get(column) ?? "";
+}
+
 function rowSubmissionIdentity(row: HTMLTableRowElement, location: Location):
   { submissionId: string; detailUrl: URL } | null {
   const languageLink = row.querySelector<HTMLAnchorElement>('td[data-col="언어"] a[href]');
@@ -68,7 +89,8 @@ function rowSubmissionIdentity(row: HTMLTableRowElement, location: Location):
   if (detailUrl.origin !== JUNGOL_ORIGIN || detailUrl.pathname !== location.pathname) return null;
   const submissionId = detailUrl.searchParams.get("sid") ?? "";
   if (!/^\d{1,40}$/.test(submissionId)) return null;
-  const explicitId = row.querySelector('td[data-col="번호"] .sl-id')?.textContent?.trim() ?? "";
+  const explicitId = (row.querySelector('td[data-col="번호"]')
+    ? row.querySelector('td[data-col="번호"] .sl-id')?.textContent : foldedRowValues(row).get("번호"))?.trim() ?? "";
   if (explicitId && (!/^\d{1,40}$/.test(explicitId) || explicitId !== submissionId)) return null;
   // Expanded group children show a short ordinal in the number cell, not a
   // submission ID. The result link must corroborate their language link.
@@ -157,7 +179,7 @@ export function previewJungolHistory(document: Document, location: Location): Ju
   if (!identity) return empty("OWNERSHIP_UNVERIFIED");
 
   const rows = [...document.querySelectorAll<HTMLTableRowElement>("table tr")]
-    .filter(row => !!row.querySelector('td[data-col="번호"]'));
+    .filter(row => !!row.querySelector('td[data-col="번호"], td[data-col="언어"]'));
   const candidates: JungolHistoryCandidate[] = [];
   const seen = new Set<string>();
   let skipped = 0;
@@ -171,9 +193,9 @@ export function previewJungolHistory(document: Document, location: Location): Ju
     const number = problem?.problemNumber;
     const title = problem?.title;
     const language = languageLink?.textContent?.trim() ?? "";
-    const codeLengthText = row.querySelector('td[data-col="코드 길이"]')?.textContent?.replace(/\s+/g, "") ?? "";
-    const executionText = row.querySelector('td[data-col="시간"]')?.textContent?.replace(/[\s·]/g, "") ?? "";
-    const memoryText = row.querySelector('td[data-col="메모리"]')?.textContent?.replace(/[\s·]/g, "") ?? "";
+    const codeLengthText = rowColumnText(row, "코드 길이").replace(/\s+/g, "");
+    const executionText = rowColumnText(row, "시간").replace(/[\s·]/g, "");
+    const memoryText = rowColumnText(row, "메모리").replace(/[\s·]/g, "");
     const codeByteLength = /^\d{1,7}B$/.test(codeLengthText) ? Number(codeLengthText.slice(0, -1)) : NaN;
     const executionTime = /^\d+(?:\.\d+)?ms$/.test(executionText) ? Number(executionText.slice(0, -2)) : NaN;
     const memoryValue = /^\d+(?:\.\d+)?MB$/.test(memoryText) ? Number(memoryText.slice(0, -2)) : NaN;
@@ -513,6 +535,23 @@ function waitFor<T>(document: Document, read: () => T | null, timeoutMs = 8_000)
   });
 }
 
+/**
+ * Jungol now renders the exact submission time as a hover tooltip, where a
+ * click closes instead of opening it. Hover first; only a control that stays
+ * closed falls back to the earlier click popover.
+ */
+function pointerEvent(document: Document, type: "mouseenter" | "mouseleave"): Event {
+  const view = document.defaultView as (Window & typeof globalThis) | null;
+  return view?.MouseEvent ? new view.MouseEvent(type) : new (view?.Event ?? Event)(type);
+}
+
+async function openJungolTimePopover(document: Document, trigger: HTMLElement): Promise<void> {
+  if (trigger.getAttribute("aria-expanded") === "true") return;
+  trigger.dispatchEvent(pointerEvent(document, "mouseenter"));
+  const opened = await waitFor(document, () => trigger.getAttribute("aria-expanded") === "true" ? true : null, 1_500);
+  if (!opened && trigger.isConnected) trigger.click();
+}
+
 /** User-initiated, bounded local import. No relay, auto-download, or GitHub job is started here. */
 export async function importVisibleJungolHistory(document: Document, location: Location,
   candidates: JungolHistoryCandidate[], store: StoreHistorical,
@@ -558,7 +597,7 @@ export async function importVisibleJungolHistory(document: Document, location: L
             !dialog.querySelector('code.hljs')?.textContent?.trim()) return null;
         return dialog.querySelector<HTMLElement>('.sd-meta-item .time')?.closest<HTMLElement>('[role="button"]') ?? null;
       });
-      if (timeTrigger?.getAttribute("aria-expanded") !== "true") timeTrigger?.click();
+      if (timeTrigger) await openJungolTimePopover(document, timeTrigger);
       const verified = timeTrigger ? await waitFor(document, () => verifyJungolHistoryDetail(document, location, candidate)) : null;
       const capture = verified && historicalJungolCapture(verified);
       const stillOwnSubmission = previewJungolHistory(document, location);
@@ -575,7 +614,10 @@ export async function importVisibleJungolHistory(document: Document, location: L
       } else { skipped++; onFailure("DETAIL_UNVERIFIED"); }
       // Jungol's open time popover consumes the first outside click. Dismiss
       // it explicitly, then retry Close once if the dialog remains open.
-      if (timeTrigger?.getAttribute("aria-expanded") === "true") timeTrigger.click();
+      if (timeTrigger?.getAttribute("aria-expanded") === "true") {
+        timeTrigger.dispatchEvent(pointerEvent(document, "mouseleave"));
+        if (timeTrigger.getAttribute("aria-expanded") === "true") timeTrigger.click();
+      }
       const close = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.trim() === "닫기");
       const isClosed = () => document.querySelector('[role="dialog"][aria-label="제출 상세"]') ||
         (!new URL(location.href).pathname.match(ACCOUNT_HISTORY_PATH) && new URL(location.href).searchParams.has("sid"))
