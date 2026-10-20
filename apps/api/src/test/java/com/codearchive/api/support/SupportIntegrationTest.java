@@ -28,8 +28,19 @@ import org.springframework.transaction.PlatformTransactionManager;
 @SpringBootTest @AutoConfigureMockMvc @ActiveProfiles("test")
 class SupportIntegrationTest {
   @Autowired MockMvc mvc; @Autowired UserRepository users; @Autowired UserSettingsRepository settings; @Autowired SupportInquiryRepository inquiries; @Autowired SupportMessageRepository messages; @Autowired SupportService support; @Autowired PlatformTransactionManager transactions; @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
-  @BeforeEach void clear() { cleanup(); }
-  @AfterEach void cleanup() { messages.deleteAll(); inquiries.deleteAll(); settings.deleteAll(); users.deleteAll(); }
+  // Other test classes share this database and may leave users with solutions.
+  // Remove only the accounts this test created, never every user.
+  private java.util.Set<Long> existingUsers = java.util.Set.of();
+  @BeforeEach void clear() {
+    messages.deleteAll(); inquiries.deleteAll();
+    existingUsers = users.findAll().stream().map(AppUser::getId).collect(java.util.stream.Collectors.toSet());
+  }
+  @AfterEach void cleanup() {
+    messages.deleteAll(); inquiries.deleteAll();
+    var created = users.findAll().stream().filter(user -> !existingUsers.contains(user.getId())).toList();
+    settings.deleteAll(settings.findAllById(created.stream().map(AppUser::getId).toList()));
+    users.deleteAll(created);
+  }
   @Test void requiresGithubSessionCsrfAndMatchingAccount() throws Exception {
     mvc.perform(get("/api/support/tickets")).andExpect(status().isUnauthorized());
     account("100");
