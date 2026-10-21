@@ -104,7 +104,9 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .popup .github-batch-card #github-batch-counts { color: var(--text-strong); font-weight: 600; }
 
 /* Footer */
-footer { display: flex; justify-content: center; color: var(--text-subtle); font-size: var(--text-2xs); }
+footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-subtle); font-size: var(--text-2xs); }
+.popup .github-link { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: var(--text-secondary); font-weight: 600; text-decoration: none; }
+.popup .github-link:hover { color: var(--purple); }
 #build-label { font-family: var(--mono); white-space: nowrap; }
 
 :is(button, a, input):focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
