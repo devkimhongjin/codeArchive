@@ -100,8 +100,10 @@ export async function publish({ env = process.env, fetcher = fetch, sleep = ms =
   }
   if (uploaded.crxVersion && uploaded.crxVersion !== config.version) throw new Error('Chrome Web Store uploaded version does not match the release version');
 
+  // Stage after approval so the owner publishes the extension and deploys any
+  // backend change together, instead of the store choosing the release time.
   const submitted = await request(fetcher, `${base}:publish`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ publishType: 'DEFAULT_PUBLISH' }), phase: 'publish',
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ publishType: 'STAGED_PUBLISH' }), phase: 'publish',
   }, config.accessToken);
   for (let attempt = 0; attempt < maxPolls; attempt += 1) {
     const current = await request(fetcher, statusUrl, { method: 'GET', phase: 'publish status' }, config.accessToken);

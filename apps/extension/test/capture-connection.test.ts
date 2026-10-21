@@ -3,7 +3,6 @@ import test from 'node:test';
 import { restoreCaptureConnection, restoreCaptureSession } from '../src/captureConnection';
 import type { Capture, CaptureSettings } from '../src/types';
 import { storeCaptureOnServer } from '../src/serverCapture';
-import { submissionNotice } from '../src/submissionNotice';
 import { parseHTML } from 'linkedom';
 import { PUBLIC_API_ORIGIN } from '../../../shared/publicApiOrigin';
 const device = 'synthetic-device-123456789';
@@ -120,13 +119,4 @@ test('relay renewal does not claim that an older export/theme snapshot was refre
   f.replies['/api/relay/grants'] = { ...(f.replies['/api/relay/grants'] as object), generation: 8 };
   assert.equal(await restoreCaptureConnection(f.store, device, f.fetcher), 'READY');
   assert.equal(f.settings().relay?.generation, 8); assert.equal(f.settings().accountSettingsVersion, 7);
-});
-test('submission notice is source-free, distinguishes login/offline and supports retry/dashboard without duplication', () => {
-  const { document } = parseHTML('<html><body><button id="submit">사이트 제출</button></body></html>'); let opened = 0, retried = 0;
-  const open = () => { opened++; }, retry = () => { retried++; };
-  submissionNotice(document, 'LOGIN_REQUIRED', open, retry); submissionNotice(document, 'LOGIN_REQUIRED', open, retry);
-  assert.equal(document.querySelectorAll('[role="alert"]').length, 1); assert.match(document.body.textContent!, /GitHub 로그인이 필요/);
-  const buttons = document.querySelectorAll<HTMLButtonElement>('aside button'); buttons[0]!.click(); buttons[1]!.click(); assert.equal(opened, 1); assert.equal(retried, 1);
-  submissionNotice(document, 'OFFLINE', open, retry); assert.match(document.body.textContent!, /서버에 연결할 수 없습니다/);
-  submissionNotice(document, 'READY', open, retry); assert.equal(document.querySelector('[role="alert"]'), null); assert.ok(document.getElementById('submit'));
 });

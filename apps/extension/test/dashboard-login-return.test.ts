@@ -3,7 +3,8 @@ import test from 'node:test';
 import { beginDashboardLogin, completeDashboardLogin, dashboardSender, DASHBOARD_LOGIN_ROUTE_KEY } from '../src/dashboardNavigation';
 const nonce = '11111111-1111-4111-8111-111111111111';
 const extensionId = 'oohlcmihldmfninmdcmanddfmhoonmdl';
-const returned = 'https://codearchive-dashboard-beta.netlify.app/';
+const apiOrigin = 'https://codearchive-api-stg-e3q54l32da-as.a.run.app/';
+const returned = apiOrigin + 'api/extension-login/complete';
 function fixture() {
   const session: Record<string, any> = { [DASHBOARD_LOGIN_ROUTE_KEY]: { dashboardTabId: 1, loginTabId: 2, loginNonce: nonce, expiresAt: 1000 } };
   const calls: any[] = [];
@@ -21,7 +22,7 @@ function fixture() {
   return { api: api as unknown as typeof chrome, session, target, calls, respond: (value: unknown) => { response = value; } };
 }
 test('saves a login route before navigating to an already-authorized provider', async () => {
-  const f = fixture(); await beginDashboardLogin(returned + 'api/oauth2/authorization/github', 1, nonce, f.api, 100);
+  const f = fixture(); await beginDashboardLogin(apiOrigin + 'api/oauth2/authorization/github', 1, nonce, f.api, 100);
   assert.deepEqual(f.calls.map(call => call[0]), ['create', 'set', 'update']);
   assert.deepEqual(f.calls[0], ['create', { url: `chrome-extension://${extensionId}/login.html` }]);
   assert.equal(f.session[DASHBOARD_LOGIN_ROUTE_KEY].loginNonce, nonce);
@@ -34,7 +35,7 @@ test('requires the initiating extension document but not optional sender.tab.url
 test('a failed provider navigation removes the progress tab and its route', async () => {
   const f = fixture();
   f.api.tabs.update = async () => { throw new Error('navigation failed'); };
-  await assert.rejects(beginDashboardLogin(returned + 'api/oauth2/authorization/github', 1, nonce, f.api, 100), /navigation failed/);
+  await assert.rejects(beginDashboardLogin(apiOrigin + 'api/oauth2/authorization/github', 1, nonce, f.api, 100), /navigation failed/);
   assert.equal(f.session[DASHBOARD_LOGIN_ROUTE_KEY], undefined);
   assert.deepEqual(f.calls.slice(-2), [['forget'], ['remove', 2]]);
 });

@@ -58,3 +58,11 @@ it('selects a dark theme from the single picker while the system is light', asyn
     expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe('dracula')
   } finally { window.matchMedia = original }
 })
+it('loads each grammar on demand when the shown language changes', async () => {
+  const { container, rerender } = render(<CodeBlock code="int main() { return 0; }" language="C++" />)
+  await waitFor(() => expect(container.querySelector('.code-viewer')?.getAttribute('data-shiki-theme')).not.toBeNull(), { timeout: 10000 })
+  expect(container.querySelectorAll('code span[style]').length).toBeGreaterThan(1)
+  rerender(<CodeBlock code={'def main():\n    return 0'} language="Python 3" />)
+  await waitFor(() => expect(container.querySelector('code')?.textContent).toBe('def main():\n    return 0'))
+  await waitFor(() => expect(container.querySelectorAll('code span[style]').length).toBeGreaterThan(1), { timeout: 10000 })
+})

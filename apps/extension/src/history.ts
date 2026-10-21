@@ -26,7 +26,7 @@ export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
   subscribeCollectionRequest?: (publish: () => void) => void };
 
 const platformInfo: Record<Platform, { href: string; linkLabel: string; description: string; guide: string }> = {
-  JUNGOL: { href: "https://jungol.co.kr/", linkLabel: "정올 열기 ↗", description: "정올에서 제출 내역을 연 뒤 이 브라우저에 로컬로 저장할 수 있습니다.", guide: "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요." },
+  JUNGOL: { href: "https://jungol.co.kr/", linkLabel: "정올 열기 ↗", description: "후보 찾기를 누르면 확장이 정올 제출현황을 백그라운드 탭에서 열고, 끝나면 닫습니다.", guide: "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요." },
   SWEA: { href: "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do", linkLabel: "SWEA 해결 내역 열기 ↗", description: "SWEA에서 본인 제출 이력을 확인해 로컬에 저장할 수 있습니다.", guide: "My Page Code에서 제출한 Problem을 열어 주세요." },
   PROGRAMMERS: { href: "https://school.programmers.co.kr/learn/challenges?order=recent&statuses=solved%2Csolved_with_unlock&page=1", linkLabel: "프로그래머스 해결 내역 열기 ↗", description: "프로그래머스에서 해결 이력을 확인해 로컬에 저장할 수 있습니다. 제출 이력에는 실행시간·메모리가 없어 해당 정보는 저장할 수 없으며, 가장 빠른 제출·최소 메모리 선택도 지원하지 않습니다.", guide: "해결한 문제 목록을 열어 두고 후보 찾기를 눌러 주세요. 문제 상세는 같은 사이트 창의 탭에서 열리고 처리 후 닫힙니다." }
 };
@@ -110,7 +110,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     if (state.status === "FAILED" && state.failureReason && failureLabels[state.failureReason])
       return `${failureLabels[state.failureReason]}${(state.completed ?? 0) > 0 ? ` 현재까지 ${resultSummary()}` : ""}`;
     if (state.status === "FAILED" && (state.completed ?? 0) > 0) return `수집을 완료하지 못했습니다. 현재까지 ${resultSummary()}`;
-    if (state.status === "TAB_NOT_FOUND") return platform() === "JUNGOL" ? "정올 우측 상단 프로필 → 내 정보 → 제출현황을 연 뒤 후보 찾기를 다시 눌러 주세요." : `${platformInfo[platform()].guide} 후보 찾기를 다시 눌러 주세요.`;
+    if (state.status === "TAB_NOT_FOUND") return platform() === "JUNGOL" ? "정올 로그인 상태를 확인하지 못했습니다. 정올에 로그인한 뒤 후보 찾기를 다시 눌러 주세요." : `${platformInfo[platform()].guide} 후보 찾기를 다시 눌러 주세요.`;
     if (state.status === "CONNECTION_REQUIRED") return platform() === "JUNGOL" ? "정올 제출현황을 열고 후보 찾기를 다시 눌러 주세요. 수집 연결을 복구합니다." : `${platformInfo[platform()].guide} 후보 찾기를 다시 눌러 주세요.`;
     if (state.status === "CONNECTION_FAILED") return platform() === "JUNGOL" ? "정올 탭과 연결하지 못했습니다. 제출현황을 새로고침한 뒤 후보 찾기를 다시 눌러 주세요." : `${platformInfo[platform()].guide} 새로고침한 뒤 다시 눌러 주세요.`;
     if (state.status === "MULTIPLE_TABS") return platform() === "JUNGOL" ? "정올 제출 탭이 여러 개입니다. 하나만 남긴 뒤 다시 시도해 주세요." : `${platformInfo[platform()].guide} 탭을 하나만 남긴 뒤 다시 눌러 주세요.`;

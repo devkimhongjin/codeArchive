@@ -16,7 +16,7 @@ test('background acknowledges source before a stalled network, then startup/alar
   const fakeChrome = { runtime: { id, onMessage: { addListener(callback: typeof listener) { listener = callback; } }, onMessageExternal: { addListener() {} },
     onStartup: { addListener(callback: () => void) { startups.push(callback); } }, onInstalled: { addListener(callback: () => void) { installs.push(callback); } } },
     alarms: { clear: async () => true, create() {}, onAlarm: { addListener(callback: typeof alarms[number]) { alarms.push(callback); } } },
-    storage: { session: area(session), local: area(local) }, tabs: { onUpdated: { addListener() {} } } };
+    storage: { session: area(session), local: area(local) }, tabs: { onUpdated: { addListener() {} }, onRemoved: { addListener() {} } } };
   const previous = { chrome: globalThis.chrome, indexedDB: globalThis.indexedDB, IDBKeyRange: globalThis.IDBKeyRange, fetch: globalThis.fetch };
   Object.assign(globalThis, { chrome: fakeChrome, indexedDB, IDBKeyRange });
   const store = new IndexedDbCaptureStore({ indexedDb: indexedDB });
@@ -50,26 +50,25 @@ test('background acknowledges source before a stalled network, then startup/alar
     const send = (message: unknown, from: unknown = sender) => new Promise<unknown>(resolve => listener!(message, from, resolve));
     const capture = createCapture({ platform: 'JUNGOL', problemNumber: '1', title: 'Fixture', problemUrl: sender.url, language: 'Java', sourceCode: 'class X {}', result: 'ACCEPTED' })!;
     assert.ok(capture);
-    assert.deepEqual(await send({ type: 'CHECK_CAPTURE_OWNER', platform: 'JUNGOL' }), { status: 'READY', accountId: '1' });
-    const result = await send({ type: 'STORE_CAPTURE', capture, expectedAccountId: '1' });
+    const result = await send({ type: 'STORE_CAPTURE', capture });
     assert.deepEqual(result, { ok: true, created: true, queued: true });
     assert.equal(await new IndexedDbCaptureStore({ indexedDb: indexedDB }).countQueuedCaptures('1'), 1);
     assert.equal(posts, 0);
     // Repeated messages/alarm wakes cannot overwrite or concurrently transmit it.
-    assert.deepEqual(await send({ type: 'STORE_CAPTURE', capture, expectedAccountId: '1' }), { ok: true, created: false, queued: true });
+    assert.deepEqual(await send({ type: 'STORE_CAPTURE', capture }), { ok: true, created: false, queued: true });
     alarms.forEach(callback => callback({ name: 'codearchive-relay-drain' }));
     assert.equal(await store.countQueuedCaptures('1'), 1);
     await until(() => authReads > 0); release();
     await until(async () => (await store.getSettings()).relay?.status === 'OFFLINE');
     assert.equal(await store.countQueuedCaptures('1'), 1);
-    assert.deepEqual(await send({ type: 'STORE_CAPTURE', capture, expectedAccountId: '1' }, { ...sender, id: 'foreign' }), { ok: false, error: 'INVALID_CAPTURE' });
+    assert.deepEqual(await send({ type: 'STORE_CAPTURE', capture }, { ...sender, id: 'foreign' }), { ok: false, error: 'INVALID_CAPTURE' });
     network = 'online'; startups.forEach(callback => callback());
     await until(async () => await store.countQueuedCaptures('1') === 0);
     assert.equal(posts, 1); assert.equal(savedIds.size, 1);
     // A later outage is recovered solely by the minute alarm.
     network = 'offline';
     const second = { ...capture, captureId: '00000000-0000-4000-8000-000000000002' };
-    assert.deepEqual(await send({ type: 'STORE_CAPTURE', capture: second, expectedAccountId: '1' }), { ok: true, created: true, queued: true });
+    assert.deepEqual(await send({ type: 'STORE_CAPTURE', capture: second }), { ok: true, created: true, queued: true });
     await until(async () => (await store.getSettings()).relay?.status === 'OFFLINE');
     network = 'online'; alarms.forEach(callback => callback({ name: 'codearchive-relay-drain' }));
     await until(async () => await store.countQueuedCaptures('1') === 0);

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CodeArchive",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Capture accepted algorithm solutions and manage server-registered code with CodeArchive.",
   "minimum_chrome_version": "120",
   "permissions": [
@@ -16,7 +16,6 @@
     "https://jungol.co.kr/*",
     "https://api.github.com/*",
     "https://codearchive-api-stg-e3q54l32da-as.a.run.app/*",
-    "https://codearchive-dashboard-beta.netlify.app/*",
     "http://localhost:5173/*"
   ],
   "background": {
@@ -62,7 +61,6 @@
   ],
   "externally_connectable": {
     "matches": [
-      "https://codearchive-dashboard-beta.netlify.app/*",
       "http://localhost:5173/*"
     ]
   },

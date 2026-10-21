@@ -1,6 +1,4 @@
-import { LEGACY_DASHBOARD_ORIGIN, PUBLIC_API_ORIGIN } from '../../../shared/publicApiOrigin';
-
-const DASHBOARD_ORIGIN = LEGACY_DASHBOARD_ORIGIN;
+import { PUBLIC_API_ORIGIN } from '../../../shared/publicApiOrigin';
 
 export const DASHBOARD_LOGIN_ROUTE_KEY = 'codearchive-dashboard-login-route';
 export type DashboardPageSender = { id?: string; url?: string; frameId?: number; documentId?: string; tab?: { id?: number; url?: string } };
@@ -26,8 +24,7 @@ export function dashboardExternalUrl(value: unknown): string | null {
 export function dashboardLoginReturn(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return !parsed.username && !parsed.password && ((parsed.origin === DASHBOARD_ORIGIN && parsed.pathname === '/') ||
-      (parsed.origin === PUBLIC_API_ORIGIN && parsed.pathname === '/api/extension-login/complete'));
+    return !parsed.username && !parsed.password && parsed.origin === PUBLIC_API_ORIGIN && parsed.pathname === '/api/extension-login/complete';
   }
   catch { return false; }
 }

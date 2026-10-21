@@ -8,7 +8,8 @@ export const EXTENSION_ORIGINS = [
 ] as const
 export const LEGACY_DASHBOARD_ORIGIN = 'https://codearchive-dashboard-beta.netlify.app'
 export const LOCAL_DASHBOARD_ORIGIN = 'http://localhost:5173'
-export const LEGACY_RELAY_ORIGINS = [LEGACY_DASHBOARD_ORIGIN, LOCAL_DASHBOARD_ORIGIN] as const
+/** Relay hosts besides the API; the retired dashboard proxy is only migrated, never called. */
+export const LEGACY_RELAY_ORIGINS = [LOCAL_DASHBOARD_ORIGIN] as const
 
 export function isTrustedApiOrigin(value: string): boolean { return value === PUBLIC_API_ORIGIN }
 export function isTrustedExtensionOrigin(value: string | null | undefined): boolean {

@@ -48,12 +48,17 @@ export function jungolAcceptedResult(document: Document): JungolAcceptedResult |
       !isVisible(dialog) || !isVisible(description) || !closeButtons(dialog).some(isVisible)) return null;
 
   const signature = normalizeText(description.textContent);
-  const match = signature.match(/^정답\s*100점\s*(\d+(?:\.\d+)?)\s*ms\s*(\d[\d,]*(?:\.\d+)?)\s*(KB|KiB|MB|MiB)(?:\s*다음 문제도 풀어볼까요\?(?:\s*다음 문제[\s\S]*)?)?$/);
+  // Jungol formats metrics with toLocaleString(), so a run over one second is
+  // "1,511ms". Its dialog also labels the raw KiB measurement as "MB"
+  // ("33,796MB" for a 33.0MB listing); only a decimal value is a real MB.
+  const match = signature.match(/^정답\s*100점\s*(\d[\d,]*(?:\.\d+)?)\s*ms\s*(\d[\d,]*(?:\.\d+)?)\s*(KB|KiB|MB|MiB)(?:\s*다음 문제도 풀어볼까요\?(?:\s*다음 문제[\s\S]*)?)?$/);
   if (!match) return null;
-  const executionTime = Number(match[1]);
-  const memoryValue = Number(match[2]!.replace(/,/g, ""));
+  const executionTime = Number(match[1]!.replace(/,/g, ""));
+  const memoryText = match[2]!.replace(/,/g, "");
+  const memoryValue = Number(memoryText);
   if (!Number.isFinite(executionTime) || !Number.isFinite(memoryValue)) return null;
-  const memoryUnit = match[3] as "KB" | "KiB" | "MB" | "MiB";
+  const labelledUnit = match[3] as "KB" | "KiB" | "MB" | "MiB";
+  const memoryUnit = labelledUnit === "MB" && !memoryText.includes(".") ? "KiB" : labelledUnit;
   const memoryUsage = memoryUnit === "KB" || memoryUnit === "KiB" ? memoryValue / 1024 : memoryValue;
   return { element: dialog, signature, performance: { executionTime, memoryValue, memoryUnit, memoryUsage } };
 }

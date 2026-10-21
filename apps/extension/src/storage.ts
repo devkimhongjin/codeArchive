@@ -4,7 +4,7 @@ import type { SweaProblemContext } from "./sweaProblemContext";
 import { canonicalLanguageKey } from "../../../shared/language";
 import { LIGHT_THEMES, DARK_THEMES } from "../../../shared/codeThemes";
 import { normalizedHeaderFields } from "../../../shared/headerFields";
-import { captureOwner, queuedCapture, sameQueuedSubmission, type CaptureOutboxStore, type QueuedCapture, type QueueCaptureResult } from './captureOutbox';
+import { queueOwner, queuedCapture, sameQueuedSubmission, type CaptureOutboxStore, type QueuedCapture, type QueueCaptureResult } from './captureOutbox';
 
 export const DATABASE_NAME = "codearchive-local";
 export const DATABASE_VERSION = 4;
@@ -189,7 +189,7 @@ export class IndexedDbCaptureStore implements CaptureStore, CaptureOutboxStore {
     const complete = transactionComplete(transaction);
     try {
       const current = settingsWithDefaults(await requestResult(transaction.objectStore(SETTINGS_STORE_NAME).get(SETTINGS_KEY)));
-      const owner = captureOwner(current);
+      const owner = queueOwner(current);
       let result: QueueCaptureResult;
       if (current.accountId !== expectedAccountId) result = { ok: false, error: 'ACCOUNT_CHANGED' };
       else if (!owner) result = { ok: false, error: 'RECONNECT_REQUIRED' };
@@ -459,7 +459,7 @@ export class MemoryCaptureStore implements CaptureStore, CaptureOutboxStore {
     return this.serializeSettings(async () => {
       if (capture.historicalImport === true) return { ok: false, error: 'INVALID_CAPTURE' };
       if (this.settings.accountId !== expectedAccountId) return { ok: false, error: 'ACCOUNT_CHANGED' };
-      const owner = captureOwner(this.settings);
+      const owner = queueOwner(this.settings);
       if (!owner) return { ok: false, error: 'RECONNECT_REQUIRED' };
       const key = JSON.stringify([owner, capture.captureId]), existing = this.outbox.get(key);
       if (existing && !sameQueuedSubmission(existing.capture, capture)) return { ok: false, error: 'CAPTURE_CONFLICT' };

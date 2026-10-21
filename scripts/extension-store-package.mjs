@@ -9,8 +9,7 @@ const release = JSON.parse(await readFile(resolve(root, 'release.json'), 'utf8')
 const hosts = [
   'https://swexpertacademy.com/*', 'https://school.programmers.co.kr/*',
   'https://jungol.co.kr/*',
-  'https://codearchive-api-stg-e3q54l32da-as.a.run.app/*',
-  'https://codearchive-dashboard-beta.netlify.app/*'
+  'https://codearchive-api-stg-e3q54l32da-as.a.run.app/*'
 ];
 const retiredReleaseHost = 'https://api.github.com/*';
 const developmentHost = 'http://localhost:5173/*';
@@ -41,10 +40,10 @@ export function prepareManifest(original) {
     ...(manifest.host_permissions?.includes(retiredReleaseHost) ? [retiredReleaseHost] : []),
     ...(manifest.host_permissions?.includes(developmentHost) ? [developmentHost] : [])];
   if (!sameSet(manifest.host_permissions, expectedHosts) || manifest.optional_host_permissions?.length) fail('unexpected host permissions');
-  const external = ['https://codearchive-dashboard-beta.netlify.app/*'];
-  const externalMatches = manifest.externally_connectable?.matches;
-  if (!sameSet(externalMatches, externalMatches?.includes(developmentHost) ? [...external, developmentHost] : external)
-    || manifest.externally_connectable.ids?.length || manifest.externally_connectable.accepts_tls_channel_id) fail('unexpected external connections');
+  // Only the local development dashboard may message the extension; the
+  // store build accepts no web page connections at all.
+  const external = manifest.externally_connectable;
+  if (external && (!sameSet(external.matches, [developmentHost]) || external.ids?.length || external.accepts_tls_channel_id)) fail('unexpected external connections');
   if (!manifest.key || !/^[A-Za-z0-9+/]+={0,2}$/.test(manifest.key)) fail('missing pinned public key');
   if (pinnedId(manifest.key) !== release.extension.id) fail('public key does not match the current local extension ID');
   if (manifest.update_url || manifest.sandbox || manifest.web_accessible_resources?.length) fail('unexpected executable resources or updater');
@@ -60,7 +59,7 @@ export function prepareManifest(original) {
     if (script.all_frames || script.match_about_blank || script.match_origin_as_fallback) fail('unexpected content script frame scope');
   }
   manifest.host_permissions = manifest.host_permissions.filter(value => value !== developmentHost && value !== retiredReleaseHost);
-  manifest.externally_connectable.matches = external;
+  delete manifest.externally_connectable;
   manifest.content_security_policy = { extension_pages: extensionCsp };
   // Validate the pinned development identity above, but never submit that key.
   // The Web Store assigns its own item identity; keep the local input unchanged.
@@ -184,7 +183,7 @@ export async function prepareStorePackage({ dist, output }) {
     localExtensionId, storeExtensionId: null,
     artifact: { name, sha256, bytes: zip.length },
     permissions: manifest.permissions, hostPermissions: manifest.host_permissions,
-    externalMatches: manifest.externally_connectable.matches,
+    externalMatches: [],
     checks: { localManifestUnchanged: true, developmentKeyRemoved: !Object.hasOwn(manifest, 'key'), developmentPermissionsRemoved: true, retiredReleasePermissionRemoved: true, localPageResourcesPresent: true, sourceMapsExcluded: true },
     files: [...files].map(([path, bytes]) => ({ path, bytes: bytes.length, sha256: digest(bytes) })),
     remainingVerification: ['Chrome runtime and interrupted-job recovery', 'Store-issued extension ID and API allowed origin', 'Published privacy policy URL and store disclosures', 'Master release source and version']

@@ -21,6 +21,18 @@ export function captureOwner(settings: CaptureSettings): string | undefined {
     ? settings.accountId : undefined;
 }
 
+/** Who a new submission is queued for. Unlike upload authority, a missing or
+ * pending grant does not drop the submission: a popup toggle whose grant
+ * request failed leaves no relay, and the outbox rebuilds it from the
+ * signed-in cookie before uploading. OFF, revocation and another account's
+ * grant still refuse it. */
+export function queueOwner(settings: CaptureSettings): string | undefined {
+  const accountId = settings.accountId, relay = settings.relay;
+  if (settings.autoSyncEnabled !== true || !accountId || !/^[1-9]\d{0,15}$/.test(accountId)) return undefined;
+  if (!relay) return accountId;
+  return relay.accountId === accountId && relay.status !== 'REVOCATION_PENDING' ? accountId : undefined;
+}
+
 export function queuedCapture(capture: Capture, accountId: string): QueuedCapture {
   // Never accept an owner or synchronization claim from the source page.
   const { syncAccountId: _owner, syncedAt: _syncedAt, ...payload } = capture;
@@ -46,7 +58,9 @@ type Outbox = CaptureOutboxStore & Pick<CaptureStore, 'getSettings' | 'mutateRel
 /** Only this dedicated queue is replayable. Legacy archives/history never enter
  * it. Keep the original capture ID and timestamps through grant renewal. */
 export async function drainCaptureOutbox(store: Outbox, verifyConnection: () => Promise<CaptureConnection>, fetcher: typeof fetch = fetch): Promise<void> {
-  const initial = await store.getSettings(), accountId = captureOwner(initial);
+  // A missing grant is restored by verifyConnection below; queueOwner still
+  // refuses OFF, revocation and another account's grant without any request.
+  const initial = await store.getSettings(), accountId = captureOwner(initial) ?? queueOwner(initial);
   if (!accountId) return;
   const queued = await store.listQueuedCaptures(accountId, 10);
   if (!queued.length) return;
