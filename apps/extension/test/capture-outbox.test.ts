@@ -196,3 +196,29 @@ test('a failed first upload stops the batch and leaves later sources for the nex
   await drainCaptureOutbox(store, ready, async () => { requests++; return new Response(null, { status: 503 }); });
   assert.equal(requests, 1); assert.equal(await store.countQueuedCaptures('1'), 2);
 });
+
+for (const mode of ['memory', 'indexeddb'] as const) {
+  test(`${mode}: a submission is queued while a failed popup toggle left no grant, and replay restores one first`, async () => {
+    const store = mode === 'memory' ? new MemoryCaptureStore() : new IndexedDbCaptureStore({ indexedDb: new IDBFactory() });
+    await store.updateSettings({ ...settings, relay: undefined });
+    assert.equal(captureOwner(await store.getSettings()), undefined, 'there is no upload authority yet');
+    assert.deepEqual(await store.enqueueCapture(capture, '1'), { ok: true, created: true, queued: true });
+
+    // Restoration fails: the submission stays queued and nothing is posted.
+    await drainCaptureOutbox(store, async () => ({ status: 'OFFLINE' }), async () => { assert.fail('no grant to upload with'); });
+    assert.equal(await store.countQueuedCaptures('1'), 1);
+
+    // The signed-in cookie issues a new grant, then the same submission uploads.
+    let verified = 0;
+    await drainCaptureOutbox(store, async () => {
+      verified++;
+      await store.updateSettings({ relay: { ...settings.relay!, secret: 'restored' } });
+      return ready();
+    }, async (_url, init) => {
+      assert.equal((init!.headers as Record<string, string>).Authorization, 'Bearer restored');
+      return receipt();
+    });
+    assert.equal(verified, 1);
+    assert.equal(await store.countQueuedCaptures('1'), 0);
+  });
+}
