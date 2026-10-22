@@ -13,10 +13,11 @@ import {
   normalizeSweaDetailUrl,
   validateSweaProblemContext
 } from "./sweaProblemContext";
-import { SWEA_ORIGIN, SWEA_SOLVING_PATH } from "./adapters/sweaSelectors";
+import { SWEA_ORIGIN, SWEA_SOLVING_PATH, SWEA_USER_SUBMISSIONS_PATH } from "./adapters/sweaSelectors";
 import { activeSubmissionProgress, SUBMISSION_PROGRESS_KEY, updateSubmissionProgress } from "./submissionProgress";
 import type { CaptureSettings, Platform } from "./types";
-import { isJungolHistoryPath } from "./historicalJungol";
+import { isJungolHistoryPath, isJungolHistorySenderUrl } from "./historicalJungol";
+import { SiteSyncService, validSiteSyncRow } from "./siteSync";
 import { isHistoricalSubmissionId } from "./historicalIdentity";
 import { historyPlatformForUrl, isLocalHistoryPageSender, mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
 import { requestLocalHistoryMessage } from "./localHistoryConnection";
@@ -28,6 +29,7 @@ import { actOnPopupBatch, loadPopupBatchProgress } from './popupBatchProgress';
 import { GithubBatchTaskRunner, type GithubBatchTask } from './githubBatchTask';
 
 const store = new IndexedDbCaptureStore();
+const siteSync = new SiteSyncService({ accountId: async () => (await store.getSettings()).accountId });
 const bridge = new DashboardBridge(store, {
   // A refreshed dashboard grant should flush captures that were retained while
   // the old relay was offline or expired instead of waiting for the next alarm.
@@ -313,6 +315,9 @@ requestRelayDrain();
 
 type InternalMessage =
   | { type: "STORE_CAPTURE"; capture: unknown }
+  | { type: "SITE_SYNC_STATUS"; rows?: unknown; problemNumbers?: unknown }
+  | { type: "SITE_SYNC_REGISTER"; capture: unknown }
+  | { type: "SITE_SYNC_COMMIT"; captureIds: unknown }
   | { type: "STORE_HISTORICAL_CAPTURE"; capture: unknown }
   | { type: "SET_SUBMISSION_PROGRESS"; attemptId: unknown; platform?: unknown; problemNumber?: unknown; title?: unknown; phase: unknown }
   | { type: "GET_POPUP_STATE" }
@@ -562,6 +567,16 @@ function isSupportedCaptureSender(sender: chrome.runtime.MessageSender, platform
   return url.origin === "https://jungol.co.kr" && /^\/problem\/\d+\/?$/.test(url.pathname);
 }
 
+/** Manual sync runs only from the signed-in user's own submission list on each platform. */
+function siteSyncPlatform(sender: chrome.runtime.MessageSender): Platform | null {
+  const url = senderUrl(sender);
+  if (!url || !Number.isSafeInteger(sender.tab?.id) || sender.frameId !== 0) return null;
+  if (url.origin === "https://jungol.co.kr") return isJungolHistorySenderUrl(url) ? "JUNGOL" : null;
+  if (url.origin === SWEA_ORIGIN) return url.pathname === SWEA_USER_SUBMISSIONS_PATH ? "SWEA" : null;
+  if (url.origin === "https://school.programmers.co.kr") return /^\/learn\/courses\/30\/lessons\/\d+$/.test(url.pathname) ? "PROGRAMMERS" : null;
+  return null;
+}
+
 let progressWrite: Promise<void> = Promise.resolve();
 let connectionRestore: ReturnType<typeof restoreCaptureSession> | null = null;
 function restoreConnection() {
@@ -638,6 +653,28 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       if (!accountId || !/^[1-9]\d{0,15}$/.test(accountId)) return { ok: false, error: 'LOGIN_REQUIRED' };
       return retainCaptureForRetry(store, capture, accountId, () => { void requestRelayDrain(); });
     }).then(sendResponse).catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
+    return true;
+  }
+
+  if (object.type === "SITE_SYNC_STATUS" || object.type === "SITE_SYNC_REGISTER" || object.type === "SITE_SYNC_COMMIT") {
+    const platform = sender.id === chrome.runtime.id ? siteSyncPlatform(sender) : null;
+    if (!platform) { sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false; }
+    let work: Promise<unknown>;
+    if (object.type === "SITE_SYNC_STATUS") {
+      const rows = object.rows ?? [], problems = object.problemNumbers ?? [];
+      if (!Array.isArray(rows) || rows.length > 500 || rows.some(row => !validSiteSyncRow(platform, row)) ||
+          !Array.isArray(problems) || problems.length > 500 || problems.some(value => typeof value !== 'string' || !/^\d{1,40}$/.test(value))) { sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false; }
+      work = siteSync.status(platform, rows, problems);
+    } else if (object.type === "SITE_SYNC_REGISTER") {
+      const capture = object.capture;
+      if (!isCaptureRecord(capture) || capture.platform !== platform) { sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false; }
+      work = siteSync.register(capture);
+    } else {
+      const ids = (object as { captureIds?: unknown }).captureIds;
+      if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) { sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false; }
+      work = siteSync.commit(platform, ids as string[]);
+    }
+    void work.then(sendResponse).catch(() => sendResponse({ ok: false, error: 'SERVER_UNAVAILABLE' }));
     return true;
   }
 

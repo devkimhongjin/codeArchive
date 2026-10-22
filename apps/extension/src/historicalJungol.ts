@@ -143,6 +143,13 @@ function groupChildIds(document: Document, location: Location, groupId: string):
   return ids;
 }
 
+/** The visible list row of one submission, for per-row actions on the user's own list. */
+export function jungolHistoryRow(document: Document, location: Location, submissionId: string): HTMLTableRowElement | null {
+  const rows = [...document.querySelectorAll<HTMLTableRowElement>("table tr")]
+    .filter(row => rowSubmissionIdentity(row, location)?.submissionId === submissionId);
+  return rows.length === 1 ? rows[0]! : null;
+}
+
 export type JungolHistoryPreview =
   | { status: "LOGIN_REQUIRED" | "ACCESS_DENIED" | "OWNERSHIP_UNVERIFIED"; candidates: []; skipped: 0 }
   | { status: "READY"; candidates: JungolHistoryCandidate[]; skipped: number; truncated: boolean;

@@ -4,7 +4,7 @@ import { collectAcceptedCaptureAttempt, createCapture, isCaptureRecord } from ".
 import { CAPTURE_RESULT, type Capture, type PlatformAdapter } from "./types";
 import { canonicalLanguageKey } from "../../../shared/language";
 import { BUILD_METADATA } from "../../../shared/buildMetadata";
-import { importVisibleJungolHistory, isJungolHistoryPath, loadJungolHistoryPreview, previewJungolHistory,
+import { importVisibleJungolHistory, isJungolHistoryPath, isJungolHistorySenderUrl, loadJungolHistoryPreview, previewJungolHistory,
   type JungolHistoryCandidate, type JungolHistoryPreview, type JungolHistoryScanProgress } from "./historicalJungol";
 import { authenticatedSweaHistoryIdentity, hydrateSweaCandidateResult, loadSweaHistoryPreview, type SweaHistoryCandidate } from "./historicalSwea";
 import { mayStoreLocalHistoryCapture, sameHistorySource } from "./historyRouting";
@@ -14,6 +14,8 @@ import { authenticatedProgrammersUserId, canonicalProgrammersLessonUrl, previewP
   readProgrammersSolvedListingPage, selectedProgrammersHistoryEditorUri, unsupportedProgrammersSqlHistory,
   type ProgrammersLessonHistoryRow, type ProgrammersLessonSubmission } from "./historicalProgrammers";
 import { isHistoricalSubmissionId, programmersHistoricalSubmissionAccount } from "./historicalIdentity";
+import { mountSiteSync, type Send, type SiteSyncPage } from "./siteSyncView";
+import { jungolSyncPage, programmersSyncPage, sweaSyncPage } from "./siteSyncPages";
 import {
   createSweaProblemContext,
   normalizeSweaDetailUrl,
@@ -1194,4 +1196,28 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
     return false;
   });
   void bootstrapContent(document, window.location, document.referrer);
+  if (typeof chrome !== "undefined" && chrome.runtime?.id) startSiteSync(document, window.location);
+}
+
+/** Mounts manual sync/commit controls on the user's own submission list, following SPA navigation. */
+function startSiteSync(document: Document, location: Location): void {
+  const send: Send = message => chrome.runtime.sendMessage(message);
+  let mounted: { key: string; handle: ReturnType<typeof mountSiteSync> } | null = null;
+  const pageFor = (): { key: string; page: SiteSyncPage } | null => {
+    if (location.origin === "https://jungol.co.kr")
+      return isJungolHistorySenderUrl(new URL(location.href)) ? { key: location.pathname + location.search, page: jungolSyncPage(document, location, send) } : null;
+    if (location.origin === SWEA_ORIGIN && location.pathname === SWEA_USER_SUBMISSIONS_PATH) return { key: location.href, page: sweaSyncPage(document, location, send) };
+    const lessonUrl = canonicalProgrammersLessonUrl(location);
+    if (lessonUrl) return { key: lessonUrl, page: programmersSyncPage(document, location, send,
+      (url, submissionId) => readProgrammersAuxiliaryLesson(document, location, { lessonUrl: url, mode: "import", submissionId })) };
+    return null;
+  };
+  const check = () => {
+    const next = pageFor();
+    if (mounted && mounted.key === next?.key) return;
+    mounted?.handle.dispose(); mounted = null;
+    if (next) mounted = { key: next.key, handle: mountSiteSync(document, next.page, send) };
+  };
+  check();
+  setInterval(check, 1000);
 }
