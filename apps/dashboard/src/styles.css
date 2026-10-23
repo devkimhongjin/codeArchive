@@ -512,3 +512,17 @@ button.problem-link { background: var(--surface); font-family: inherit; font-siz
 .connection-banner.is-connected { min-height: 0; margin-bottom: var(--space-5); padding-block: var(--space-2); }
 .connection-banner.is-connected small { display: none; }
 @media (prefers-reduced-motion: reduce) { .connection-banner .connection-icon svg, .github-target-overlay svg { animation: none; } }
+
+/* Site login status (history view) */
+.site-login-card { margin-bottom: var(--space-4); }
+.site-login-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.site-login-heading h2 { margin: 0; }
+.site-login-list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.site-login-list li { display: grid; grid-template-columns: 96px 1fr auto; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); }
+.site-login-list strong { color: var(--text-strong); font-size: var(--text-md); }
+.site-login-state { color: var(--text-secondary); font-size: var(--text-sm); }
+.site-login-list li[data-state="SIGNED_IN"] .site-login-state { color: var(--success, #18794e); font-weight: 600; }
+.site-login-list li[data-state="SIGNED_OUT"] .site-login-state { color: var(--danger, #c4321a); font-weight: 600; }
+.site-login-list a.history-work-button { text-decoration: none; }
+.site-login-error { color: var(--danger, #c4321a); }
+@media (max-width: 560px) { .site-login-list li { grid-template-columns: 1fr auto; } .site-login-state { grid-column: 1 / -1; grid-row: 2; } }
