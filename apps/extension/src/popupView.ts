@@ -21,7 +21,22 @@ interface PopupServices {
   updateSettings?: (patch: Record<string, boolean>) => Promise<unknown>;
   updateGithubAutomation?: (request: GithubToggleRequest) => Promise<GithubToggleResult>;
   retryRelay?: () => Promise<unknown>;
+  syncPending?: () => Promise<unknown>;
 }
+/** Explains a manual sync in the user's terms, including why nothing was sent. */
+export function pendingSyncMessage(response: unknown): string {
+  const summary = (response as { ok?: boolean; summary?: { status?: string; sent?: number; rejected?: number; remaining?: number; error?: string; rejection?: string } } | null)?.summary;
+  if (!summary) return '동기화를 시작하지 못했어요. 팝업을 다시 열어 주세요.';
+  const sent = summary.sent ?? 0, rejected = summary.rejected ?? 0;
+  const done = [sent ? `${sent}개 전송 완료` : '', rejected ? `${rejected}개는 서버가 받지 않아 남겨 두었어요${summary.rejection ? ` (사유: ${summary.rejection})` : ''}` : ''].filter(Boolean).join(' · ');
+  const reason = summary.status === 'LOGIN_REQUIRED' ? '대시보드에서 다시 로그인해 주세요.'
+    : summary.status === 'ACCOUNT_CHANGED' || summary.error === 'ACCOUNT_CHANGED' ? '로그인 계정이 바뀌었어요. 대시보드에서 계정을 확인해 주세요.'
+    : summary.status === 'RECONNECT_REQUIRED' || summary.status === 'NO_ACCOUNT' ? '연결 정보를 확인하지 못했어요. 대시보드를 열면 연결이 갱신돼요.'
+    : summary.status === 'OFFLINE' || summary.status === 'STOPPED' ? '서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.' : '';
+  if (summary.status === 'IDLE') return '보낼 임시 저장이 없어요.';
+  return [done, reason].filter(Boolean).join(' ') || '모두 전송했어요.';
+}
+
 function asSynced(value: unknown): value is Preview {
   if (!value || typeof value !== 'object') return false;
   const item = value as Partial<Capture>;
@@ -80,6 +95,9 @@ export function mountPopup(document: Document, services: PopupServices): void {
   const automationStatus = document.querySelector<HTMLElement>('#automation-status')!;
   const pendingUploads = document.querySelector<HTMLElement>('#pending-uploads');
   const retryRelay = document.querySelector<HTMLButtonElement>('#retry-relay')!;
+  const syncPending = document.querySelector<HTMLButtonElement>('#sync-pending');
+  const syncPendingResult = document.querySelector<HTMLElement>('#sync-pending-result');
+  let syncingPending = false;
   const githubAutoRow = githubAuto.closest<HTMLElement>('.switch-row');
   // Until settings are read the switch shows a checking state rather than a stale OFF or a disabled look.
   const setChecking = (checking: boolean) => {
@@ -188,6 +206,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
     if (pendingUploads) {
       const count = Number.isSafeInteger(pendingCount) && (pendingCount as number) > 0 ? pendingCount as number : 0;
       pendingUploads.hidden = count === 0;
+      if (syncPending) syncPending.hidden = count === 0 || !services.syncPending;
       pendingUploads.textContent = count ? `임시 저장 ${count}개 · ${!settings.autoSyncEnabled ? '자동 동기화를 켜면 전송됩니다.' : relayStatus === 'AUTH_EXPIRED' ? '같은 계정으로 로그인하면 자동 전송됩니다.' : '연결되면 자동 전송됩니다. 브라우저를 다시 켜도 이어집니다.'}` : '';
     }
     automationStatus.textContent = recentError ? '서버 연결 확인 필요' : relayStatus === 'CONFIRMED' ? '자동 동기화 중' : relayStatus === 'OFFLINE' ? '오프라인' : relayStatus === 'RELAY_ERROR' ? '동기화 오류' : '대시보드 로그인 필요';
@@ -274,6 +293,16 @@ export function mountPopup(document: Document, services: PopupServices): void {
       .finally(() => { githubBusy = false; void load(); });
   });
   services.subscribeProgress?.(() => { void refreshBatch(); void load(); });
+  syncPending?.addEventListener('click', () => {
+    if (syncingPending || !services.syncPending) return;
+    syncingPending = true; syncPending.disabled = true; syncPending.textContent = '동기화 중…';
+    if (syncPendingResult) syncPendingResult.hidden = true;
+    void services.syncPending().then(response => {
+      if (syncPendingResult) { syncPendingResult.textContent = pendingSyncMessage(response); syncPendingResult.hidden = false; }
+    }).catch(() => {
+      if (syncPendingResult) { syncPendingResult.textContent = pendingSyncMessage(null); syncPendingResult.hidden = false; }
+    }).then(() => load()).finally(() => { syncingPending = false; syncPending.disabled = false; syncPending.textContent = '지금 동기화'; });
+  });
   retryRelay.addEventListener('click', () => {
     if (retrying || !services.retryRelay) return;
     retrying = true; retryRelay.disabled = true; retryRelay.textContent = '재시도 중…';

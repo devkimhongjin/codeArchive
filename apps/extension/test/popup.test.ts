@@ -253,3 +253,18 @@ test('a late local read cannot re-enable the switch after the full state read fa
   assert.equal(toggle.disabled, true); assert.notEqual(toggle.checked, true);
   assert.match(document.querySelector('#error')!.textContent!, /불러오지 못했어요/);
 });
+
+test('a connected popup with temporary saves offers a manual sync and shows its result', async () => {
+  const { document } = parseHTML(html);
+  let pendingCount = 2, syncs = 0;
+  mountPopup(document, { load: async () => ({ pendingCount, settings: { accountId: '1', autoSyncEnabled: true, relay: { status: 'CONFIRMED' } }, recentCaptures: [] }),
+    copy: async () => {}, syncPending: async () => { syncs++; pendingCount = 0; return { ok: true, summary: { status: 'DONE', sent: 2, rejected: 0, remaining: 0 } }; } });
+  await settle();
+  const button = document.querySelector<HTMLButtonElement>('#sync-pending')!;
+  assert.equal(button.hidden, false, 'shown even while the relay reports CONFIRMED');
+  assert.equal(document.querySelector<HTMLButtonElement>('#retry-relay')!.hidden, true);
+  button.click(); await settle(); await settle();
+  assert.equal(syncs, 1);
+  assert.equal(document.querySelector('#sync-pending-result')!.textContent, '2개 전송 완료');
+  assert.equal(button.hidden, true, 'nothing left to send');
+});
