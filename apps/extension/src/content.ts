@@ -4,7 +4,7 @@ import { collectAcceptedCaptureAttempt, createCapture, isCaptureRecord } from ".
 import { CAPTURE_RESULT, type Capture, type PlatformAdapter } from "./types";
 import { canonicalLanguageKey } from "../../../shared/language";
 import { BUILD_METADATA } from "../../../shared/buildMetadata";
-import { importVisibleJungolHistory, isJungolHistoryPath, loadJungolHistoryPreview, previewJungolHistory,
+import { importVisibleJungolHistory, isJungolHistoryPath, isJungolHistorySenderUrl, loadJungolHistoryPreview, previewJungolHistory,
   type JungolHistoryCandidate, type JungolHistoryPreview, type JungolHistoryScanProgress } from "./historicalJungol";
 import { authenticatedSweaHistoryIdentity, hydrateSweaCandidateResult, loadSweaHistoryPreview, type SweaHistoryCandidate } from "./historicalSwea";
 import { mayStoreLocalHistoryCapture, sameHistorySource } from "./historyRouting";
@@ -14,6 +14,8 @@ import { authenticatedProgrammersUserId, canonicalProgrammersLessonUrl, previewP
   readProgrammersSolvedListingPage, selectedProgrammersHistoryEditorUri, unsupportedProgrammersSqlHistory,
   type ProgrammersLessonHistoryRow, type ProgrammersLessonSubmission } from "./historicalProgrammers";
 import { isHistoricalSubmissionId, programmersHistoricalSubmissionAccount } from "./historicalIdentity";
+import { mountSiteSync, type Send, type SiteSyncPage } from "./siteSyncView";
+import { jungolSyncPage, programmersSyncPage, sweaSyncPage } from "./siteSyncPages";
 import {
   createSweaProblemContext,
   normalizeSweaDetailUrl,
@@ -1101,9 +1103,11 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
   chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
     const object = message !== null && typeof message === "object" ? message as Record<string, unknown> : null;
     if (object?.type === "PROGRAMMERS_AUXILIARY_READ") {
+      programmersAuxiliaryReads += 1;
       void readProgrammersAuxiliaryLesson(document, window.location, {
         lessonUrl: object.lessonUrl, mode: object.mode, submissionId: object.submissionId
-      }).then(sendResponse).catch(() => sendResponse({ status: "SOURCE_UNAVAILABLE" }));
+      }).then(sendResponse).catch(() => sendResponse({ status: "SOURCE_UNAVAILABLE" }))
+        .finally(() => { programmersAuxiliaryReads -= 1; });
       return true;
     }
     if (object?.type === "HISTORY_SCAN_START" || object?.type === "HISTORY_SCAN_STATUS") {
@@ -1194,4 +1198,40 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
     return false;
   });
   void bootstrapContent(document, window.location, document.referrer);
+  if (typeof chrome !== "undefined" && chrome.runtime?.id) startSiteSync(document, window.location);
+}
+
+let programmersAuxiliaryReads = 0;
+/** A history scan or import drives this page itself; site sync must not add work or hover rows meanwhile. */
+function historyTaskActive(): boolean {
+  return !!(jungolImportController?.isActive || jungolScan?.state.status === "SCANNING" ||
+    (jungolLocalTask && ["SCANNING", "IMPORTING", "CANCELLING"].includes(jungolLocalTask.state.status)) ||
+    sweaController?.isActive || sweaState.status === "SCANNING" ||
+    programmersLocalController?.isActive || programmersLocalState.status === "SCANNING" || programmersAuxiliaryReads > 0);
+}
+
+/** Mounts manual sync/commit controls on the user's own submission list, following SPA navigation. */
+function startSiteSync(document: Document, location: Location): void {
+  const send: Send = message => chrome.runtime.sendMessage(message);
+  let mounted: { key: string; handle: ReturnType<typeof mountSiteSync> } | null = null;
+  const pageFor = (): { key: string; page: SiteSyncPage } | null => {
+    if (location.origin === "https://jungol.co.kr")
+      return isJungolHistorySenderUrl(new URL(location.href)) ? { key: location.pathname + location.search, page: jungolSyncPage(document, location, send) } : null;
+    if (location.origin === SWEA_ORIGIN && location.pathname === SWEA_USER_SUBMISSIONS_PATH) return { key: location.href, page: sweaSyncPage(document, location, send) };
+    const lessonUrl = canonicalProgrammersLessonUrl(location);
+    if (lessonUrl) return { key: lessonUrl, page: programmersSyncPage(document, location, send,
+      (url, submissionId) => readProgrammersAuxiliaryLesson(document, location, { lessonUrl: url, mode: "import", submissionId })) };
+    return null;
+  };
+  const check = () => {
+    // Stand down while a history task runs here, and never start in a tab the
+    // user cannot see (the extension's own background history tab).
+    const next = historyTaskActive() ? null : pageFor();
+    if (mounted && mounted.key === next?.key) return;
+    if (!mounted && next && document.visibilityState !== "visible") return;
+    mounted?.handle.dispose(); mounted = null;
+    if (next) mounted = { key: next.key, handle: mountSiteSync(document, next.page, send) };
+  };
+  check();
+  setInterval(check, 1000);
 }
