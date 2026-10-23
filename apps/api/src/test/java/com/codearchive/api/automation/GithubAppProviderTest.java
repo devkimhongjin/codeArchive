@@ -101,6 +101,23 @@ class GithubAppProviderTest {
     assertThat(requests).hasSize(4);
   }
 
+  @Test void solutionCommitsAreAttributedToTheRepositoryOwnerNotTheAppBot() throws Exception {
+    assertThat(provider().createOnly(settings(),solution()).outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    String owner="{\"name\":\"Owner\",\"email\":\"1+owner@users.noreply.github.com\"}";
+    assertThat(requests.get(6).path()).isEqualTo("/repos/owner/repo/git/commits");
+    assertThat(requests.get(6).body()).contains("\"author\":"+owner).contains("\"committer\":"+owner);
+  }
+
+  @Test void commitIdentityFallsBackToTheLoginAndRefusesUnsafeIdentities() {
+    assertThat(GithubAppProvider.CommitIdentity.of(AppUser.fromGithub("7","octo-cat",null,null)))
+      .isEqualTo(new GithubAppProvider.CommitIdentity("octo-cat","7+octo-cat@users.noreply.github.com"));
+    assertThat(GithubAppProvider.CommitIdentity.of(AppUser.fromGithub("7","octo","  ","x@y.test")).name()).isEqualTo("octo");
+    assertThat(GithubAppProvider.CommitIdentity.of(AppUser.fromGithub("7","octo","Evil <x@y>",null)).name()).isEqualTo("octo");
+    assertThat(GithubAppProvider.CommitIdentity.of(AppUser.fromGithub("7","bad login",null,null))).isNull();
+    assertThat(GithubAppProvider.CommitIdentity.of(AppUser.fromGithub("x7","octo",null,null))).isNull();
+    assertThat(GithubAppProvider.CommitIdentity.of(null)).isNull();
+  }
+
   @Test void rendersAConfiguredSingleLineCommitMessage() throws Exception {
     GithubProvider.Result result=provider().createOnly(settings("main","Solve {platform} #{number}: {title} by {nickname}"),solution());
     assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);

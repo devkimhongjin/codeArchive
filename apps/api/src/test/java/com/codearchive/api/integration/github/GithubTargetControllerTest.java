@@ -70,10 +70,10 @@ class GithubTargetControllerTest {
 
     assertThat(controller.initializeReadme(null, null, 44L, 7L).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
     assertThat(controller.initializeReadme(github("123", "account"), "456", 44L, 7L).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-    verify(provider, never()).initializeReadme("123", 44L, 7L);
+    verify(provider, never()).initializeReadme(org.mockito.ArgumentMatchers.eq("123"), org.mockito.ArgumentMatchers.eq(44L), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.any(GithubAppProvider.CommitIdentity.class));
 
     when(provider.browseReady()).thenReturn(true);
-    when(provider.initializeReadme("123", 44L, 7L)).thenReturn("primary");
+    when(provider.initializeReadme(org.mockito.ArgumentMatchers.eq("123"), org.mockito.ArgumentMatchers.eq(44L), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.any(GithubAppProvider.CommitIdentity.class))).thenReturn("primary");
     var response = controller.initializeReadme(github("123", "account"), "123", 44L, 7L);
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isEqualTo(Map.of("defaultBranch", "primary"));
@@ -139,7 +139,7 @@ class GithubTargetControllerTest {
     verifyNoInteractions(provider);
 
     when(provider.browseReady()).thenReturn(true);
-    when(provider.addFile("123", 44L, 7L, "main", "new.txt", "secret source", "Add file", "a".repeat(40), false))
+    when(provider.addFile(org.mockito.ArgumentMatchers.eq("123"), org.mockito.ArgumentMatchers.eq(44L), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq("main"), org.mockito.ArgumentMatchers.eq("new.txt"), org.mockito.ArgumentMatchers.eq("secret source"), org.mockito.ArgumentMatchers.eq("Add file"), org.mockito.ArgumentMatchers.eq("a".repeat(40)), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.any(GithubAppProvider.CommitIdentity.class)))
         .thenThrow(new GithubAppProvider.TargetConflictException("path collision"));
     var response = controller.addFile(github("123", "account"), "123", 44L, 7L, request);
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
@@ -159,7 +159,7 @@ class GithubTargetControllerTest {
     verifyNoInteractions(provider);
     when(provider.browseReady()).thenReturn(true);
     when(provider.matchesRepository("123", 44L, 7L, "account", "algorithm")).thenReturn(true);
-    when(provider.replaceFile("123", 44L, 7L, "main", "기존.java", "private source", "Edit file", "a".repeat(40), "b".repeat(40)))
+    when(provider.replaceFile(org.mockito.ArgumentMatchers.eq("123"), org.mockito.ArgumentMatchers.eq(44L), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq("main"), org.mockito.ArgumentMatchers.eq("기존.java"), org.mockito.ArgumentMatchers.eq("private source"), org.mockito.ArgumentMatchers.eq("Edit file"), org.mockito.ArgumentMatchers.eq("a".repeat(40)), org.mockito.ArgumentMatchers.eq("b".repeat(40)), org.mockito.ArgumentMatchers.any(GithubAppProvider.CommitIdentity.class)))
         .thenThrow(new GithubAppProvider.TargetConflictException("file changed"));
     var response = controller.editFile(github("123", "account"), "123", 44L, 7L, request);
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
@@ -211,10 +211,10 @@ class GithubTargetControllerTest {
     var confirmation = new GithubTargetController.TreeOperationCommitRequest("signed-preview");
     when(provider.previewBranch("123", 44L, 7L, "signed-preview")).thenReturn("other");
     assertThat(controller.commitTreeOperation(github("123", "account"), "123", 44L, 7L, confirmation).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-    verify(provider, never()).commitOperation("123", 44L, 7L, "signed-preview");
+    verify(provider, never()).commitOperation(org.mockito.ArgumentMatchers.eq("123"), org.mockito.ArgumentMatchers.eq(44L), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq("signed-preview"), org.mockito.ArgumentMatchers.any(GithubAppProvider.CommitIdentity.class));
     when(provider.previewBranch("123", 44L, 7L, "signed-preview")).thenReturn("main");
     assertThat(controller.commitTreeOperation(github("123", "account"), "123", 44L, 7L, confirmation).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-    verify(provider, never()).commitOperation("123", 44L, 7L, "signed-preview");
+    verify(provider, never()).commitOperation(org.mockito.ArgumentMatchers.eq("123"), org.mockito.ArgumentMatchers.eq(44L), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq("signed-preview"), org.mockito.ArgumentMatchers.any(GithubAppProvider.CommitIdentity.class));
   }
 
   private static UserSettingsRepository savedTarget(AppUser user) {

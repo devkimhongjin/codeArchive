@@ -24,7 +24,7 @@ import com.codearchive.api.auth.*;import com.codearchive.api.automation.GithubAp
   if(!checked.accepted())return checked.failure();
   if(request==null)return ResponseEntity.badRequest().body(new ApiError("Invalid file request"));
   if(!github.browseReady())return ResponseEntity.status(503).body(new ApiError("GitHub App provider is unavailable"));
-  try{return ResponseEntity.ok(Map.of("commitSha",github.addFile(checked.account().githubId(),id,repo,request.branch(),request.path(),request.content(),request.message(),request.expectedHeadSha(),request.placeholder())));}
+  try{return ResponseEntity.ok(Map.of("commitSha",github.addFile(checked.account().githubId(),id,repo,request.branch(),request.path(),request.content(),request.message(),request.expectedHeadSha(),request.placeholder(),GithubAppProvider.CommitIdentity.of(checked.account().user()))));}
   catch(GithubAppProvider.TargetConflictException e){return ResponseEntity.status(409).body(new ApiError("Repository changed or target path is unavailable; refresh before retrying"));}
   catch(IllegalArgumentException e){return ResponseEntity.badRequest().body(new ApiError("Invalid file request"));}
   catch(SecurityException e){return ResponseEntity.status(403).body(new ApiError("Repository is not available to this account"));}
@@ -35,7 +35,7 @@ import com.codearchive.api.auth.*;import com.codearchive.api.automation.GithubAp
   if(!checked.accepted())return checked.failure();
   if(request==null)return ResponseEntity.badRequest().body(new ApiError("Invalid file edit"));
   if(!github.browseReady())return ResponseEntity.status(503).body(new ApiError("GitHub App provider is unavailable"));
-  try{requireSavedTarget(checked.account().user(),id,repo,request.branch());return ResponseEntity.ok(Map.of("commitSha",github.replaceFile(checked.account().githubId(),id,repo,request.branch(),request.path(),request.content(),request.message(),request.expectedHeadSha(),request.expectedBlobSha())));}
+  try{requireSavedTarget(checked.account().user(),id,repo,request.branch());return ResponseEntity.ok(Map.of("commitSha",github.replaceFile(checked.account().githubId(),id,repo,request.branch(),request.path(),request.content(),request.message(),request.expectedHeadSha(),request.expectedBlobSha(),GithubAppProvider.CommitIdentity.of(checked.account().user()))));}
   catch(GithubAppProvider.TargetConflictException|GithubAppProvider.FileMissingException e){return ResponseEntity.status(409).body(new ApiError("Repository or file changed; refresh before retrying"));}
   catch(IllegalArgumentException e){return ResponseEntity.badRequest().body(new ApiError("Invalid file edit"));}
   catch(SecurityException e){return ResponseEntity.status(403).body(new ApiError("Repository is not available to this account"));}
@@ -57,7 +57,7 @@ import com.codearchive.api.auth.*;import com.codearchive.api.automation.GithubAp
   if(!checked.accepted())return checked.failure();
   if(request==null)return ResponseEntity.badRequest().body(new ApiError("Invalid tree operation confirmation"));
   if(!github.browseReady())return ResponseEntity.status(503).body(new ApiError("GitHub App provider is unavailable"));
-  try{String branch=github.previewBranch(checked.account().githubId(),id,repo,request.previewId());requireSavedTarget(checked.account().user(),id,repo,branch);String sha=github.commitOperation(checked.account().githubId(),id,repo,request.previewId());return ResponseEntity.ok(Map.of("commitSha",sha,"recovery","Use GitHub commit "+sha+" to revert this operation if needed."));}
+  try{String branch=github.previewBranch(checked.account().githubId(),id,repo,request.previewId());requireSavedTarget(checked.account().user(),id,repo,branch);String sha=github.commitOperation(checked.account().githubId(),id,repo,request.previewId(),GithubAppProvider.CommitIdentity.of(checked.account().user()));return ResponseEntity.ok(Map.of("commitSha",sha,"recovery","Use GitHub commit "+sha+" to revert this operation if needed."));}
   catch(GithubAppProvider.TargetConflictException e){return ResponseEntity.status(409).body(new ApiError("Repository changed or preview expired; refresh and preview again"));}
   catch(IllegalArgumentException e){return ResponseEntity.badRequest().body(new ApiError("Invalid tree operation confirmation"));}
   catch(SecurityException e){return ResponseEntity.status(403).body(new ApiError("Repository is not available to this account"));}
@@ -69,7 +69,7 @@ import com.codearchive.api.auth.*;import com.codearchive.api.automation.GithubAp
   var checked=GithubAccountAssertion.require(a,expected,users);
   if(!checked.accepted())return checked.failure();
   if(!github.browseReady())return ResponseEntity.status(503).body(new ApiError("GitHub App provider is unavailable"));
-  try{return ResponseEntity.ok(Map.of("defaultBranch",github.initializeReadme(checked.account().githubId(),id,repo)));}
+  try{return ResponseEntity.ok(Map.of("defaultBranch",github.initializeReadme(checked.account().githubId(),id,repo,GithubAppProvider.CommitIdentity.of(checked.account().user()))));}
   catch(GithubAppProvider.EmptyRepositoryConflictException e){return ResponseEntity.status(409).body(new ApiError("Repository is already initialized; refresh branches"));}
   catch(IllegalArgumentException e){return ResponseEntity.badRequest().body(new ApiError("Invalid repository selection"));}
   catch(SecurityException e){return ResponseEntity.status(403).body(new ApiError("Repository is not available to this account"));}
