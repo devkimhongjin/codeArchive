@@ -151,6 +151,15 @@ function syncJungol(document: Document, location: Location, window: MainWorldWin
   }
 }
 
+/**
+ * Jungol labels the selected language "C++20" but sends altLanguage "CPP20".
+ * Spell "++" as "PP" before dropping punctuation, so C++ is compared as CPP
+ * rather than C ("Java 8"/"JAVA8", "Kotlin/JVM 11"/"KOTLIN_JVM11" still match).
+ */
+export function jungolLanguageToken(value: string): string {
+  return value.toUpperCase().replace(/\+\+/g, "PP").replace(/[^A-Z0-9]/g, "");
+}
+
 /** Observe only the platform's own JSON judge POST, without changing it. */
 export function installJungolJudgeObserver(document: Document, location: Location, window: MainWorldWindow): () => void {
   const originalFetch = window.fetch;
@@ -175,7 +184,7 @@ export function installJungolJudgeObserver(document: Document, location: Locatio
               problemNumber && Number(judge.problemId) === Number(problemNumber) &&
               typeof sourceCode === "string" && sourceCode.trim() && sourceCode.length <= 1_000_000 &&
               typeof altLanguage === "string" && typeof language === "string" &&
-              altLanguage.replace(/[^a-z0-9]/gi, "").toUpperCase() === language.replace(/[^a-z0-9]/gi, "").toUpperCase()
+              jungolLanguageToken(altLanguage) === jungolLanguageToken(language)
             ) {
               let source = document.querySelector<HTMLTextAreaElement>(JUNGOL_SOURCE_SELECTOR);
               if (!source) {
