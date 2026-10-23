@@ -48,6 +48,14 @@ export interface ProgrammersAuxiliaryServices {
 
 let programmersAuxiliaryRequestSequence = 0;
 const PROGRAMMERS_AUXILIARY_WAIT_MS = 100;
+// A lesson that cannot be read is tried once more and then left out of the
+// candidates, so one slow or unusual lesson does not end a long scan. Several
+// unreadable lessons in a row mean the sign-in or the site changed.
+const PROGRAMMERS_LESSON_READ_ATTEMPTS = 2;
+const PROGRAMMERS_UNREAD_LESSON_LIMIT = 3;
+class ProgrammersScanStopped extends Error {
+  constructor(readonly status: "SCAN_INCOMPLETE" | "OWNERSHIP_UNVERIFIED", readonly problemNumber?: string) { super(status); }
+}
 
 function programmersCandidateView(candidate: ProgrammersLessonSubmission): ProgrammersAuxiliaryCandidate {
   return { submissionId: candidate.submissionId, problemNumber: candidate.problemNumber, language: candidate.language,
@@ -239,7 +247,9 @@ export async function readProgrammersAuxiliaryLesson(document: Document, locatio
     if (message.mode === "import" && selectedAccount !== history.accountId) return { status: "OWNERSHIP_UNVERIFIED" };
     return { status: "EMPTY", accountId: history.accountId, lessonId: history.lessonId, title: history.title, candidates: [] };
   }
-  if (history.status === "OWNERSHIP_UNVERIFIED" || history.status === "PENDING") return { status: "OWNERSHIP_UNVERIFIED" };
+  if (history.status === "OWNERSHIP_UNVERIFIED") return { status: "OWNERSHIP_UNVERIFIED" };
+  // A history panel that did not finish rendering in time is not an ownership finding.
+  if (history.status === "PENDING") return { status: "HISTORY_INCOMPLETE" };
   if (history.status === "INCOMPLETE") return { status: "HISTORY_INCOMPLETE" };
   if (history.status === "AMBIGUOUS") return { status: "AMBIGUOUS_HISTORY" };
   if (history.status !== "READY") return { status: "HISTORY_INCOMPLETE" };
@@ -723,7 +733,7 @@ function startSweaImport(document: Document, location: Location, ids: unknown): 
 
 type ProgrammersLocalCandidate = { difficulty?: ProblemDifficulty; submissionId: string; problemNumber: string; title: string; language: string; createdAt: string; lessonUrl: string; order: number };
 type ProgrammersLocalState = { status: string; candidates?: ProgrammersLocalCandidate[]; truncated?: false; skipped?: number;
-  unsupportedProblemNumbers?: string[];
+  unsupportedProblemNumbers?: string[]; unreadProblemNumbers?: string[]; failedProblemNumber?: string;
   progress?: ExternalHistoryScanProgress; completed?: number; total?: number; saved?: number; duplicate?: number; problemCount?: number;
   submissionCount?: number; startedAt?: number; endedAt?: number; timingSample?: HistoricalTimingSample; failedSubmissionIds?: string[]; failureReason?: string };
 let programmersLocalState: ProgrammersLocalState = { status: "SCAN_IDLE" };
@@ -822,28 +832,42 @@ function startProgrammersScan(document: Document, location: Location): Programme
     }
     const candidates: ProgrammersLocalCandidate[] = [];
     const unsupportedProblemNumbers: string[] = [];
+    const unreadProblemNumbers: string[] = [];
     let accountId: string | null = null;
+    let unreadInRow = 0;
     for (const lesson of lessons) {
-      if (generation !== programmersLocalGeneration || !programmersSourceCurrent(location)) throw new HistoricalImportFailure("LIST_CHANGED");
-      programmersLocalState = { ...programmersLocalState, progress: programmersProgress(Math.ceil(initial.total / 20), lesson.order, lessons.length, lessons.length, lesson.problemNumber) };
-      const response = await chrome.runtime.sendMessage({ type: "PROGRAMMERS_AUX_READ", lessonUrl: lesson.lessonUrl, mode: "preview" });
-      if (generation !== programmersLocalGeneration || !programmersSourceCurrent(location)) throw new HistoricalImportFailure("LIST_CHANGED");
-      if ((response as { ok?: unknown; error?: unknown } | null)?.ok !== true && /INTERRUPTED|UNAUTHORIZED|REDIRECTED/.test(String((response as { error?: unknown } | null)?.error ?? "")))
-        throw new HistoricalImportFailure("LIST_CHANGED");
-      const parsed = validProgrammersAuxiliaryPreview(response, lesson, accountId);
-      if (!parsed) throw new HistoricalImportFailure("DETAIL_UNVERIFIED");
+      let response: unknown = null;
+      let parsed: ReturnType<typeof validProgrammersAuxiliaryPreview> = null;
+      for (let attempt = 0; attempt < PROGRAMMERS_LESSON_READ_ATTEMPTS && !parsed; attempt += 1) {
+        if (generation !== programmersLocalGeneration || !programmersSourceCurrent(location)) throw new HistoricalImportFailure("LIST_CHANGED");
+        programmersLocalState = { ...programmersLocalState, progress: programmersProgress(Math.ceil(initial.total / 20), lesson.order, lessons.length, lessons.length, lesson.problemNumber) };
+        try { response = await chrome.runtime.sendMessage({ type: "PROGRAMMERS_AUX_READ", lessonUrl: lesson.lessonUrl, mode: "preview" }); }
+        catch { response = null; }
+        if (generation !== programmersLocalGeneration || !programmersSourceCurrent(location)) throw new HistoricalImportFailure("LIST_CHANGED");
+        if ((response as { ok?: unknown; error?: unknown } | null)?.ok !== true && /INTERRUPTED|UNAUTHORIZED|REDIRECTED/.test(String((response as { error?: unknown } | null)?.error ?? "")))
+          throw new HistoricalImportFailure("LIST_CHANGED");
+        parsed = validProgrammersAuxiliaryPreview(response, lesson, null);
+      }
+      if (!parsed) {
+        unreadProblemNumbers.push(lesson.problemNumber);
+        if (++unreadInRow >= PROGRAMMERS_UNREAD_LESSON_LIMIT) throw new ProgrammersScanStopped("SCAN_INCOMPLETE", lesson.problemNumber);
+        continue;
+      }
+      unreadInRow = 0;
       accountId ??= parsed.accountId;
-      if (parsed.accountId !== accountId) throw new HistoricalImportFailure("DETAIL_UNVERIFIED");
+      if (parsed.accountId !== accountId) throw new ProgrammersScanStopped("OWNERSHIP_UNVERIFIED");
       if ((response as { result?: { status?: string } }).result?.status === "UNSUPPORTED_HISTORY") unsupportedProblemNumbers.push(lesson.problemNumber);
       for (const candidate of parsed.candidates) candidates.push({ ...candidate, difficulty: lesson.difficulty, title: lesson.title, lessonUrl: lesson.lessonUrl, order: lesson.order });
       programmersLocalState = { ...programmersLocalState, progress: programmersProgress(Math.ceil(initial.total / 20), lesson.order + 1, lessons.length) };
     }
     if (generation !== programmersLocalGeneration) return;
+    if (lessons.length && unreadProblemNumbers.length === lessons.length) throw new ProgrammersScanStopped("SCAN_INCOMPLETE", unreadProblemNumbers[0]);
     programmersLocalAccountId = accountId;
-    programmersLocalState = { status: "READY", candidates, unsupportedProblemNumbers, truncated: false, skipped: 0, startedAt: programmersLocalState.startedAt, endedAt: Date.now() };
+    programmersLocalState = { status: "READY", candidates, unsupportedProblemNumbers, unreadProblemNumbers, truncated: false, skipped: 0, startedAt: programmersLocalState.startedAt, endedAt: Date.now() };
   })().catch(error => {
     if (generation !== programmersLocalGeneration) return;
-    programmersLocalState = { status: error instanceof HistoricalImportFailure && error.reason === "LIST_CHANGED" ? "INTERRUPTED" : "SCAN_INCOMPLETE",
+    const status = error instanceof HistoricalImportFailure && error.reason === "LIST_CHANGED" ? "INTERRUPTED" : error instanceof ProgrammersScanStopped ? error.status : "SCAN_INCOMPLETE";
+    programmersLocalState = { status, ...(error instanceof ProgrammersScanStopped && error.problemNumber ? { failedProblemNumber: error.problemNumber } : {}),
       startedAt: programmersLocalState.startedAt, endedAt: Date.now() };
   });
   return programmersLocalState;
@@ -856,7 +880,7 @@ function startProgrammersImport(document: Document, location: Location, ids: unk
   if (selected.some(candidate => !candidate)) return { status: "FAILED" };
   const generation = ++programmersLocalGeneration;
   const controller = new HistoricalTaskController<ProgrammersLocalCandidate>(); programmersLocalController = controller;
-  const unsupportedProblemNumbers = programmersLocalState.unsupportedProblemNumbers;
+  const { unsupportedProblemNumbers, unreadProblemNumbers } = programmersLocalState;
   const completedProblems = new Set<string>();
   controller.start(selected as ProgrammersLocalCandidate[], async (candidate, mayStore) => {
     if (!mayStore() || generation !== programmersLocalGeneration || !programmersSourceCurrent(location)) { controller.cancel(); return { saved: 0, duplicate: 0, skipped: 0 }; }
@@ -887,11 +911,11 @@ function startProgrammersImport(document: Document, location: Location, ids: unk
       return { saved: stored.created === true ? 1 : 0, duplicate: stored.created === true ? 0 : 1, skipped: 0 };
     } catch { return { saved: 0, duplicate: 0, skipped: 1, failedSubmissionId: candidate.submissionId }; }
   }, (candidate, result) => { if (result.saved + result.duplicate) completedProblems.add(`PROGRAMMERS:${candidate.problemNumber}`); }, candidate => candidate.submissionId);
-  programmersLocalState = { status: "IMPORTING", startedAt: Date.now(), unsupportedProblemNumbers };
+  programmersLocalState = { status: "IMPORTING", startedAt: Date.now(), unsupportedProblemNumbers, unreadProblemNumbers };
   void controller.settled().then(() => {
     if (generation !== programmersLocalGeneration || programmersLocalController !== controller || !controller.state) return;
     const timingSample = timingSampleFromCompletedTask(controller.state, "PROGRAMMERS");
-    programmersLocalState = { ...controller.state, unsupportedProblemNumbers, problemCount: completedProblems.size, submissionCount: controller.state.saved + controller.state.duplicate,
+    programmersLocalState = { ...controller.state, unsupportedProblemNumbers, unreadProblemNumbers, problemCount: completedProblems.size, submissionCount: controller.state.saved + controller.state.duplicate,
       ...(timingSample ? { timingSample } : {}) };
     if (timingSample && chrome.storage?.local) void persistHistoricalTimingSample(chrome.storage.local, timingSample).catch(() => undefined);
   });

@@ -80,7 +80,7 @@ async function writeLocalHistoryRoute(route: LocalHistoryRoute | null): Promise<
 
 // A Jungol list the extension opened itself in an inactive tab, so collection
 // never depends on the user's window size or on a tab they left open.
-const JUNGOL_OWNED_TAB_KEY = "codearchive-jungol-owned-history-tab";
+const JUNGOL_OWNED_TAB_KEY = "codearchive-owned-history-tab";
 const JUNGOL_OWNED_TAB_IDLE_MS = 10 * 60_000;
 type OwnedJungolTab = { tabId: number; historyPageTabId?: number; lastUsedAt: number };
 const OWNED_TAB_KEEP_STATUSES = new Set(["READY", "SCANNING", "IMPORTING", "CANCELLING"]);
@@ -97,11 +97,15 @@ async function closeOwnedJungolTab(tabId?: number): Promise<void> {
   await chrome.tabs.remove(owned.tabId).catch(() => undefined);
 }
 
-function waitForTabLoad(tabId: number, pathname: string, timeoutMs = 30_000): Promise<boolean> {
+/** pathname null: any committed page of a fresh tab (a redirect is checked by the caller). */
+function waitForTabLoad(tabId: number, pathname: string | null, timeoutMs = 30_000): Promise<boolean> {
   return new Promise(resolve => {
     let settled = false;
     const loaded = (tab: chrome.tabs.Tab) => {
-      try { return tab.status === "complete" && new URL(tab.url ?? "").pathname === pathname; } catch { return false; }
+      try {
+        if (tab.status !== "complete" || !tab.url || tab.url === "about:blank") return false;
+        return pathname === null || new URL(tab.url).pathname === pathname;
+      } catch { return false; }
     };
     const finish = (value: boolean) => {
       if (settled) return;
@@ -112,6 +116,33 @@ function waitForTabLoad(tabId: number, pathname: string, timeoutMs = 30_000): Pr
     chrome.tabs.onUpdated.addListener(listener);
     void chrome.tabs.get(tabId).then(tab => { if (loaded(tab)) finish(true); }).catch(() => finish(false));
   });
+}
+
+/** SWEA and Programmers list the signed-in user's own submissions at a fixed address; ownership is verified by the scan. */
+const OWNED_LISTING_URLS: Partial<Record<Platform, string>> = {
+  SWEA: "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do",
+  PROGRAMMERS: "https://school.programmers.co.kr/learn/challenges?order=recent&statuses=solved%2Csolved_with_unlock&page=1",
+};
+async function openOwnedListingTab(platform: Platform, historyPageTabId?: number): Promise<{ tabId: number; url: string } | null> {
+  const url = OWNED_LISTING_URLS[platform];
+  if (!url) return null;
+  let tabId: number | undefined;
+  try {
+    tabId = (await chrome.tabs.create({ url, active: false })).id;
+    if (tabId === undefined || !Number.isSafeInteger(tabId)) return null;
+    const id = tabId;
+    await chrome.tabs.update(id, { autoDiscardable: false }).catch(() => undefined);
+    if (!await waitForTabLoad(id, null)) throw new Error("list");
+    const current = (await chrome.tabs.get(id)).url;
+    // A signed-out visit is redirected to a login page and is never adopted.
+    if (!current || historyPlatformForUrl(current) !== platform) throw new Error("not a listing");
+    const owned: OwnedJungolTab = { tabId: id, historyPageTabId, lastUsedAt: Date.now() };
+    await chrome.storage.session.set({ [JUNGOL_OWNED_TAB_KEY]: owned });
+    return { tabId: id, url: current };
+  } catch {
+    if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
+    return null;
+  }
 }
 
 /** Reads the signed-in account from Jungol's home page and opens its own submission list. */
@@ -190,10 +221,8 @@ async function resolveLocalHistoryTab(platform: Platform, allowNewSource = false
   })());
   if (matches.length > 1) return { error: "MULTIPLE_TABS" };
   if (matches.length === 1) return { tabId: matches[0]!.id!, url: matches[0]!.url!, platform };
-  if (platform === "JUNGOL") {
-    const owned = await openOwnedJungolHistoryTab(historyPageTabId);
-    if (owned) return { ...owned, platform };
-  }
+  const owned = platform === "JUNGOL" ? await openOwnedJungolHistoryTab(historyPageTabId) : await openOwnedListingTab(platform, historyPageTabId);
+  if (owned) return { ...owned, platform };
   return { error: "TAB_NOT_FOUND" };
 }
 
@@ -443,7 +472,8 @@ async function runProgrammersAuxiliary(sender: chrome.runtime.MessageSender, mes
       return { ok: false, error: "INTERRUPTED" };
     // Keep auxiliary lessons in the existing source window, leaving the
     // collection window visible. Never create a popup for each problem.
-    const created = await chrome.tabs.create({ url: lessonUrl, active: true, windowId: sourceTab.windowId });
+    // Inactive: collecting many submissions must not bring each lesson to the front.
+    const created = await chrome.tabs.create({ url: lessonUrl, active: false, windowId: sourceTab.windowId });
     if (!created || !Number.isSafeInteger(created.id)) return { ok: false, error: "OPEN_FAILED" };
     run.auxiliaryTabId = created.id!;
     if (run.cancelled) return { ok: false, error: "INTERRUPTED" };

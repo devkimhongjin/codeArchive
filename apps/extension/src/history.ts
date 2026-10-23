@@ -17,7 +17,7 @@ type State = { status: string; candidates?: Candidate[]; truncated?: boolean; pr
   storedSubmissionIds?: string[];
   serverAccount?: string; serverRunId?: string;
   skipped?: number; failedSubmissionIds?: string[]; verificationFailures?: Record<string, number>;
-  problemCount?: number; submissionCount?: number; unsupportedProblemNumbers?: string[] };
+  problemCount?: number; submissionCount?: number; unsupportedProblemNumbers?: string[]; unreadProblemNumbers?: string[] };
 export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
   schedule?: (work: () => void, delay: number) => unknown; now?: () => number;
   readTiming?: () => Promise<unknown>; openSite?: (url: string) => Promise<unknown>;
@@ -27,8 +27,8 @@ export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
 
 const platformInfo: Record<Platform, { href: string; linkLabel: string; description: string; guide: string }> = {
   JUNGOL: { href: "https://jungol.co.kr/", linkLabel: "정올 열기 ↗", description: "후보 찾기를 누르면 확장이 정올 제출현황을 백그라운드 탭에서 열고, 끝나면 닫습니다.", guide: "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요." },
-  SWEA: { href: "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do", linkLabel: "SWEA 해결 내역 열기 ↗", description: "SWEA에서 본인 제출 이력을 확인해 로컬에 저장할 수 있습니다.", guide: "My Page Code에서 제출한 Problem을 열어 주세요." },
-  PROGRAMMERS: { href: "https://school.programmers.co.kr/learn/challenges?order=recent&statuses=solved%2Csolved_with_unlock&page=1", linkLabel: "프로그래머스 해결 내역 열기 ↗", description: "프로그래머스에서 해결 이력을 확인해 로컬에 저장할 수 있습니다. 제출 이력에는 실행시간·메모리가 없어 해당 정보는 저장할 수 없으며, 가장 빠른 제출·최소 메모리 선택도 지원하지 않습니다.", guide: "해결한 문제 목록을 열어 두고 후보 찾기를 눌러 주세요. 문제 상세는 같은 사이트 창의 탭에서 열리고 처리 후 닫힙니다." }
+  SWEA: { href: "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do", linkLabel: "SWEA 해결 내역 열기 ↗", description: "후보 찾기를 누르면 확장이 SWEA 제출 목록을 백그라운드 탭에서 열고, 끝나면 닫습니다.", guide: "My Page Code에서 제출한 Problem을 열어 주세요." },
+  PROGRAMMERS: { href: "https://school.programmers.co.kr/learn/challenges?order=recent&statuses=solved%2Csolved_with_unlock&page=1", linkLabel: "프로그래머스 해결 내역 열기 ↗", description: "후보 찾기를 누르면 확장이 해결한 문제 목록을 백그라운드 탭에서 열고, 문제 상세도 뒤쪽 탭에서 읽은 뒤 닫습니다. 제출 이력에는 실행시간·메모리가 없어 해당 정보는 저장할 수 없으며, 가장 빠른 제출·최소 메모리 선택도 지원하지 않습니다.", guide: "해결한 문제 목록을 열어 주세요. 문제 상세는 같은 사이트 창의 뒤쪽 탭에서 열리고 처리 후 닫힙니다." }
 };
 
 export function mountHistory(doc: Document, services: HistoryServices) {
@@ -86,6 +86,8 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   function label(state: State) {
     const unsupportedNotice = state.unsupportedProblemNumbers?.length
       ? ` 제출 이력을 제공하지 않는 SQL 문제 ${state.unsupportedProblemNumbers.length}건은 수집 대상에서 제외했습니다.` : "";
+    const unread = state.unreadProblemNumbers ?? [];
+    const unreadNotice = unread.length ? ` 제출 이력을 읽지 못한 문제 ${unread.length}건(${unread.slice(0, 5).map(number => `#${number}`).join(", ")}${unread.length > 5 ? ` 외 ${unread.length - 5}건` : ""})은 이번 후보에서 빠졌습니다. 후보 찾기를 다시 누르면 다시 읽습니다.` : "";
     if (state.status === "SCANNING") return "목록을 확인하고 있어요.";
     if (state.status === "IMPORTING") return `${serverMode ? '원본 확인 · 서버 등록 중' : '로컬 저장 중'} ${state.completed ?? 0}/${state.total ?? 0}건`;
     if (state.status === "CANCELLING") return `현재 제출 처리를 마무리하는 중입니다. ${state.completed ?? 0}/${state.total ?? 0}건 처리했습니다.`;
@@ -98,7 +100,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
         .map(([reason, count]) => `${reasons[reason]} ${count}건`).join(" · ");
       return `${problems}제출 ${submissions}건 · 새로 저장 ${state.saved ?? 0}건 · 이미 저장됨 ${state.duplicate ?? 0}건${failures}${details ? ` · ${details}` : ""}`;
     };
-    if (state.status === "DONE") return serverMode ? `원본 확인 완료 · ${resultSummary().replace('새로 저장', '확인 완료').replace('이미 저장됨', '재확인')} ${unsupportedNotice}` : `로컬 저장 완료 · ${resultSummary()}${unsupportedNotice}`;
+    if (state.status === "DONE") return serverMode ? `원본 확인 완료 · ${resultSummary().replace('새로 저장', '확인 완료').replace('이미 저장됨', '재확인')} ${unsupportedNotice}${unreadNotice}` : `로컬 저장 완료 · ${resultSummary()}${unsupportedNotice}${unreadNotice}`;
     if (state.status === "INTERRUPTED" && (state.completed ?? 0) > 0) return `수집이 중단되었습니다. 현재까지 ${resultSummary()}`;
     const failureLabels: Record<string, string> = {
       LIST_CHANGED: "제출 목록이 바뀌었습니다. 후보 찾기를 다시 실행해 주세요.",
@@ -110,7 +112,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     if (state.status === "FAILED" && state.failureReason && failureLabels[state.failureReason])
       return `${failureLabels[state.failureReason]}${(state.completed ?? 0) > 0 ? ` 현재까지 ${resultSummary()}` : ""}`;
     if (state.status === "FAILED" && (state.completed ?? 0) > 0) return `수집을 완료하지 못했습니다. 현재까지 ${resultSummary()}`;
-    if (state.status === "TAB_NOT_FOUND") return platform() === "JUNGOL" ? "정올 로그인 상태를 확인하지 못했습니다. 정올에 로그인한 뒤 후보 찾기를 다시 눌러 주세요." : `${platformInfo[platform()].guide} 후보 찾기를 다시 눌러 주세요.`;
+    if (state.status === "TAB_NOT_FOUND") { const name = platform() === "JUNGOL" ? "정올" : platform() === "SWEA" ? "SWEA" : "프로그래머스"; return `${name} 로그인 상태를 확인하지 못했습니다. ${name}에 로그인한 뒤 후보 찾기를 다시 눌러 주세요.`; }
     if (state.status === "CONNECTION_REQUIRED") return platform() === "JUNGOL" ? "정올 제출현황을 열고 후보 찾기를 다시 눌러 주세요. 수집 연결을 복구합니다." : `${platformInfo[platform()].guide} 후보 찾기를 다시 눌러 주세요.`;
     if (state.status === "CONNECTION_FAILED") return platform() === "JUNGOL" ? "정올 탭과 연결하지 못했습니다. 제출현황을 새로고침한 뒤 후보 찾기를 다시 눌러 주세요." : `${platformInfo[platform()].guide} 새로고침한 뒤 다시 눌러 주세요.`;
     if (state.status === "MULTIPLE_TABS") return platform() === "JUNGOL" ? "정올 제출 탭이 여러 개입니다. 하나만 남긴 뒤 다시 시도해 주세요." : `${platformInfo[platform()].guide} 탭을 하나만 남긴 뒤 다시 눌러 주세요.`;
@@ -120,9 +122,11 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       const where = state.failedProblemNumber ? `문제 #${state.failedProblemNumber}의 제출 이력 ${state.failurePage}페이지` : `문제 목록 ${state.failurePage}페이지`;
       return `${where}를 확인하지 못해 후보 찾기를 중단했습니다. 원본 사이트에서 해당 목록을 확인한 뒤 다시 시도해 주세요.`;
     }
+    if (state.status === "SCAN_INCOMPLETE" && state.failedProblemNumber)
+      return `문제 #${state.failedProblemNumber}까지 제출 이력을 연달아 읽지 못해 후보 찾기를 중단했습니다. 사이트 로그인 상태와 해당 문제 페이지를 확인한 뒤 다시 시도해 주세요.`;
     if (state.status === "SCAN_INCOMPLETE") return "목록이 끝까지 열리지 않았습니다. 원본 탭을 유지한 뒤 다시 시도해 주세요.";
     if (state.status === "FAILED") return "수집을 완료하지 못했습니다. 원본 탭 상태를 확인해 주세요.";
-    return state.status === "READY" ? `후보 목록을 확인했습니다.${unsupportedNotice}` : platformInfo[platform()].guide;
+    return state.status === "READY" ? `후보 목록을 확인했습니다.${unsupportedNotice}${unreadNotice}` : platformInfo[platform()].guide;
   }
   function clearCandidates() { reconciliationEpoch++; reconciliationBusy = false; reconciliation = null; if (reconciliationStatus) reconciliationStatus.textContent = ""; if (clearReconciliation) clearReconciliation.hidden = true; if (verifyExisting) verifyExisting.hidden = true; if (reconciliationHelp) reconciliationHelp.hidden = true; candidates = []; selected.clear(); readyForImport = false; candidatesPanel.hidden = true; list.replaceChildren(); }
   function formatElapsed(milliseconds: number) {

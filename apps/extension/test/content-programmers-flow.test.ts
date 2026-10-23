@@ -108,9 +108,10 @@ test("Programmers listing owns auxiliary envelopes and the only local store", as
     const withSql = await message({ type: "LOCAL_HISTORY_STATUS", platform: "PROGRAMMERS" }) as { status: string; unsupportedProblemNumbers?: string[] };
     assert.equal(withSql.status, "READY"); assert.deepEqual(withSql.unsupportedProblemNumbers, ["299310"]);
     assert.equal(calls.filter(call => (call as { type?: string }).type === "STORE_HISTORICAL_CAPTURE").length, storesBefore + 1);
+    // A lesson read under another account stops the scan as an ownership failure.
     sqlAccount = "111";
     await message({ type: "LOCAL_HISTORY_SCAN_START", platform: "PROGRAMMERS" });
     await new Promise(resolve => globals.setTimeout(resolve, 30));
-    assert.equal((await message({ type: "LOCAL_HISTORY_STATUS", platform: "PROGRAMMERS" }) as { status: string }).status, "SCAN_INCOMPLETE");
+    assert.equal((await message({ type: "LOCAL_HISTORY_STATUS", platform: "PROGRAMMERS" }) as { status: string }).status, "OWNERSHIP_UNVERIFIED");
   } finally { Object.assign(globalThis, globals); }
 });

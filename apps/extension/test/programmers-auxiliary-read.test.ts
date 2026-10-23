@@ -135,6 +135,11 @@ test("Programmers auxiliary waits for late history UI and returns an explicit em
     }
   });
   assert.equal(result.status, "READY");
+  // A signed-in lesson whose history panel never finishes rendering is a
+  // retryable read failure, not an ownership finding that stops an import.
+  const unrendered = lessonDocument();
+  unrendered.querySelector(".submission-history-wrapper")!.remove();
+  assert.deepEqual(await readProgrammersAuxiliaryLesson(unrendered, locationFor(), { lessonUrl, mode: "preview" }, { attempts: 2, sleep: async () => undefined }), { status: "HISTORY_INCOMPLETE" });
   const empty = lessonDocument({ rows: [] });
   empty.querySelectorAll("button").forEach(button => button.remove());
   empty.querySelector(".submission-history-wrapper")!.append("제출 이력이 없습니다");

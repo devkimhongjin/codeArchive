@@ -49,7 +49,7 @@ test("a Jungol scan opens the signed-in list in an inactive tab and closes it wh
     // No list is open: the extension opens one itself without focusing it.
     assert.equal((await command("LOCAL_HISTORY_SCAN_START")).status, "READY");
     assert.deepEqual(created, [{ url: "https://jungol.co.kr/", active: false }]);
-    const ownedTabId = (stored["codearchive-jungol-owned-history-tab"] as { tabId: number }).tabId;
+    const ownedTabId = (stored["codearchive-owned-history-tab"] as { tabId: number }).tabId;
     assert.equal(tabs.get(ownedTabId)?.url, "https://jungol.co.kr/account/152511/submission");
     assert.deepEqual(removed, [], "a READY scan keeps the list for the import");
 
@@ -59,7 +59,7 @@ test("a Jungol scan opens the signed-in list in an inactive tab and closes it wh
     importStatus = "DONE";
     assert.equal((await command("LOCAL_HISTORY_STATUS")).status, "DONE");
     assert.deepEqual(removed, [ownedTabId]);
-    assert.equal(stored["codearchive-jungol-owned-history-tab"], undefined);
+    assert.equal(stored["codearchive-owned-history-tab"], undefined);
 
     // A scan that finds nothing usable does not leave the hidden tab behind.
     scanStatus = "OWNERSHIP_UNVERIFIED";
