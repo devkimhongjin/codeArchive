@@ -1103,9 +1103,11 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
   chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
     const object = message !== null && typeof message === "object" ? message as Record<string, unknown> : null;
     if (object?.type === "PROGRAMMERS_AUXILIARY_READ") {
+      programmersAuxiliaryReads += 1;
       void readProgrammersAuxiliaryLesson(document, window.location, {
         lessonUrl: object.lessonUrl, mode: object.mode, submissionId: object.submissionId
-      }).then(sendResponse).catch(() => sendResponse({ status: "SOURCE_UNAVAILABLE" }));
+      }).then(sendResponse).catch(() => sendResponse({ status: "SOURCE_UNAVAILABLE" }))
+        .finally(() => { programmersAuxiliaryReads -= 1; });
       return true;
     }
     if (object?.type === "HISTORY_SCAN_START" || object?.type === "HISTORY_SCAN_STATUS") {
@@ -1199,6 +1201,15 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
   if (typeof chrome !== "undefined" && chrome.runtime?.id) startSiteSync(document, window.location);
 }
 
+let programmersAuxiliaryReads = 0;
+/** A history scan or import drives this page itself; site sync must not add work or hover rows meanwhile. */
+function historyTaskActive(): boolean {
+  return !!(jungolImportController?.isActive || jungolScan?.state.status === "SCANNING" ||
+    (jungolLocalTask && ["SCANNING", "IMPORTING", "CANCELLING"].includes(jungolLocalTask.state.status)) ||
+    sweaController?.isActive || sweaState.status === "SCANNING" ||
+    programmersLocalController?.isActive || programmersLocalState.status === "SCANNING" || programmersAuxiliaryReads > 0);
+}
+
 /** Mounts manual sync/commit controls on the user's own submission list, following SPA navigation. */
 function startSiteSync(document: Document, location: Location): void {
   const send: Send = message => chrome.runtime.sendMessage(message);
@@ -1213,8 +1224,11 @@ function startSiteSync(document: Document, location: Location): void {
     return null;
   };
   const check = () => {
-    const next = pageFor();
+    // Stand down while a history task runs here, and never start in a tab the
+    // user cannot see (the extension's own background history tab).
+    const next = historyTaskActive() ? null : pageFor();
     if (mounted && mounted.key === next?.key) return;
+    if (!mounted && next && document.visibilityState !== "visible") return;
     mounted?.handle.dispose(); mounted = null;
     if (next) mounted = { key: next.key, handle: mountSiteSync(document, next.page, send) };
   };
