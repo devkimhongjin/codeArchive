@@ -5,7 +5,7 @@ import { formatCaptureMemory, formatExecutionTime, formatSolutionTime } from './
 import { buildLabel, updatedLabel } from '../../../shared/buildMetadata';
 import type { GithubToggleRequest, GithubToggleResult } from './popupGithubAutomation';
 import type { PopupBatchAction, PopupBatchProgress } from './popupBatchProgress';
-type Preview = Omit<Capture, 'sourceCode'> & { githubCommitStatus?: GithubCommitStatus };
+type Preview = Omit<Capture, 'sourceCode'> & { githubCommitStatus?: GithubCommitStatus; githubUrl?: string };
 interface PopupServices {
   load: () => Promise<unknown>;
   /** Local settings only: no server round trip, so the switch is not held behind a cold API. */
@@ -17,7 +17,7 @@ interface PopupServices {
   copy: (text: string) => Promise<void>;
   copyCapture?: (captureId: string) => Promise<{ ok?: boolean; text?: string }>;
   downloadCapture?: (captureId: string) => Promise<{ ok?: boolean }>;
-  loadGithubStatuses?: (captureIds: string[]) => Promise<{ statuses?: Record<string, GithubCommitStatus> }>;
+  loadGithubStatuses?: (captureIds: string[]) => Promise<{ statuses?: Record<string, GithubCommitStatus>; links?: Record<string, string> }>;
   updateSettings?: (patch: Record<string, boolean>) => Promise<unknown>;
   updateGithubAutomation?: (request: GithubToggleRequest) => Promise<GithubToggleResult>;
   retryRelay?: () => Promise<unknown>;
@@ -44,19 +44,34 @@ function asSynced(value: unknown): value is Preview {
     typeof item.problemNumber === 'string' && typeof item.title === 'string' && typeof item.language === 'string' &&
     item.result === 'ACCEPTED' && item.syncState === 'SYNCED' && typeof item.observedAt === 'string' && !Number.isNaN(Date.parse(item.observedAt));
 }
+/** Opens the dashboard on this solution. */
+function dashboardSolutionUrl(captureId: string): string {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(captureId) ? `dashboard.html?capture=${captureId}` : 'dashboard.html';
+}
+function githubFileUrl(value: string | undefined): string | null {
+  if (!value) return null;
+  try { const url = new URL(value); return url.protocol === 'https:' && url.hostname === 'github.com' ? url.href : null; } catch { return null; }
+}
+function newTabLink(document: Document, className: string, href: string, text: string, label: string): HTMLAnchorElement {
+  const link = document.createElement('a'); link.className = className; link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer';
+  link.textContent = text; link.setAttribute('aria-label', label); return link;
+}
 function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement, captures: Preview[], services: PopupServices) {
   list.replaceChildren(); empty.hidden = captures.length !== 0;
   for (const capture of captures) {
     const item = document.createElement('article'); item.className = 'recent-item';
     const heading = document.createElement('div'); heading.className = 'recent-item-heading';
     const platform = document.createElement('span'); platform.className = 'platform-label'; platform.textContent = capture.platform;
-    const sync = document.createElement('span'); sync.className = 'sync-label'; sync.textContent = '동기화됨'; heading.append(platform, sync);
+    const dashboardUrl = dashboardSolutionUrl(capture.captureId);
+    const sync = newTabLink(document, 'sync-label', dashboardUrl, '동기화됨', `#${capture.problemNumber} 대시보드에서 보기`); heading.append(platform, sync);
     const commit = capture.githubCommitStatus;
     if (commit && ['NOT_REQUESTED', 'PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'UNKNOWN'].includes(commit)) {
-      const github = document.createElement('span'); github.className = `github-label github-${commit.toLowerCase()}`;
-      github.textContent = commit === 'SUCCEEDED' ? 'GitHub 완료' : commit === 'PENDING' ? '커밋 대기' : commit === 'RUNNING' ? '커밋 중' : commit === 'FAILED' ? '커밋 실패' : commit === 'UNKNOWN' ? '커밋 확인 필요' : '자동 커밋 안 함'; heading.append(github);
+      const text = commit === 'SUCCEEDED' ? 'GitHub 완료' : commit === 'PENDING' ? '커밋 대기' : commit === 'RUNNING' ? '커밋 중' : commit === 'FAILED' ? '커밋 실패' : commit === 'UNKNOWN' ? '커밋 확인 필요' : '자동 커밋 안 함';
+      const fileUrl = commit === 'SUCCEEDED' ? githubFileUrl(capture.githubUrl) : null;
+      const github = fileUrl ? newTabLink(document, '', fileUrl, text, `#${capture.problemNumber} GitHub에서 보기`) : document.createElement('span');
+      github.className = `github-label github-${commit.toLowerCase()}`; github.textContent = text; heading.append(github);
     }
-    const title = document.createElement('a'); title.className = 'recent-title'; title.href = 'dashboard.html'; title.target = '_blank'; title.rel = 'noopener noreferrer'; title.textContent = `#${capture.problemNumber} · ${capture.title}`;
+    const title = document.createElement('a'); title.className = 'recent-title'; title.href = dashboardUrl; title.target = '_blank'; title.rel = 'noopener noreferrer'; title.textContent = `#${capture.problemNumber} · ${capture.title}`;
     const meta = document.createElement('p'); meta.className = 'recent-meta'; meta.textContent = `${canonicalLanguageDisplayName(capture.language)} · 풀이 시간 ${formatSolutionTime(capture.solvedAt ?? capture.observedAt)}`;
     const performance = document.createElement('p'); performance.className = 'recent-performance'; performance.textContent = `실행 시간 ${formatExecutionTime(capture.executionTime)} · 메모리 ${formatCaptureMemory(capture)}`;
     item.append(heading, title, meta, performance);
@@ -167,6 +182,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
   batchCancel?.addEventListener('click', () => void batchAction('CANCEL'));
   document.querySelector<HTMLButtonElement>('#github-batch-dashboard')?.addEventListener('click', () => services.openDashboard?.('github'));
   let knownStatuses = new Map<string, GithubCommitStatus>();
+  let knownLinks = new Map<string, string>();
   let recentRenderKey: string | undefined;
   let visibleCaptures: Preview[] = [];
   let statusContext = '', statusEpoch = 0, statusInFlight = false, statusRefreshPending = false;
@@ -176,7 +192,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
     recentRenderKey = key;
     renderRecent(document, recentList, recentEmpty, captures, services);
   };
-  const showCurrentRecent = () => showRecent(visibleCaptures.map(capture => ({ ...capture, githubCommitStatus: knownStatuses.get(capture.captureId) })));
+  const showCurrentRecent = () => showRecent(visibleCaptures.map(capture => ({ ...capture, githubCommitStatus: knownStatuses.get(capture.captureId), githubUrl: knownLinks.get(capture.captureId) })));
   async function refreshStatuses(): Promise<void> {
     if (!services.loadGithubStatuses || !visibleCaptures.length || !localReady || githubBusy) return;
     if (statusInFlight) { statusRefreshPending = true; return; }
@@ -188,6 +204,8 @@ export function mountPopup(document: Document, services: PopupServices): void {
       for (const id of ids) {
         const status = response.statuses[id];
         if (typeof status === 'string' && ['NOT_REQUESTED', 'PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'UNKNOWN'].includes(status)) knownStatuses.set(id, status);
+        const link = response.links?.[id];
+        if (typeof link === 'string') knownLinks.set(id, link);
       }
       showCurrentRecent();
     } catch { /* Missing remote evidence retains the last confirmed display. */ }
@@ -234,7 +252,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
       if (!state?.settings || state.error) throw new Error('Invalid state');
       if (statusAccount !== state.settings.accountId) {
         batchEpoch++; if (batchCard && batchAccount !== state.settings.accountId) { batchCard.hidden = true; lastBatch = null; seenBatchKey = undefined; }
-        knownStatuses.clear(); statusAccount = state.settings.accountId;
+        knownStatuses.clear(); knownLinks.clear(); statusAccount = state.settings.accountId;
         void refreshBatch();
       }
       const seen = new Set<string>();
@@ -245,6 +263,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
         const status = knownStatuses.get(capture.captureId) ?? capture.githubCommitStatus;
         return status ? [[capture.captureId, status] as const] : [];
       }));
+      knownLinks = new Map([...knownLinks].filter(([captureId]) => knownStatuses.has(captureId)));
       visibleCaptures = captures;
       const nextStatusContext = JSON.stringify([state.settings.accountId, state.settings.accountSettingsVersion, captures.map(capture => capture.captureId)]);
       if (nextStatusContext !== statusContext) { statusContext = nextStatusContext; statusEpoch++; }

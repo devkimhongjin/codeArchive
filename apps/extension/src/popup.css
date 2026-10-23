@@ -82,8 +82,9 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .recent-item { padding: 12px; background: var(--surface-muted); border: 1px solid var(--line-soft); border-radius: var(--radius-md); }
 .recent-item-heading { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .platform-label { color: var(--purple); font: 700 var(--text-2xs) var(--mono); letter-spacing: .04em; }
-.sync-label { margin-left: auto; color: var(--text-subtle); font-size: var(--text-2xs); }
-.popup .github-label { padding: 2px 7px; color: var(--text-secondary); background: var(--line-soft); border-radius: var(--radius-pill); font-size: var(--text-2xs); font-weight: 600; white-space: nowrap; }
+.sync-label { margin-left: auto; color: var(--text-subtle); font-size: var(--text-2xs); text-decoration: none; }
+a.sync-label:hover, a.github-label:hover { text-decoration: underline; }
+.popup .github-label { padding: 2px 7px; text-decoration: none; color: var(--text-secondary); background: var(--line-soft); border-radius: var(--radius-pill); font-size: var(--text-2xs); font-weight: 600; white-space: nowrap; }
 .popup .github-succeeded { color: var(--success); background: var(--success-soft); }
 .popup .github-pending, .popup .github-running { color: var(--purple-ink); background: var(--purple-soft); }
 .popup .github-failed, .popup .github-unknown { color: var(--danger); background: var(--danger-soft); }

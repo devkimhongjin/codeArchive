@@ -600,8 +600,8 @@ export default function App() {
     window.addEventListener('popstate', restoreRoute)
     return () => window.removeEventListener('popstate', restoreRoute)
   }, [])
-  const returnToArchive = (platform: Solution['platform'], problemNumber: string) => {
-    const own = solutions.find(solution => solution.platform === platform && solution.problemNumber === problemNumber)
+  const returnToArchive = (platform: Solution['platform'], problemNumber: string, captureId?: string) => {
+    const own = solutions.find(solution => captureId ? solution.captureId === captureId : solution.platform === platform && solution.problemNumber === problemNumber)
     setQuery('')
     setPlatformFilter('ALL')
     setLanguageFilter('ALL')
@@ -609,8 +609,22 @@ export default function App() {
     const groupIndex = groups.findIndex(group => group.platform === platform && group.problemNumber === problemNumber)
     setSolutionPage(groupIndex < 0 ? 1 : Math.floor(groupIndex / ARCHIVE_PAGE_SIZE) + 1)
     if (own) setSelectedId(own.captureId)
-    changeView('solutions')
+    if (view !== 'solutions') changeView('solutions')
+    else setMobileNavOpen(false)
   }
+
+  // The extension popup opens dashboard.html?capture=<id> to show one solution.
+  const focusCapture = useRef(new URLSearchParams(window.location.search).get('capture'))
+  useEffect(() => {
+    const captureId = focusCapture.current
+    if (!captureId || !solutions.length) return
+    focusCapture.current = null
+    const url = new URL(window.location.href)
+    url.searchParams.delete('capture')
+    window.history.replaceState(window.history.state, document.title, `${url.pathname}${url.search}${url.hash}`)
+    const target = solutions.find(solution => solution.captureId === captureId)
+    if (target) returnToArchive(target.platform, target.problemNumber, target.captureId)
+  }, [solutions])
 
   const refreshPendingCount = async (
     capability = bridgeCapabilityRef.current,

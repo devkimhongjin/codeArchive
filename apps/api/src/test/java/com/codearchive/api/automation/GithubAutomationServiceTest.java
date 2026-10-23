@@ -139,6 +139,27 @@ class GithubAutomationServiceTest {
     verify(jobs,times(3)).findByIdForClaim(11L); verify(provider,times(1)).createOnly(eq(current),eq(capture),any()); assertThat(job.getState()).isEqualTo(CommitJobState.SUCCEEDED);
   }
 
+  @Test void aConfirmedCommitKeepsTheGithubPageOfTheFileItWrote() throws Exception {
+    GithubCommitJobRepository jobs=mock(GithubCommitJobRepository.class); UserSettingsRepository settingsRepo=mock(UserSettingsRepository.class); SolutionRepository solutions=mock(SolutionRepository.class); GithubProvider provider=mock(GithubProvider.class);
+    AppUser user=AppUser.fromGithub("1","owner","Owner",null); set(user,"id",1L); UserSettings current=settings(user,1,Instant.EPOCH); Solution capture=solution(user,"capture",Instant.now()); GithubCommitJob job=new GithubCommitJob(user,"capture",1); set(job,"id",13L);
+    when(jobs.findByIdForClaim(13L)).thenReturn(Optional.of(job)); when(jobs.findById(13L)).thenReturn(Optional.of(job)); when(settingsRepo.findByUserId(1L)).thenReturn(Optional.of(current)); when(solutions.findByUserIdAndCaptureId(1L,"capture")).thenReturn(Optional.of(capture));
+    when(provider.createOnly(eq(current),eq(capture),any())).thenReturn(GithubProvider.Result.succeededAt("SWEA/1 T/풀이 1.java"));
+    GithubAutomationService service=new GithubAutomationService(jobs,settingsRepo,solutions,provider); service.process(13L);
+    assertThat(job.getGithubUrl()).isEqualTo("https://github.com/owner/repo/blob/main/SWEA/1%20T/%ED%92%80%EC%9D%B4%201.java");
+
+    // A commit from before pages were kept points where the current target holds it; unfinished jobs have no page.
+    GithubCommitJob older=new GithubCommitJob(user,"older",1); older.terminal(CommitJobState.SUCCEEDED); GithubCommitJob pending=new GithubCommitJob(user,"pending",1);
+    Solution olderSolution=solution(user,"older",Instant.now());
+    when(jobs.findByUserIdAndCaptureIdIn(1L,List.of("capture","older","pending"))).thenReturn(List.of(job,older,pending));
+    when(solutions.findByUserIdAndCaptureId(1L,"older")).thenReturn(Optional.of(olderSolution));
+    when(provider.solutionUrl(current,olderSolution)).thenReturn("https://github.com/owner/repo/blob/main/older.java");
+    assertThat(service.githubUrls(user,List.of("capture","older","pending"))).containsExactly(
+      org.assertj.core.api.Assertions.entry("capture","https://github.com/owner/repo/blob/main/SWEA/1%20T/%ED%92%80%EC%9D%B4%201.java"),
+      org.assertj.core.api.Assertions.entry("older","https://github.com/owner/repo/blob/main/older.java"));
+    assertThat(GithubProvider.blobUrl("owner","repo","feature/x","a.java")).isEqualTo("https://github.com/owner/repo/blob/feature/x/a.java");
+    assertThat(GithubProvider.blobUrl("owner","repo","main"," ")).isNull();
+  }
+
   @Test void finalWriteGuardRechecksSettingsAfterTheDurableClaim() throws Exception {
     GithubCommitJobRepository jobs=mock(GithubCommitJobRepository.class); UserSettingsRepository settingsRepo=mock(UserSettingsRepository.class); SolutionRepository solutions=mock(SolutionRepository.class); GithubProvider provider=mock(GithubProvider.class);
     AppUser user=AppUser.fromGithub("1","owner","Owner",null); set(user,"id",1L); UserSettings claimed=settings(user,1,Instant.EPOCH); UserSettings changed=settings(user,2,Instant.EPOCH); Solution capture=solution(user,"capture",Instant.now()); GithubCommitJob job=new GithubCommitJob(user,"capture",1); set(job,"id",12L);

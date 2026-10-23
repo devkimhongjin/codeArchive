@@ -96,6 +96,23 @@ public class GithubAutomationService {
         return result;
     }
 
+    /**
+     * github.com pages of committed solutions. A commit made before the page
+     * was recorded points to where the current target would hold the file.
+     */
+    public Map<String, String> githubUrls(AppUser user, List<String> captureIds) {
+        Map<String, String> result = new LinkedHashMap<>();
+        UserSettings current = settings.findByUserId(user.getId()).orElse(null);
+        for (GithubCommitJob job : jobs.findByUserIdAndCaptureIdIn(user.getId(), captureIds)) {
+            if (job.getState() != CommitJobState.SUCCEEDED) continue;
+            String url = job.getGithubUrl();
+            if (url == null && current != null && current.githubTargetConfigured())
+                url = solutions.findByUserIdAndCaptureId(user.getId(), job.getCaptureId()).map(solution -> provider.solutionUrl(current, solution)).orElse(null);
+            if (url != null) result.put(job.getCaptureId(), url);
+        }
+        return result;
+    }
+
     @Transactional
     public Map<String, CommitJobState> requestManualHistorical(List<Solution> selected, long settingsVersion,
             long installationId, String owner, String repository, String branch) {
@@ -211,10 +228,13 @@ public class GithubAutomationService {
             outcome = GithubProvider.Result.unknown(GithubProvider.Diagnostic.PROVIDER_EXCEPTION);
         }
         GithubProvider.Result finalOutcome = outcome;
-        return inTransaction(() -> complete(id, finalOutcome));
+        // The page of the file as written, kept so a later target change does not move the link.
+        String githubUrl = outcome.outcome() == GithubProvider.Outcome.SUCCEEDED && outcome.path() != null
+                ? GithubProvider.blobUrl(claim.settings().getGithubOwner(), claim.settings().getGithubRepository(), claim.settings().getGithubBranch(), outcome.path()) : null;
+        return inTransaction(() -> complete(id, finalOutcome, githubUrl));
     }
 
-    private ProcessResult complete(Long id, GithubProvider.Result outcome) {
+    private ProcessResult complete(Long id, GithubProvider.Result outcome, String githubUrl) {
         GithubCommitJob job = jobs.findByIdForClaim(id).orElse(null);
         if (job == null || job.getState() != CommitJobState.RUNNING) {
             return ProcessResult.IGNORED;
@@ -222,7 +242,7 @@ public class GithubAutomationService {
         ProcessResult result = ProcessResult.COMPLETED;
         job.recordDiagnostic(outcome.diagnostic()); // Never persist provider details or response bodies.
         switch (outcome.outcome()) {
-            case SUCCEEDED -> job.terminal(CommitJobState.SUCCEEDED);
+            case SUCCEEDED -> { job.terminal(CommitJobState.SUCCEEDED); job.recordGithubUrl(githubUrl); }
             case UNKNOWN -> job.terminal(CommitJobState.UNKNOWN);
             case FAILED -> job.terminal(CommitJobState.FAILED);
             case RETRYABLE -> {
