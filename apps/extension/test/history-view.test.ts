@@ -178,6 +178,14 @@ test("scan errors retain their problem/page context and unsupported SQL is not p
   const readySql = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { status: "READY", candidates: [], unsupportedProblemNumbers: ["299310"] });
   await tick(); await tick();
   assert.match(readySql.document.querySelector("#status")!.textContent!, /제출 이력을 제공하지 않는 SQL 문제 1건은 수집 대상에서 제외/);
+  // Lessons left out after a retry are named, not reported as a list that did not open.
+  const readyUnread = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } :
+    { status: "READY", candidates: [], unreadProblemNumbers: ["1", "2", "3", "4", "5", "6", "7"] });
+  await tick(); await tick();
+  assert.match(readyUnread.document.querySelector("#status")!.textContent!, /제출 이력을 읽지 못한 문제 7건\(#1, #2, #3, #4, #5 외 2건\)은 이번 후보에서 빠졌습니다/);
+  const stopped = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { status: "SCAN_INCOMPLETE", failedProblemNumber: "42576" });
+  await tick(); await tick();
+  assert.match(stopped.document.querySelector("#status")!.textContent!, /문제 #42576까지 제출 이력을 연달아 읽지 못해 후보 찾기를 중단했습니다/);
 });
 
 test("late platform results are ignored after a switch and switching back reloads safely", async () => {

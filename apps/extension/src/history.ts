@@ -17,7 +17,7 @@ type State = { status: string; candidates?: Candidate[]; truncated?: boolean; pr
   storedSubmissionIds?: string[];
   serverAccount?: string; serverRunId?: string;
   skipped?: number; failedSubmissionIds?: string[]; verificationFailures?: Record<string, number>;
-  problemCount?: number; submissionCount?: number; unsupportedProblemNumbers?: string[] };
+  problemCount?: number; submissionCount?: number; unsupportedProblemNumbers?: string[]; unreadProblemNumbers?: string[] };
 export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
   schedule?: (work: () => void, delay: number) => unknown; now?: () => number;
   readTiming?: () => Promise<unknown>; openSite?: (url: string) => Promise<unknown>;
@@ -86,6 +86,8 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   function label(state: State) {
     const unsupportedNotice = state.unsupportedProblemNumbers?.length
       ? ` 제출 이력을 제공하지 않는 SQL 문제 ${state.unsupportedProblemNumbers.length}건은 수집 대상에서 제외했습니다.` : "";
+    const unread = state.unreadProblemNumbers ?? [];
+    const unreadNotice = unread.length ? ` 제출 이력을 읽지 못한 문제 ${unread.length}건(${unread.slice(0, 5).map(number => `#${number}`).join(", ")}${unread.length > 5 ? ` 외 ${unread.length - 5}건` : ""})은 이번 후보에서 빠졌습니다. 후보 찾기를 다시 누르면 다시 읽습니다.` : "";
     if (state.status === "SCANNING") return "목록을 확인하고 있어요.";
     if (state.status === "IMPORTING") return `${serverMode ? '원본 확인 · 서버 등록 중' : '로컬 저장 중'} ${state.completed ?? 0}/${state.total ?? 0}건`;
     if (state.status === "CANCELLING") return `현재 제출 처리를 마무리하는 중입니다. ${state.completed ?? 0}/${state.total ?? 0}건 처리했습니다.`;
@@ -98,7 +100,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
         .map(([reason, count]) => `${reasons[reason]} ${count}건`).join(" · ");
       return `${problems}제출 ${submissions}건 · 새로 저장 ${state.saved ?? 0}건 · 이미 저장됨 ${state.duplicate ?? 0}건${failures}${details ? ` · ${details}` : ""}`;
     };
-    if (state.status === "DONE") return serverMode ? `원본 확인 완료 · ${resultSummary().replace('새로 저장', '확인 완료').replace('이미 저장됨', '재확인')} ${unsupportedNotice}` : `로컬 저장 완료 · ${resultSummary()}${unsupportedNotice}`;
+    if (state.status === "DONE") return serverMode ? `원본 확인 완료 · ${resultSummary().replace('새로 저장', '확인 완료').replace('이미 저장됨', '재확인')} ${unsupportedNotice}${unreadNotice}` : `로컬 저장 완료 · ${resultSummary()}${unsupportedNotice}${unreadNotice}`;
     if (state.status === "INTERRUPTED" && (state.completed ?? 0) > 0) return `수집이 중단되었습니다. 현재까지 ${resultSummary()}`;
     const failureLabels: Record<string, string> = {
       LIST_CHANGED: "제출 목록이 바뀌었습니다. 후보 찾기를 다시 실행해 주세요.",
@@ -120,9 +122,11 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       const where = state.failedProblemNumber ? `문제 #${state.failedProblemNumber}의 제출 이력 ${state.failurePage}페이지` : `문제 목록 ${state.failurePage}페이지`;
       return `${where}를 확인하지 못해 후보 찾기를 중단했습니다. 원본 사이트에서 해당 목록을 확인한 뒤 다시 시도해 주세요.`;
     }
+    if (state.status === "SCAN_INCOMPLETE" && state.failedProblemNumber)
+      return `문제 #${state.failedProblemNumber}까지 제출 이력을 연달아 읽지 못해 후보 찾기를 중단했습니다. 사이트 로그인 상태와 해당 문제 페이지를 확인한 뒤 다시 시도해 주세요.`;
     if (state.status === "SCAN_INCOMPLETE") return "목록이 끝까지 열리지 않았습니다. 원본 탭을 유지한 뒤 다시 시도해 주세요.";
     if (state.status === "FAILED") return "수집을 완료하지 못했습니다. 원본 탭 상태를 확인해 주세요.";
-    return state.status === "READY" ? `후보 목록을 확인했습니다.${unsupportedNotice}` : platformInfo[platform()].guide;
+    return state.status === "READY" ? `후보 목록을 확인했습니다.${unsupportedNotice}${unreadNotice}` : platformInfo[platform()].guide;
   }
   function clearCandidates() { reconciliationEpoch++; reconciliationBusy = false; reconciliation = null; if (reconciliationStatus) reconciliationStatus.textContent = ""; if (clearReconciliation) clearReconciliation.hidden = true; if (verifyExisting) verifyExisting.hidden = true; if (reconciliationHelp) reconciliationHelp.hidden = true; candidates = []; selected.clear(); readyForImport = false; candidatesPanel.hidden = true; list.replaceChildren(); }
   function formatElapsed(milliseconds: number) {
