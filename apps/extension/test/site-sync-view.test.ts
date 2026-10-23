@@ -99,3 +99,22 @@ test('Jungol rows read their exact time from the hover tooltip so a live capture
     handle.dispose();
   } finally { globalThis.MutationObserver = previous; }
 });
+
+test('returning to the list reads the server state again for submissions made in another window', async () => {
+  const { document, location } = fixture(row('2001'));
+  let registered = false, statusReads = 0;
+  const send = async (message: unknown) => {
+    if ((message as { type: string }).type !== 'SITE_SYNC_STATUS') return { ok: false };
+    statusReads++;
+    return { ok: true, githubReady: true, problems: [], rows: [registered ? { submissionId: '2001', state: 'REGISTERED', captureId, commit: 'SUCCEEDED' } : { submissionId: '2001', state: 'UNREGISTERED' }] };
+  };
+  const handle = mountSiteSync(document, jungolSyncPage(document, location, send), send);
+  await tick();
+  assert.equal(controls(document, '2001').state, '미등록');
+  registered = true;
+  document.defaultView!.dispatchEvent(new (document.defaultView!.Event)('focus'));
+  await tick();
+  assert.equal(statusReads, 2);
+  assert.equal(controls(document, '2001').state, '커밋 완료');
+  handle.dispose();
+});

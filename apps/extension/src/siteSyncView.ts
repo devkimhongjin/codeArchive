@@ -143,11 +143,22 @@ export function mountSiteSync(document: Document, page: SiteSyncPage, send: Send
     clearTimeout(scanTimer); scanTimer = setTimeout(scan, 400);
   });
   observer.observe(document.body ?? document.documentElement, { childList: true, subtree: true });
+  // A submission made in another window is registered while this list stays
+  // open; read the server state again when the user comes back to it.
+  const win = document.defaultView;
+  let lastFocusRefresh = 0;
+  const onReturn = () => {
+    if (disposed || busy || document.visibilityState === 'hidden' || Date.now() - lastFocusRefresh < 3_000) return;
+    lastFocusRefresh = Date.now(); void refresh();
+  };
+  document.addEventListener('visibilitychange', onReturn);
+  win?.addEventListener('focus', onReturn);
   scan();
   return {
     refresh,
     dispose() {
       disposed = true; observer.disconnect(); clearTimeout(scanTimer);
+      document.removeEventListener('visibilitychange', onReturn); win?.removeEventListener('focus', onReturn);
       document.querySelectorAll('.codearchive-sync-host').forEach(node => node.remove());
     }
   };
