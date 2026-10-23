@@ -8,8 +8,8 @@ export type SiteSyncTarget = {
   row?: SiteSyncRowKey;
   sync(): Promise<SyncOutcome>;
 };
-/** prepare: optional async enrichment of row keys (e.g. exact times) before a status read. */
-export type SiteSyncPage = { platform: Platform; targets(): SiteSyncTarget[]; prepare?(): Promise<void> };
+/** refine: optional async enrichment (e.g. exact times) of the given unregistered rows; true when any key changed. */
+export type SiteSyncPage = { platform: Platform; targets(): SiteSyncTarget[]; refine?(submissionIds: string[]): Promise<boolean> };
 export type Send = (message: unknown) => Promise<unknown>;
 
 // Controls live in a shadow root: site parsers (including ours) read cell text,
@@ -88,9 +88,18 @@ export function mountSiteSync(document: Document, page: SiteSyncPage, send: Send
   const current = () => page.targets();
   function renderAll() { if (!disposed) for (const target of current()) render(target); }
 
+  // Show the server state at once; then refine only unregistered rows (e.g.
+  // read exact times to match live captures) and ask again if a key changed.
   async function refresh() {
-    try { await page.prepare?.(); } catch { /* Status still reads the keys it has. */ }
-    if (disposed) return;
+    await readStatus();
+    if (disposed || !page.refine || statusError) return;
+    const unregistered = [...rows.values()].filter(row => row.state === 'UNREGISTERED').map(row => row.submissionId);
+    let changed = false;
+    try { changed = unregistered.length > 0 && await page.refine(unregistered); } catch { /* Keep the first answer. */ }
+    if (changed && !disposed) await readStatus();
+  }
+
+  async function readStatus() {
     const targets = current();
     const keys = targets.flatMap(target => target.row ? [target.row] : []);
     const problemNumbers = targets.filter(target => !target.row).map(target => target.problemNumber);

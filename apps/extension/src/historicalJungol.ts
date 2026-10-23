@@ -524,7 +524,7 @@ export async function readJungolRowSubmittedAt(document: Document, row: HTMLElem
   const trigger = row.querySelector<HTMLElement>('td[data-col="시각"] .time')?.closest<HTMLElement>('[role="button"]');
   if (!trigger) return null;
   trigger.dispatchEvent(pointerEvent(document, "mouseenter"));
-  const text = await waitFor(document, () => trigger.querySelector('.paper .content')?.textContent?.trim() || null, 1_500);
+  const text = await waitFor(document, () => trigger.querySelector('.paper .content')?.textContent?.trim() || null, 1_000);
   trigger.dispatchEvent(pointerEvent(document, "mouseleave"));
   return text ? parseJungolKstTimestamp(text) : null;
 }

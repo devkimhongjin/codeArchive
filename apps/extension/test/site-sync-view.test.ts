@@ -88,12 +88,13 @@ test('Jungol rows read their exact time from the hover tooltip so a live capture
   }, 5));
   trigger.addEventListener('mouseleave', () => { trigger.setAttribute('aria-expanded', 'false'); trigger.querySelector('.paper')?.remove(); });
   const sent: Array<{ type: string; rows?: Array<{ submissionId: string; solvedAt?: string }> }> = [];
-  const send = async (message: unknown) => { sent.push(message as typeof sent[number]); return { ok: true, githubReady: true, problems: [], rows: [] }; };
+  const send = async (message: unknown) => { sent.push(message as typeof sent[number]); return { ok: true, githubReady: true, problems: [], rows: [{ submissionId: '2001', state: 'UNREGISTERED' }] }; };
   const previous = globalThis.MutationObserver; globalThis.MutationObserver = document.defaultView!.MutationObserver;
   try {
     const handle = mountSiteSync(document, jungolSyncPage(document, location, send), send);
     await tick(200);
-    assert.equal(sent[0]!.rows![0]!.solvedAt, '2026-10-20T06:12:05.000Z');
+    assert.equal(sent[0]!.rows![0]!.solvedAt, undefined, 'the first answer is shown without waiting for tooltips');
+    assert.equal(sent[1]!.rows![0]!.solvedAt, '2026-10-20T06:12:05.000Z', 'an unregistered row is asked again with its exact time');
     assert.equal(clicks, 0, 'reading the time never clicks the row');
     assert.equal(trigger.getAttribute('aria-expanded'), 'false', 'the tooltip is closed again');
     handle.dispose();

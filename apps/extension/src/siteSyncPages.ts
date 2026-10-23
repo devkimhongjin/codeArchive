@@ -16,7 +16,7 @@ export function jungolSyncPage(document: Document, location: Location, send: Sen
   // Exact submission times let a row match a live capture, which carries no
   // site submission id. Read each once; a failed read is not retried in a loop.
   const times = new Map<string, string>(), attempted = new Set<string>();
-  let preparing: Promise<void> | null = null;
+  let refining: Promise<boolean> | null = null;
   const candidates = () => {
     if (!isJungolHistorySenderUrl(new URL(location.href))) return [];
     const preview = previewJungolHistory(document, location);
@@ -24,17 +24,22 @@ export function jungolSyncPage(document: Document, location: Location, send: Sen
   };
   return {
     platform: 'JUNGOL',
-    prepare() {
-      preparing ??= (async () => {
-        for (const candidate of candidates()) {
-          if (attempted.has(candidate.submissionId)) continue;
-          attempted.add(candidate.submissionId);
-          const row = jungolHistoryRow(document, location, candidate.submissionId);
-          const solvedAt = row ? await readJungolRowSubmittedAt(document, row) : null;
-          if (solvedAt) times.set(candidate.submissionId, solvedAt);
+    refine(submissionIds) {
+      refining ??= (async () => {
+        const pending = candidates().filter(candidate => submissionIds.includes(candidate.submissionId) && !attempted.has(candidate.submissionId));
+        let changed = false;
+        // A few tooltips at a time: each row waits briefly, never the whole list in turn.
+        for (let index = 0; index < pending.length; index += 3) {
+          await Promise.all(pending.slice(index, index + 3).map(async candidate => {
+            attempted.add(candidate.submissionId);
+            const row = jungolHistoryRow(document, location, candidate.submissionId);
+            const solvedAt = row ? await readJungolRowSubmittedAt(document, row) : null;
+            if (solvedAt) { times.set(candidate.submissionId, solvedAt); changed = true; }
+          }));
         }
-      })().finally(() => { preparing = null; });
-      return preparing;
+        return changed;
+      })().finally(() => { refining = null; });
+      return refining;
     },
     targets() {
       if (!isJungolHistorySenderUrl(new URL(location.href))) return [];
