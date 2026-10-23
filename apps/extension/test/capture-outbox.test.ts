@@ -222,3 +222,39 @@ for (const mode of ['memory', 'indexeddb'] as const) {
     assert.equal(await store.countQueuedCaptures('1'), 0);
   });
 }
+
+test('a capture the server rejects no longer blocks later ones; a manual sync retries it and reports why', async () => {
+  const store = await memory();
+  const bad = { ...capture, captureId: '00000000-0000-4000-8000-0000000000aa', observedAt: '2026-10-14T00:00:00.000Z' };
+  const good = { ...capture, captureId: '00000000-0000-4000-8000-0000000000bb', observedAt: '2026-10-14T00:00:01.000Z' };
+  await store.enqueueCapture(bad, '1'); await store.enqueueCapture(good, '1');
+  const posted: string[] = [];
+  const server = async (_url: RequestInfo | URL, init?: RequestInit) => {
+    const id = JSON.parse(String(init!.body)).captureId as string; posted.push(id);
+    return id === bad.captureId ? new Response(JSON.stringify({ message: 'languageKey does not match language' }), { status: 400 }) : receipt(id);
+  };
+  const first = await drainCaptureOutbox(store, ready, server);
+  assert.deepEqual(first, { status: 'DONE', sent: 1, rejected: 1, remaining: 1, rejection: 'languageKey does not match language' });
+  assert.deepEqual(posted, [bad.captureId, good.captureId], 'the later capture is sent after the rejected one');
+  assert.equal((await store.getSettings()).relay?.status, 'CONFIRMED', 'a content rejection is not a connection failure');
+
+  posted.length = 0;
+  assert.deepEqual(await drainCaptureOutbox(store, ready, server), { status: 'IDLE', sent: 0, rejected: 0, remaining: 1 });
+  assert.deepEqual(posted, [], 'automatic replay skips a rejected capture');
+
+  const manual = await drainCaptureOutbox(store, ready, server, { manual: true });
+  assert.deepEqual(posted, [bad.captureId], 'a manual sync retries it');
+  assert.equal(manual.rejected, 1); assert.equal(manual.remaining, 1);
+  assert.equal((await store.listQueuedCaptures('1', 10, { includeRejected: true }))[0]!.capture.sourceCode, bad.sourceCode, 'the rejected submission is kept, never dropped');
+});
+
+test('connection failures stop the queue and say why, without marking anything rejected', async () => {
+  for (const [status, expected] of [[500, 'RELAY_ERROR'], [429, 'RELAY_ERROR']] as const) {
+    const store = await memory(); await store.enqueueCapture(capture, '1');
+    const summary = await drainCaptureOutbox(store, ready, async () => new Response('', { status }));
+    assert.deepEqual(summary, { status: 'STOPPED', sent: 0, rejected: 0, remaining: 1, error: expected });
+    assert.equal((await store.listQueuedCaptures('1')).length, 1, 'still eligible for automatic replay');
+  }
+  const store = await memory(); await store.enqueueCapture(capture, '1');
+  assert.deepEqual(await drainCaptureOutbox(store, async () => ({ status: 'RECONNECT_REQUIRED' })), { status: 'RECONNECT_REQUIRED', sent: 0, rejected: 0, remaining: 1 });
+});

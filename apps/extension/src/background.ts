@@ -21,7 +21,7 @@ import { isHistoricalSubmissionId } from "./historicalIdentity";
 import { historyPlatformForUrl, isLocalHistoryPageSender, mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
 import { requestLocalHistoryMessage } from "./localHistoryConnection";
 import { loadPopupServerState } from './serverCapture';
-import { drainCaptureOutbox, retainCaptureForRetry } from './captureOutbox';
+import { drainCaptureOutbox, retainCaptureForRetry, type DrainSummary } from './captureOutbox';
 import { registerHistoricalOnServer } from './cloudClient';
 import { restoreCaptureSession } from './captureConnection';
 import { actOnPopupBatch, loadPopupBatchProgress } from './popupBatchProgress';
@@ -274,14 +274,27 @@ async function finishSelfRevocation(settings: Awaited<ReturnType<typeof store.ge
   if (result === "ACK") await store.mutateRelayIfCurrent(relay, current => ({ ...current, relay: undefined }));
 }
 
-async function drainRelay(): Promise<void> {
+async function drainRelay(manual = false): Promise<DrainSummary> {
   let settings = await store.getSettings();
   if (await migrateLegacyRelayEndpoint(store, settings)) settings = await store.getSettings();
   if (settings.relay?.status === "REVOCATION_PENDING") {
     await finishSelfRevocation(settings);
-    return;
+    return { status: 'RECONNECT_REQUIRED', sent: 0, rejected: 0, remaining: 0 };
   }
-  await drainCaptureOutbox(store, restoreConnection);
+  return drainCaptureOutbox(store, restoreConnection, fetch, { manual });
+}
+
+/** The popup's manual sync waits for any automatic run, then retries every queued item once. */
+async function syncPendingNow(): Promise<DrainSummary> {
+  await relayDrainPromise?.catch(() => undefined);
+  const run = drainRelay(true);
+  // An automatic request made meanwhile only sets relayDrainRequested; run it after.
+  relayDrainPromise = run.then(() => undefined, () => undefined).finally(() => {
+    if (relayDrainPromise === tracked) relayDrainPromise = null;
+    if (relayDrainRequested) void requestRelayDrain();
+  });
+  const tracked = relayDrainPromise;
+  return run;
 }
 
 let relayDrainPromise: Promise<void> | null = null;
@@ -293,7 +306,7 @@ function requestRelayDrain(): Promise<void> {
     relayDrainPromise = (async () => {
       do {
         relayDrainRequested = false;
-        await drainRelay();
+        await drainRelay(false);
       } while (relayDrainRequested);
     })()
       .catch(() => undefined)
@@ -321,6 +334,7 @@ type InternalMessage =
   | { type: 'POPUP_GITHUB_BATCH_ACTION'; action?: unknown; taskId?: unknown; accountId?: unknown }
   | { type: "SET_GITHUB_AUTOMATION"; enabled: boolean; accountId: string; settingsVersion: number }
   | { type: "RETRY_RELAY" }
+  | { type: "SYNC_PENDING_NOW" }
   | { type: "GET_GITHUB_COMMIT_STATUSES"; captureIds: unknown }
   | { type: "COPY_RECENT_CAPTURE"; captureId: string }
   | { type: "DOWNLOAD_RECENT_CAPTURE"; captureId: string }
@@ -795,6 +809,13 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       if (object.type === 'GET_GITHUB_BATCH') void githubBatchRunner.resume();
       return { task: await githubBatchRunner.get(account) };
     })().then(sendResponse).catch(error => sendResponse({ error: error instanceof Error ? error.message : '일괄 커밋을 확인하지 못했습니다.' }));
+    return true;
+  }
+
+  if (object.type === "SYNC_PENDING_NOW") {
+    if (!isPopupSender(sender)) { sendResponse({ ok: false, error: "UNAUTHORIZED" }); return false; }
+    void syncPendingNow().then(summary => sendResponse({ ok: true, summary }))
+      .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;
   }
 

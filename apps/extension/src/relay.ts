@@ -2,7 +2,8 @@ import type { Capture, CaptureSettings } from "./types";
 import type { CaptureStore } from "./storage";
 import { LEGACY_DASHBOARD_ORIGIN, LEGACY_RELAY_ORIGINS, PUBLIC_API_ORIGIN } from '../../../shared/publicApiOrigin';
 
-export type RelayAttemptResult = "ACK" | "OFFLINE" | "AUTH_EXPIRED" | "RELAY_ERROR" | "DISABLED";
+/** REJECTED: the server refused this capture's content (4xx). The connection itself is fine. */
+export type RelayAttemptResult = "ACK" | "OFFLINE" | "AUTH_EXPIRED" | "RELAY_ERROR" | "DISABLED" | "REJECTED";
 export type GithubCommitStatus = "NOT_REQUESTED" | "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "UNKNOWN";
 export const RELAY_REQUEST_TIMEOUT_MS = 8_000;
 
@@ -73,6 +74,7 @@ export async function relayCapture(
     const { syncAccountId: _deviceOwner, ...payload } = capture;
     const response = await fetchWithTimeout(fetcher, endpoint, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${relay.secret}` }, body: JSON.stringify(payload) }, timeoutMs);
     if (response.status === 401) return "AUTH_EXPIRED";
+    if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) return "REJECTED";
     return response.ok ? "ACK" : "RELAY_ERROR";
   } catch { return "OFFLINE"; }
 }
@@ -136,7 +138,7 @@ export async function recordRelayAttempt(store: Pick<CaptureStore, "mutateRelayI
   if (result === "DISABLED") return;
   const relay = settings.relay;
   if (!relay) return;
-  const status = result === "ACK" ? "CONFIRMED" : result;
+  const status = result === "ACK" || result === "REJECTED" ? "CONFIRMED" : result;
   await store.mutateRelayIfCurrent(relay, current => ({ ...current, relay: { ...relay, status } }));
 }
 
