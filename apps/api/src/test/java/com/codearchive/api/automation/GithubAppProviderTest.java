@@ -44,6 +44,10 @@ class GithubAppProviderTest {
   @Test void successUsesFreshHeadCreateOnlySequenceAndNonForceRef() throws Exception {
     GithubProvider.Result result=provider().createOnly(settings(),solution());
     assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    // The success names the path the new tree wrote, which is also where the target would hold it.
+    assertThat(result.path()).isNotBlank();
+    assertThat(requests).filteredOn(request->request.path().endsWith("/git/trees")).singleElement().extracting(Request::body).asString().contains("\"path\":\""+result.path()+"\"");
+    assertThat(provider().solutionUrl(settings(),solution())).isEqualTo(GithubProvider.blobUrl("owner","repo","main",result.path()));
     assertThat(requests).extracting(Request::method,Request::path).containsExactly(
       org.assertj.core.groups.Tuple.tuple("POST","/app/installations/44/access_tokens"),
       org.assertj.core.groups.Tuple.tuple("GET","/repos/owner/repo/git/ref/heads/main"),

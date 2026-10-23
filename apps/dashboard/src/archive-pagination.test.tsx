@@ -32,6 +32,13 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); localStorage.clear(); window.history.replaceState({}, '', '/'); vi.resetAllMocks() })
 
+it('opens the solution named by the extension popup link and removes the parameter', async () => {
+  window.history.replaceState({}, '', '/?capture=capture-41')
+  render(<App />)
+  expect(await screen.findByRole('heading', { name: '문제 41' })).toBeTruthy()
+  expect(window.location.search).toBe('')
+})
+
 it('shows the archive and export controls without the removed analysis feature', async () => {
   await openArchive()
   expect(screen.getByRole('region', { name: '소스 코드' })).toBeTruthy()

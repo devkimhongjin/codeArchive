@@ -8,7 +8,7 @@ import { IndexedDbCaptureStore } from "./storage";
 import { prepareCaptureDownload } from "./backgroundActions";
 import { exportCode } from "./export";
 import { normalizedHeaderFields } from "../../../shared/headerFields";
-import { fetchGithubCommitStatuses, fetchRecentServerCapture, migrateLegacyRelayEndpoint, revokeRelay } from "./relay";
+import { fetchGithubCommitState, fetchRecentServerCapture, migrateLegacyRelayEndpoint, revokeRelay } from "./relay";
 import {
   normalizeSweaDetailUrl,
   validateSweaProblemContext
@@ -877,9 +877,9 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     }
     const captureIds = [...new Set(object.captureIds.filter(isUuid))].slice(0, 10);
     void store.getSettings()
-      .then(settings => fetchGithubCommitStatuses(captureIds, settings))
-      .then(statuses => sendResponse({ statuses }))
-      .catch(() => sendResponse({ statuses: {} }));
+      .then(settings => fetchGithubCommitState(captureIds, settings))
+      .then(({ statuses, links }) => sendResponse({ statuses, links }))
+      .catch(() => sendResponse({ statuses: {}, links: {} }));
     return true;
   }
 

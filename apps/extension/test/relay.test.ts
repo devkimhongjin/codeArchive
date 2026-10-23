@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchGithubCommitStatuses, migrateLegacyRelayEndpoint, recordRelayAttempt, relayCapture, revokeRelay } from "../src/relay";
+import { fetchGithubCommitState, fetchGithubCommitStatuses, migrateLegacyRelayEndpoint, recordRelayAttempt, relayCapture, revokeRelay } from "../src/relay";
 import { LEGACY_DASHBOARD_ORIGIN, LOCAL_DASHBOARD_ORIGIN, PUBLIC_API_ORIGIN } from "../../../shared/publicApiOrigin";
 import { MemoryCaptureStore } from "../src/storage";
 import type { Capture, CaptureSettings } from "../src/types";
@@ -102,6 +102,18 @@ test("commit status lookup is bearer-scoped and accepts only known states", asyn
   assert.equal(requested.pathname, "/api/relay/github-commit-status");
   assert.equal(requested.searchParams.getAll("captureId").length, 2);
   assert.deepEqual(statuses, { "11111111-1111-4111-8111-111111111111": "SUCCEEDED" });
+});
+
+test("commit links are kept only for requested, committed solutions on github.com", async () => {
+  const enabled: CaptureSettings = { ...settings, autoSyncEnabled: true, relay: { ...settings.relay!, status: "CONFIRMED" } };
+  const [done, pending, foreign, other] = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"];
+  const state = await fetchGithubCommitState([done, pending, foreign], enabled, async () => Response.json({
+    statuses: { [done]: "SUCCEEDED", [pending]: "PENDING", [foreign]: "SUCCEEDED" },
+    links: { [done]: "https://github.com/me/archive/blob/main/SWEA/1%20A.java", [pending]: "https://github.com/me/archive/blob/main/p.java",
+      [foreign]: "https://evil.example/me/archive/blob/main/x.java", [other]: "https://github.com/me/archive/blob/main/o.java" } }));
+  assert.deepEqual(state.links, { [done]: "https://github.com/me/archive/blob/main/SWEA/1%20A.java" });
+  // An older server without links still reports statuses.
+  assert.deepEqual(await fetchGithubCommitState([done], enabled, async () => Response.json({ statuses: { [done]: "SUCCEEDED" } })), { statuses: { [done]: "SUCCEEDED" }, links: {} });
 });
 
 test("relay, status lookup and self-revocation stop waiting when the network never settles", async () => {
