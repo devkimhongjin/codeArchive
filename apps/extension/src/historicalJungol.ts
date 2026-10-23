@@ -495,7 +495,13 @@ export function verifyJungolHistoryDetail(document: Document, location: Location
       problemMatch?.[1]?.trim() !== candidate.title || problemMatch?.[2] !== candidate.problemNumber ||
       detailId !== `#${candidate.submissionId}` || score !== "100점" || status !== "정답" ||
       !code.trim() || reportedCodeLength !== candidate.codeByteLength) return null;
-  const date = timeText.match(/^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.\s*(오전|오후)\s*(\d{1,2}):(\d{2}):(\d{2})$/);
+  const solvedAt = parseJungolKstTimestamp(timeText);
+  return solvedAt ? { ...candidate, sourceCode: code, solvedAt } : null;
+}
+
+/** Jungol's exact time tooltip, "2026. 10. 20. 오후 3:12:05" in KST, as an ISO instant. */
+export function parseJungolKstTimestamp(text: string): string | null {
+  const date = text.trim().match(/^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.\s*(오전|오후)\s*(\d{1,2}):(\d{2}):(\d{2})$/);
   if (!date) return null;
   const [, year, month, day, period, hour, minute, second] = date;
   const displayHour = Number(hour);
@@ -506,7 +512,21 @@ export function verifyJungolHistoryDetail(document: Document, location: Location
   if (roundTrip.getUTCFullYear() !== Number(year) || roundTrip.getUTCMonth() + 1 !== Number(month) ||
       roundTrip.getUTCDate() !== Number(day) || roundTrip.getUTCHours() !== hour24 ||
       roundTrip.getUTCMinutes() !== Number(minute) || roundTrip.getUTCSeconds() !== Number(second)) return null;
-  return { ...candidate, sourceCode: code, solvedAt: new Date(utc).toISOString() };
+  return new Date(utc).toISOString();
+}
+
+/**
+ * The list shows only a relative time ("5분 전"); the exact one is in the row's
+ * hover-only tooltip. Hover, read, and leave. Never click: a click on the row
+ * opens the submission detail.
+ */
+export async function readJungolRowSubmittedAt(document: Document, row: HTMLElement): Promise<string | null> {
+  const trigger = row.querySelector<HTMLElement>('td[data-col="시각"] .time')?.closest<HTMLElement>('[role="button"]');
+  if (!trigger) return null;
+  trigger.dispatchEvent(pointerEvent(document, "mouseenter"));
+  const text = await waitFor(document, () => trigger.querySelector('.paper .content')?.textContent?.trim() || null, 1_500);
+  trigger.dispatchEvent(pointerEvent(document, "mouseleave"));
+  return text ? parseJungolKstTimestamp(text) : null;
 }
 
 export function historicalJungolCapture(verified: JungolHistoryVerified): Capture | null {

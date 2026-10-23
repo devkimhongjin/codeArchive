@@ -71,3 +71,31 @@ test('without a GitHub target or a signed-in extension the controls stay disable
     handle.dispose();
   }
 });
+
+test('Jungol rows read their exact time from the hover tooltip so a live capture can match', async () => {
+  const { parseJungolKstTimestamp } = await import('../src/historicalJungol');
+  assert.equal(parseJungolKstTimestamp('2026. 10. 20. 오후 3:12:05'), '2026-10-20T06:12:05.000Z');
+  assert.equal(parseJungolKstTimestamp('2026. 10. 20. 오전 12:00:00'), '2026-10-19T15:00:00.000Z');
+  assert.equal(parseJungolKstTimestamp('10월 20일'), null);
+  const timed = row('2001').replace('</tr>', '<td data-col="시각"><div role="button" aria-expanded="false"><div class="target"><span class="time">5분 전</span></div></div></td></tr>');
+  const { document, location } = fixture(timed);
+  const trigger = document.querySelector<HTMLElement>('td[data-col="시각"] [role="button"]')!;
+  let clicks = 0;
+  trigger.addEventListener('click', () => { clicks++; });
+  trigger.addEventListener('mouseenter', () => setTimeout(() => {
+    trigger.setAttribute('aria-expanded', 'true');
+    const paper = document.createElement('div'); paper.className = 'paper'; paper.innerHTML = '<div class="content">2026. 10. 20. 오후 3:12:05</div>'; trigger.append(paper);
+  }, 5));
+  trigger.addEventListener('mouseleave', () => { trigger.setAttribute('aria-expanded', 'false'); trigger.querySelector('.paper')?.remove(); });
+  const sent: Array<{ type: string; rows?: Array<{ submissionId: string; solvedAt?: string }> }> = [];
+  const send = async (message: unknown) => { sent.push(message as typeof sent[number]); return { ok: true, githubReady: true, problems: [], rows: [] }; };
+  const previous = globalThis.MutationObserver; globalThis.MutationObserver = document.defaultView!.MutationObserver;
+  try {
+    const handle = mountSiteSync(document, jungolSyncPage(document, location, send), send);
+    await tick(200);
+    assert.equal(sent[0]!.rows![0]!.solvedAt, '2026-10-20T06:12:05.000Z');
+    assert.equal(clicks, 0, 'reading the time never clicks the row');
+    assert.equal(trigger.getAttribute('aria-expanded'), 'false', 'the tooltip is closed again');
+    handle.dispose();
+  } finally { globalThis.MutationObserver = previous; }
+});

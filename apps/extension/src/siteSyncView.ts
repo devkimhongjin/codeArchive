@@ -8,7 +8,8 @@ export type SiteSyncTarget = {
   row?: SiteSyncRowKey;
   sync(): Promise<SyncOutcome>;
 };
-export type SiteSyncPage = { platform: Platform; targets(): SiteSyncTarget[] };
+/** prepare: optional async enrichment of row keys (e.g. exact times) before a status read. */
+export type SiteSyncPage = { platform: Platform; targets(): SiteSyncTarget[]; prepare?(): Promise<void> };
 export type Send = (message: unknown) => Promise<unknown>;
 
 // Controls live in a shadow root: site parsers (including ours) read cell text,
@@ -88,6 +89,8 @@ export function mountSiteSync(document: Document, page: SiteSyncPage, send: Send
   function renderAll() { if (!disposed) for (const target of current()) render(target); }
 
   async function refresh() {
+    try { await page.prepare?.(); } catch { /* Status still reads the keys it has. */ }
+    if (disposed) return;
     const targets = current();
     const keys = targets.flatMap(target => target.row ? [target.row] : []);
     const problemNumbers = targets.filter(target => !target.row).map(target => target.problemNumber);

@@ -1,4 +1,4 @@
-import { importVisibleJungolHistory, isJungolHistorySenderUrl, jungolHistoryRow, previewJungolHistory } from './historicalJungol';
+import { importVisibleJungolHistory, isJungolHistorySenderUrl, jungolHistoryRow, previewJungolHistory, readJungolRowSubmittedAt } from './historicalJungol';
 import { authenticatedSweaHistoryIdentity, hydrateSweaCandidateResult, loadSweaProblemCandidates, sweaProblemCards } from './historicalSwea';
 import { canonicalProgrammersLessonUrl, readProgrammersLessonHistory } from './historicalProgrammers';
 import { SWEA_ORIGIN, SWEA_USER_SUBMISSIONS_PATH } from './adapters/sweaSelectors';
@@ -13,8 +13,29 @@ const registerOutcome = (result: Registered): SyncOutcome => result?.ok
 
 /** Jungol: one row per accepted own submission on /account/{id}/submission or /submission?account=. */
 export function jungolSyncPage(document: Document, location: Location, send: Send): SiteSyncPage {
+  // Exact submission times let a row match a live capture, which carries no
+  // site submission id. Read each once; a failed read is not retried in a loop.
+  const times = new Map<string, string>(), attempted = new Set<string>();
+  let preparing: Promise<void> | null = null;
+  const candidates = () => {
+    if (!isJungolHistorySenderUrl(new URL(location.href))) return [];
+    const preview = previewJungolHistory(document, location);
+    return preview.status === 'READY' ? preview.candidates : [];
+  };
   return {
     platform: 'JUNGOL',
+    prepare() {
+      preparing ??= (async () => {
+        for (const candidate of candidates()) {
+          if (attempted.has(candidate.submissionId)) continue;
+          attempted.add(candidate.submissionId);
+          const row = jungolHistoryRow(document, location, candidate.submissionId);
+          const solvedAt = row ? await readJungolRowSubmittedAt(document, row) : null;
+          if (solvedAt) times.set(candidate.submissionId, solvedAt);
+        }
+      })().finally(() => { preparing = null; });
+      return preparing;
+    },
     targets() {
       if (!isJungolHistorySenderUrl(new URL(location.href))) return [];
       const preview = previewJungolHistory(document, location);
@@ -24,7 +45,8 @@ export function jungolSyncPage(document: Document, location: Location, send: Sen
         const anchor = row?.querySelector<HTMLElement>('td[data-col="결과"]') ?? row?.lastElementChild as HTMLElement | null | undefined;
         if (!anchor) return [];
         return [{ id: candidate.submissionId, anchor, problemNumber: candidate.problemNumber,
-          row: { submissionId: candidate.submissionId, problemNumber: candidate.problemNumber, language: candidate.language },
+          row: { submissionId: candidate.submissionId, problemNumber: candidate.problemNumber, language: candidate.language,
+            ...(times.has(candidate.submissionId) ? { solvedAt: times.get(candidate.submissionId) } : {}) },
           async sync(): Promise<SyncOutcome> {
             let registered: Registered; let failure: string | undefined;
             await importVisibleJungolHistory(document, location, [candidate], async capture => {
