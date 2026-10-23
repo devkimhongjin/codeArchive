@@ -47,6 +47,7 @@ import { EXTENSION_RELEASE, isVersionAtLeast } from './extensionRelease'
 import { formatExecutionTime, formatMemory } from './performancePresentation'
 import { CommunityView } from './CommunityView'
 import { HistoricalCollectionView } from './HistoricalCollectionView'
+import { SiteLoginStatus } from './SiteLoginStatus'
 import { HistoricalGithubCommitView } from './HistoricalGithubCommitView'
 import type { GithubSelectionMetric } from './githubBatchSelection'
 import { formatKstDate, formatKstDateTime } from '../../../shared/timePresentation'
@@ -1514,6 +1515,7 @@ export default function App() {
               <li><b>3</b><span><strong>일괄 GitHub 커밋</strong>등록이 끝나면 이 화면 상단에서 저장소와 제출을 확인한 뒤 요청합니다.</span></li>
             </ol>
           </div>
+          {extensionId && <SiteLoginStatus />}
           {historicalOpened && <>
           <div className="history-result-actions" aria-label="수집 후 작업">
             <p role="status">{historicalScope ? `서버 등록 확인 · 제출 ${historicalScope.submissionIds.length}건` : user && mode === 'live' ? historicalSyncBusy ? '서버 제출 기록을 확인하고 등록하고 있습니다.' : '후보를 선택해 서버에 등록하면 GitHub 커밋을 진행할 수 있습니다.' : 'CodeArchive에 로그인한 뒤 수집을 시작해 주세요.'}</p>
