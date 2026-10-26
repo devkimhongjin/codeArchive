@@ -33,6 +33,8 @@ it('separates history management and preserves both operations across action and
   fireEvent.click(screen.getByRole('button', { name: '수집 완료 0' }))
   expect(await screen.findByText('서버 등록 확인 · 제출 1건')).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: '일괄 GitHub 커밋' }))
+  // The batch commit follows the collection it acts on.
+  expect(screen.getByRole('button', { name: '수집 완료 1' }).compareDocumentPosition(screen.getByRole('button', { name: '커밋 작업 0' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: '커밋 작업 0' }))
   fireEvent.click(screen.getByRole('button', { name: '설정' }))
   expect(screen.queryByRole('button', { name: '커밋 작업 1' })).toBeNull()

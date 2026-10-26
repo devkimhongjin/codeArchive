@@ -18,6 +18,7 @@ import { activeSubmissionProgress, SUBMISSION_PROGRESS_KEY, updateSubmissionProg
 import type { CaptureSettings, Platform } from "./types";
 import { isJungolHistoryPath, isJungolHistorySenderUrl } from "./historicalJungol";
 import { SiteSyncService, validSiteSyncRow } from "./siteSync";
+import { checkSiteLogins } from "./siteLogin";
 import { isHistoricalSubmissionId } from "./historicalIdentity";
 import { historyPlatformForUrl, isLocalHistoryPageSender, mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
 import { requestLocalHistoryMessage } from "./localHistoryConnection";
@@ -383,6 +384,7 @@ type InternalMessage =
   | { type: "LOCAL_HISTORY_IDS"; platform?: unknown }
   | { type: "LOCAL_HISTORY_SCAN_START" | "LOCAL_HISTORY_STATUS" | "LOCAL_HISTORY_CANCEL"; platform?: unknown }
   | { type: "LOCAL_HISTORY_IMPORT_START"; platform?: unknown; submissionIds: unknown; serverRunId?: unknown; serverAccount?: unknown }
+  | { type: 'SITE_LOGIN_STATUS' }
   | { type: 'START_GITHUB_BATCH' | 'GET_GITHUB_BATCH' | 'CANCEL_GITHUB_BATCH' | 'RESUME_GITHUB_BATCH'; account?: unknown; target?: unknown };
 
 type ProgrammersAuxiliaryMessage = { type: "PROGRAMMERS_AUX_READ"; lessonUrl: unknown; mode: unknown; submissionId?: unknown } | { type: "PROGRAMMERS_AUX_CANCEL" };
@@ -876,6 +878,12 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       }
       return localHistoryCommand(object.type as LocalHistoryCommand, platform, ids as string[] | undefined, sender.tab?.id);
     })().then(sendResponse).catch(() => sendResponse({ status: "FAILED" }));
+    return true;
+  }
+
+  if (object.type === 'SITE_LOGIN_STATUS') {
+    if (!dashboardSender(sender, chrome.runtime.id)) { sendResponse({ error: 'UNAUTHORIZED' }); return false; }
+    void checkSiteLogins().then(sites => sendResponse({ sites })).catch(() => sendResponse({ error: 'UNAVAILABLE' }));
     return true;
   }
 
