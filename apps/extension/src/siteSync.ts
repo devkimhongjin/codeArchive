@@ -57,12 +57,29 @@ export function liveMatches(platform: Platform, row: { problemNumber: string; la
     Math.abs(Date.parse(solution.solvedAt) - time) <= LIVE_MATCH_WINDOW_MS);
 }
 
+/**
+ * A live capture is one submission, so it belongs to the closest row within
+ * the window; other close rows (several submissions made seconds apart) are
+ * different submissions. A tie, or a row closest to several live captures,
+ * cannot be decided.
+ */
 export function matchSiteRows(platform: Platform, rows: SiteSyncRowKey[], solutions: ServerSolution[]): SiteSyncRowState[] {
+  const exactFor = (row: SiteSyncRowKey) => solutions.filter(solution => solution.platform === platform && solution.historicalSubmissionId === row.submissionId);
+  const openByProblem = new Map<string, SiteSyncRowKey[]>();
+  for (const row of rows) if (!exactFor(row).length) openByProblem.set(row.problemNumber, [...(openByProblem.get(row.problemNumber) ?? []), row]);
+  const owned = new Map<SiteSyncRowKey, ServerSolution[]>(), undecided = new Set<SiteSyncRowKey>();
+  for (const live of solutions) {
+    if (live.platform !== platform || live.historicalSubmissionId) continue;
+    const near = (openByProblem.get(live.problemNumber) ?? []).filter(row => liveMatches(platform, row, [live]).length === 1)
+      .map(row => ({ row, distance: Math.abs(Date.parse(live.solvedAt) - Date.parse(row.solvedAt!)) })).sort((left, right) => left.distance - right.distance);
+    if (!near.length) continue;
+    if (near.length > 1 && near[0]!.distance === near[1]!.distance) { near.filter(item => item.distance === near[0]!.distance).forEach(item => undecided.add(item.row)); continue; }
+    owned.set(near[0]!.row, [...(owned.get(near[0]!.row) ?? []), live]);
+  }
   return rows.map(row => {
-    const exact = solutions.filter(solution => solution.platform === platform && solution.historicalSubmissionId === row.submissionId);
-    if (exact.length > 1) return { submissionId: row.submissionId, state: 'AMBIGUOUS' };
-    const match = exact[0] ?? (() => { const live = liveMatches(platform, row, solutions); return live.length === 1 ? live[0] : live.length > 1 ? null : undefined; })();
-    if (match === null) return { submissionId: row.submissionId, state: 'AMBIGUOUS' };
+    const exact = exactFor(row), live = owned.get(row) ?? [];
+    if (exact.length > 1 || (!exact.length && (undecided.has(row) || live.length > 1))) return { submissionId: row.submissionId, state: 'AMBIGUOUS' };
+    const match = exact[0] ?? live[0];
     return match ? { submissionId: row.submissionId, state: 'REGISTERED', captureId: match.captureId, commit: match.state }
       : { submissionId: row.submissionId, state: 'UNREGISTERED' };
   });

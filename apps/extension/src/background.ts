@@ -358,6 +358,7 @@ requestRelayDrain();
 type InternalMessage =
   | { type: "STORE_CAPTURE"; capture: unknown }
   | { type: "SITE_SYNC_STATUS"; rows?: unknown; problemNumbers?: unknown }
+  | { type: "HISTORY_SERVER_MATCH"; platform?: unknown; rows?: unknown }
   | { type: "SITE_SYNC_REGISTER"; capture: unknown }
   | { type: "SITE_SYNC_COMMIT"; captureIds: unknown }
   | { type: "STORE_HISTORICAL_CAPTURE"; capture: unknown }
@@ -697,6 +698,18 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       if (!accountId || !/^[1-9]\d{0,15}$/.test(accountId)) return { ok: false, error: 'LOGIN_REQUIRED' };
       return retainCaptureForRetry(store, capture, accountId, () => { void requestRelayDrain(); });
     }).then(sendResponse).catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
+    return true;
+  }
+
+  // History candidates the server already holds, including live captures that carry no site submission id.
+  if (object.type === "HISTORY_SERVER_MATCH") {
+    const platform = object.platform;
+    if (!isLocalHistoryPageSender(sender, chrome.runtime.id) || (platform !== "JUNGOL" && platform !== "SWEA" && platform !== "PROGRAMMERS") ||
+        !Array.isArray(object.rows) || object.rows.length > 10_000) { sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false; }
+    const rows = object.rows.filter(row => validSiteSyncRow(platform, row));
+    void siteSync.status(platform, rows)
+      .then(result => sendResponse(result.ok ? { ok: true, existing: result.rows.filter(row => row.state !== 'UNREGISTERED').map(row => row.submissionId) } : result))
+      .catch(() => sendResponse({ ok: false, error: 'SERVER_UNAVAILABLE' }));
     return true;
   }
 

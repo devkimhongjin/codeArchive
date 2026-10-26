@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { parseHTML } from "linkedom";
-import { mountHistory } from "../src/history";
+import { mountHistory, type HistoryServices } from "../src/history";
 import { HISTORICAL_COLLECTION_REQUEST, isTrustedHistoricalCollectionRequest, type HistoricalCollectionNotice } from '../../../shared/historicalCollectionScope';
 
 const candidate = { submissionId: "101", problemNumber: "1000", title: "테스트", executionTime: 1, memoryValue: 2 };
@@ -36,7 +36,7 @@ function choose(select: HTMLSelectElement, value: string) {
 }
 
 function page(send: (message: { type: string; submissionIds?: string[] }) => Promise<unknown>,
-  options: { now?: () => number; readTiming?: () => Promise<unknown>; onCollectionNotice?: (notice: HistoricalCollectionNotice) => void; subscribeCollectionRequest?: (publish: () => void) => void } = {}) {
+  options: { now?: () => number; readTiming?: () => Promise<unknown>; onCollectionNotice?: (notice: HistoricalCollectionNotice) => void; subscribeCollectionRequest?: (publish: () => void) => void; server?: HistoryServices['server'] } = {}) {
   const { document } = parseHTML(`<!doctype html><body>
     <button id="scan"></button><button id="cancel" hidden></button><button id="import"></button>
     <select id="platform"><option value="JUNGOL" selected>JUNGOL</option><option value="SWEA">SWEA</option><option value="PROGRAMMERS">PROGRAMMERS</option></select>
@@ -83,24 +83,41 @@ test("history page separates settings, site navigation, and local collection", (
   const html = readFileSync(new URL("../src/history.html", import.meta.url), "utf8");
   for (const platform of ["JUNGOL", "SWEA", "PROGRAMMERS"]) assert.match(html, new RegExp(`<option value="${platform}"`));
   for (const mode of ["all", "latest", "fastest", "lowest-memory"]) assert.match(html, new RegExp(`<option value="${mode}"`));
-  assert.match(html, /<section class="settings-card"[\s\S]*?<section class="site-navigation"[\s\S]*?<section class="collection-card"/);
-  assert.match(html, /우측 상단 프로필 → 내 정보 → 제출현황/);
+  // The extension opens the site lists itself, so the page no longer links to them.
+  assert.match(html, /<section class="settings-card"[\s\S]*?<section class="collection-card"/);
+  assert.doesNotMatch(html, /site-navigation|history-page-link|사이트에서 내역 열기/);
   assert.match(html, /id="source-note"/);
   assert.match(html, /id="task-time"/);
   assert.match(html, /id="task-stage"/);
   assert.doesNotMatch(html, /id="timing-estimate"|로컬 저장 예상:/);
-  assert.match(html, /id="history-page-link" href="https:\/\/jungol\.co\.kr\/"/);
   assert.doesNotMatch(html, /내 제출 필터/);
-  assert.match(html, /id="history-page-link"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/);
 });
 
-test("Jungol runtime navigation uses the homepage and agreed profile guidance", async () => {
+test("Jungol explains that the extension opens the submission list in a background tab", async () => {
   const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : ready);
   await tick(); await tick();
-  const link = view.document.querySelector<HTMLAnchorElement>("#history-page-link")!;
-  assert.equal(link.href, "https://jungol.co.kr/");
-  assert.equal(link.textContent, "정올 열기 ↗");
-  assert.equal(view.document.querySelector("#platform-help")!.textContent, "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요.");
+  assert.match(view.document.querySelector("#platform-description")!.textContent!, /정올 제출현황을 백그라운드 탭에서 열고/);
+});
+
+test("server registration leaves out submissions the server already holds as live captures", async () => {
+  const live = { submissionId: "pg:947840:1:2026-10-20T12:00:00.000+09:00:java", problemNumber: "1", title: "A", language: "java", createdAt: "2026-10-20T12:00:00.000+09:00" };
+  const fresh = { ...live, submissionId: "pg:947840:2:2026-10-20T12:00:00.000+09:00:java", problemNumber: "2", title: "B" };
+  const sent: Array<{ type: string; rows?: unknown[] }> = [];
+  let answerMatch!: (value: unknown) => void;
+  const view = page(async message => {
+    sent.push(message as { type: string; rows?: unknown[] });
+    if (message.type === "HISTORY_SERVER_MATCH") return new Promise(resolve => { answerMatch = resolve; });
+    return { status: "READY", candidates: [live, fresh], truncated: false };
+  }, { server: async () => ({ account: "17:100", submissionIds: [] }) });
+  choose(view.document.querySelector<HTMLSelectElement>("#platform")!, "PROGRAMMERS"); await tick(); await tick();
+  const importButton = view.document.querySelector<HTMLButtonElement>("#import")!;
+  assert.equal(importButton.disabled, true, "registration waits for the live capture check");
+  assert.deepEqual(sent.find(message => message.type === "HISTORY_SERVER_MATCH")?.rows?.[0],
+    { submissionId: live.submissionId, problemNumber: "1", language: "java", solvedAt: live.createdAt });
+  answerMatch({ ok: true, existing: [live.submissionId] }); await tick(); await tick();
+  assert.equal(importButton.disabled, false);
+  assert.equal(importButton.textContent, "선택한 1건 서버 등록");
+  assert.match(view.document.querySelector("#candidate-help")!.textContent!, /제출 1건\(실시간 수집 1건 포함\)은 후보에서 제외/);
 });
 
 test("SWEA uses its own platform-tagged local collection commands", async () => {
@@ -113,7 +130,6 @@ test("SWEA uses its own platform-tagged local collection commands", async () => 
   assert.ok(calls.includes("LOCAL_HISTORY_STATUS"));
   assert.equal((view.document.querySelector("#scan") as HTMLButtonElement).disabled, false);
   assert.equal((view.document.querySelector("#selection") as HTMLSelectElement).disabled, false);
-  assert.equal((view.document.querySelector("#history-page-link") as HTMLAnchorElement).href, "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do");
   assert.match(view.document.querySelector("#status")!.textContent!, /후보 목록/);
 });
 
@@ -132,7 +148,7 @@ test("SWEA and Programmers use their own guidance, candidate metadata, and histo
   const platform = view.document.querySelector<HTMLSelectElement>("#platform")!;
   choose(platform, "SWEA"); await tick(); await tick();
   assert.match(view.document.querySelector("#progress")!.textContent!, /문제 93건 · 제출 이력 8\/93개 확인/);
-  assert.match(view.document.querySelector("#platform-help")!.textContent!, /My Page Code/);
+  assert.match(view.document.querySelector("#platform-description")!.textContent!, /SWEA 제출 목록/);
   choose(platform, "PROGRAMMERS"); await tick(); await tick();
   const meta = view.document.querySelector("#candidate-list .meta")!.textContent!;
   assert.match(meta, /2026-09-21T16:43:27\.310\+09:00 · java/);
