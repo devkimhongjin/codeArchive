@@ -273,7 +273,7 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [platformFilter, setPlatformFilter] = useState<'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'>('ALL')
   const [languageFilter, setLanguageFilter] = useState('ALL')
-  const [solutionSort, setSolutionSort] = useState<SolutionSort>('latest')
+  const [solutionSort, setSolutionSort] = useState<SolutionSort>('saved')
   const [solutionPage, setSolutionPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -1512,17 +1512,17 @@ export default function App() {
             <ol className="history-steps">
               <li><b>1</b><span><strong>후보 선택</strong>수집 화면에서 플랫폼과 같은 문제 제출 기준을 고릅니다.</span></li>
               <li><b>2</b><span><strong>서버 등록</strong>본인 제출의 원본을 확인해 로그인한 계정에 저장합니다. 이미 서버에 있는 제출은 제외합니다.</span></li>
-              <li><b>3</b><span><strong>일괄 GitHub 커밋</strong>등록이 끝나면 이 화면 상단에서 저장소와 제출을 확인한 뒤 요청합니다.</span></li>
+              <li><b>3</b><span><strong>일괄 GitHub 커밋</strong>등록이 끝나면 수집 화면 아래에서 저장소와 제출을 확인한 뒤 요청합니다.</span></li>
             </ol>
           </div>
           {extensionId && <SiteLoginStatus />}
           {historicalOpened && <>
+          <HistoricalCollectionView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} disabled={historicalCommitBusy} onSelectionChange={receiveHistoricalScope} serverContext={{ user, mode, extensionId, capability: bridgeCapability }} onBusyChange={setHistoricalSyncBusy} />
           <div className="history-result-actions" aria-label="수집 후 작업">
             <p role="status">{historicalScope ? `서버 등록 확인 · 제출 ${historicalScope.submissionIds.length}건` : user && mode === 'live' ? historicalSyncBusy ? '서버 제출 기록을 확인하고 등록하고 있습니다.' : '후보를 선택해 서버에 등록하면 GitHub 커밋을 진행할 수 있습니다.' : 'CodeArchive에 로그인한 뒤 수집을 시작해 주세요.'}</p>
             {historicalScope && <button type="button" className="history-work-button active" disabled={!user || mode !== 'live' || historicalSyncBusy || historicalCommitBusy} onClick={() => setHistoricalCommitPreview(value => value + 1)}><Icon name="github" size={16} /> 일괄 GitHub 커밋</button>}
           </div>
           <div hidden={!historicalScope || !historicalCommitPreview}>{historicalScope && historicalCommitPreview > 0 && <HistoricalGithubCommitView selectionScope={historicalScope} previewRequest={historicalCommitPreview} onBusyChange={setHistoricalCommitBusy} user={user} mode={mode} revision={historicalRevision} />}</div>
-          <HistoricalCollectionView extensionId={extensionId} capability={bridgeCapability} supported={historySupported} disabled={historicalCommitBusy} onSelectionChange={receiveHistoricalScope} serverContext={{ user, mode, extensionId, capability: bridgeCapability }} onBusyChange={setHistoricalSyncBusy} />
           </>}
         </section>
         {view === 'community' && <CommunityView
@@ -1702,7 +1702,7 @@ function SolutionsView({
         <section className="solution-list-panel" aria-label="풀이 목록">
           <div className="panel-heading">
             <div><span className="panel-title">풀이 목록</span><span className="panel-count">문제 {problemCount}건</span></div>
-            <label className="panel-sort">정렬 <select aria-label="풀이 정렬" value={solutionSort} onChange={(event) => setSolutionSort(event.target.value as SolutionSort)}><option value="latest">최신 저장순</option><option value="oldest">오래된 저장순</option><option value="problem">문제 번호순</option><option value="title">문제 제목순</option></select></label>
+            <label className="panel-sort">정렬 <select aria-label="풀이 정렬" value={solutionSort} onChange={(event) => setSolutionSort(event.target.value as SolutionSort)}><option value="saved">최근 저장순</option><option value="latest">최근 풀이순</option><option value="oldest">오래된 풀이순</option><option value="problem">문제 번호순</option><option value="title">문제 제목순</option></select></label>
           </div>
           <nav className="archive-pagination" aria-label="풀이 페이지">
             <span className="archive-page-range">{problemCount ? `${(page - 1) * ARCHIVE_PAGE_SIZE + 1}–${Math.min(page * ARCHIVE_PAGE_SIZE, problemCount)}` : '0'} / {problemCount}문제</span>

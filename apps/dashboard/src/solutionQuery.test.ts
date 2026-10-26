@@ -28,6 +28,12 @@ describe('solution query', () => {
     expect(filterAndSortSolutions(values, { query: '', platform: 'ALL', languageKey: 'ALL', sort: 'problem' }).map(x => x.problemNumber)).toEqual(['1', '2', '10'])
   })
 
+  it('orders by when the archive saved a solution, so an imported past solution comes first', () => {
+    const imported = { ...solution('old', 'Java', '7', '과거 문제', '2025-06-01T00:00:00Z'), observedAt: '2026-02-01T00:00:00Z' }
+    expect(filterAndSortSolutions([...values, imported], { query: '', platform: 'ALL', languageKey: 'ALL', sort: 'saved' }).map(x => x.captureId)).toEqual(['old', 'a', 'b', 'c'])
+    expect(filterAndSortSolutions([...values, imported], { query: '', platform: 'ALL', languageKey: 'ALL', sort: 'latest' }).map(x => x.captureId)).toEqual(['a', 'b', 'c', 'old'])
+  })
+
   it('groups only matching platform and problem identities while retaining submission history', () => {
     const grouped = groupSolutions(values)
     expect(grouped).toHaveLength(3)
