@@ -37,7 +37,7 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
-    private static final int LATEST_MIGRATION = 30;
+    private static final int LATEST_MIGRATION = 31;
 
     @Test
     void supportReviewUpgradePreservesOldInquiriesAndMessages() throws Exception {
@@ -50,7 +50,7 @@ class PostgreSqlMigrationTest {
                 ResultSet inquiry = statement.executeQuery("INSERT INTO support_inquiries(owner_id, category, title, status, created_at, updated_at, closed_at, version) VALUES (" + userId + ", 'BUG', 'retained', 'CLOSED', now(), now(), now(), 0) RETURNING id"); inquiry.next(); inquiryId = inquiry.getLong(1);
                 statement.executeUpdate("INSERT INTO support_messages(inquiry_id, author_id, author_role, body, created_at) VALUES (" + inquiryId + ", " + userId + ", 'USER', 'retained body', now())");
             }
-            assertEquals(2, database.flyway().migrate().migrationsExecuted);
+            assertEquals(LATEST_MIGRATION - 28, database.flyway().migrate().migrationsExecuted);
             assertEquals("CLOSED", database.scalar("SELECT status FROM support_inquiries WHERE id = ?", inquiryId));
             assertNull(database.scalar("SELECT archived_at FROM support_inquiries WHERE id = ?", inquiryId));
             assertEquals("retained body", database.scalar("SELECT body FROM support_messages WHERE inquiry_id = ?", inquiryId));
