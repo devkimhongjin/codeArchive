@@ -39,6 +39,16 @@ test('rows match the same site submission, or exactly one close live capture of 
   ]);
 });
 
+test('a live capture is one submission: of several close submissions only the closest matches it', () => {
+  const live = solution({ captureId: id(7), platform: 'PROGRAMMERS', problemNumber: '159993', language: 'Java', solvedAt: '2026-10-20T03:00:10.000Z' });
+  const rows = ['00', '01', '02'].map(second => ({ submissionId: `pg:947840:159993:2026-10-20T12:00:${second}.000+09:00:java`, problemNumber: '159993', language: 'java',
+    solvedAt: `2026-10-20T12:00:${second}.000+09:00` }));
+  assert.deepEqual(matchSiteRows('PROGRAMMERS', rows, [live]).map(row => row.state), ['UNREGISTERED', 'UNREGISTERED', 'REGISTERED']);
+  // Two submissions equally close cannot be told apart.
+  const tied = [rows[0]!, { ...rows[2]!, solvedAt: '2026-10-20T12:00:20.000+09:00' }];
+  assert.deepEqual(matchSiteRows('PROGRAMMERS', tied, [live]).map(row => row.state), ['AMBIGUOUS', 'AMBIGUOUS']);
+});
+
 function server(solutions: ServerSolution[], settings: Record<string, unknown> | null, user = { id: 7, githubId: '70' }) {
   const posts: Array<{ path: string; body: unknown }> = [];
   const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {

@@ -29,6 +29,11 @@ test('manual site sync accepts only the own submission list pages of each platfo
     assert.deepEqual(await send({ type: 'SITE_SYNC_STATUS', rows: [{ submissionId: 'x', problemNumber: '1' }] }, 'https://jungol.co.kr/account/9/submission'), { ok: false, error: 'BAD_REQUEST' });
     assert.deepEqual(await send({ type: 'SITE_SYNC_REGISTER', capture: { platform: 'SWEA' } }, 'https://jungol.co.kr/account/9/submission'), { ok: false, error: 'BAD_REQUEST' });
     assert.deepEqual(await send({ type: 'SITE_SYNC_COMMIT', captureIds: 'x' }, 'https://school.programmers.co.kr/learn/courses/30/lessons/42576'), { ok: false, error: 'BAD_REQUEST' });
+    // History candidates are matched only for the extension's own history page.
+    const match = { type: 'HISTORY_SERVER_MATCH', platform: 'PROGRAMMERS', rows: [] };
+    assert.deepEqual(await send(match, 'https://school.programmers.co.kr/learn/challenges'), { ok: false, error: 'BAD_REQUEST' });
+    assert.deepEqual(await send({ ...match, platform: 'OTHER' }, `chrome-extension://${id}/history.html`), { ok: false, error: 'BAD_REQUEST' });
+    assert.deepEqual(await send(match, `chrome-extension://${id}/history.html`), { ok: false, error: 'LOGIN_REQUIRED' });
     // An accepted page with valid input reaches the account check (no extension login here).
     assert.deepEqual(await send(status, 'https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do'), { ok: false, error: 'LOGIN_REQUIRED' });
   } finally { Object.assign(globalThis, previous); }

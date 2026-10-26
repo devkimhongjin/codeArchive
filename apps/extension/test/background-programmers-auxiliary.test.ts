@@ -100,7 +100,7 @@ test("Programmers auxiliary reads remain source-owned and always clean up their 
     assert.equal(sent[0]!.tabId, 31);
     assert.deepEqual(sent[0]!.options, { frameId: 0 });
     assert.deepEqual(removed, [31]);
-    assert.deepEqual(creates[0], { url: lessonUrl, active: true, windowId: 9 });
+    assert.deepEqual(creates[0], { url: lessonUrl, active: false, windowId: 9 }, "an auxiliary lesson never comes to the front");
 
     session[routeKey] = { ...preservedScanningRoute, status: "IMPORTING" };
     const preservedImportingRoute = structuredClone(session[routeKey]);
