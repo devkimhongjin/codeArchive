@@ -481,10 +481,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
    // freshly observed target head, so create/update remains branch-correct.
    Response exists=send("GET",repo+"/contents/"+encodedPath(path)+"?ref="+segment(head),token,null);
    if(exists.code==200){
-    ExistingFileState existing=compatibleFileState(exists,source,legacySource);if(existing==ExistingFileState.IDENTICAL)return Result.succeeded();if(existing==ExistingFileState.CONFLICT)return Result.failed("Git path is not an updatable file");
+    ExistingFileState existing=compatibleFileState(exists,source,legacySource);if(existing==ExistingFileState.IDENTICAL)return Result.succeededAt(path);if(existing==ExistingFileState.CONFLICT)return Result.failed("Git path is not an updatable file");
     targetPath=versionedPath(path,solution);
     Response versioned=send("GET",repo+"/contents/"+encodedPath(targetPath)+"?ref="+segment(head),token,null);
-    if(versioned.code==200){ExistingFileState state=compatibleFileState(versioned,source,legacySource);if(state==ExistingFileState.IDENTICAL)return Result.succeeded();return Result.failed("Versioned Git path already exists");}else if(versioned.code!=404)return classify(versioned,false);
+    if(versioned.code==200){ExistingFileState state=compatibleFileState(versioned,source,legacySource);if(state==ExistingFileState.IDENTICAL)return Result.succeededAt(targetPath);return Result.failed("Versioned Git path already exists");}else if(versioned.code!=404)return classify(versioned,false);
    }else if(exists.code!=404)return classify(exists,false);
    // A timezone presentation change must not create a second copy of an old
    // submission. Compare exact old/new content at the same pinned target head;
@@ -497,7 +497,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
      Response previous=send("GET",repo+"/contents/"+encodedPath(previousPath)+"?ref="+segment(head),token,null);
      if(previous.code==200){
       ExistingFileState state=compatibleFileState(previous,source,legacySource);
-      if(state==ExistingFileState.IDENTICAL)return Result.succeeded();
+      if(state==ExistingFileState.IDENTICAL)return Result.succeededAt(previousPath);
       if(state==ExistingFileState.CONFLICT)return Result.failed("Legacy Git path could not be verified");
      }else if(previous.code!=404)return classify(previous,false);
     }
@@ -520,7 +520,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
    // window before the visible mutation as logout/OFF may have happened there.
    if(!finalWriteGuard.stillAuthorized())return Result.failed("GitHub automation consent changed before final write");
    Response update=send("PATCH",repo+"/git/refs/heads/"+segment(s.getGithubBranch()),token,json.writeValueAsString(Map.of("sha",commitSha,"force",false)));
-   if(update.code==200)return Result.succeeded(); return Result.unknown(Diagnostic.REF_UNCONFIRMED);
+   if(update.code==200)return Result.succeededAt(targetPath); return Result.unknown(Diagnostic.REF_UNCONFIRMED);
   } catch(Exception e){return possibleWrite?Result.unknown("GitHub mutation outcome is unknown"):Result.retryable("GitHub App request failed before final mutation");}
  }
  private Result createFirstSolution(UserSettings settings,Solution solution,FinalWriteGuard guard,String token,String repo,String path,String source){
@@ -536,7 +536,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
    if(!guard.stillAuthorized())return Result.failed("GitHub automation consent changed before first commit");
    String body=json.writeValueAsString(contentsBody(commitMessage(settings,solution),Base64.getEncoder().encodeToString(source.getBytes(StandardCharsets.UTF_8)),CommitIdentity.of(settings.getUser())));
    Response created=send("PUT",repo+"/contents/"+encodedPath(path),token,body);
-   if(created.code==201)return Result.succeeded();
+   if(created.code==201)return Result.succeededAt(path);
    if(created.code==409||created.code==422)return Result.unknown("First commit collided with another repository change");
    return Result.unknown("First commit outcome was not confirmed");
   }catch(EmptyRepositoryConflictException e){return Result.retryable("Repository initialized before first commit; retry against its branch");}
@@ -672,6 +672,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
  private static String metadataLine(String value,String extension){String line=value==null?"":value.replaceAll("[\\r\\n\\u2028\\u2029]"," ");return "java".equals(extension)?line.replace('\\','/'):line;}
  private static String segment(String value){if(value==null||value.isBlank())throw new IllegalArgumentException("blank path component");return URLEncoder.encode(value,StandardCharsets.UTF_8).replace("+","%20");}
  private static String encodedPath(String path){return Arrays.stream(path.split("/",-1)).map(GithubAppProvider::segment).collect(java.util.stream.Collectors.joining("/"));}
+ @Override public String solutionUrl(UserSettings s,Solution solution){try{return GithubProvider.blobUrl(s.getGithubOwner(),s.getGithubRepository(),s.getGithubBranch(),path(s,solution));}catch(RuntimeException e){return null;}}
  private String path(UserSettings s,Solution x){return path(s,x,DISPLAY_ZONE);}
  private String path(UserSettings s,Solution x,ZoneId zone){
   Instant solvedAt=x.getSolvedAt()!=null?x.getSolvedAt():x.getObservedAt();

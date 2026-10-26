@@ -42,7 +42,7 @@ import org.springframework.http.ResponseEntity; import org.springframework.secur
    if(captureIds==null||captureIds.isEmpty()||captureIds.size()>10||captureIds.stream().anyMatch(value->{try{return !UUID.fromString(value).toString().equalsIgnoreCase(value);}catch(RuntimeException ignored){return true;}}))return ResponseEntity.badRequest().body(new ApiError("Invalid capture identity"));
    Map<String,com.codearchive.api.automation.CommitJobState> existing=automation.statuses(grant.getUser(),captureIds); Map<String,String> result=new LinkedHashMap<>();
    captureIds.stream().distinct().forEach(captureId->result.put(captureId,Optional.ofNullable(existing.get(captureId)).map(state->state.name()).orElse("NOT_REQUESTED")));
-   return ResponseEntity.ok(Map.of("statuses",result));
+   return ResponseEntity.ok(Map.of("statuses",result,"links",automation.githubUrls(grant.getUser(),captureIds)));
  }
  @GetMapping("/recent") @Transactional(readOnly=true) public ResponseEntity<?> recent(@RequestHeader(value="Authorization",required=false) String authorization){
    if(authorization==null||!authorization.startsWith("Bearer "))return ResponseEntity.status(401).body(new ApiError("Relay authorization is required"));

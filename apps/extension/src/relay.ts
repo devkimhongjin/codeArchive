@@ -79,26 +79,57 @@ export async function relayCapture(
   } catch { return "OFFLINE"; }
 }
 
+/** A github.com file page; anything else from the server is dropped. */
+export function trustedGithubFileUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 2_048) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "github.com" && !url.port && !url.username && !url.password && !url.search && !url.hash &&
+      /^\/[^/]+\/[^/]+\/blob\/[^/]+\/.+/.test(url.pathname) ? url.href : null;
+  } catch { return null; }
+}
+
 export async function fetchGithubCommitStatuses(
   captureIds: string[],
   settings: CaptureSettings,
   fetcher: typeof fetch = fetch,
   timeoutMs = RELAY_REQUEST_TIMEOUT_MS
 ): Promise<Record<string, GithubCommitStatus>> {
+  return (await fetchGithubCommitState(captureIds, settings, fetcher, timeoutMs)).statuses;
+}
+
+/** Commit statuses, and the github.com page of each committed file the server knows. */
+export async function fetchGithubCommitState(
+  captureIds: string[],
+  settings: CaptureSettings,
+  fetcher: typeof fetch = fetch,
+  timeoutMs = RELAY_REQUEST_TIMEOUT_MS
+): Promise<{ statuses: Record<string, GithubCommitStatus>; links: Record<string, string> }> {
+  const none = { statuses: {}, links: {} };
   const relay = settings.relay;
-  if (!relay || captureIds.length === 0 || relay.status === "AUTH_EXPIRED" || relay.status === "REVOCATION_PENDING") return {};
-  const relayEndpoint = trustedRelayEndpoint(relay.endpoint); if (!relayEndpoint) return {};
+  if (!relay || captureIds.length === 0 || relay.status === "AUTH_EXPIRED" || relay.status === "REVOCATION_PENDING") return none;
+  const relayEndpoint = trustedRelayEndpoint(relay.endpoint); if (!relayEndpoint) return none;
   const endpoint = new URL("/api/relay/github-commit-status", relayEndpoint.origin);
-  for (const captureId of [...new Set(captureIds)].slice(0, 10)) endpoint.searchParams.append("captureId", captureId);
+  const requested = [...new Set(captureIds)].slice(0, 10);
+  for (const captureId of requested) endpoint.searchParams.append("captureId", captureId);
   try {
     const response = await fetchWithTimeout(fetcher, endpoint, { headers: { "Authorization": `Bearer ${relay.secret}` } }, timeoutMs);
-    if (!response.ok) return {};
-    const payload = await response.json() as { statuses?: unknown };
-    if (!payload.statuses || typeof payload.statuses !== "object") return {};
+    if (!response.ok) return none;
+    const payload = await response.json() as { statuses?: unknown; links?: unknown };
+    if (!payload.statuses || typeof payload.statuses !== "object") return none;
     const allowed = new Set<GithubCommitStatus>(["NOT_REQUESTED", "PENDING", "RUNNING", "SUCCEEDED", "FAILED", "UNKNOWN"]);
-    return Object.fromEntries(Object.entries(payload.statuses).filter((entry): entry is [string, GithubCommitStatus] => typeof entry[1] === "string" && allowed.has(entry[1] as GithubCommitStatus)));
+    const statuses = Object.fromEntries(Object.entries(payload.statuses).filter((entry): entry is [string, GithubCommitStatus] => typeof entry[1] === "string" && allowed.has(entry[1] as GithubCommitStatus)));
+    // Servers before the commit page was recorded send no links.
+    const links: Record<string, string> = {};
+    if (payload.links && typeof payload.links === "object" && !Array.isArray(payload.links)) {
+      for (const [captureId, value] of Object.entries(payload.links)) {
+        const url = trustedGithubFileUrl(value);
+        if (url && requested.includes(captureId) && statuses[captureId] === "SUCCEEDED") links[captureId] = url;
+      }
+    }
+    return { statuses, links };
   } catch {
-    return {};
+    return none;
   }
 }
 
