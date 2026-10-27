@@ -44,6 +44,10 @@ class GithubAppProviderTest {
   @Test void successUsesFreshHeadCreateOnlySequenceAndNonForceRef() throws Exception {
     GithubProvider.Result result=provider().createOnly(settings(),solution());
     assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    // The success names the path the new tree wrote, which is also where the target would hold it.
+    assertThat(result.path()).isNotBlank();
+    assertThat(requests).filteredOn(request->request.path().endsWith("/git/trees")).singleElement().extracting(Request::body).asString().contains("\"path\":\""+result.path()+"\"");
+    assertThat(provider().solutionUrl(settings(),solution())).isEqualTo(GithubProvider.blobUrl("owner","repo","main",result.path()));
     assertThat(requests).extracting(Request::method,Request::path).containsExactly(
       org.assertj.core.groups.Tuple.tuple("POST","/app/installations/44/access_tokens"),
       org.assertj.core.groups.Tuple.tuple("GET","/repos/owner/repo/git/ref/heads/main"),
@@ -99,6 +103,23 @@ class GithubAppProviderTest {
     assertThat(result.outcome()).isEqualTo(GithubProvider.Outcome.FAILED);
     assertThat(requests).extracting(Request::path).noneMatch(path->path.contains("/git/blobs")||path.contains("/git/trees")||path.contains("/git/commits")&&path.endsWith("commit"));
     assertThat(requests).hasSize(4);
+  }
+
+  @Test void solutionCommitsAreAttributedToTheRepositoryOwnerNotTheAppBot() throws Exception {
+    assertThat(provider().createOnly(settings(),solution()).outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    String owner="{\"name\":\"Owner\",\"email\":\"1+owner@users.noreply.github.com\"}";
+    assertThat(requests.get(6).path()).isEqualTo("/repos/owner/repo/git/commits");
+    assertThat(requests.get(6).body()).contains("\"author\":"+owner).contains("\"committer\":"+owner);
+  }
+
+  @Test void commitIdentityFallsBackToTheLoginAndRefusesUnsafeIdentities() {
+    assertThat(GithubAppProvider.CommitIdentity.of(AppUser.fromGithub("7","octo-cat",null,null)))
+      .isEqualTo(new GithubAppProvider.CommitIdentity("octo-cat","7+octo-cat@users.noreply.github.com"));
+    assertThat(GithubAppProvider.CommitIdentity.of(AppUser.fromGithub("7","octo","  ","x@y.test")).name()).isEqualTo("octo");
+    assertThat(GithubAppProvider.CommitIdentity.of(AppUser.fromGithub("7","octo","Evil <x@y>",null)).name()).isEqualTo("octo");
+    assertThat(GithubAppProvider.CommitIdentity.of(AppUser.fromGithub("7","bad login",null,null))).isNull();
+    assertThat(GithubAppProvider.CommitIdentity.of(AppUser.fromGithub("x7","octo",null,null))).isNull();
+    assertThat(GithubAppProvider.CommitIdentity.of(null)).isNull();
   }
 
   @Test void rendersAConfiguredSingleLineCommitMessage() throws Exception {

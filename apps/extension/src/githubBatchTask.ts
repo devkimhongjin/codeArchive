@@ -5,6 +5,15 @@ export type BatchState = 'NONE' | 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED'
 export type GithubBatchTask = BatchTarget & { taskId: string; account: string; status: 'REQUESTING' | 'TRACKING' | 'DONE' | 'PAUSED';
   offset: number; states: Record<string, BatchState>; cancelRequested: boolean; error?: string; updatedAt: number };
 export type BatchTaskStorage = { get(): Promise<GithubBatchTask | null>; set(value: GithubBatchTask): Promise<void> };
+/**
+ * Once every commit is requested the server settles them in the background, so the
+ * runner looks again every few seconds and stores each look for the popup to read.
+ * One pass stays well under a service worker's five-minute event limit; the
+ * 30-second alarm resumes tracking after it.
+ */
+export type BatchTracking = { intervalMs: number; windowMs: number; sleep(ms: number): Promise<void>; now(): number };
+const DEFAULT_TRACKING: BatchTracking = { intervalMs: 4_000, windowMs: 4 * 60_000, sleep: ms => new Promise(resolve => setTimeout(resolve, ms)), now: () => Date.now() };
+const waiting = (task: GithubBatchTask) => Object.values(task.states).some(state => state === 'PENDING' || state === 'RUNNING');
 const states: BatchState[] = ['NONE', 'PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'UNKNOWN'];
 export function validBatchTarget(value: unknown): value is BatchTarget {
   if (!value || typeof value !== 'object') return false;
@@ -19,7 +28,7 @@ export class GithubBatchTaskRunner {
   private work: Promise<void> | null = null;
   private starting = false;
   private mutations: Promise<unknown> = Promise.resolve();
-  constructor(private readonly storage: BatchTaskStorage, private readonly fetcher: typeof fetch = fetch) {}
+  constructor(private readonly storage: BatchTaskStorage, private readonly fetcher: typeof fetch = fetch, private readonly tracking: BatchTracking = DEFAULT_TRACKING) {}
   private update(change: (latest: GithubBatchTask | null) => GithubBatchTask | null): Promise<GithubBatchTask | null> {
     const pending = this.mutations.then(async () => {
       const next = change(await this.storage.get());
@@ -97,16 +106,26 @@ export class GithubBatchTaskRunner {
         Object.assign(task.states, result); task.offset += batch.length; await persist();
       }
       task.status = 'TRACKING'; await persist();
-      if (task.offset) {
+      const deadline = this.tracking.now() + this.tracking.windowMs;
+      while (task.offset) {
         const candidates = await cloudRequest<{ captureId: string; state: BatchState }[]>('/api/solutions/github-candidates', user.githubId, undefined, this.fetcher);
         if (!Array.isArray(candidates)) throw new Error('커밋 상태를 확인하지 못했습니다.');
+        const byId = new Map(candidates.map(row => [row.captureId, row]));
         for (const id of task.captureIds.slice(0, task.offset)) {
-          const record = candidates.find(row => row.captureId === id);
+          const record = byId.get(id);
           if (!record || !states.includes(record.state) || record.state === 'NONE') throw new Error('서버 커밋 상태를 확인하지 못했습니다.');
           task.states[id] = record.state;
         }
+        if (!waiting(task)) break;
+        // Publish every look at once; the rest settle in the worker over the next seconds.
+        await persist();
+        if (this.tracking.now() + this.tracking.intervalMs > deadline) break;
+        await this.tracking.sleep(this.tracking.intervalMs);
+        const latest = await this.storage.get();
+        if (latest?.taskId !== task.taskId) return;
+        task.cancelRequested ||= latest.cancelRequested;
       }
-      if (!Object.values(task.states).some(state => state === 'PENDING' || state === 'RUNNING')) task.status = 'DONE';
+      if (!waiting(task)) task.status = 'DONE';
       await persist();
     } catch (error) { task.status = 'PAUSED'; task.error = error instanceof Error ? error.message : '일괄 커밋을 이어가지 못했습니다.'; await persist(); }
   }

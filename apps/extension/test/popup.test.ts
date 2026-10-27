@@ -192,6 +192,27 @@ test('remote status polling retains confirmed labels and DOM while delayed or un
   assert.equal(document.querySelector('.github-label')?.textContent, '커밋 대기');
 });
 
+test('the synced label opens the solution in the dashboard and a finished commit opens its GitHub file', async () => {
+  const id = '11111111-1111-4111-8111-111111111111', other = '22222222-2222-4222-8222-222222222222';
+  const { document } = parseHTML(html);
+  mountPopup(document, {
+    load: async () => ({ settings: { accountId: '1' }, recentCaptures: [record(id, 'SYNCED', '1'), record(other, 'SYNCED', '2')] }), copy: async () => {},
+    loadGithubStatuses: async () => ({ statuses: { [id]: 'SUCCEEDED', [other]: 'SUCCEEDED' },
+      links: { [id]: 'https://github.com/me/archive/blob/main/SWEA/1.java', [other]: 'javascript:alert(1)' } }),
+  });
+  await settle(); await settle();
+  const [first, second] = [...document.querySelectorAll<HTMLElement>('.recent-item')];
+  const sync = first!.querySelector<HTMLAnchorElement>('a.sync-label')!;
+  assert.equal(sync.getAttribute('href'), `dashboard.html?capture=${id}`); assert.equal(sync.target, '_blank'); assert.equal(sync.textContent, '동기화됨');
+  assert.equal(first!.querySelector<HTMLAnchorElement>('a.recent-title')!.getAttribute('href'), `dashboard.html?capture=${id}`);
+  const github = first!.querySelector<HTMLAnchorElement>('a.github-label')!;
+  assert.equal(github.getAttribute('href'), 'https://github.com/me/archive/blob/main/SWEA/1.java'); assert.equal(github.textContent, 'GitHub 완료');
+  assert.equal(github.rel, 'noopener noreferrer');
+  // A link that is not a github.com page stays a plain label.
+  assert.equal(second!.querySelector('a.github-label'), null);
+  assert.equal(second!.querySelector('span.github-label')?.textContent, 'GitHub 완료');
+});
+
 test('cached labels do not cross accounts or replacement submissions of the same problem', async () => {
   const { document } = parseHTML(html); let refresh!: () => void; let accountId = '1'; let captureId = 'one';
   let statuses: Record<string, GithubCommitStatus> = { one: 'SUCCEEDED' };
@@ -252,4 +273,19 @@ test('a late local read cannot re-enable the switch after the full state read fa
   const toggle = document.querySelector<HTMLInputElement>('#github-auto')!;
   assert.equal(toggle.disabled, true); assert.notEqual(toggle.checked, true);
   assert.match(document.querySelector('#error')!.textContent!, /불러오지 못했어요/);
+});
+
+test('a connected popup with temporary saves offers a manual sync and shows its result', async () => {
+  const { document } = parseHTML(html);
+  let pendingCount = 2, syncs = 0;
+  mountPopup(document, { load: async () => ({ pendingCount, settings: { accountId: '1', autoSyncEnabled: true, relay: { status: 'CONFIRMED' } }, recentCaptures: [] }),
+    copy: async () => {}, syncPending: async () => { syncs++; pendingCount = 0; return { ok: true, summary: { status: 'DONE', sent: 2, rejected: 0, remaining: 0 } }; } });
+  await settle();
+  const button = document.querySelector<HTMLButtonElement>('#sync-pending')!;
+  assert.equal(button.hidden, false, 'shown even while the relay reports CONFIRMED');
+  assert.equal(document.querySelector<HTMLButtonElement>('#retry-relay')!.hidden, true);
+  button.click(); await settle(); await settle();
+  assert.equal(syncs, 1);
+  assert.equal(document.querySelector('#sync-pending-result')!.textContent, '2개 전송 완료');
+  assert.equal(button.hidden, true, 'nothing left to send');
 });

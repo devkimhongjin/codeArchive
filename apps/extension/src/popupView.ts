@@ -5,7 +5,7 @@ import { formatCaptureMemory, formatExecutionTime, formatSolutionTime } from './
 import { buildLabel, updatedLabel } from '../../../shared/buildMetadata';
 import type { GithubToggleRequest, GithubToggleResult } from './popupGithubAutomation';
 import type { PopupBatchAction, PopupBatchProgress } from './popupBatchProgress';
-type Preview = Omit<Capture, 'sourceCode'> & { githubCommitStatus?: GithubCommitStatus };
+type Preview = Omit<Capture, 'sourceCode'> & { githubCommitStatus?: GithubCommitStatus; githubUrl?: string };
 interface PopupServices {
   load: () => Promise<unknown>;
   /** Local settings only: no server round trip, so the switch is not held behind a cold API. */
@@ -17,11 +17,26 @@ interface PopupServices {
   copy: (text: string) => Promise<void>;
   copyCapture?: (captureId: string) => Promise<{ ok?: boolean; text?: string }>;
   downloadCapture?: (captureId: string) => Promise<{ ok?: boolean }>;
-  loadGithubStatuses?: (captureIds: string[]) => Promise<{ statuses?: Record<string, GithubCommitStatus> }>;
+  loadGithubStatuses?: (captureIds: string[]) => Promise<{ statuses?: Record<string, GithubCommitStatus>; links?: Record<string, string> }>;
   updateSettings?: (patch: Record<string, boolean>) => Promise<unknown>;
   updateGithubAutomation?: (request: GithubToggleRequest) => Promise<GithubToggleResult>;
   retryRelay?: () => Promise<unknown>;
+  syncPending?: () => Promise<unknown>;
 }
+/** Explains a manual sync in the user's terms, including why nothing was sent. */
+export function pendingSyncMessage(response: unknown): string {
+  const summary = (response as { ok?: boolean; summary?: { status?: string; sent?: number; rejected?: number; remaining?: number; error?: string; rejection?: string } } | null)?.summary;
+  if (!summary) return '동기화를 시작하지 못했어요. 팝업을 다시 열어 주세요.';
+  const sent = summary.sent ?? 0, rejected = summary.rejected ?? 0;
+  const done = [sent ? `${sent}개 전송 완료` : '', rejected ? `${rejected}개는 서버가 받지 않아 남겨 두었어요${summary.rejection ? ` (사유: ${summary.rejection})` : ''}` : ''].filter(Boolean).join(' · ');
+  const reason = summary.status === 'LOGIN_REQUIRED' ? '대시보드에서 다시 로그인해 주세요.'
+    : summary.status === 'ACCOUNT_CHANGED' || summary.error === 'ACCOUNT_CHANGED' ? '로그인 계정이 바뀌었어요. 대시보드에서 계정을 확인해 주세요.'
+    : summary.status === 'RECONNECT_REQUIRED' || summary.status === 'NO_ACCOUNT' ? '연결 정보를 확인하지 못했어요. 대시보드를 열면 연결이 갱신돼요.'
+    : summary.status === 'OFFLINE' || summary.status === 'STOPPED' ? '서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.' : '';
+  if (summary.status === 'IDLE') return '보낼 임시 저장이 없어요.';
+  return [done, reason].filter(Boolean).join(' ') || '모두 전송했어요.';
+}
+
 function asSynced(value: unknown): value is Preview {
   if (!value || typeof value !== 'object') return false;
   const item = value as Partial<Capture>;
@@ -29,19 +44,34 @@ function asSynced(value: unknown): value is Preview {
     typeof item.problemNumber === 'string' && typeof item.title === 'string' && typeof item.language === 'string' &&
     item.result === 'ACCEPTED' && item.syncState === 'SYNCED' && typeof item.observedAt === 'string' && !Number.isNaN(Date.parse(item.observedAt));
 }
+/** Opens the dashboard on this solution. */
+function dashboardSolutionUrl(captureId: string): string {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(captureId) ? `dashboard.html?capture=${captureId}` : 'dashboard.html';
+}
+function githubFileUrl(value: string | undefined): string | null {
+  if (!value) return null;
+  try { const url = new URL(value); return url.protocol === 'https:' && url.hostname === 'github.com' ? url.href : null; } catch { return null; }
+}
+function newTabLink(document: Document, className: string, href: string, text: string, label: string): HTMLAnchorElement {
+  const link = document.createElement('a'); link.className = className; link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer';
+  link.textContent = text; link.setAttribute('aria-label', label); return link;
+}
 function renderRecent(document: Document, list: HTMLElement, empty: HTMLElement, captures: Preview[], services: PopupServices) {
   list.replaceChildren(); empty.hidden = captures.length !== 0;
   for (const capture of captures) {
     const item = document.createElement('article'); item.className = 'recent-item';
     const heading = document.createElement('div'); heading.className = 'recent-item-heading';
     const platform = document.createElement('span'); platform.className = 'platform-label'; platform.textContent = capture.platform;
-    const sync = document.createElement('span'); sync.className = 'sync-label'; sync.textContent = '동기화됨'; heading.append(platform, sync);
+    const dashboardUrl = dashboardSolutionUrl(capture.captureId);
+    const sync = newTabLink(document, 'sync-label', dashboardUrl, '동기화됨', `#${capture.problemNumber} 대시보드에서 보기`); heading.append(platform, sync);
     const commit = capture.githubCommitStatus;
     if (commit && ['NOT_REQUESTED', 'PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'UNKNOWN'].includes(commit)) {
-      const github = document.createElement('span'); github.className = `github-label github-${commit.toLowerCase()}`;
-      github.textContent = commit === 'SUCCEEDED' ? 'GitHub 완료' : commit === 'PENDING' ? '커밋 대기' : commit === 'RUNNING' ? '커밋 중' : commit === 'FAILED' ? '커밋 실패' : commit === 'UNKNOWN' ? '커밋 확인 필요' : '자동 커밋 안 함'; heading.append(github);
+      const text = commit === 'SUCCEEDED' ? 'GitHub 완료' : commit === 'PENDING' ? '커밋 대기' : commit === 'RUNNING' ? '커밋 중' : commit === 'FAILED' ? '커밋 실패' : commit === 'UNKNOWN' ? '커밋 확인 필요' : '자동 커밋 안 함';
+      const fileUrl = commit === 'SUCCEEDED' ? githubFileUrl(capture.githubUrl) : null;
+      const github = fileUrl ? newTabLink(document, '', fileUrl, text, `#${capture.problemNumber} GitHub에서 보기`) : document.createElement('span');
+      github.className = `github-label github-${commit.toLowerCase()}`; github.textContent = text; heading.append(github);
     }
-    const title = document.createElement('a'); title.className = 'recent-title'; title.href = 'dashboard.html'; title.target = '_blank'; title.rel = 'noopener noreferrer'; title.textContent = `#${capture.problemNumber} · ${capture.title}`;
+    const title = document.createElement('a'); title.className = 'recent-title'; title.href = dashboardUrl; title.target = '_blank'; title.rel = 'noopener noreferrer'; title.textContent = `#${capture.problemNumber} · ${capture.title}`;
     const meta = document.createElement('p'); meta.className = 'recent-meta'; meta.textContent = `${canonicalLanguageDisplayName(capture.language)} · 풀이 시간 ${formatSolutionTime(capture.solvedAt ?? capture.observedAt)}`;
     const performance = document.createElement('p'); performance.className = 'recent-performance'; performance.textContent = `실행 시간 ${formatExecutionTime(capture.executionTime)} · 메모리 ${formatCaptureMemory(capture)}`;
     item.append(heading, title, meta, performance);
@@ -80,6 +110,9 @@ export function mountPopup(document: Document, services: PopupServices): void {
   const automationStatus = document.querySelector<HTMLElement>('#automation-status')!;
   const pendingUploads = document.querySelector<HTMLElement>('#pending-uploads');
   const retryRelay = document.querySelector<HTMLButtonElement>('#retry-relay')!;
+  const syncPending = document.querySelector<HTMLButtonElement>('#sync-pending');
+  const syncPendingResult = document.querySelector<HTMLElement>('#sync-pending-result');
+  let syncingPending = false;
   const githubAutoRow = githubAuto.closest<HTMLElement>('.switch-row');
   // Until settings are read the switch shows a checking state rather than a stale OFF or a disabled look.
   const setChecking = (checking: boolean) => {
@@ -149,6 +182,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
   batchCancel?.addEventListener('click', () => void batchAction('CANCEL'));
   document.querySelector<HTMLButtonElement>('#github-batch-dashboard')?.addEventListener('click', () => services.openDashboard?.('github'));
   let knownStatuses = new Map<string, GithubCommitStatus>();
+  let knownLinks = new Map<string, string>();
   let recentRenderKey: string | undefined;
   let visibleCaptures: Preview[] = [];
   let statusContext = '', statusEpoch = 0, statusInFlight = false, statusRefreshPending = false;
@@ -158,7 +192,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
     recentRenderKey = key;
     renderRecent(document, recentList, recentEmpty, captures, services);
   };
-  const showCurrentRecent = () => showRecent(visibleCaptures.map(capture => ({ ...capture, githubCommitStatus: knownStatuses.get(capture.captureId) })));
+  const showCurrentRecent = () => showRecent(visibleCaptures.map(capture => ({ ...capture, githubCommitStatus: knownStatuses.get(capture.captureId), githubUrl: knownLinks.get(capture.captureId) })));
   async function refreshStatuses(): Promise<void> {
     if (!services.loadGithubStatuses || !visibleCaptures.length || !localReady || githubBusy) return;
     if (statusInFlight) { statusRefreshPending = true; return; }
@@ -170,6 +204,8 @@ export function mountPopup(document: Document, services: PopupServices): void {
       for (const id of ids) {
         const status = response.statuses[id];
         if (typeof status === 'string' && ['NOT_REQUESTED', 'PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'UNKNOWN'].includes(status)) knownStatuses.set(id, status);
+        const link = response.links?.[id];
+        if (typeof link === 'string') knownLinks.set(id, link);
       }
       showCurrentRecent();
     } catch { /* Missing remote evidence retains the last confirmed display. */ }
@@ -188,6 +224,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
     if (pendingUploads) {
       const count = Number.isSafeInteger(pendingCount) && (pendingCount as number) > 0 ? pendingCount as number : 0;
       pendingUploads.hidden = count === 0;
+      if (syncPending) syncPending.hidden = count === 0 || !services.syncPending;
       pendingUploads.textContent = count ? `임시 저장 ${count}개 · ${!settings.autoSyncEnabled ? '자동 동기화를 켜면 전송됩니다.' : relayStatus === 'AUTH_EXPIRED' ? '같은 계정으로 로그인하면 자동 전송됩니다.' : '연결되면 자동 전송됩니다. 브라우저를 다시 켜도 이어집니다.'}` : '';
     }
     automationStatus.textContent = recentError ? '서버 연결 확인 필요' : relayStatus === 'CONFIRMED' ? '자동 동기화 중' : relayStatus === 'OFFLINE' ? '오프라인' : relayStatus === 'RELAY_ERROR' ? '동기화 오류' : '대시보드 로그인 필요';
@@ -215,7 +252,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
       if (!state?.settings || state.error) throw new Error('Invalid state');
       if (statusAccount !== state.settings.accountId) {
         batchEpoch++; if (batchCard && batchAccount !== state.settings.accountId) { batchCard.hidden = true; lastBatch = null; seenBatchKey = undefined; }
-        knownStatuses.clear(); statusAccount = state.settings.accountId;
+        knownStatuses.clear(); knownLinks.clear(); statusAccount = state.settings.accountId;
         void refreshBatch();
       }
       const seen = new Set<string>();
@@ -226,6 +263,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
         const status = knownStatuses.get(capture.captureId) ?? capture.githubCommitStatus;
         return status ? [[capture.captureId, status] as const] : [];
       }));
+      knownLinks = new Map([...knownLinks].filter(([captureId]) => knownStatuses.has(captureId)));
       visibleCaptures = captures;
       const nextStatusContext = JSON.stringify([state.settings.accountId, state.settings.accountSettingsVersion, captures.map(capture => capture.captureId)]);
       if (nextStatusContext !== statusContext) { statusContext = nextStatusContext; statusEpoch++; }
@@ -274,6 +312,16 @@ export function mountPopup(document: Document, services: PopupServices): void {
       .finally(() => { githubBusy = false; void load(); });
   });
   services.subscribeProgress?.(() => { void refreshBatch(); void load(); });
+  syncPending?.addEventListener('click', () => {
+    if (syncingPending || !services.syncPending) return;
+    syncingPending = true; syncPending.disabled = true; syncPending.textContent = '동기화 중…';
+    if (syncPendingResult) syncPendingResult.hidden = true;
+    void services.syncPending().then(response => {
+      if (syncPendingResult) { syncPendingResult.textContent = pendingSyncMessage(response); syncPendingResult.hidden = false; }
+    }).catch(() => {
+      if (syncPendingResult) { syncPendingResult.textContent = pendingSyncMessage(null); syncPendingResult.hidden = false; }
+    }).then(() => load()).finally(() => { syncingPending = false; syncPending.disabled = false; syncPending.textContent = '지금 동기화'; });
+  });
   retryRelay.addEventListener('click', () => {
     if (retrying || !services.retryRelay) return;
     retrying = true; retryRelay.disabled = true; retryRelay.textContent = '재시도 중…';

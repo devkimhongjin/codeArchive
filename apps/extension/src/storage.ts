@@ -4,7 +4,7 @@ import type { SweaProblemContext } from "./sweaProblemContext";
 import { canonicalLanguageKey } from "../../../shared/language";
 import { LIGHT_THEMES, DARK_THEMES } from "../../../shared/codeThemes";
 import { normalizedHeaderFields } from "../../../shared/headerFields";
-import { queueOwner, queuedCapture, sameQueuedSubmission, type CaptureOutboxStore, type QueuedCapture, type QueueCaptureResult } from './captureOutbox';
+import { queueOwner, queuedCapture, sameQueuedSubmission, type CaptureOutboxStore, type ListQueuedOptions, type QueuedCapture, type QueueCaptureResult } from './captureOutbox';
 
 export const DATABASE_NAME = "codearchive-local";
 export const DATABASE_VERSION = 4;
@@ -211,17 +211,26 @@ export class IndexedDbCaptureStore implements CaptureStore, CaptureOutboxStore {
     }
   }
 
-  async listQueuedCaptures(accountId: string, limit = 10): Promise<QueuedCapture[]> {
+  async listQueuedCaptures(accountId: string, limit = 10, options: ListQueuedOptions = {}): Promise<QueuedCapture[]> {
     const database = await this.open();
     const transaction = database.transaction(CAPTURE_OUTBOX_STORE_NAME, 'readonly');
     const entries = await requestResult(transaction.objectStore(CAPTURE_OUTBOX_STORE_NAME).index('byAccount').getAll(accountId)) as QueuedCapture[];
-    return entries.sort((left, right) => left.capture.observedAt.localeCompare(right.capture.observedAt) || left.capture.captureId.localeCompare(right.capture.captureId))
+    return entries.filter(entry => options.includeRejected || !entry.rejectedAt).sort((left, right) => left.capture.observedAt.localeCompare(right.capture.observedAt) || left.capture.captureId.localeCompare(right.capture.captureId))
       .slice(0, clampLimit(limit)).map(entry => structuredClone(entry));
   }
 
   async countQueuedCaptures(accountId: string): Promise<number> {
     const database = await this.open();
     return requestResult(database.transaction(CAPTURE_OUTBOX_STORE_NAME, 'readonly').objectStore(CAPTURE_OUTBOX_STORE_NAME).index('byAccount').count(accountId));
+  }
+
+  async markQueuedCaptureRejected(accountId: string, captureId: string, at: string): Promise<void> {
+    const database = await this.open();
+    const transaction = database.transaction(CAPTURE_OUTBOX_STORE_NAME, 'readwrite');
+    const outbox = transaction.objectStore(CAPTURE_OUTBOX_STORE_NAME);
+    const entry = await requestResult(outbox.get([accountId, captureId])) as QueuedCapture | undefined;
+    if (entry) outbox.put({ ...entry, rejectedAt: at });
+    await transactionComplete(transaction);
   }
 
   async acknowledgeQueuedCapture(accountId: string, captureId: string): Promise<void> {
@@ -468,14 +477,19 @@ export class MemoryCaptureStore implements CaptureStore, CaptureOutboxStore {
     });
   }
 
-  async listQueuedCaptures(accountId: string, limit = 10): Promise<QueuedCapture[]> {
-    return [...this.outbox.values()].filter(entry => entry.accountId === accountId)
+  async listQueuedCaptures(accountId: string, limit = 10, options: ListQueuedOptions = {}): Promise<QueuedCapture[]> {
+    return [...this.outbox.values()].filter(entry => entry.accountId === accountId && (options.includeRejected || !entry.rejectedAt))
       .sort((left, right) => left.capture.observedAt.localeCompare(right.capture.observedAt) || left.capture.captureId.localeCompare(right.capture.captureId))
       .slice(0, clampLimit(limit)).map(entry => structuredClone(entry));
   }
 
   async countQueuedCaptures(accountId: string): Promise<number> {
     return [...this.outbox.values()].filter(entry => entry.accountId === accountId).length;
+  }
+
+  async markQueuedCaptureRejected(accountId: string, captureId: string, at: string): Promise<void> {
+    const key = JSON.stringify([accountId, captureId]), entry = this.outbox.get(key);
+    if (entry) this.outbox.set(key, { ...entry, rejectedAt: at });
   }
 
   async acknowledgeQueuedCapture(accountId: string, captureId: string): Promise<void> {

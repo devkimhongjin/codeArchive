@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { indexedDB, IDBKeyRange } from "fake-indexeddb";
 
-test("a Jungol scan opens the signed-in list in an inactive tab and closes it when the run ends", async () => {
+test("a Jungol scan opens the signed-in list in a tab in front and closes it when the run ends", async () => {
   const id = "test-extension";
   const stored: Record<string, unknown> = {};
   const tabs = new Map<number, { id: number; url: string; status: string; active: boolean }>();
@@ -10,6 +10,8 @@ test("a Jungol scan opens the signed-in list in an inactive tab and closes it wh
   const updatedListeners: Array<(tabId: number, info: unknown, tab: unknown) => void> = [];
   const removedListeners: Array<(tabId: number) => void> = [];
   let nextTabId = 20, homeAccounts = ["152511"], scanStatus = "READY", importStatus = "IMPORTING";
+  // Accounts whose profile shows the owner's edit tab; the home page can link others too.
+  let owners = new Set(["152511"]);
   let listener: ((message: unknown, sender: unknown, reply: (value: unknown) => void) => boolean) | undefined;
   const fakeChrome = {
     runtime: { id, getManifest: () => ({ version: "1.0.4" }), onMessage: { addListener(callback: typeof listener) { listener = callback; } }, onMessageExternal: { addListener() {} } },
@@ -37,19 +39,20 @@ test("a Jungol scan opens the signed-in list in an inactive tab and closes it wh
       sendMessage: async (_tabId: number, message: { type: string }) => message.type === "LOCAL_HISTORY_SCAN_START" ? { status: scanStatus, candidates: [] }
         : message.type === "LOCAL_HISTORY_STATUS" ? { status: importStatus } : { status: "IDLE" }
     },
-    scripting: { executeScript: async (details: { func?: unknown }) => details.func ? [{ result: homeAccounts }] : [] }
+    scripting: { executeScript: async (details: { func?: unknown; args?: unknown[] }) =>
+      details.args ? [{ result: owners.has(String(details.args[0])) }] : details.func ? [{ result: homeAccounts }] : [] }
   };
   const previous = { chrome: globalThis.chrome, indexedDB: globalThis.indexedDB, IDBKeyRange: globalThis.IDBKeyRange };
   Object.assign(globalThis, { chrome: fakeChrome, indexedDB, IDBKeyRange });
   try {
     await import("../src/background");
     const historyPage = { id, frameId: 0, url: `chrome-extension://${id}/history.html`, tab: { id: 5 } };
-    const command = (type: string) => new Promise<{ status?: string }>(resolve => listener!({ type }, historyPage, resolve as (value: unknown) => void));
+    const command = (type: string) => new Promise<{ status?: string; sourceOpenFailure?: string }>(resolve => listener!({ type }, historyPage, resolve as (value: unknown) => void));
 
-    // No list is open: the extension opens one itself without focusing it.
+    // No list is open: the extension opens one itself, in front, because Jungol does not answer in the background.
     assert.equal((await command("LOCAL_HISTORY_SCAN_START")).status, "READY");
-    assert.deepEqual(created, [{ url: "https://jungol.co.kr/", active: false }]);
-    const ownedTabId = (stored["codearchive-jungol-owned-history-tab"] as { tabId: number }).tabId;
+    assert.deepEqual(created, [{ url: "https://jungol.co.kr/", active: true }]);
+    const ownedTabId = (stored["codearchive-owned-history-tab"] as { tabId: number }).tabId;
     assert.equal(tabs.get(ownedTabId)?.url, "https://jungol.co.kr/account/152511/submission");
     assert.deepEqual(removed, [], "a READY scan keeps the list for the import");
 
@@ -59,7 +62,7 @@ test("a Jungol scan opens the signed-in list in an inactive tab and closes it wh
     importStatus = "DONE";
     assert.equal((await command("LOCAL_HISTORY_STATUS")).status, "DONE");
     assert.deepEqual(removed, [ownedTabId]);
-    assert.equal(stored["codearchive-jungol-owned-history-tab"], undefined);
+    assert.equal(stored["codearchive-owned-history-tab"], undefined);
 
     // A scan that finds nothing usable does not leave the hidden tab behind.
     scanStatus = "OWNERSHIP_UNVERIFIED";
@@ -74,9 +77,29 @@ test("a Jungol scan opens the signed-in list in an inactive tab and closes it wh
     await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(tabs.size, 0);
 
-    // An ambiguous home page is refused and its probe tab is removed.
-    homeAccounts = ["1", "2"];
-    assert.deepEqual(await command("LOCAL_HISTORY_SCAN_START"), { status: "TAB_NOT_FOUND" });
+    // A visible home page can link other accounts too: the one whose profile shows the
+    // owner's edit tab is the signed-in user's and is opened, however the links are ordered.
+    homeAccounts = ["7", "152511", "9"];
+    assert.equal((await command("LOCAL_HISTORY_SCAN_START")).status, "READY");
+    const pickedTabId = ((stored as Record<string, unknown>)["codearchive-owned-history-tab"] as { tabId: number }).tabId;
+    assert.equal(tabs.get(pickedTabId)?.url, "https://jungol.co.kr/account/152511/submission");
+    importStatus = "DONE";
+    assert.equal((await command("LOCAL_HISTORY_STATUS")).status, "DONE");
     assert.equal(tabs.size, 0);
+
+    // No candidate is the signed-in user's: refused, its probe tab is removed, and the cause is reported.
+    homeAccounts = ["1", "2"];
+    assert.deepEqual(await command("LOCAL_HISTORY_SCAN_START"), { status: "TAB_NOT_FOUND", sourceOpenFailure: "NOT_OWNER" });
+    assert.equal(tabs.size, 0);
+
+    // A home page without any account link says so.
+    homeAccounts = [];
+    assert.deepEqual(await command("LOCAL_HISTORY_SCAN_START"), { status: "TAB_NOT_FOUND", sourceOpenFailure: "NO_ACCOUNT_LINK" });
+    assert.equal(tabs.size, 0);
+
+    // A later, different failure does not inherit a stale cause.
+    owners = new Set(["152511"]); homeAccounts = ["152511"];
+    assert.equal((await command("LOCAL_HISTORY_SCAN_START")).status, "READY");
+    assert.equal((await command("LOCAL_HISTORY_STATUS")).sourceOpenFailure, undefined);
   } finally { Object.assign(globalThis, previous); }
 });

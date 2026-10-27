@@ -8,26 +8,30 @@ import { IndexedDbCaptureStore } from "./storage";
 import { prepareCaptureDownload } from "./backgroundActions";
 import { exportCode } from "./export";
 import { normalizedHeaderFields } from "../../../shared/headerFields";
-import { fetchGithubCommitStatuses, fetchRecentServerCapture, migrateLegacyRelayEndpoint, revokeRelay } from "./relay";
+import { fetchGithubCommitState, fetchRecentServerCapture, migrateLegacyRelayEndpoint, revokeRelay } from "./relay";
 import {
   normalizeSweaDetailUrl,
   validateSweaProblemContext
 } from "./sweaProblemContext";
-import { SWEA_ORIGIN, SWEA_SOLVING_PATH } from "./adapters/sweaSelectors";
+import { SWEA_ORIGIN, SWEA_SOLVING_PATH, SWEA_USER_SUBMISSIONS_PATH } from "./adapters/sweaSelectors";
 import { activeSubmissionProgress, SUBMISSION_PROGRESS_KEY, updateSubmissionProgress } from "./submissionProgress";
 import type { CaptureSettings, Platform } from "./types";
-import { isJungolHistoryPath } from "./historicalJungol";
+import { isJungolHistoryPath, isJungolHistorySenderUrl } from "./historicalJungol";
+import { SiteSyncService, validSiteSyncRow } from "./siteSync";
+import { checkSiteLogins } from "./siteLogin";
 import { isHistoricalSubmissionId } from "./historicalIdentity";
 import { historyPlatformForUrl, isLocalHistoryPageSender, mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
 import { requestLocalHistoryMessage } from "./localHistoryConnection";
+import { localHistoryProgressSignature, trackStall, type StallTracker } from "./ownedTabStall";
 import { loadPopupServerState } from './serverCapture';
-import { drainCaptureOutbox, retainCaptureForRetry } from './captureOutbox';
+import { drainCaptureOutbox, retainCaptureForRetry, type DrainSummary } from './captureOutbox';
 import { registerHistoricalOnServer } from './cloudClient';
 import { restoreCaptureSession } from './captureConnection';
 import { actOnPopupBatch, loadPopupBatchProgress } from './popupBatchProgress';
 import { GithubBatchTaskRunner, type GithubBatchTask } from './githubBatchTask';
 
 const store = new IndexedDbCaptureStore();
+const siteSync = new SiteSyncService({ accountId: async () => (await store.getSettings()).accountId });
 const bridge = new DashboardBridge(store, {
   // A refreshed dashboard grant should flush captures that were retained while
   // the old relay was offline or expired instead of waiting for the next alarm.
@@ -76,12 +80,16 @@ async function writeLocalHistoryRoute(route: LocalHistoryRoute | null): Promise<
   else await chrome.storage.session.remove(LOCAL_HISTORY_ROUTE_KEY);
 }
 
-// A Jungol list the extension opened itself in an inactive tab, so collection
-// never depends on the user's window size or on a tab they left open.
-const JUNGOL_OWNED_TAB_KEY = "codearchive-jungol-owned-history-tab";
+// A source list the extension opened itself, so collection never depends on the
+// user's window size or on a tab they left open. SWEA and Programmers lists open
+// inactive; Jungol does not answer while its tab is in the background, so it
+// gets a window of its own (the history page keeps its tab) that is brought
+// forward again whenever a run starts or stalls.
+const JUNGOL_OWNED_TAB_KEY = "codearchive-owned-history-tab";
 const JUNGOL_OWNED_TAB_IDLE_MS = 10 * 60_000;
-type OwnedJungolTab = { tabId: number; historyPageTabId?: number; lastUsedAt: number };
+type OwnedJungolTab = { tabId: number; historyPageTabId?: number; lastUsedAt: number; foregrounded?: boolean; ownWindow?: boolean };
 const OWNED_TAB_KEEP_STATUSES = new Set(["READY", "SCANNING", "IMPORTING", "CANCELLING"]);
+let ownedTabStall: StallTracker | null = null;
 
 async function readOwnedJungolTab(): Promise<OwnedJungolTab | null> {
   const value = (await chrome.storage.session.get(JUNGOL_OWNED_TAB_KEY))[JUNGOL_OWNED_TAB_KEY] as Partial<OwnedJungolTab> | undefined;
@@ -91,15 +99,67 @@ async function readOwnedJungolTab(): Promise<OwnedJungolTab | null> {
 async function closeOwnedJungolTab(tabId?: number): Promise<void> {
   const owned = await readOwnedJungolTab();
   if (!owned || (tabId !== undefined && owned.tabId !== tabId)) return;
+  ownedTabStall = null;
   await chrome.storage.session.remove(JUNGOL_OWNED_TAB_KEY);
+  // A run that pulled the user onto the source tab hands them back to the page
+  // that started it, but only if they are still looking at the source tab.
+  const shown = owned.foregrounded ? await isShownToUser(owned) : false;
   await chrome.tabs.remove(owned.tabId).catch(() => undefined);
+  if (shown) await focusHistoryPage(owned).catch(() => undefined);
 }
 
-function waitForTabLoad(tabId: number, pathname: string, timeoutMs = 30_000): Promise<boolean> {
+/** In front of the user: the active tab of its window, and for a window of its own also the focused window. */
+async function isShownToUser(owned: OwnedJungolTab): Promise<boolean> {
+  const tab = await chrome.tabs.get(owned.tabId).catch(() => undefined);
+  if (!tab?.active) return false;
+  if (!owned.ownWindow || tab.windowId === undefined) return true;
+  const sourceWindow = await Promise.resolve(chrome.windows?.get(tab.windowId)).catch(() => undefined);
+  return sourceWindow ? sourceWindow.focused === true : true;
+}
+
+async function bringTabForward(tabId: number): Promise<void> {
+  const tab = await chrome.tabs.update(tabId, { active: true });
+  if (tab?.windowId !== undefined) await chrome.windows?.update(tab.windowId, { focused: true });
+}
+
+async function focusHistoryPage(owned: OwnedJungolTab): Promise<void> {
+  if (owned.historyPageTabId !== undefined) await bringTabForward(owned.historyPageTabId);
+}
+
+/** The list is ready and the tab stays open for the import: hand the user back to the page that started the run. */
+async function handBackToHistoryPage(owned: OwnedJungolTab): Promise<void> {
+  if (owned.foregrounded && await isShownToUser(owned)) await focusHistoryPage(owned);
+}
+
+/**
+ * The source site does not answer while its tab is in the background, so a run
+ * that stands still is brought to the front. A source tab in the history page's
+ * own window is forced once; if the user then goes back on purpose it is only
+ * reported. A window of its own is brought forward again, because that never
+ * takes the history page's tab away.
+ */
+async function relieveStalledOwnedTab(owned: OwnedJungolTab, response: unknown): Promise<{ sourceForegrounded?: true; sourceStalled?: true }> {
+  const { tracker, stalled } = trackStall(ownedTabStall, owned.tabId, localHistoryProgressSignature(response), Date.now());
+  ownedTabStall = tracker;
+  const note = owned.foregrounded ? { sourceForegrounded: true as const } : {};
+  if (!stalled || !tracker) return note;
+  if (!await chrome.tabs.get(owned.tabId).catch(() => undefined) || await isShownToUser(owned)) return note;
+  if (owned.foregrounded && !owned.ownWindow) return { ...note, sourceStalled: true };
+  await bringTabForward(owned.tabId).catch(() => undefined);
+  if (!owned.foregrounded) await chrome.storage.session.set({ [JUNGOL_OWNED_TAB_KEY]: { ...owned, foregrounded: true } });
+  ownedTabStall = { ...tracker, since: Date.now() };
+  return { sourceForegrounded: true };
+}
+
+/** pathname null: any committed page of a fresh tab (a redirect is checked by the caller). */
+function waitForTabLoad(tabId: number, pathname: string | null, timeoutMs = 30_000): Promise<boolean> {
   return new Promise(resolve => {
     let settled = false;
     const loaded = (tab: chrome.tabs.Tab) => {
-      try { return tab.status === "complete" && new URL(tab.url ?? "").pathname === pathname; } catch { return false; }
+      try {
+        if (tab.status !== "complete" || !tab.url || tab.url === "about:blank") return false;
+        return pathname === null || new URL(tab.url).pathname === pathname;
+      } catch { return false; }
     };
     const finish = (value: boolean) => {
       if (settled) return;
@@ -112,15 +172,97 @@ function waitForTabLoad(tabId: number, pathname: string, timeoutMs = 30_000): Pr
   });
 }
 
-/** Reads the signed-in account from Jungol's home page and opens its own submission list. */
-async function openOwnedJungolHistoryTab(historyPageTabId?: number): Promise<{ tabId: number; url: string } | null> {
+/** SWEA and Programmers list the signed-in user's own submissions at a fixed address; ownership is verified by the scan. */
+const OWNED_LISTING_URLS: Partial<Record<Platform, string>> = {
+  SWEA: "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do",
+  PROGRAMMERS: "https://school.programmers.co.kr/learn/challenges?order=recent&statuses=solved%2Csolved_with_unlock&page=1",
+};
+async function openOwnedListingTab(platform: Platform, historyPageTabId?: number): Promise<{ tabId: number; url: string } | null> {
+  const url = OWNED_LISTING_URLS[platform];
+  if (!url) return null;
   let tabId: number | undefined;
   try {
-    tabId = (await chrome.tabs.create({ url: "https://jungol.co.kr/", active: false })).id;
+    tabId = (await chrome.tabs.create({ url, active: false })).id;
     if (tabId === undefined || !Number.isSafeInteger(tabId)) return null;
     const id = tabId;
     await chrome.tabs.update(id, { autoDiscardable: false }).catch(() => undefined);
+    if (!await waitForTabLoad(id, null)) throw new Error("list");
+    const current = (await chrome.tabs.get(id)).url;
+    // A signed-out visit is redirected to a login page and is never adopted.
+    if (!current || historyPlatformForUrl(current) !== platform) throw new Error("not a listing");
+    const owned: OwnedJungolTab = { tabId: id, historyPageTabId, lastUsedAt: Date.now() };
+    await chrome.storage.session.set({ [JUNGOL_OWNED_TAB_KEY]: owned });
+    return { tabId: id, url: current };
+  } catch {
+    if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
+    return null;
+  }
+}
+
+/** The right half of the history page's window, so both stay visible side by side. */
+async function jungolWindowBounds(historyPageTabId?: number): Promise<{ left?: number; top?: number; width?: number; height?: number }> {
+  try {
+    if (historyPageTabId === undefined) return {};
+    const host = await chrome.windows.get((await chrome.tabs.get(historyPageTabId)).windowId);
+    const { left, top, width, height } = host;
+    if (host.state === "minimized" || host.state === "fullscreen" || left === undefined || top === undefined || width === undefined || height === undefined) return {};
+    const half = Math.max(640, Math.floor(width / 2));
+    return { left: left + width - half, top, width: half, height: Math.max(520, height) };
+  } catch { return {}; }
+}
+
+/**
+ * Jungol does not answer while its tab is in the background. A window of its own
+ * keeps the history page's tab active and visible beside it; where windows
+ * cannot be created, a tab in front is the fallback.
+ */
+async function createJungolSourceTab(historyPageTabId?: number): Promise<{ tabId?: number; ownWindow: boolean }> {
+  try {
+    const created = await chrome.windows.create({ url: "https://jungol.co.kr/", type: "normal", focused: true, ...await jungolWindowBounds(historyPageTabId) });
+    const tabId = created?.tabs?.[0]?.id;
+    if (Number.isSafeInteger(tabId)) return { tabId, ownWindow: true };
+  } catch { /* fall back to a tab */ }
+  return { tabId: (await chrome.tabs.create({ url: "https://jungol.co.kr/", active: true })).id, ownWindow: false };
+}
+
+/** Why the extension could not open Jungol's own submission list; shown next to the "login not confirmed" message. */
+type OpenFailure = "WINDOW" | "HOME_LOAD" | "NO_ACCOUNT_LINK" | "NOT_OWNER" | "LIST_LOAD";
+let lastOpenFailure: OpenFailure | null = null;
+const MAX_ACCOUNT_CANDIDATES = 5;
+
+/** A profile is the user's own only when its edit tab renders, which the site shows to the signed-in owner alone. */
+async function ownsJungolProfile(tabId: number, accountId: string): Promise<boolean> {
+  try {
+    const [probe] = await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, world: "ISOLATED", args: [accountId], func: async (account: string) => {
+      for (let attempt = 0; attempt < 16; attempt++) {
+        if (document.querySelector(`a[href="/account/${account}/edit"]`)) return true;
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      return false;
+    } });
+    return probe?.result === true;
+  } catch { return false; }
+}
+
+/**
+ * Reads the signed-in account from Jungol's home page and opens its own submission list.
+ * A visible home page can link several accounts (rankings and the like), so each
+ * candidate profile is opened until one shows the owner's edit tab; a lone candidate
+ * is passed on as before and checked again by the page script.
+ */
+async function openOwnedJungolHistoryTab(historyPageTabId?: number): Promise<{ tabId: number; url: string } | null> {
+  let tabId: number | undefined;
+  let stage: OpenFailure = "WINDOW";
+  lastOpenFailure = null;
+  try {
+    const source = await createJungolSourceTab(historyPageTabId);
+    tabId = source.tabId;
+    if (tabId === undefined || !Number.isSafeInteger(tabId)) { lastOpenFailure = stage; return null; }
+    const id = tabId;
+    await chrome.tabs.update(id, { autoDiscardable: false }).catch(() => undefined);
+    stage = "HOME_LOAD";
     if (!await waitForTabLoad(id, "/")) throw new Error("home");
+    stage = "NO_ACCOUNT_LINK";
     const [probe] = await chrome.scripting.executeScript({ target: { tabId: id, frameIds: [0] }, world: "ISOLATED", func: async () => {
       for (let attempt = 0; attempt < 20; attempt++) {
         const ids = [...new Set([...document.querySelectorAll("a[href^='/account/']")]
@@ -130,17 +272,26 @@ async function openOwnedJungolHistoryTab(historyPageTabId?: number): Promise<{ t
       }
       return [] as string[];
     } });
-    const ids = probe?.result;
-    // Ownership is verified again on the list itself (its edit tab only renders
-    // for the signed-in user), so an ambiguous home page is simply refused.
-    if (!Array.isArray(ids) || ids.length !== 1 || !/^\d{1,40}$/.test(String(ids[0]))) throw new Error("account");
-    const path = `/account/${ids[0]}/submission`;
-    await chrome.tabs.update(id, { url: `https://jungol.co.kr${path}` });
-    if (!await waitForTabLoad(id, path)) throw new Error("list");
-    const owned: OwnedJungolTab = { tabId: id, historyPageTabId, lastUsedAt: Date.now() };
+    const found = probe?.result;
+    const candidates = (Array.isArray(found) ? found.map(String) : []).filter(value => /^\d{1,40}$/.test(value)).slice(0, MAX_ACCOUNT_CANDIDATES);
+    if (!candidates.length) throw new Error("account");
+    let path = "";
+    for (const candidate of candidates) {
+      stage = "LIST_LOAD";
+      path = `/account/${candidate}/submission`;
+      await chrome.tabs.update(id, { url: `https://jungol.co.kr${path}` });
+      if (!await waitForTabLoad(id, path)) throw new Error("list");
+      stage = "NOT_OWNER";
+      // Also waits for the profile to render before the page script reads it.
+      if (await ownsJungolProfile(id, candidate) || candidates.length === 1) { stage = "LIST_LOAD"; break; }
+      path = "";
+    }
+    if (!path) throw new Error("not owner");
+    const owned: OwnedJungolTab = { tabId: id, historyPageTabId, lastUsedAt: Date.now(), foregrounded: true, ownWindow: source.ownWindow };
     await chrome.storage.session.set({ [JUNGOL_OWNED_TAB_KEY]: owned });
     return { tabId: id, url: `https://jungol.co.kr${path}` };
   } catch {
+    lastOpenFailure = stage;
     if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
     return null;
   }
@@ -188,10 +339,8 @@ async function resolveLocalHistoryTab(platform: Platform, allowNewSource = false
   })());
   if (matches.length > 1) return { error: "MULTIPLE_TABS" };
   if (matches.length === 1) return { tabId: matches[0]!.id!, url: matches[0]!.url!, platform };
-  if (platform === "JUNGOL") {
-    const owned = await openOwnedJungolHistoryTab(historyPageTabId);
-    if (owned) return { ...owned, platform };
-  }
+  const owned = platform === "JUNGOL" ? await openOwnedJungolHistoryTab(historyPageTabId) : await openOwnedListingTab(platform, historyPageTabId);
+  if (owned) return { ...owned, platform };
   return { error: "TAB_NOT_FOUND" };
 }
 
@@ -204,13 +353,29 @@ function localHistoryCommand(type: LocalHistoryCommand, platform: Platform = "JU
 }
 
 async function runLocalHistoryCommand(type: LocalHistoryCommand, platform: Platform, submissionIds?: string[], historyPageTabId?: number): Promise<unknown> {
+  lastOpenFailure = null;
   const target = await resolveLocalHistoryTab(platform, mayRediscoverHistorySource(type), historyPageTabId);
-  if ("error" in target) return { status: target.error };
+  if ("error" in target) return { status: target.error, ...(lastOpenFailure ? { sourceOpenFailure: lastOpenFailure } : {}) };
   const owned = await readOwnedJungolTab();
   const ownedTarget = owned?.tabId === target.tabId;
+  let ownedRecord = owned;
   if (owned && ownedTarget) {
     const touched: OwnedJungolTab = { ...owned, lastUsedAt: Date.now(), historyPageTabId: historyPageTabId ?? owned.historyPageTabId };
     await chrome.storage.session.set({ [JUNGOL_OWNED_TAB_KEY]: touched });
+    ownedRecord = touched;
+  }
+  // Jungol does not answer while its tab is in the background, so every run on it
+  // (the list scan, and the import that follows after the user went back to the
+  // history page) starts with the tab in front.
+  if (platform === "JUNGOL" && (type === "LOCAL_HISTORY_SCAN_START" || type === "LOCAL_HISTORY_IMPORT_START")) {
+    // Best effort: failing to bring the tab forward must never stop the run itself.
+    try {
+      await bringTabForward(target.tabId);
+      if (ownedRecord && ownedTarget && !ownedRecord.foregrounded) {
+        ownedRecord = { ...ownedRecord, foregrounded: true };
+        await chrome.storage.session.set({ [JUNGOL_OWNED_TAB_KEY]: ownedRecord });
+      }
+    } catch { /* The tab may have closed meanwhile; the command below reports that. */ }
   }
   // The content script can request an owned auxiliary tab before this command
   // replies. Persist that intent first, so the auxiliary service has a route
@@ -227,6 +392,9 @@ async function runLocalHistoryCommand(type: LocalHistoryCommand, platform: Platf
     }) as { status?: unknown };
     const status = typeof response?.status === "string" ? response.status : "FAILED";
     await writeLocalHistoryRoute({ ...target, status });
+    // Relieving a stall is best effort and must never turn a healthy run into INTERRUPTED.
+    const sourceNote = ownedTarget && ownedRecord ? await relieveStalledOwnedTab(ownedRecord, response).catch(() => ({})) : {};
+    if (ownedTarget && ownedRecord && status === "READY") await handBackToHistoryPage(ownedRecord).catch(() => undefined);
     // An import always needs a fresh READY scan, so a finished or failed run
     // has no further use for the hidden tab. Status reads close it only once
     // the import itself has ended.
@@ -234,7 +402,8 @@ async function runLocalHistoryCommand(type: LocalHistoryCommand, platform: Platf
       await closeOwnedJungolTab(target.tabId);
     }
     const run = (await chrome.storage.session.get(SERVER_HISTORY_RUN_KEY))[SERVER_HISTORY_RUN_KEY] as ServerHistoryRun | undefined;
-    return run && run.platform === platform ? { ...response, serverAccount: run.account, serverRunId: run.runId } : response;
+    const reply = Object.keys(sourceNote).length ? { ...response, ...sourceNote } : response;
+    return run && run.platform === platform ? { ...reply, serverAccount: run.account, serverRunId: run.runId } : reply;
   } catch {
     await writeLocalHistoryRoute({ ...target, status: "INTERRUPTED" });
     return { status: "INTERRUPTED" };
@@ -274,14 +443,27 @@ async function finishSelfRevocation(settings: Awaited<ReturnType<typeof store.ge
   if (result === "ACK") await store.mutateRelayIfCurrent(relay, current => ({ ...current, relay: undefined }));
 }
 
-async function drainRelay(): Promise<void> {
+async function drainRelay(manual = false): Promise<DrainSummary> {
   let settings = await store.getSettings();
   if (await migrateLegacyRelayEndpoint(store, settings)) settings = await store.getSettings();
   if (settings.relay?.status === "REVOCATION_PENDING") {
     await finishSelfRevocation(settings);
-    return;
+    return { status: 'RECONNECT_REQUIRED', sent: 0, rejected: 0, remaining: 0 };
   }
-  await drainCaptureOutbox(store, restoreConnection);
+  return drainCaptureOutbox(store, restoreConnection, fetch, { manual });
+}
+
+/** The popup's manual sync waits for any automatic run, then retries every queued item once. */
+async function syncPendingNow(): Promise<DrainSummary> {
+  await relayDrainPromise?.catch(() => undefined);
+  const run = drainRelay(true);
+  // An automatic request made meanwhile only sets relayDrainRequested; run it after.
+  relayDrainPromise = run.then(() => undefined, () => undefined).finally(() => {
+    if (relayDrainPromise === tracked) relayDrainPromise = null;
+    if (relayDrainRequested) void requestRelayDrain();
+  });
+  const tracked = relayDrainPromise;
+  return run;
 }
 
 let relayDrainPromise: Promise<void> | null = null;
@@ -293,7 +475,7 @@ function requestRelayDrain(): Promise<void> {
     relayDrainPromise = (async () => {
       do {
         relayDrainRequested = false;
-        await drainRelay();
+        await drainRelay(false);
       } while (relayDrainRequested);
     })()
       .catch(() => undefined)
@@ -313,6 +495,10 @@ requestRelayDrain();
 
 type InternalMessage =
   | { type: "STORE_CAPTURE"; capture: unknown }
+  | { type: "SITE_SYNC_STATUS"; rows?: unknown; problemNumbers?: unknown }
+  | { type: "HISTORY_SERVER_MATCH"; platform?: unknown; rows?: unknown }
+  | { type: "SITE_SYNC_REGISTER"; capture: unknown }
+  | { type: "SITE_SYNC_COMMIT"; captureIds: unknown }
   | { type: "STORE_HISTORICAL_CAPTURE"; capture: unknown }
   | { type: "SET_SUBMISSION_PROGRESS"; attemptId: unknown; platform?: unknown; problemNumber?: unknown; title?: unknown; phase: unknown }
   | { type: "GET_POPUP_STATE" }
@@ -321,6 +507,7 @@ type InternalMessage =
   | { type: 'POPUP_GITHUB_BATCH_ACTION'; action?: unknown; taskId?: unknown; accountId?: unknown }
   | { type: "SET_GITHUB_AUTOMATION"; enabled: boolean; accountId: string; settingsVersion: number }
   | { type: "RETRY_RELAY" }
+  | { type: "SYNC_PENDING_NOW" }
   | { type: "GET_GITHUB_COMMIT_STATUSES"; captureIds: unknown }
   | { type: "COPY_RECENT_CAPTURE"; captureId: string }
   | { type: "DOWNLOAD_RECENT_CAPTURE"; captureId: string }
@@ -334,6 +521,7 @@ type InternalMessage =
   | { type: "LOCAL_HISTORY_IDS"; platform?: unknown }
   | { type: "LOCAL_HISTORY_SCAN_START" | "LOCAL_HISTORY_STATUS" | "LOCAL_HISTORY_CANCEL"; platform?: unknown }
   | { type: "LOCAL_HISTORY_IMPORT_START"; platform?: unknown; submissionIds: unknown; serverRunId?: unknown; serverAccount?: unknown }
+  | { type: 'SITE_LOGIN_STATUS' }
   | { type: 'START_GITHUB_BATCH' | 'GET_GITHUB_BATCH' | 'CANCEL_GITHUB_BATCH' | 'RESUME_GITHUB_BATCH'; account?: unknown; target?: unknown };
 
 type ProgrammersAuxiliaryMessage = { type: "PROGRAMMERS_AUX_READ"; lessonUrl: unknown; mode: unknown; submissionId?: unknown } | { type: "PROGRAMMERS_AUX_CANCEL" };
@@ -424,7 +612,8 @@ async function runProgrammersAuxiliary(sender: chrome.runtime.MessageSender, mes
       return { ok: false, error: "INTERRUPTED" };
     // Keep auxiliary lessons in the existing source window, leaving the
     // collection window visible. Never create a popup for each problem.
-    const created = await chrome.tabs.create({ url: lessonUrl, active: true, windowId: sourceTab.windowId });
+    // Inactive: collecting many submissions must not bring each lesson to the front.
+    const created = await chrome.tabs.create({ url: lessonUrl, active: false, windowId: sourceTab.windowId });
     if (!created || !Number.isSafeInteger(created.id)) return { ok: false, error: "OPEN_FAILED" };
     run.auxiliaryTabId = created.id!;
     if (run.cancelled) return { ok: false, error: "INTERRUPTED" };
@@ -562,6 +751,22 @@ function isSupportedCaptureSender(sender: chrome.runtime.MessageSender, platform
   return url.origin === "https://jungol.co.kr" && /^\/problem\/\d+\/?$/.test(url.pathname);
 }
 
+/** Manual sync runs only from the signed-in user's own submission list on each platform. */
+function siteSyncPlatform(sender: chrome.runtime.MessageSender): Platform | null {
+  const frameUrl = senderUrl(sender);
+  // A content script keeps the address it was injected at, but Jungol moves between
+  // its pages without reloading (history.pushState), so the sender URL still names
+  // the page the user came from. The tab's current address says which page is open.
+  let tabUrl: URL | null = null;
+  try { tabUrl = typeof sender.tab?.url === "string" ? new URL(sender.tab.url) : null; } catch { tabUrl = null; }
+  const url = frameUrl && tabUrl && tabUrl.origin === frameUrl.origin ? tabUrl : frameUrl;
+  if (!url || !Number.isSafeInteger(sender.tab?.id) || sender.frameId !== 0) return null;
+  if (url.origin === "https://jungol.co.kr") return isJungolHistorySenderUrl(url) ? "JUNGOL" : null;
+  if (url.origin === SWEA_ORIGIN) return url.pathname === SWEA_USER_SUBMISSIONS_PATH ? "SWEA" : null;
+  if (url.origin === "https://school.programmers.co.kr") return /^\/learn\/courses\/30\/lessons\/\d+$/.test(url.pathname) ? "PROGRAMMERS" : null;
+  return null;
+}
+
 let progressWrite: Promise<void> = Promise.resolve();
 let connectionRestore: ReturnType<typeof restoreCaptureSession> | null = null;
 function restoreConnection() {
@@ -638,6 +843,40 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       if (!accountId || !/^[1-9]\d{0,15}$/.test(accountId)) return { ok: false, error: 'LOGIN_REQUIRED' };
       return retainCaptureForRetry(store, capture, accountId, () => { void requestRelayDrain(); });
     }).then(sendResponse).catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
+    return true;
+  }
+
+  // History candidates the server already holds, including live captures that carry no site submission id.
+  if (object.type === "HISTORY_SERVER_MATCH") {
+    const platform = object.platform;
+    if (!isLocalHistoryPageSender(sender, chrome.runtime.id) || (platform !== "JUNGOL" && platform !== "SWEA" && platform !== "PROGRAMMERS") ||
+        !Array.isArray(object.rows) || object.rows.length > 10_000) { sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false; }
+    const rows = object.rows.filter(row => validSiteSyncRow(platform, row));
+    void siteSync.status(platform, rows)
+      .then(result => sendResponse(result.ok ? { ok: true, existing: result.rows.filter(row => row.state !== 'UNREGISTERED').map(row => row.submissionId) } : result))
+      .catch(() => sendResponse({ ok: false, error: 'SERVER_UNAVAILABLE' }));
+    return true;
+  }
+
+  if (object.type === "SITE_SYNC_STATUS" || object.type === "SITE_SYNC_REGISTER" || object.type === "SITE_SYNC_COMMIT") {
+    const platform = sender.id === chrome.runtime.id ? siteSyncPlatform(sender) : null;
+    if (!platform) { sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false; }
+    let work: Promise<unknown>;
+    if (object.type === "SITE_SYNC_STATUS") {
+      const rows = object.rows ?? [], problems = object.problemNumbers ?? [];
+      if (!Array.isArray(rows) || rows.length > 500 || rows.some(row => !validSiteSyncRow(platform, row)) ||
+          !Array.isArray(problems) || problems.length > 500 || problems.some(value => typeof value !== 'string' || !/^\d{1,40}$/.test(value))) { sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false; }
+      work = siteSync.status(platform, rows, problems);
+    } else if (object.type === "SITE_SYNC_REGISTER") {
+      const capture = object.capture;
+      if (!isCaptureRecord(capture) || capture.platform !== platform) { sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false; }
+      work = siteSync.register(capture);
+    } else {
+      const ids = (object as { captureIds?: unknown }).captureIds;
+      if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) { sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false; }
+      work = siteSync.commit(platform, ids as string[]);
+    }
+    void work.then(sendResponse).catch(() => sendResponse({ ok: false, error: 'SERVER_UNAVAILABLE' }));
     return true;
   }
 
@@ -785,6 +1024,12 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     return true;
   }
 
+  if (object.type === 'SITE_LOGIN_STATUS') {
+    if (!dashboardSender(sender, chrome.runtime.id)) { sendResponse({ error: 'UNAUTHORIZED' }); return false; }
+    void checkSiteLogins().then(sites => sendResponse({ sites })).catch(() => sendResponse({ error: 'UNAVAILABLE' }));
+    return true;
+  }
+
   if (object.type === 'START_GITHUB_BATCH' || object.type === 'GET_GITHUB_BATCH' || object.type === 'CANCEL_GITHUB_BATCH' || object.type === 'RESUME_GITHUB_BATCH') {
     if (!dashboardSender(sender, chrome.runtime.id) || typeof object.account !== 'string' || !/^[0-9]+:[0-9]+$/.test(object.account)) { sendResponse({ error: 'UNAUTHORIZED' }); return false; }
     const account = object.account;
@@ -795,6 +1040,13 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       if (object.type === 'GET_GITHUB_BATCH') void githubBatchRunner.resume();
       return { task: await githubBatchRunner.get(account) };
     })().then(sendResponse).catch(error => sendResponse({ error: error instanceof Error ? error.message : '일괄 커밋을 확인하지 못했습니다.' }));
+    return true;
+  }
+
+  if (object.type === "SYNC_PENDING_NOW") {
+    if (!isPopupSender(sender)) { sendResponse({ ok: false, error: "UNAUTHORIZED" }); return false; }
+    void syncPendingNow().then(summary => sendResponse({ ok: true, summary }))
+      .catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;
   }
 
@@ -819,9 +1071,9 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     }
     const captureIds = [...new Set(object.captureIds.filter(isUuid))].slice(0, 10);
     void store.getSettings()
-      .then(settings => fetchGithubCommitStatuses(captureIds, settings))
-      .then(statuses => sendResponse({ statuses }))
-      .catch(() => sendResponse({ statuses: {} }));
+      .then(settings => fetchGithubCommitState(captureIds, settings))
+      .then(({ statuses, links }) => sendResponse({ statuses, links }))
+      .catch(() => sendResponse({ statuses: {}, links: {} }));
     return true;
   }
 

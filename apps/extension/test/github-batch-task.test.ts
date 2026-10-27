@@ -111,3 +111,61 @@ test('historical registration compares server membership and does not require an
   const fetcher = (async (url: URL) => { if (url.pathname.endsWith('/me')) return Response.json({ id: 1, githubId: '1' }); if (url.pathname.endsWith('historical-submission-ids')) return Response.json(['101']); uploadCount++; return Response.json({}); }) as unknown as typeof fetch;
   assert.deepEqual(await registerHistoricalOnServer(capture, '1:1', fetcher), { ok: true, created: false }); assert.equal(uploadCount, 0);
 });
+
+function settling(plan: (poll: number, index: number) => 'PENDING' | 'RUNNING' | 'SUCCEEDED') {
+  let polls = 0;
+  const known: string[] = [];
+  const fetcher = (async (url: URL, init: RequestInit) => {
+    if (url.pathname === '/api/auth/me') return Response.json({ id: 1, githubId: '1' });
+    if (url.pathname === '/api/auth/csrf') return Response.json({ headerName: 'X-XSRF-TOKEN', token: 'synthetic' });
+    if (url.pathname === '/api/solutions/github-batch') {
+      const batch = JSON.parse(init.body as string).captureIds as string[];
+      known.push(...batch);
+      return Response.json(Object.fromEntries(batch.map(id => [id, 'PENDING'])));
+    }
+    polls += 1;
+    return Response.json(known.map((captureId, index) => ({ captureId, state: plan(polls, index) })));
+  }) as unknown as typeof fetch;
+  return { fetcher, polls: () => polls };
+}
+function ticking(windowMs = 60_000) {
+  let clock = 0; const slept: number[] = [];
+  return { slept, tracking: { intervalMs: 1_000, windowMs, now: () => clock, sleep: async (ms: number) => { slept.push(ms); clock += ms; } } };
+}
+
+test('after every commit is requested the runner looks again every few seconds and stores each look for the popup', async () => {
+  const base = storage(), successes: number[] = [];
+  const store = { get: base.get, set: async (task: GithubBatchTask) => { successes.push(Object.values(task.states).filter(state => state === 'SUCCEEDED').length); await base.set(task); } };
+  const api = settling((poll, index) => poll === 1 ? (index < 30 ? 'SUCCEEDED' : 'PENDING') : poll === 2 ? (index < 80 ? 'SUCCEEDED' : 'RUNNING') : 'SUCCEEDED');
+  const clock = ticking(), runner = new GithubBatchTaskRunner(store, api.fetcher, clock.tracking);
+  await runner.start('1:1', target); await runner.resume();
+  assert.equal(api.polls(), 3, 'one look per interval until nothing is pending or running');
+  assert.deepEqual(clock.slept, [1_000, 1_000]);
+  assert.deepEqual([...new Set(successes)].filter(count => [30, 80, 120].includes(count)), [30, 80, 120], 'each look is stored before the next one');
+  const done = (await runner.get('1:1'))!;
+  assert.equal(done.status, 'DONE');
+  assert.equal(Object.values(done.states).filter(state => state === 'SUCCEEDED').length, 120);
+});
+
+test('tracking that outlasts its window stays open for the next alarm instead of looping forever', async () => {
+  let settled = false;
+  const store = storage(), api = settling(() => settled ? 'SUCCEEDED' : 'PENDING');
+  const clock = ticking(3_000), runner = new GithubBatchTaskRunner(store, api.fetcher, clock.tracking);
+  await runner.start('1:1', target); await runner.resume();
+  assert.equal(api.polls(), 4, 'looks at 0s, 1s, 2s and 3s, then hands over');
+  assert.equal((await runner.get('1:1'))?.status, 'TRACKING');
+  settled = true; await runner.resume();
+  assert.equal((await runner.get('1:1'))?.status, 'DONE');
+});
+
+test('tracking stops quietly when another task replaces the one it was following', async () => {
+  const store = storage(), api = settling(() => 'PENDING'), clock = ticking();
+  const replacement = { ...target, captureIds: [ids[0]!], account: '1:1', taskId: 'replacement', status: 'REQUESTING' as const, offset: 0, states: {}, cancelRequested: false, updatedAt: 1 };
+  const tracking = { ...clock.tracking, sleep: async (ms: number) => { await clock.tracking.sleep(ms); await store.set(replacement); } };
+  const runner = new GithubBatchTaskRunner(store, api.fetcher, tracking);
+  await runner.start('1:1', target); await runner.resume();
+  assert.equal(api.polls(), 1);
+  const kept = (await store.get())!;
+  assert.equal(kept.taskId, 'replacement');
+  assert.equal(kept.status, 'REQUESTING', 'the replacement is left exactly as it was');
+});

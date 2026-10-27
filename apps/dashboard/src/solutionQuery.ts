@@ -2,7 +2,8 @@ import { difficultyKey } from '../../../shared/difficulty'
 import type { Platform, Solution } from './types'
 import { canonicalLanguageKey } from '../../../shared/language'
 
-export type SolutionSort = 'latest' | 'oldest' | 'problem' | 'title'
+/** saved: when the archive received it; latest/oldest: when it was solved on the site. */
+export type SolutionSort = 'saved' | 'latest' | 'oldest' | 'problem' | 'title'
 
 export type SolutionQuery = {
   query: string
@@ -27,6 +28,12 @@ function timestamp(solution: Solution): number {
   return Number.isNaN(value) ? 0 : value
 }
 
+// A past solution keeps its original solve time but is saved when imported.
+function savedTimestamp(solution: Solution): number {
+  const value = Date.parse(solution.observedAt ?? solution.solvedAt ?? '')
+  return Number.isNaN(value) ? 0 : value
+}
+
 function stableCaptureOrder(left: Solution, right: Solution): number {
   return left.captureId.localeCompare(right.captureId)
 }
@@ -45,7 +52,8 @@ export function filterAndSortSolutions(solutions: Solution[], options: SolutionQ
     })
     .sort((left, right) => {
       let compared = 0
-      if (options.sort === 'latest') compared = timestamp(right) - timestamp(left)
+      if (options.sort === 'saved') compared = savedTimestamp(right) - savedTimestamp(left) || timestamp(right) - timestamp(left)
+      else if (options.sort === 'latest') compared = timestamp(right) - timestamp(left)
       else if (options.sort === 'oldest') compared = timestamp(left) - timestamp(right)
       else if (options.sort === 'problem') compared = natural.compare(left.problemNumber, right.problemNumber)
       else compared = natural.compare(left.title, right.title)

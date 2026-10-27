@@ -1,6 +1,6 @@
 package com.codearchive.api.automation;
 
-import com.codearchive.api.settings.UserSettings; import com.codearchive.api.solution.Solution; import com.fasterxml.jackson.databind.*;
+import com.codearchive.api.auth.AppUser; import com.codearchive.api.settings.UserSettings; import com.codearchive.api.solution.Solution; import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStream; import java.math.BigInteger; import java.net.URI; import java.net.URLEncoder; import java.net.http.*; import java.nio.ByteBuffer; import java.nio.charset.CharacterCodingException; import java.nio.charset.CodingErrorAction; import java.nio.charset.StandardCharsets; import java.security.*; import java.security.interfaces.RSAPrivateKey; import java.security.spec.PKCS8EncodedKeySpec; import java.security.spec.RSAPrivateCrtKeySpec; import java.time.*; import java.time.format.DateTimeFormatter; import java.util.*; import java.util.regex.Matcher; import java.util.regex.Pattern; import javax.crypto.Mac; import javax.crypto.spec.SecretKeySpec; import org.springframework.beans.factory.annotation.Autowired; import org.springframework.beans.factory.annotation.Value; import org.springframework.stereotype.Component;
 
 /** Server-only GitHub App write path. Every write is based on a newly read branch head and uses a non-force ref update. */
@@ -13,6 +13,32 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
  private static final int MAX_OPERATION_FILES=100,MAX_OPERATION_DEPTH=32,MAX_OPERATION_TREE_REQUESTS=256,MAX_PREVIEW_TOKEN_LENGTH=4096;
  private static final int MAX_FILE_PREVIEW_BYTES=65536;
  public static final String INITIAL_README="# CodeArchive\n\n이 저장소는 CodeArchive로 관리하는 알고리즘 풀이를 보관합니다. 지원 사이트에서 PASS한 풀이가 설정에 따라 자동 수집·동기화·커밋됩니다.\n\n저장된 풀이에는 플랫폼, 문제 번호와 제목, 제출 언어, 소스 코드, 수집 가능한 실행 시간과 메모리 정보가 포함될 수 있습니다. 폴더 구조와 파일명, 커밋 메시지, 문제 정보 주석은 CodeArchive 설정에 따라 달라집니다.\n";
+ /**
+  * Commits are written by the App installation but attributed to the
+  * repository owner: their GitHub display name (or login) and the GitHub
+  * noreply address, which links the commit to their account and contribution
+  * graph. Without a usable identity GitHub records the App bot as before.
+  */
+ public record CommitIdentity(String name,String email){
+  public static CommitIdentity of(AppUser user){
+   if(user==null)return null;
+   String id=user.getGithubId(),login=user.getGithubLogin(),display=user.getGithubName();
+   if(id==null||!id.matches("[0-9]{1,40}")||login==null||!login.matches("[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})"))return null;
+   String name=display!=null&&!display.isBlank()&&display.strip().length()<=100&&display.chars().noneMatch(c->c<32||c==127||c=='<'||c=='>')?display.strip():login;
+   return new CommitIdentity(name,id+"+"+login+"@users.noreply.github.com");
+  }
+  Map<String,String> person(){Map<String,String> person=new LinkedHashMap<>();person.put("name",name);person.put("email",email);return person;}
+ }
+ private static Map<String,Object> commitBody(String message,String tree,List<String> parents,CommitIdentity author){
+  Map<String,Object> body=new LinkedHashMap<>();body.put("message",message);body.put("tree",tree);body.put("parents",parents);
+  if(author!=null){body.put("author",author.person());body.put("committer",author.person());}
+  return body;
+ }
+ private static Map<String,Object> contentsBody(String message,String base64Content,CommitIdentity author){
+  Map<String,Object> body=new LinkedHashMap<>();body.put("message",message);body.put("content",base64Content);
+  if(author!=null){body.put("author",author.person());body.put("committer",author.person());}
+  return body;
+ }
  private final String appId,key,base; private final HttpClient http; private final ObjectMapper json; private final Duration requestTimeout; private final GithubProvider fallback=new FailClosedGithubProvider();
  @Autowired public GithubAppProvider(@Value("${codearchive.github.app-id:}")String appId,@Value("${codearchive.github.app-private-key:}")String key,@Value("${codearchive.github.api-base:https://api.github.com}")String base,@Value("${codearchive.github.connect-timeout-ms:5000}")long connectTimeoutMs,@Value("${codearchive.github.request-timeout-ms:10000}")long requestTimeoutMs,ObjectMapper json){this(appId,key,base,HttpClient.newBuilder().connectTimeout(timeout(connectTimeoutMs)).build(),json,requestTimeoutMs);} 
  GithubAppProvider(String appId,String key,String base,HttpClient http,ObjectMapper json){this(appId,key,base,http,json,10000);}
@@ -168,7 +194,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
  }
  private static boolean sha(String value){return value!=null&&value.matches("[0-9a-fA-F]{40}");}
  /** Adds one new file or one folder placeholder without changing an existing path. */
- public String addFile(String githubId,long installation,long repository,String branch,String path,String content,String message,String expectedHead,boolean placeholder)throws Exception{
+ public String addFile(String githubId,long installation,long repository,String branch,String path,String content,String message,String expectedHead,boolean placeholder)throws Exception{return addFile(githubId,installation,repository,branch,path,content,message,expectedHead,placeholder,null);}
+ public String addFile(String githubId,long installation,long repository,String branch,String path,String content,String message,String expectedHead,boolean placeholder,CommitIdentity author)throws Exception{
   if(!safeBranch(branch)||!safePath(path)||path.isBlank()||!sha(expectedHead)||content==null||content.getBytes(StandardCharsets.UTF_8).length>65536||message==null||message.isBlank()||message.length()>200||message.chars().anyMatch(c->c<32||c==127))throw new IllegalArgumentException("invalid file request");
   String[] parts=path.split("/");
   if(placeholder&&(parts.length<2||!parts[parts.length-1].equals(".gitkeep")||!content.isEmpty()))throw new IllegalArgumentException("invalid folder placeholder");
@@ -225,7 +252,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
   if(newTree.code!=201)throw new ProviderUnavailableException("file tree creation outcome unavailable");
   String newTreeSha=json.readTree(newTree.body).path("sha").asText();
   if(!sha(newTreeSha))throw new ProviderUnavailableException("file tree response invalid");
-  Response newCommit=send("POST",repoPath+"/git/commits",token,json.writeValueAsString(Map.of("message",message,"tree",newTreeSha,"parents",List.of(head))));
+  Response newCommit=send("POST",repoPath+"/git/commits",token,json.writeValueAsString(commitBody(message,newTreeSha,List.of(head),author)));
   if(newCommit.code!=201)throw new ProviderUnavailableException("file commit creation outcome unavailable");
   String commitSha=json.readTree(newCommit.body).path("sha").asText();
   if(!sha(commitSha))throw new ProviderUnavailableException("file commit response invalid");
@@ -265,7 +292,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
   return plan.branch();
  }
  /** Rebuilds the plan at the stored HEAD; the client can only present previewId. */
- public String commitOperation(String githubId,long installation,long repository,String previewId)throws Exception{
+ public String commitOperation(String githubId,long installation,long repository,String previewId)throws Exception{return commitOperation(githubId,installation,repository,previewId,null);}
+ public String commitOperation(String githubId,long installation,long repository,String previewId,CommitIdentity author)throws Exception{
   OperationPlan plan=readSignedPreview(previewId);
   if(!plan.githubId().equals(githubId)||plan.installation()!=installation||plan.repository()!=repository)throw new SecurityException("preview target mismatch");
   OperationPreviewRequest request=new OperationPreviewRequest(plan.operation(),plan.branch(),plan.sourcePath(),plan.destinationPath(),plan.message(),plan.expectedHeadSha());
@@ -288,7 +316,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
   // GitHub accepted an object write, not necessarily the requested deletion.
   // Verify the returned tree before a commit/ref can make anything visible.
   verifyOperationTree(repoPath,token,plan,rebuilt.blobs(),newTreeSha);
-  Response newCommit=send("POST",repoPath+"/git/commits",token,json.writeValueAsString(Map.of("message",plan.message(),"tree",newTreeSha,"parents",List.of(plan.expectedHeadSha()))));
+  Response newCommit=send("POST",repoPath+"/git/commits",token,json.writeValueAsString(commitBody(plan.message(),newTreeSha,List.of(plan.expectedHeadSha()),author)));
   if(newCommit.code!=201)throw new ProviderUnavailableException("operation commit creation outcome unavailable");
   String commitSha=json.readTree(newCommit.body).path("sha").asText(); if(!sha(commitSha))throw new ProviderUnavailableException("operation commit response invalid");
   requireHead(refPath,token,plan.branch(),plan.expectedHeadSha());
@@ -366,12 +394,13 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
  private void validateSafeEntry(JsonNode entry){String name=entry.path("path").asText(),type=entry.path("type").asText(),mode=entry.path("mode").asText(),object=entry.path("sha").asText();if(!safeBrowsePart(name)||!sha(object)||!("blob".equals(type)&&("100644".equals(mode)||"100755".equals(mode))||"tree".equals(type)&&"040000".equals(mode)))throw new TargetConflictException("unsafe repository entry");}
  private static Map<String,Object> treeEntry(String path,String mode,String type,String object){Map<String,Object> value=new LinkedHashMap<>();value.put("path",path);value.put("mode",mode);value.put("type",type);value.put("sha",object);return value;}
  public void validateTarget(String githubId,long installation,long repository,String branch,String root)throws Exception{directories(githubId,installation,repository,branch,root==null?"":root);}
- public String initializeReadme(String githubId,long installation,long repository)throws Exception{
+ public String initializeReadme(String githubId,long installation,long repository)throws Exception{return initializeReadme(githubId,installation,repository,null);}
+ public String initializeReadme(String githubId,long installation,long repository,CommitIdentity author)throws Exception{
   String token=installationToken(installation);
   String branch=emptyDefaultBranch(githubId,installation,repository,token);
   RepositoryChoice target=repository(githubId,installation,repository);
   String path="/repos/"+segment(target.owner())+"/"+segment(target.name())+"/contents/README.md";
-  Response created=send("PUT",path,token,json.writeValueAsString(Map.of("message","Initialize CodeArchive archive","content",Base64.getEncoder().encodeToString(INITIAL_README.getBytes(StandardCharsets.UTF_8)))));
+  Response created=send("PUT",path,token,json.writeValueAsString(contentsBody("Initialize CodeArchive archive",Base64.getEncoder().encodeToString(INITIAL_README.getBytes(StandardCharsets.UTF_8)),author)));
   if(created.code==201)return branch;
   if(created.code==409||created.code==422)throw new EmptyRepositoryConflictException();
   throw new ProviderUnavailableException("README initialization outcome is unavailable");
@@ -452,10 +481,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
    // freshly observed target head, so create/update remains branch-correct.
    Response exists=send("GET",repo+"/contents/"+encodedPath(path)+"?ref="+segment(head),token,null);
    if(exists.code==200){
-    ExistingFileState existing=compatibleFileState(exists,source,legacySource);if(existing==ExistingFileState.IDENTICAL)return Result.succeeded();if(existing==ExistingFileState.CONFLICT)return Result.failed("Git path is not an updatable file");
+    ExistingFileState existing=compatibleFileState(exists,source,legacySource);if(existing==ExistingFileState.IDENTICAL)return Result.succeededAt(path);if(existing==ExistingFileState.CONFLICT)return Result.failed("Git path is not an updatable file");
     targetPath=versionedPath(path,solution);
     Response versioned=send("GET",repo+"/contents/"+encodedPath(targetPath)+"?ref="+segment(head),token,null);
-    if(versioned.code==200){ExistingFileState state=compatibleFileState(versioned,source,legacySource);if(state==ExistingFileState.IDENTICAL)return Result.succeeded();return Result.failed("Versioned Git path already exists");}else if(versioned.code!=404)return classify(versioned,false);
+    if(versioned.code==200){ExistingFileState state=compatibleFileState(versioned,source,legacySource);if(state==ExistingFileState.IDENTICAL)return Result.succeededAt(targetPath);return Result.failed("Versioned Git path already exists");}else if(versioned.code!=404)return classify(versioned,false);
    }else if(exists.code!=404)return classify(exists,false);
    // A timezone presentation change must not create a second copy of an old
    // submission. Compare exact old/new content at the same pinned target head;
@@ -468,7 +497,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
      Response previous=send("GET",repo+"/contents/"+encodedPath(previousPath)+"?ref="+segment(head),token,null);
      if(previous.code==200){
       ExistingFileState state=compatibleFileState(previous,source,legacySource);
-      if(state==ExistingFileState.IDENTICAL)return Result.succeeded();
+      if(state==ExistingFileState.IDENTICAL)return Result.succeededAt(previousPath);
       if(state==ExistingFileState.CONFLICT)return Result.failed("Legacy Git path could not be verified");
      }else if(previous.code!=404)return classify(previous,false);
     }
@@ -478,7 +507,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
    String blobSha=json.readTree(blob.body).path("sha").asText();
    Response newTree=send("POST",repo+"/git/trees",token,json.writeValueAsString(Map.of("base_tree",tree,"tree",List.of(Map.of("path",targetPath,"mode","100644","type","blob","sha",blobSha))))); if(newTree.code!=201)return Result.unknown(Diagnostic.TREE_UNCONFIRMED);
    String treeSha=json.readTree(newTree.body).path("sha").asText();
-   Response newCommit=send("POST",repo+"/git/commits",token,json.writeValueAsString(Map.of("message",commitMessage(s,solution),"tree",treeSha,"parents",List.of(head)))); if(newCommit.code!=201)return Result.unknown(Diagnostic.COMMIT_UNCONFIRMED);
+   Response newCommit=send("POST",repo+"/git/commits",token,json.writeValueAsString(commitBody(commitMessage(s,solution),treeSha,List.of(head),CommitIdentity.of(s.getUser())))); if(newCommit.code!=201)return Result.unknown(Diagnostic.COMMIT_UNCONFIRMED);
    String commitSha=json.readTree(newCommit.body).path("sha").asText();
    // The durable worker re-reads consent/settings at the latest safe point.
    // Never expose a ref update once logout, target, or automation consent changed.
@@ -491,7 +520,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
    // window before the visible mutation as logout/OFF may have happened there.
    if(!finalWriteGuard.stillAuthorized())return Result.failed("GitHub automation consent changed before final write");
    Response update=send("PATCH",repo+"/git/refs/heads/"+segment(s.getGithubBranch()),token,json.writeValueAsString(Map.of("sha",commitSha,"force",false)));
-   if(update.code==200)return Result.succeeded(); return Result.unknown(Diagnostic.REF_UNCONFIRMED);
+   if(update.code==200)return Result.succeededAt(targetPath); return Result.unknown(Diagnostic.REF_UNCONFIRMED);
   } catch(Exception e){return possibleWrite?Result.unknown("GitHub mutation outcome is unknown"):Result.retryable("GitHub App request failed before final mutation");}
  }
  private Result createFirstSolution(UserSettings settings,Solution solution,FinalWriteGuard guard,String token,String repo,String path,String source){
@@ -505,9 +534,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
    String branch=emptyDefaultBranch(settings.getUser().getGithubId(),installation,target.id(),token);
    if(!branch.equals(settings.getGithubBranch()))return Result.failed("Default branch changed");
    if(!guard.stillAuthorized())return Result.failed("GitHub automation consent changed before first commit");
-   String body=json.writeValueAsString(Map.of("message",commitMessage(settings,solution),"content",Base64.getEncoder().encodeToString(source.getBytes(StandardCharsets.UTF_8))));
+   String body=json.writeValueAsString(contentsBody(commitMessage(settings,solution),Base64.getEncoder().encodeToString(source.getBytes(StandardCharsets.UTF_8)),CommitIdentity.of(settings.getUser())));
    Response created=send("PUT",repo+"/contents/"+encodedPath(path),token,body);
-   if(created.code==201)return Result.succeeded();
+   if(created.code==201)return Result.succeededAt(path);
    if(created.code==409||created.code==422)return Result.unknown("First commit collided with another repository change");
    return Result.unknown("First commit outcome was not confirmed");
   }catch(EmptyRepositoryConflictException e){return Result.retryable("Repository initialized before first commit; retry against its branch");}
@@ -534,7 +563,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
   }
  }
  /** Replace exactly the file that was read and explicitly confirmed by the browser. */
- public String replaceFile(String githubId,long installation,long repository,String branch,String path,String content,String message,String expectedHead,String expectedBlob)throws Exception{
+ public String replaceFile(String githubId,long installation,long repository,String branch,String path,String content,String message,String expectedHead,String expectedBlob)throws Exception{return replaceFile(githubId,installation,repository,branch,path,content,message,expectedHead,expectedBlob,null);}
+ public String replaceFile(String githubId,long installation,long repository,String branch,String path,String content,String message,String expectedHead,String expectedBlob,CommitIdentity author)throws Exception{
   if(!safeBranch(branch)||!safeBrowsePath(path)||path.isBlank()||pathDepth(path)>MAX_OPERATION_DEPTH||!sha(expectedHead)||!sha(expectedBlob)||content==null||content.getBytes(StandardCharsets.UTF_8).length>MAX_FILE_PREVIEW_BYTES||content.chars().anyMatch(c->c==0||c<32&&c!='\n'&&c!='\r'&&c!='\t'||c==127)||message==null||message.isBlank()||message.length()>200||message.chars().anyMatch(c->c<32||c==127))throw new IllegalArgumentException("invalid file edit");
   BranchChoice selected=selectedBranch(githubId,installation,repository,branch);
   if(selected==null)throw new TargetConflictException("branch unavailable");
@@ -562,7 +592,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
   digest.update(("blob "+contentBytes.length+"\0").getBytes(StandardCharsets.UTF_8));digest.update(contentBytes);
   String contentSha=HexFormat.of().formatHex(digest.digest());
   verifyEditedTree(repoPath,token,beforeRoot,readTree(repoPath,newTreeSha,token),path.split("/"),0,original.mode(),expectedBlob,contentSha);
-  Response newCommit=send("POST",repoPath+"/git/commits",token,json.writeValueAsString(Map.of("message",message,"tree",newTreeSha,"parents",List.of(expectedHead))));
+  Response newCommit=send("POST",repoPath+"/git/commits",token,json.writeValueAsString(commitBody(message,newTreeSha,List.of(expectedHead),author)));
   if(newCommit.code!=201)throw new ProviderUnavailableException("file edit commit outcome unavailable");
   String commitSha=json.readTree(newCommit.body).path("sha").asText();
   if(!sha(commitSha))throw new ProviderUnavailableException("file edit commit invalid");
@@ -642,6 +672,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
  private static String metadataLine(String value,String extension){String line=value==null?"":value.replaceAll("[\\r\\n\\u2028\\u2029]"," ");return "java".equals(extension)?line.replace('\\','/'):line;}
  private static String segment(String value){if(value==null||value.isBlank())throw new IllegalArgumentException("blank path component");return URLEncoder.encode(value,StandardCharsets.UTF_8).replace("+","%20");}
  private static String encodedPath(String path){return Arrays.stream(path.split("/",-1)).map(GithubAppProvider::segment).collect(java.util.stream.Collectors.joining("/"));}
+ @Override public String solutionUrl(UserSettings s,Solution solution){try{return GithubProvider.blobUrl(s.getGithubOwner(),s.getGithubRepository(),s.getGithubBranch(),path(s,solution));}catch(RuntimeException e){return null;}}
  private String path(UserSettings s,Solution x){return path(s,x,DISPLAY_ZONE);}
  private String path(UserSettings s,Solution x,ZoneId zone){
   Instant solvedAt=x.getSolvedAt()!=null?x.getSolvedAt():x.getObservedAt();

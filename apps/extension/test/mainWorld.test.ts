@@ -262,3 +262,24 @@ test("MAIN-world Jungol observer reads only the unchanged exact judge POST", asy
   cleanup();
   assert.equal(fakeWindow.fetch, originalFetch);
 });
+
+test("MAIN-world Jungol observer captures C++ submissions whose request names the language CPP", async () => {
+  for (const [chip, alt] of [["C++20", "CPP20"], ["C++17", "CPP17"], ["Java 8", "JAVA8"], ["Python 3", "PYTHON3"], ["PyPy 3", "PYPY3"], ["Kotlin/JVM 11", "KOTLIN_JVM11"]] as const) {
+    const { document } = parseHTML(`<html><body><button class="lang-chip">${chip}</button></body></html>`);
+    const fakeWindow = { fetch: (async () => new Response("ok")) as typeof fetch } as unknown as Window;
+    const cleanup = installJungolJudgeObserver(document, locationFor("https://jungol.co.kr/problem/1000"), fakeWindow);
+    await fakeWindow.fetch("https://saet.jungol.co.kr/judge", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ problemId: 1000, language: alt.replace(/\d+$/, ""), altLanguage: alt, sourceText: "int main(){}" }) });
+    const source = document.querySelector("textarea[data-codearchive-jungol-source]") as HTMLTextAreaElement | null;
+    assert.equal(source?.value, "int main(){}", chip);
+    assert.equal(source?.dataset.codearchiveJungolLanguage, chip);
+    cleanup();
+  }
+  // A different language is still refused.
+  const { document } = parseHTML('<html><body><button class="lang-chip">C++20</button></body></html>');
+  const fakeWindow = { fetch: (async () => new Response("ok")) as typeof fetch } as unknown as Window;
+  installJungolJudgeObserver(document, locationFor("https://jungol.co.kr/problem/1000"), fakeWindow);
+  await fakeWindow.fetch("https://saet.jungol.co.kr/judge", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ problemId: 1000, language: "C", altLanguage: "C20", sourceText: "int main(){}" }) });
+  assert.equal(document.querySelector("textarea[data-codearchive-jungol-source]"), null);
+});

@@ -17,18 +17,19 @@ type State = { status: string; candidates?: Candidate[]; truncated?: boolean; pr
   storedSubmissionIds?: string[];
   serverAccount?: string; serverRunId?: string;
   skipped?: number; failedSubmissionIds?: string[]; verificationFailures?: Record<string, number>;
-  problemCount?: number; submissionCount?: number; unsupportedProblemNumbers?: string[] };
+  problemCount?: number; submissionCount?: number; unsupportedProblemNumbers?: string[]; unreadProblemNumbers?: string[];
+  sourceForegrounded?: boolean; sourceStalled?: boolean; sourceOpenFailure?: string; identityReason?: string };
 export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
   schedule?: (work: () => void, delay: number) => unknown; now?: () => number;
-  readTiming?: () => Promise<unknown>; openSite?: (url: string) => Promise<unknown>;
+  readTiming?: () => Promise<unknown>;
   onCollectionNotice?: (notice: HistoricalCollectionNotice) => void;
   server?: (operation: 'IDS', platform: HistoryServerPlatform, account?: string, capture?: unknown) => Promise<HistoryServerResult>;
   subscribeCollectionRequest?: (publish: () => void) => void };
 
-const platformInfo: Record<Platform, { href: string; linkLabel: string; description: string; guide: string }> = {
-  JUNGOL: { href: "https://jungol.co.kr/", linkLabel: "정올 열기 ↗", description: "후보 찾기를 누르면 확장이 정올 제출현황을 백그라운드 탭에서 열고, 끝나면 닫습니다.", guide: "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요." },
-  SWEA: { href: "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do", linkLabel: "SWEA 해결 내역 열기 ↗", description: "SWEA에서 본인 제출 이력을 확인해 로컬에 저장할 수 있습니다.", guide: "My Page Code에서 제출한 Problem을 열어 주세요." },
-  PROGRAMMERS: { href: "https://school.programmers.co.kr/learn/challenges?order=recent&statuses=solved%2Csolved_with_unlock&page=1", linkLabel: "프로그래머스 해결 내역 열기 ↗", description: "프로그래머스에서 해결 이력을 확인해 로컬에 저장할 수 있습니다. 제출 이력에는 실행시간·메모리가 없어 해당 정보는 저장할 수 없으며, 가장 빠른 제출·최소 메모리 선택도 지원하지 않습니다.", guide: "해결한 문제 목록을 열어 두고 후보 찾기를 눌러 주세요. 문제 상세는 같은 사이트 창의 탭에서 열리고 처리 후 닫힙니다." }
+const platformInfo: Record<Platform, { description: string; guide: string }> = {
+  JUNGOL: { description: "후보 찾기를 누르면 확장이 정올 제출현황을 새 창에서 열어 앞으로 가져오고, 끝나면 닫습니다. 이 화면의 탭은 그대로 유지됩니다. 정올은 창이 다른 창에 가려지거나 최소화되어 백그라운드가 되면 응답하지 않아 수집이 진행되지 않을 수 있으니, 수집이 끝날 때까지 정올 창을 이 화면과 나란히 두고 가리거나 최소화하지 말아 주세요.", guide: "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요." },
+  SWEA: { description: "후보 찾기를 누르면 확장이 SWEA 제출 목록을 백그라운드 탭에서 열고, 끝나면 닫습니다. SWEA가 백그라운드에서 응답하지 않으면 그 탭을 앞으로 가져옵니다.", guide: "My Page Code에서 제출한 Problem을 열어 주세요." },
+  PROGRAMMERS: { description: "후보 찾기를 누르면 확장이 해결한 문제 목록을 백그라운드 탭에서 열고, 문제 상세도 뒤쪽 탭에서 읽은 뒤 닫습니다. 프로그래머스가 백그라운드에서 응답하지 않으면 목록 탭을 앞으로 가져옵니다. 제출 이력에는 실행시간·메모리가 없어 해당 정보는 저장할 수 없으며, 가장 빠른 제출·최소 메모리 선택도 지원하지 않습니다.", guide: "해결한 문제 목록을 열어 주세요. 문제 상세는 같은 사이트 창의 뒤쪽 탭에서 열리고 처리 후 닫힙니다." }
 };
 
 export function mountHistory(doc: Document, services: HistoryServices) {
@@ -47,9 +48,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   const importButton = doc.querySelector<HTMLButtonElement>("#import")!;
   const policy = doc.querySelector<HTMLSelectElement>("#selection")!;
   const platformSelect = doc.querySelector<HTMLSelectElement>("#platform")!;
-  const siteLink = doc.querySelector<HTMLAnchorElement>("#history-page-link")!;
   const description = doc.querySelector<HTMLElement>("#platform-description")!;
-  const platformHelp = doc.querySelector<HTMLElement>("#platform-help")!;
   const status = doc.querySelector<HTMLElement>("#status")!;
   const progress = doc.querySelector<HTMLElement>("#progress")!;
   const progressBar = doc.querySelector<HTMLProgressElement>("#task-progress")!;
@@ -67,6 +66,10 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   let reconciliation: ReconciliationRow[] | null = null;
   let reconciliationEpoch = 0, reconciliationBusy = false;
   let candidates: Candidate[] = [], localIds = new Set<string>(), selected = new Set<string>();
+  // Submissions the server already holds as live captures: they have no site
+  // submission id, so the extension matches them by problem, language and time.
+  let liveMatchedIds = new Set<string>();
+  const existing = (id: string) => localIds.has(id) || liveMatchedIds.has(id);
   let pollingEpoch: number | null = null, readyForImport = false, platformEpoch = 0, taskActive = false;
   let timingSample: HistoricalTimingSample | null = null;
   let serverAccount: string | null = null, registrationAccount: string | null = null;
@@ -77,7 +80,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   if (serverMode) {
     doc.body.classList.add('server-history');
     const heading = doc.querySelector('.collection-card h2'); if (heading) heading.textContent = '수집 · 서버 등록';
-    const note = doc.querySelector('#source-note'); if (note) note.textContent = '수집 화면과 사이트 화면을 모두 열어 두세요. 선택한 제출은 원본 확인 후 로그인한 계정의 서버에 등록됩니다.';
+    const note = doc.querySelector('#source-note'); if (note) note.textContent = '수집 중에는 이 화면을 열어 두세요. 사이트 내역은 확장이 탭에서 열고 끝나면 닫습니다. 정올은 창이 가려지거나 최소화되면 진행되지 않을 수 있어 새 창을 앞으로 가져옵니다. 선택한 제출은 원본 확인 후 로그인한 계정의 서버에 등록됩니다.';
     const collection = doc.querySelector('.collection-card'); collection?.setAttribute('aria-label', '서버 수집');
     for (const element of [reconciliationButton, verifyExisting, clearReconciliation]) if (element) element.hidden = true;
   }
@@ -86,6 +89,8 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   function label(state: State) {
     const unsupportedNotice = state.unsupportedProblemNumbers?.length
       ? ` 제출 이력을 제공하지 않는 SQL 문제 ${state.unsupportedProblemNumbers.length}건은 수집 대상에서 제외했습니다.` : "";
+    const unread = state.unreadProblemNumbers ?? [];
+    const unreadNotice = unread.length ? ` 제출 이력을 읽지 못한 문제 ${unread.length}건(${unread.slice(0, 5).map(number => `#${number}`).join(", ")}${unread.length > 5 ? ` 외 ${unread.length - 5}건` : ""})은 이번 후보에서 빠졌습니다. 후보 찾기를 다시 누르면 다시 읽습니다.` : "";
     if (state.status === "SCANNING") return "목록을 확인하고 있어요.";
     if (state.status === "IMPORTING") return `${serverMode ? '원본 확인 · 서버 등록 중' : '로컬 저장 중'} ${state.completed ?? 0}/${state.total ?? 0}건`;
     if (state.status === "CANCELLING") return `현재 제출 처리를 마무리하는 중입니다. ${state.completed ?? 0}/${state.total ?? 0}건 처리했습니다.`;
@@ -98,7 +103,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
         .map(([reason, count]) => `${reasons[reason]} ${count}건`).join(" · ");
       return `${problems}제출 ${submissions}건 · 새로 저장 ${state.saved ?? 0}건 · 이미 저장됨 ${state.duplicate ?? 0}건${failures}${details ? ` · ${details}` : ""}`;
     };
-    if (state.status === "DONE") return serverMode ? `원본 확인 완료 · ${resultSummary().replace('새로 저장', '확인 완료').replace('이미 저장됨', '재확인')} ${unsupportedNotice}` : `로컬 저장 완료 · ${resultSummary()}${unsupportedNotice}`;
+    if (state.status === "DONE") return serverMode ? `원본 확인 완료 · ${resultSummary().replace('새로 저장', '확인 완료').replace('이미 저장됨', '재확인')} ${unsupportedNotice}${unreadNotice}` : `로컬 저장 완료 · ${resultSummary()}${unsupportedNotice}${unreadNotice}`;
     if (state.status === "INTERRUPTED" && (state.completed ?? 0) > 0) return `수집이 중단되었습니다. 현재까지 ${resultSummary()}`;
     const failureLabels: Record<string, string> = {
       LIST_CHANGED: "제출 목록이 바뀌었습니다. 후보 찾기를 다시 실행해 주세요.",
@@ -110,19 +115,32 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     if (state.status === "FAILED" && state.failureReason && failureLabels[state.failureReason])
       return `${failureLabels[state.failureReason]}${(state.completed ?? 0) > 0 ? ` 현재까지 ${resultSummary()}` : ""}`;
     if (state.status === "FAILED" && (state.completed ?? 0) > 0) return `수집을 완료하지 못했습니다. 현재까지 ${resultSummary()}`;
-    if (state.status === "TAB_NOT_FOUND") return platform() === "JUNGOL" ? "정올 로그인 상태를 확인하지 못했습니다. 정올에 로그인한 뒤 후보 찾기를 다시 눌러 주세요." : `${platformInfo[platform()].guide} 후보 찾기를 다시 눌러 주세요.`;
+    if (state.status === "TAB_NOT_FOUND") {
+      const name = platform() === "JUNGOL" ? "정올" : platform() === "SWEA" ? "SWEA" : "프로그래머스";
+      const causes: Record<string, string> = { WINDOW: "정올 창을 열지 못했습니다", HOME_LOAD: "정올 첫 화면을 불러오지 못했습니다",
+        NO_ACCOUNT_LINK: "정올 첫 화면에서 내 계정 링크를 찾지 못했습니다", NOT_OWNER: "정올 첫 화면의 계정 중 로그인한 본인 계정을 확인하지 못했습니다",
+        LIST_LOAD: "정올 제출현황을 불러오지 못했습니다" };
+      const cause = state.sourceOpenFailure && causes[state.sourceOpenFailure] ? ` (원인: ${causes[state.sourceOpenFailure]} · ${state.sourceOpenFailure})` : "";
+      return `${name} 로그인 상태를 확인하지 못했습니다.${cause} ${name}에 로그인한 뒤 후보 찾기를 다시 눌러 주세요.`;
+    }
     if (state.status === "CONNECTION_REQUIRED") return platform() === "JUNGOL" ? "정올 제출현황을 열고 후보 찾기를 다시 눌러 주세요. 수집 연결을 복구합니다." : `${platformInfo[platform()].guide} 후보 찾기를 다시 눌러 주세요.`;
     if (state.status === "CONNECTION_FAILED") return platform() === "JUNGOL" ? "정올 탭과 연결하지 못했습니다. 제출현황을 새로고침한 뒤 후보 찾기를 다시 눌러 주세요." : `${platformInfo[platform()].guide} 새로고침한 뒤 다시 눌러 주세요.`;
     if (state.status === "MULTIPLE_TABS") return platform() === "JUNGOL" ? "정올 제출 탭이 여러 개입니다. 하나만 남긴 뒤 다시 시도해 주세요." : `${platformInfo[platform()].guide} 탭을 하나만 남긴 뒤 다시 눌러 주세요.`;
     if (state.status === "INTERRUPTED") return "원본 탭이 닫혔거나 이동했습니다. 저장된 항목은 유지됩니다.";
-    if (state.status === "OWNERSHIP_UNVERIFIED" || state.status === "LOGIN_REQUIRED") return "로그인한 본인의 제출 이력을 확인하지 못했습니다. 원본 사이트의 로그인 상태를 확인해 주세요.";
+    if (state.status === "OWNERSHIP_UNVERIFIED" || state.status === "LOGIN_REQUIRED") {
+      const missing: Record<string, string> = { NO_EDIT_TAB: "내 프로필의 정보 수정 탭", NO_ACTIVE_TAB: "제출현황 탭", NO_ACCOUNT_NAME: "계정 이름" };
+      const detail = state.identityReason && missing[state.identityReason] ? ` (찾지 못한 항목: ${missing[state.identityReason]} · ${state.identityReason})` : "";
+      return `로그인한 본인의 제출 이력을 확인하지 못했습니다.${detail} 원본 사이트의 로그인 상태를 확인해 주세요.`;
+    }
     if (state.status === "SCAN_INCOMPLETE" && state.failurePage) {
       const where = state.failedProblemNumber ? `문제 #${state.failedProblemNumber}의 제출 이력 ${state.failurePage}페이지` : `문제 목록 ${state.failurePage}페이지`;
       return `${where}를 확인하지 못해 후보 찾기를 중단했습니다. 원본 사이트에서 해당 목록을 확인한 뒤 다시 시도해 주세요.`;
     }
+    if (state.status === "SCAN_INCOMPLETE" && state.failedProblemNumber)
+      return `문제 #${state.failedProblemNumber}까지 제출 이력을 연달아 읽지 못해 후보 찾기를 중단했습니다. 사이트 로그인 상태와 해당 문제 페이지를 확인한 뒤 다시 시도해 주세요.`;
     if (state.status === "SCAN_INCOMPLETE") return "목록이 끝까지 열리지 않았습니다. 원본 탭을 유지한 뒤 다시 시도해 주세요.";
     if (state.status === "FAILED") return "수집을 완료하지 못했습니다. 원본 탭 상태를 확인해 주세요.";
-    return state.status === "READY" ? `후보 목록을 확인했습니다.${unsupportedNotice}` : platformInfo[platform()].guide;
+    return state.status === "READY" ? `후보 목록을 확인했습니다.${unsupportedNotice}${unreadNotice}` : platformInfo[platform()].guide;
   }
   function clearCandidates() { reconciliationEpoch++; reconciliationBusy = false; reconciliation = null; if (reconciliationStatus) reconciliationStatus.textContent = ""; if (clearReconciliation) clearReconciliation.hidden = true; if (verifyExisting) verifyExisting.hidden = true; if (reconciliationHelp) reconciliationHelp.hidden = true; candidates = []; selected.clear(); readyForImport = false; candidatesPanel.hidden = true; list.replaceChildren(); }
   function formatElapsed(milliseconds: number) {
@@ -145,12 +163,12 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     return candidates.filter(item => allowedForRecovery(item) && selected.has(item.submissionId)).map(item => item.submissionId);
   }
   function allowedForRecovery(item: Candidate) {
-    if (!reconciliation) return !localIds.has(item.submissionId);
+    if (!reconciliation) return !existing(item.submissionId);
     const state = reconciliation.find(row => row.submissionId === item.submissionId)?.state;
     return state === "missing_local" || state === "enrichment_available";
   }
   function render() {
-    const allowed = reconciliation ? candidates : candidates.filter(item => !localIds.has(item.submissionId));
+    const allowed = reconciliation ? candidates : candidates.filter(item => !existing(item.submissionId));
     selected = new Set([...selected].filter(id => allowed.some(item => item.submissionId === id && allowedForRecovery(item))));
     list.replaceChildren();
     for (const candidate of allowed) {
@@ -172,8 +190,9 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     const problemCount = new Set(allowed.map(item => `${platform()}:${item.problemNumber}`)).size;
     const summary = `후보 문제 ${problemCount}건 · 제출 ${allowed.length}건`;
     const excluded = candidates.length - allowed.length;
+    const excludedLive = reconciliation ? 0 : candidates.filter(item => !localIds.has(item.submissionId) && liveMatchedIds.has(item.submissionId)).length;
     help.textContent = selected.size > 5_000 ? `${summary} · 한 번에 최대 5,000개 제출을 저장할 수 있습니다. 선택 범위를 줄여 주세요.` :
-      excluded ? `${summary} · 이미 ${serverMode ? '서버에 등록된' : '이 브라우저에 저장한'} 제출 ${excluded}건은 후보에서 제외했습니다.` : summary;
+      excluded ? `${summary} · 이미 ${serverMode ? '서버에 등록된' : '이 브라우저에 저장한'} 제출 ${excluded}건${excludedLive ? `(실시간 수집 ${excludedLive}건 포함)` : ''}은 후보에서 제외했습니다.` : summary;
     importButton.textContent = reconciliation ? `선택한 ${selected.size}건 원본 검증·복구/보강` : `선택한 ${selected.size}건 ${serverMode ? '서버 등록' : '로컬 저장'}`;
     if (reconciliationButton) reconciliationButton.disabled = reconciliationBusy || taskActive || !readyForImport || platform() === "JUNGOL";
     importButton.disabled = serverBusy || taskActive || !readyForImport || selected.size === 0 || selected.size > 5_000;
@@ -182,7 +201,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     notifyCollection(null);
     registrationSelection = null; registrationAccount = null; registrationRunId = null; serverError = '';
     const current = platform(), info = platformInfo[current];
-    siteLink.href = info.href; siteLink.textContent = info.linkLabel; description.textContent = serverMode ? info.description.replace('이 브라우저에 로컬로 저장', '서버에 등록').replaceAll('로컬에 저장', '서버에 등록') : info.description; platformHelp.textContent = info.guide;
+    description.textContent = serverMode ? info.description.replace('이 브라우저에 로컬로 저장', '서버에 등록').replaceAll('로컬에 저장', '서버에 등록') : info.description;
     clearCandidates(); progressBar.hidden = true; progress.textContent = ""; if (taskStage) taskStage.textContent = ""; if (taskTime) { taskTime.textContent = ""; taskTime.hidden = true; }
     cancel.hidden = true; policy.disabled = false; platformSelect.disabled = false; taskActive = false;
     const performanceUnavailable = current === "PROGRAMMERS";
@@ -207,6 +226,22 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       serverAccount = result.account;
     }
     localIds = new Set(Array.isArray(ids.submissionIds) ? ids.submissionIds.filter(id => typeof id === "string" && id.length <= 300) : []); return true;
+  }
+  async function matchLiveCaptures(expected: Platform, epoch: number) {
+    const shown = candidates;
+    // Programmers lists the time as createdAt, SWEA as solvedAt; a row without a time can never match a live capture.
+    const rows = shown.map(item => ({ submissionId: item.submissionId, problemNumber: item.problemNumber,
+      ...(item.language ? { language: item.language } : {}), ...((item.createdAt ?? item.solvedAt) ? { solvedAt: (item.createdAt ?? item.solvedAt)! } : {}) }));
+    type MatchResponse = { ok?: unknown; existing?: unknown } | null;
+    let response: MatchResponse = null;
+    try { response = await send({ type: "HISTORY_SERVER_MATCH", platform: expected, rows }) as MatchResponse; } catch { response = null; }
+    if (!ownsPlatform(expected, epoch) || candidates !== shown) return;
+    if (response?.ok !== true || !Array.isArray(response.existing)) {
+      status.textContent = "서버에 이미 있는 실시간 수집 풀이를 확인하지 못해 등록을 멈췄습니다. 후보 찾기를 다시 눌러 주세요."; render(); return;
+    }
+    liveMatchedIds = new Set(response.existing.filter((id): id is string => typeof id === "string"));
+    selected = new Set(selectHistoricalSubmissionIds(candidates.filter(item => !existing(item.submissionId)), policy.value as HistoricalSelectionMode));
+    readyForImport = true; render();
   }
   async function loadTiming(expected: Platform = platform(), epoch = platformEpoch) {
     try {
@@ -272,8 +307,22 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       if (taskStage) taskStage.textContent = state.status === "CANCELLING" ? "현재 제출 처리를 마무리하는 중입니다." :
         state.status === "IMPORTING" ? `제출을 확인하고 ${serverMode ? '서버에 등록' : '로컬에 저장'}하는 중입니다.` : "";
     } else { progressBar.hidden = true; progress.textContent = ""; if (taskStage) taskStage.textContent = ""; }
+    // The source site only answers while its tab is in front; say what the extension did about it.
+    if (taskStage && active && (state.sourceStalled || state.sourceForegrounded)) {
+      const site = platform() === "JUNGOL" ? "정올" : platform() === "SWEA" ? "SWEA" : "프로그래머스";
+      const note = state.sourceStalled
+        ? `${site} 사이트가 백그라운드 탭에서는 응답하지 않습니다. ${site} 탭을 눌러 앞으로 가져와 주세요.`
+        : platform() === "JUNGOL"
+          ? "정올 창을 앞으로 가져왔습니다. 창이 가려지거나 최소화되어 백그라운드가 되면 정올이 응답하지 않아 진행되지 않을 수 있으니, 끝날 때까지 그대로 두어 주세요. 끝나면 창이 자동으로 닫힙니다."
+          : `${site} 탭을 앞으로 가져왔습니다. 백그라운드에서는 사이트가 응답하지 않아 진행되지 않을 수 있으니, 끝날 때까지 그 탭을 유지해 주세요. 끝나면 이 화면으로 돌아옵니다.`;
+      taskStage.textContent = taskStage.textContent ? `${taskStage.textContent} ${note}` : note;
+    }
     if (state.status === "READY" && !state.truncated && Array.isArray(state.candidates)) {
-      candidates = state.candidates.filter(item => typeof item.submissionId === "string" && item.submissionId.length > 0 && item.submissionId.length <= 300); selected = new Set(selectHistoricalSubmissionIds(candidates.filter(item => !localIds.has(item.submissionId)), policy.value as HistoricalSelectionMode)); readyForImport = true; candidatesPanel.hidden = false; render();
+      candidates = state.candidates.filter(item => typeof item.submissionId === "string" && item.submissionId.length > 0 && item.submissionId.length <= 300); liveMatchedIds = new Set();
+      selected = new Set(selectHistoricalSubmissionIds(candidates.filter(item => !existing(item.submissionId)), policy.value as HistoricalSelectionMode));
+      // Registration waits until live captures are matched, so none is registered twice.
+      readyForImport = !serverMode || !candidates.length; candidatesPanel.hidden = false; render();
+      if (serverMode && candidates.length) void matchLiveCaptures(expected, epoch);
     } else if (state.status !== "READY") {
       readyForImport = false; if (state.status !== "SCANNING") clearCandidates();
       if (state.status === "DONE" || state.status === "FAILED" || state.status === "INTERRUPTED") {
@@ -294,13 +343,6 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     }, 500);
   }
   async function loadPlatform() { const expected = platform(), epoch = platformEpoch; try { if (!await refreshLocalIds(expected, epoch) || !ownsPlatform(expected, epoch)) return; await applyState(await send({ type: "LOCAL_HISTORY_STATUS", platform: expected }), expected, epoch); } catch (error) { if (ownsPlatform(expected, epoch)) status.textContent = serverMode && error instanceof Error ? error.message : "확장 프로그램에 연결할 수 없습니다."; } }
-  siteLink.addEventListener("click", async event => {
-    if (!services.openSite || event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-    event.preventDefault();
-    const current = platform(), epoch = platformEpoch;
-    try { await services.openSite(platformInfo[current].href); }
-    catch { if (platform() === current && platformEpoch === epoch) status.textContent = "사이트를 새 창에서 열지 못했습니다. 다시 눌러 주세요."; }
-  });
   reconciliationButton?.addEventListener("click", async () => {
     const expected = platform(), epoch = platformEpoch;
     if (reconciliationBusy || !readyForImport || taskActive || expected === "JUNGOL") return;
@@ -328,7 +370,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     if (reconciliationStatus) reconciliationStatus.textContent = "기존 제출 원본을 다시 확인합니다. 코드·문제·언어·시각이 일치하고 새로 확인한 정보가 있을 때만 빈 값을 보강합니다.";
     render();
   });
-  clearReconciliation?.addEventListener("click", () => { reconciliation = null; selected = new Set(selectHistoricalSubmissionIds(candidates.filter(item => !localIds.has(item.submissionId)), policy.value as HistoricalSelectionMode)); clearReconciliation.hidden = true; if (verifyExisting) verifyExisting.hidden = true; if (reconciliationHelp) reconciliationHelp.hidden = true; if (reconciliationStatus) reconciliationStatus.textContent = ""; render(); });
+  clearReconciliation?.addEventListener("click", () => { reconciliation = null; selected = new Set(selectHistoricalSubmissionIds(candidates.filter(item => !existing(item.submissionId)), policy.value as HistoricalSelectionMode)); clearReconciliation.hidden = true; if (verifyExisting) verifyExisting.hidden = true; if (reconciliationHelp) reconciliationHelp.hidden = true; if (reconciliationStatus) reconciliationStatus.textContent = ""; render(); });
   scan.addEventListener("click", async () => {
     if (scan.disabled) return;
     const expected = platform(), epoch = ++platformEpoch;
@@ -355,7 +397,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     try {
       if (serverMode) {
         if (!await refreshLocalIds(expected, epoch) || !ownsPlatform(expected, epoch)) return;
-        registrationSelection = new Set(chosen.filter(id => !localIds.has(id))); registrationAccount = serverAccount;
+        registrationSelection = new Set(chosen.filter(id => !existing(id))); registrationAccount = serverAccount;
         serverError = ''; registrationRunId = crypto.randomUUID();
         if (!registrationSelection.size) {
           status.textContent = '선택한 제출은 이미 서버에 등록되어 있습니다.'; readyForImport = true; render();
@@ -394,7 +436,6 @@ if (typeof document !== "undefined" && typeof chrome !== "undefined") {
   send: message => chrome.runtime.sendMessage(message) as Promise<unknown>,
   server,
   readTiming: () => chrome.storage.local.get(HISTORY_TIMING_STORAGE_KEY),
-  openSite: url => chrome.windows.create({ url, type: "normal", focused: true }),
   subscribeCollectionRequest: publish => {
     window.addEventListener('message', event => {
       if (window.parent !== window && new URLSearchParams(window.location.search).get('embedded') === '1' &&
