@@ -22,6 +22,7 @@ import { checkSiteLogins } from "./siteLogin";
 import { isHistoricalSubmissionId } from "./historicalIdentity";
 import { historyPlatformForUrl, isLocalHistoryPageSender, mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
 import { requestLocalHistoryMessage } from "./localHistoryConnection";
+import { localHistoryProgressSignature, trackStall, type StallTracker } from "./ownedTabStall";
 import { loadPopupServerState } from './serverCapture';
 import { drainCaptureOutbox, retainCaptureForRetry, type DrainSummary } from './captureOutbox';
 import { registerHistoricalOnServer } from './cloudClient';
@@ -79,12 +80,16 @@ async function writeLocalHistoryRoute(route: LocalHistoryRoute | null): Promise<
   else await chrome.storage.session.remove(LOCAL_HISTORY_ROUTE_KEY);
 }
 
-// A Jungol list the extension opened itself in an inactive tab, so collection
-// never depends on the user's window size or on a tab they left open.
+// A source list the extension opened itself, so collection never depends on the
+// user's window size or on a tab they left open. SWEA and Programmers lists open
+// inactive; Jungol does not answer while its tab is in the background, so it
+// gets a window of its own (the history page keeps its tab) that is brought
+// forward again whenever a run starts or stalls.
 const JUNGOL_OWNED_TAB_KEY = "codearchive-owned-history-tab";
 const JUNGOL_OWNED_TAB_IDLE_MS = 10 * 60_000;
-type OwnedJungolTab = { tabId: number; historyPageTabId?: number; lastUsedAt: number };
+type OwnedJungolTab = { tabId: number; historyPageTabId?: number; lastUsedAt: number; foregrounded?: boolean; ownWindow?: boolean };
 const OWNED_TAB_KEEP_STATUSES = new Set(["READY", "SCANNING", "IMPORTING", "CANCELLING"]);
+let ownedTabStall: StallTracker | null = null;
 
 async function readOwnedJungolTab(): Promise<OwnedJungolTab | null> {
   const value = (await chrome.storage.session.get(JUNGOL_OWNED_TAB_KEY))[JUNGOL_OWNED_TAB_KEY] as Partial<OwnedJungolTab> | undefined;
@@ -94,8 +99,56 @@ async function readOwnedJungolTab(): Promise<OwnedJungolTab | null> {
 async function closeOwnedJungolTab(tabId?: number): Promise<void> {
   const owned = await readOwnedJungolTab();
   if (!owned || (tabId !== undefined && owned.tabId !== tabId)) return;
+  ownedTabStall = null;
   await chrome.storage.session.remove(JUNGOL_OWNED_TAB_KEY);
+  // A run that pulled the user onto the source tab hands them back to the page
+  // that started it, but only if they are still looking at the source tab.
+  const shown = owned.foregrounded ? await isShownToUser(owned) : false;
   await chrome.tabs.remove(owned.tabId).catch(() => undefined);
+  if (shown) await focusHistoryPage(owned).catch(() => undefined);
+}
+
+/** In front of the user: the active tab of its window, and for a window of its own also the focused window. */
+async function isShownToUser(owned: OwnedJungolTab): Promise<boolean> {
+  const tab = await chrome.tabs.get(owned.tabId).catch(() => undefined);
+  if (!tab?.active) return false;
+  if (!owned.ownWindow || tab.windowId === undefined) return true;
+  const sourceWindow = await Promise.resolve(chrome.windows?.get(tab.windowId)).catch(() => undefined);
+  return sourceWindow ? sourceWindow.focused === true : true;
+}
+
+async function bringTabForward(tabId: number): Promise<void> {
+  const tab = await chrome.tabs.update(tabId, { active: true });
+  if (tab?.windowId !== undefined) await chrome.windows?.update(tab.windowId, { focused: true });
+}
+
+async function focusHistoryPage(owned: OwnedJungolTab): Promise<void> {
+  if (owned.historyPageTabId !== undefined) await bringTabForward(owned.historyPageTabId);
+}
+
+/** The list is ready and the tab stays open for the import: hand the user back to the page that started the run. */
+async function handBackToHistoryPage(owned: OwnedJungolTab): Promise<void> {
+  if (owned.foregrounded && await isShownToUser(owned)) await focusHistoryPage(owned);
+}
+
+/**
+ * The source site does not answer while its tab is in the background, so a run
+ * that stands still is brought to the front. A source tab in the history page's
+ * own window is forced once; if the user then goes back on purpose it is only
+ * reported. A window of its own is brought forward again, because that never
+ * takes the history page's tab away.
+ */
+async function relieveStalledOwnedTab(owned: OwnedJungolTab, response: unknown): Promise<{ sourceForegrounded?: true; sourceStalled?: true }> {
+  const { tracker, stalled } = trackStall(ownedTabStall, owned.tabId, localHistoryProgressSignature(response), Date.now());
+  ownedTabStall = tracker;
+  const note = owned.foregrounded ? { sourceForegrounded: true as const } : {};
+  if (!stalled || !tracker) return note;
+  if (!await chrome.tabs.get(owned.tabId).catch(() => undefined) || await isShownToUser(owned)) return note;
+  if (owned.foregrounded && !owned.ownWindow) return { ...note, sourceStalled: true };
+  await bringTabForward(owned.tabId).catch(() => undefined);
+  if (!owned.foregrounded) await chrome.storage.session.set({ [JUNGOL_OWNED_TAB_KEY]: { ...owned, foregrounded: true } });
+  ownedTabStall = { ...tracker, since: Date.now() };
+  return { sourceForegrounded: true };
 }
 
 /** pathname null: any committed page of a fresh tab (a redirect is checked by the caller). */
@@ -146,11 +199,38 @@ async function openOwnedListingTab(platform: Platform, historyPageTabId?: number
   }
 }
 
+/** The right half of the history page's window, so both stay visible side by side. */
+async function jungolWindowBounds(historyPageTabId?: number): Promise<{ left?: number; top?: number; width?: number; height?: number }> {
+  try {
+    if (historyPageTabId === undefined) return {};
+    const host = await chrome.windows.get((await chrome.tabs.get(historyPageTabId)).windowId);
+    const { left, top, width, height } = host;
+    if (host.state === "minimized" || host.state === "fullscreen" || left === undefined || top === undefined || width === undefined || height === undefined) return {};
+    const half = Math.max(640, Math.floor(width / 2));
+    return { left: left + width - half, top, width: half, height: Math.max(520, height) };
+  } catch { return {}; }
+}
+
+/**
+ * Jungol does not answer while its tab is in the background. A window of its own
+ * keeps the history page's tab active and visible beside it; where windows
+ * cannot be created, a tab in front is the fallback.
+ */
+async function createJungolSourceTab(historyPageTabId?: number): Promise<{ tabId?: number; ownWindow: boolean }> {
+  try {
+    const created = await chrome.windows.create({ url: "https://jungol.co.kr/", type: "normal", focused: true, ...await jungolWindowBounds(historyPageTabId) });
+    const tabId = created?.tabs?.[0]?.id;
+    if (Number.isSafeInteger(tabId)) return { tabId, ownWindow: true };
+  } catch { /* fall back to a tab */ }
+  return { tabId: (await chrome.tabs.create({ url: "https://jungol.co.kr/", active: true })).id, ownWindow: false };
+}
+
 /** Reads the signed-in account from Jungol's home page and opens its own submission list. */
 async function openOwnedJungolHistoryTab(historyPageTabId?: number): Promise<{ tabId: number; url: string } | null> {
   let tabId: number | undefined;
   try {
-    tabId = (await chrome.tabs.create({ url: "https://jungol.co.kr/", active: false })).id;
+    const source = await createJungolSourceTab(historyPageTabId);
+    tabId = source.tabId;
     if (tabId === undefined || !Number.isSafeInteger(tabId)) return null;
     const id = tabId;
     await chrome.tabs.update(id, { autoDiscardable: false }).catch(() => undefined);
@@ -171,7 +251,7 @@ async function openOwnedJungolHistoryTab(historyPageTabId?: number): Promise<{ t
     const path = `/account/${ids[0]}/submission`;
     await chrome.tabs.update(id, { url: `https://jungol.co.kr${path}` });
     if (!await waitForTabLoad(id, path)) throw new Error("list");
-    const owned: OwnedJungolTab = { tabId: id, historyPageTabId, lastUsedAt: Date.now() };
+    const owned: OwnedJungolTab = { tabId: id, historyPageTabId, lastUsedAt: Date.now(), foregrounded: true, ownWindow: source.ownWindow };
     await chrome.storage.session.set({ [JUNGOL_OWNED_TAB_KEY]: owned });
     return { tabId: id, url: `https://jungol.co.kr${path}` };
   } catch {
@@ -240,9 +320,24 @@ async function runLocalHistoryCommand(type: LocalHistoryCommand, platform: Platf
   if ("error" in target) return { status: target.error };
   const owned = await readOwnedJungolTab();
   const ownedTarget = owned?.tabId === target.tabId;
+  let ownedRecord = owned;
   if (owned && ownedTarget) {
     const touched: OwnedJungolTab = { ...owned, lastUsedAt: Date.now(), historyPageTabId: historyPageTabId ?? owned.historyPageTabId };
     await chrome.storage.session.set({ [JUNGOL_OWNED_TAB_KEY]: touched });
+    ownedRecord = touched;
+  }
+  // Jungol does not answer while its tab is in the background, so every run on it
+  // (the list scan, and the import that follows after the user went back to the
+  // history page) starts with the tab in front.
+  if (platform === "JUNGOL" && (type === "LOCAL_HISTORY_SCAN_START" || type === "LOCAL_HISTORY_IMPORT_START")) {
+    // Best effort: failing to bring the tab forward must never stop the run itself.
+    try {
+      await bringTabForward(target.tabId);
+      if (ownedRecord && ownedTarget && !ownedRecord.foregrounded) {
+        ownedRecord = { ...ownedRecord, foregrounded: true };
+        await chrome.storage.session.set({ [JUNGOL_OWNED_TAB_KEY]: ownedRecord });
+      }
+    } catch { /* The tab may have closed meanwhile; the command below reports that. */ }
   }
   // The content script can request an owned auxiliary tab before this command
   // replies. Persist that intent first, so the auxiliary service has a route
@@ -259,6 +354,9 @@ async function runLocalHistoryCommand(type: LocalHistoryCommand, platform: Platf
     }) as { status?: unknown };
     const status = typeof response?.status === "string" ? response.status : "FAILED";
     await writeLocalHistoryRoute({ ...target, status });
+    // Relieving a stall is best effort and must never turn a healthy run into INTERRUPTED.
+    const sourceNote = ownedTarget && ownedRecord ? await relieveStalledOwnedTab(ownedRecord, response).catch(() => ({})) : {};
+    if (ownedTarget && ownedRecord && status === "READY") await handBackToHistoryPage(ownedRecord).catch(() => undefined);
     // An import always needs a fresh READY scan, so a finished or failed run
     // has no further use for the hidden tab. Status reads close it only once
     // the import itself has ended.
@@ -266,7 +364,8 @@ async function runLocalHistoryCommand(type: LocalHistoryCommand, platform: Platf
       await closeOwnedJungolTab(target.tabId);
     }
     const run = (await chrome.storage.session.get(SERVER_HISTORY_RUN_KEY))[SERVER_HISTORY_RUN_KEY] as ServerHistoryRun | undefined;
-    return run && run.platform === platform ? { ...response, serverAccount: run.account, serverRunId: run.runId } : response;
+    const reply = Object.keys(sourceNote).length ? { ...response, ...sourceNote } : response;
+    return run && run.platform === platform ? { ...reply, serverAccount: run.account, serverRunId: run.runId } : reply;
   } catch {
     await writeLocalHistoryRoute({ ...target, status: "INTERRUPTED" });
     return { status: "INTERRUPTED" };

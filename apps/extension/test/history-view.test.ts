@@ -93,10 +93,14 @@ test("history page separates settings, site navigation, and local collection", (
   assert.doesNotMatch(html, /내 제출 필터/);
 });
 
-test("Jungol explains that the extension opens the submission list in a background tab", async () => {
+test("Jungol warns before the run that it can stall in the background and brings its tab forward", async () => {
   const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : ready);
   await tick(); await tick();
-  assert.match(view.document.querySelector("#platform-description")!.textContent!, /정올 제출현황을 백그라운드 탭에서 열고/);
+  const description = view.document.querySelector("#platform-description")!.textContent!;
+  assert.match(description, /정올 제출현황을 새 창에서 열어 앞으로 가져오고/);
+  assert.match(description, /백그라운드가 되면 응답하지 않아 수집이 진행되지 않을 수 있으니.*가리거나 최소화하지 말아 주세요/);
+  choose(view.document.querySelector<HTMLSelectElement>("#platform")!, "SWEA");
+  assert.match(view.document.querySelector("#platform-description")!.textContent!, /SWEA 제출 목록을 백그라운드 탭에서 열고/);
 });
 
 test("server registration leaves out submissions the server already holds as live captures", async () => {
@@ -114,6 +118,27 @@ test("server registration leaves out submissions the server already holds as liv
   assert.equal(importButton.disabled, true, "registration waits for the live capture check");
   assert.deepEqual(sent.find(message => message.type === "HISTORY_SERVER_MATCH")?.rows?.[0],
     { submissionId: live.submissionId, problemNumber: "1", language: "java", solvedAt: live.createdAt });
+  answerMatch({ ok: true, existing: [live.submissionId] }); await tick(); await tick();
+  assert.equal(importButton.disabled, false);
+  assert.equal(importButton.textContent, "선택한 1건 서버 등록");
+  assert.match(view.document.querySelector("#candidate-help")!.textContent!, /제출 1건\(실시간 수집 1건 포함\)은 후보에서 제외/);
+});
+
+test("SWEA candidates carry their submission time to the live capture match and drop what the server already has", async () => {
+  const live = { submissionId: "AX1111", problemNumber: "1204", title: "A", language: "JAVA", solvedAt: "2026-10-20 12:00:00.000+09:00" };
+  const fresh = { ...live, submissionId: "AX2222", problemNumber: "1205", title: "B" };
+  const sent: Array<{ type: string; rows?: unknown[] }> = [];
+  let answerMatch!: (value: unknown) => void;
+  const view = page(async message => {
+    sent.push(message as { type: string; rows?: unknown[] });
+    if (message.type === "HISTORY_SERVER_MATCH") return new Promise(resolve => { answerMatch = resolve; });
+    return { status: "READY", candidates: [live, fresh], truncated: false };
+  }, { server: async () => ({ account: "17:100", submissionIds: [] }) });
+  choose(view.document.querySelector<HTMLSelectElement>("#platform")!, "SWEA"); await tick(); await tick();
+  const importButton = view.document.querySelector<HTMLButtonElement>("#import")!;
+  assert.equal(importButton.disabled, true, "registration waits for the live capture check");
+  assert.deepEqual(sent.find(message => message.type === "HISTORY_SERVER_MATCH")?.rows?.[0],
+    { submissionId: "AX1111", problemNumber: "1204", language: "JAVA", solvedAt: live.solvedAt });
   answerMatch({ ok: true, existing: [live.submissionId] }); await tick(); await tick();
   assert.equal(importButton.disabled, false);
   assert.equal(importButton.textContent, "선택한 1건 서버 등록");
@@ -391,6 +416,25 @@ test("waiting scan stage reports source visibility without inventing list progre
   assert.equal(view.document.querySelector("#progress")!.textContent, "목록 행 37개 · 2개 페이지를 확인했습니다.");
   assert.equal(view.document.querySelector("#task-time")!.textContent, "");
   assert.equal((view.document.querySelector("#task-time") as HTMLElement).hidden, true);
+});
+
+test("a source tab that was brought forward, or stalled again, is explained next to the stage", async () => {
+  const waiting = { status: "SCANNING", startedAt: 1_000, progress: { phase: "pages", stage: "waiting-pages",
+    rows: 22, pagesLoaded: 0, groupsExpanded: 0, groupsTotal: 0, lastProgressAt: 1_500, sourceVisibility: "hidden" } };
+  const forced = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { ...waiting, sourceForegrounded: true }, { now: () => 62_000 });
+  await tick(); await tick();
+  assert.match(forced.document.querySelector("#task-stage")!.textContent!, /정올 창을 앞으로 가져왔습니다.*진행되지 않을 수 있으니.*자동으로 닫힙니다/);
+  const again = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { ...waiting, sourceForegrounded: true, sourceStalled: true }, { now: () => 62_000 });
+  await tick(); await tick();
+  const text = again.document.querySelector("#task-stage")!.textContent!;
+  assert.match(text, /정올 사이트가 백그라운드 탭에서는 응답하지 않습니다.*정올 탭을 눌러 앞으로 가져와 주세요/);
+  assert.doesNotMatch(text, /앞으로 가져왔습니다/);
+  const plain = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : waiting, { now: () => 62_000 });
+  await tick(); await tick();
+  assert.doesNotMatch(plain.document.querySelector("#task-stage")!.textContent!, /앞으로 가져/);
+  const finished = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { status: "DONE", completed: 1, total: 1, saved: 1, duplicate: 0, skipped: 0, sourceForegrounded: true });
+  await tick(); await tick();
+  assert.equal(finished.document.querySelector("#task-stage")!.textContent, "", "a finished run no longer shows the note");
 });
 
 test("history view remains retryable before entering submissions and after connection failure", async () => {
