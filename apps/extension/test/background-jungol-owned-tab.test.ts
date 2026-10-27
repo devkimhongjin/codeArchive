@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { indexedDB, IDBKeyRange } from "fake-indexeddb";
 
-test("a Jungol scan opens the signed-in list in an inactive tab and closes it when the run ends", async () => {
+test("a Jungol scan opens the signed-in list in a tab in front and closes it when the run ends", async () => {
   const id = "test-extension";
   const stored: Record<string, unknown> = {};
   const tabs = new Map<number, { id: number; url: string; status: string; active: boolean }>();
@@ -46,9 +46,9 @@ test("a Jungol scan opens the signed-in list in an inactive tab and closes it wh
     const historyPage = { id, frameId: 0, url: `chrome-extension://${id}/history.html`, tab: { id: 5 } };
     const command = (type: string) => new Promise<{ status?: string }>(resolve => listener!({ type }, historyPage, resolve as (value: unknown) => void));
 
-    // No list is open: the extension opens one itself without focusing it.
+    // No list is open: the extension opens one itself, in front, because Jungol does not answer in the background.
     assert.equal((await command("LOCAL_HISTORY_SCAN_START")).status, "READY");
-    assert.deepEqual(created, [{ url: "https://jungol.co.kr/", active: false }]);
+    assert.deepEqual(created, [{ url: "https://jungol.co.kr/", active: true }]);
     const ownedTabId = (stored["codearchive-owned-history-tab"] as { tabId: number }).tabId;
     assert.equal(tabs.get(ownedTabId)?.url, "https://jungol.co.kr/account/152511/submission");
     assert.deepEqual(removed, [], "a READY scan keeps the list for the import");

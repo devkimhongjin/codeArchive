@@ -17,7 +17,8 @@ type State = { status: string; candidates?: Candidate[]; truncated?: boolean; pr
   storedSubmissionIds?: string[];
   serverAccount?: string; serverRunId?: string;
   skipped?: number; failedSubmissionIds?: string[]; verificationFailures?: Record<string, number>;
-  problemCount?: number; submissionCount?: number; unsupportedProblemNumbers?: string[]; unreadProblemNumbers?: string[] };
+  problemCount?: number; submissionCount?: number; unsupportedProblemNumbers?: string[]; unreadProblemNumbers?: string[];
+  sourceForegrounded?: boolean; sourceStalled?: boolean };
 export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
   schedule?: (work: () => void, delay: number) => unknown; now?: () => number;
   readTiming?: () => Promise<unknown>;
@@ -26,9 +27,9 @@ export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
   subscribeCollectionRequest?: (publish: () => void) => void };
 
 const platformInfo: Record<Platform, { description: string; guide: string }> = {
-  JUNGOL: { description: "후보 찾기를 누르면 확장이 정올 제출현황을 백그라운드 탭에서 열고, 끝나면 닫습니다.", guide: "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요." },
-  SWEA: { description: "후보 찾기를 누르면 확장이 SWEA 제출 목록을 백그라운드 탭에서 열고, 끝나면 닫습니다.", guide: "My Page Code에서 제출한 Problem을 열어 주세요." },
-  PROGRAMMERS: { description: "후보 찾기를 누르면 확장이 해결한 문제 목록을 백그라운드 탭에서 열고, 문제 상세도 뒤쪽 탭에서 읽은 뒤 닫습니다. 제출 이력에는 실행시간·메모리가 없어 해당 정보는 저장할 수 없으며, 가장 빠른 제출·최소 메모리 선택도 지원하지 않습니다.", guide: "해결한 문제 목록을 열어 주세요. 문제 상세는 같은 사이트 창의 뒤쪽 탭에서 열리고 처리 후 닫힙니다." }
+  JUNGOL: { description: "후보 찾기를 누르면 확장이 정올 제출현황을 새 창에서 열어 앞으로 가져오고, 끝나면 닫습니다. 이 화면의 탭은 그대로 유지됩니다. 정올은 창이 다른 창에 가려지거나 최소화되어 백그라운드가 되면 응답하지 않아 수집이 진행되지 않을 수 있으니, 수집이 끝날 때까지 정올 창을 이 화면과 나란히 두고 가리거나 최소화하지 말아 주세요.", guide: "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요." },
+  SWEA: { description: "후보 찾기를 누르면 확장이 SWEA 제출 목록을 백그라운드 탭에서 열고, 끝나면 닫습니다. SWEA가 백그라운드에서 응답하지 않으면 그 탭을 앞으로 가져옵니다.", guide: "My Page Code에서 제출한 Problem을 열어 주세요." },
+  PROGRAMMERS: { description: "후보 찾기를 누르면 확장이 해결한 문제 목록을 백그라운드 탭에서 열고, 문제 상세도 뒤쪽 탭에서 읽은 뒤 닫습니다. 프로그래머스가 백그라운드에서 응답하지 않으면 목록 탭을 앞으로 가져옵니다. 제출 이력에는 실행시간·메모리가 없어 해당 정보는 저장할 수 없으며, 가장 빠른 제출·최소 메모리 선택도 지원하지 않습니다.", guide: "해결한 문제 목록을 열어 주세요. 문제 상세는 같은 사이트 창의 뒤쪽 탭에서 열리고 처리 후 닫힙니다." }
 };
 
 export function mountHistory(doc: Document, services: HistoryServices) {
@@ -79,7 +80,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   if (serverMode) {
     doc.body.classList.add('server-history');
     const heading = doc.querySelector('.collection-card h2'); if (heading) heading.textContent = '수집 · 서버 등록';
-    const note = doc.querySelector('#source-note'); if (note) note.textContent = '수집 중에는 이 화면을 열어 두세요. 사이트 내역은 확장이 뒤쪽 탭에서 열고 끝나면 닫습니다. 선택한 제출은 원본 확인 후 로그인한 계정의 서버에 등록됩니다.';
+    const note = doc.querySelector('#source-note'); if (note) note.textContent = '수집 중에는 이 화면을 열어 두세요. 사이트 내역은 확장이 탭에서 열고 끝나면 닫습니다. 정올은 창이 가려지거나 최소화되면 진행되지 않을 수 있어 새 창을 앞으로 가져옵니다. 선택한 제출은 원본 확인 후 로그인한 계정의 서버에 등록됩니다.';
     const collection = doc.querySelector('.collection-card'); collection?.setAttribute('aria-label', '서버 수집');
     for (const element of [reconciliationButton, verifyExisting, clearReconciliation]) if (element) element.hidden = true;
   }
@@ -217,8 +218,9 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   }
   async function matchLiveCaptures(expected: Platform, epoch: number) {
     const shown = candidates;
+    // Programmers lists the time as createdAt, SWEA as solvedAt; a row without a time can never match a live capture.
     const rows = shown.map(item => ({ submissionId: item.submissionId, problemNumber: item.problemNumber,
-      ...(item.language ? { language: item.language } : {}), ...(item.createdAt ? { solvedAt: item.createdAt } : {}) }));
+      ...(item.language ? { language: item.language } : {}), ...((item.createdAt ?? item.solvedAt) ? { solvedAt: (item.createdAt ?? item.solvedAt)! } : {}) }));
     type MatchResponse = { ok?: unknown; existing?: unknown } | null;
     let response: MatchResponse = null;
     try { response = await send({ type: "HISTORY_SERVER_MATCH", platform: expected, rows }) as MatchResponse; } catch { response = null; }
@@ -294,6 +296,16 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       if (taskStage) taskStage.textContent = state.status === "CANCELLING" ? "현재 제출 처리를 마무리하는 중입니다." :
         state.status === "IMPORTING" ? `제출을 확인하고 ${serverMode ? '서버에 등록' : '로컬에 저장'}하는 중입니다.` : "";
     } else { progressBar.hidden = true; progress.textContent = ""; if (taskStage) taskStage.textContent = ""; }
+    // The source site only answers while its tab is in front; say what the extension did about it.
+    if (taskStage && active && (state.sourceStalled || state.sourceForegrounded)) {
+      const site = platform() === "JUNGOL" ? "정올" : platform() === "SWEA" ? "SWEA" : "프로그래머스";
+      const note = state.sourceStalled
+        ? `${site} 사이트가 백그라운드 탭에서는 응답하지 않습니다. ${site} 탭을 눌러 앞으로 가져와 주세요.`
+        : platform() === "JUNGOL"
+          ? "정올 창을 앞으로 가져왔습니다. 창이 가려지거나 최소화되어 백그라운드가 되면 정올이 응답하지 않아 진행되지 않을 수 있으니, 끝날 때까지 그대로 두어 주세요. 끝나면 창이 자동으로 닫힙니다."
+          : `${site} 탭을 앞으로 가져왔습니다. 백그라운드에서는 사이트가 응답하지 않아 진행되지 않을 수 있으니, 끝날 때까지 그 탭을 유지해 주세요. 끝나면 이 화면으로 돌아옵니다.`;
+      taskStage.textContent = taskStage.textContent ? `${taskStage.textContent} ${note}` : note;
+    }
     if (state.status === "READY" && !state.truncated && Array.isArray(state.candidates)) {
       candidates = state.candidates.filter(item => typeof item.submissionId === "string" && item.submissionId.length > 0 && item.submissionId.length <= 300); liveMatchedIds = new Set();
       selected = new Set(selectHistoricalSubmissionIds(candidates.filter(item => !existing(item.submissionId)), policy.value as HistoricalSelectionMode));
