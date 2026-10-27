@@ -418,6 +418,17 @@ test("waiting scan stage reports source visibility without inventing list progre
   assert.equal((view.document.querySelector("#task-time") as HTMLElement).hidden, true);
 });
 
+test("a Jungol list that could not be opened names the cause next to the login hint", async () => {
+  const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { status: "TAB_NOT_FOUND", sourceOpenFailure: "NO_ACCOUNT_LINK" });
+  await tick(); await tick();
+  const text = view.document.querySelector("#status")!.textContent!;
+  assert.match(text, /정올 로그인 상태를 확인하지 못했습니다\. \(원인: 정올 첫 화면에서 내 계정 링크를 찾지 못했습니다 · NO_ACCOUNT_LINK\)/);
+  assert.match(text, /정올에 로그인한 뒤 후보 찾기를 다시 눌러 주세요/);
+  const plain = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { status: "TAB_NOT_FOUND" });
+  await tick(); await tick();
+  assert.equal(plain.document.querySelector("#status")!.textContent, "정올 로그인 상태를 확인하지 못했습니다. 정올에 로그인한 뒤 후보 찾기를 다시 눌러 주세요.");
+});
+
 test("a source tab that was brought forward, or stalled again, is explained next to the stage", async () => {
   const waiting = { status: "SCANNING", startedAt: 1_000, progress: { phase: "pages", stage: "waiting-pages",
     rows: 22, pagesLoaded: 0, groupsExpanded: 0, groupsTotal: 0, lastProgressAt: 1_500, sourceVisibility: "hidden" } };
