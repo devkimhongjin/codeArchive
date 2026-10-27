@@ -38,8 +38,9 @@ test("production history handler retries after entering submissions and reconnec
     const sender = { id, frameId: 0, url: `chrome-extension://${id}/history.html` };
     const command = (type = "LOCAL_HISTORY_SCAN_START", requestSender: unknown = sender) => new Promise<unknown>(resolve => listener!({ type }, requestSender, resolve));
 
-    // Clicking on the homepage binds no route and requires no script injection.
-    assert.deepEqual(await command(), { status: "TAB_NOT_FOUND" });
+    // Clicking on the homepage binds no route and requires no script injection. This
+    // environment cannot create the source window or tab, and the reply says where it stopped.
+    assert.deepEqual(await command(), { status: "TAB_NOT_FOUND", sourceOpenFailure: "WINDOW" });
     assert.equal(stored["codearchive-local-history-route"], undefined);
     assert.equal(sends, 0); assert.equal(injections, 0);
 

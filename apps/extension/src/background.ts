@@ -225,16 +225,44 @@ async function createJungolSourceTab(historyPageTabId?: number): Promise<{ tabId
   return { tabId: (await chrome.tabs.create({ url: "https://jungol.co.kr/", active: true })).id, ownWindow: false };
 }
 
-/** Reads the signed-in account from Jungol's home page and opens its own submission list. */
+/** Why the extension could not open Jungol's own submission list; shown next to the "login not confirmed" message. */
+type OpenFailure = "WINDOW" | "HOME_LOAD" | "NO_ACCOUNT_LINK" | "NOT_OWNER" | "LIST_LOAD";
+let lastOpenFailure: OpenFailure | null = null;
+const MAX_ACCOUNT_CANDIDATES = 5;
+
+/** A profile is the user's own only when its edit tab renders, which the site shows to the signed-in owner alone. */
+async function ownsJungolProfile(tabId: number, accountId: string): Promise<boolean> {
+  try {
+    const [probe] = await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, world: "ISOLATED", args: [accountId], func: async (account: string) => {
+      for (let attempt = 0; attempt < 16; attempt++) {
+        if (document.querySelector(`a[href="/account/${account}/edit"]`)) return true;
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      return false;
+    } });
+    return probe?.result === true;
+  } catch { return false; }
+}
+
+/**
+ * Reads the signed-in account from Jungol's home page and opens its own submission list.
+ * A visible home page can link several accounts (rankings and the like), so each
+ * candidate profile is opened until one shows the owner's edit tab; a lone candidate
+ * is passed on as before and checked again by the page script.
+ */
 async function openOwnedJungolHistoryTab(historyPageTabId?: number): Promise<{ tabId: number; url: string } | null> {
   let tabId: number | undefined;
+  let stage: OpenFailure = "WINDOW";
+  lastOpenFailure = null;
   try {
     const source = await createJungolSourceTab(historyPageTabId);
     tabId = source.tabId;
-    if (tabId === undefined || !Number.isSafeInteger(tabId)) return null;
+    if (tabId === undefined || !Number.isSafeInteger(tabId)) { lastOpenFailure = stage; return null; }
     const id = tabId;
     await chrome.tabs.update(id, { autoDiscardable: false }).catch(() => undefined);
+    stage = "HOME_LOAD";
     if (!await waitForTabLoad(id, "/")) throw new Error("home");
+    stage = "NO_ACCOUNT_LINK";
     const [probe] = await chrome.scripting.executeScript({ target: { tabId: id, frameIds: [0] }, world: "ISOLATED", func: async () => {
       for (let attempt = 0; attempt < 20; attempt++) {
         const ids = [...new Set([...document.querySelectorAll("a[href^='/account/']")]
@@ -244,17 +272,26 @@ async function openOwnedJungolHistoryTab(historyPageTabId?: number): Promise<{ t
       }
       return [] as string[];
     } });
-    const ids = probe?.result;
-    // Ownership is verified again on the list itself (its edit tab only renders
-    // for the signed-in user), so an ambiguous home page is simply refused.
-    if (!Array.isArray(ids) || ids.length !== 1 || !/^\d{1,40}$/.test(String(ids[0]))) throw new Error("account");
-    const path = `/account/${ids[0]}/submission`;
-    await chrome.tabs.update(id, { url: `https://jungol.co.kr${path}` });
-    if (!await waitForTabLoad(id, path)) throw new Error("list");
+    const found = probe?.result;
+    const candidates = (Array.isArray(found) ? found.map(String) : []).filter(value => /^\d{1,40}$/.test(value)).slice(0, MAX_ACCOUNT_CANDIDATES);
+    if (!candidates.length) throw new Error("account");
+    let path = "";
+    for (const candidate of candidates) {
+      stage = "LIST_LOAD";
+      path = `/account/${candidate}/submission`;
+      await chrome.tabs.update(id, { url: `https://jungol.co.kr${path}` });
+      if (!await waitForTabLoad(id, path)) throw new Error("list");
+      stage = "NOT_OWNER";
+      // Also waits for the profile to render before the page script reads it.
+      if (await ownsJungolProfile(id, candidate) || candidates.length === 1) { stage = "LIST_LOAD"; break; }
+      path = "";
+    }
+    if (!path) throw new Error("not owner");
     const owned: OwnedJungolTab = { tabId: id, historyPageTabId, lastUsedAt: Date.now(), foregrounded: true, ownWindow: source.ownWindow };
     await chrome.storage.session.set({ [JUNGOL_OWNED_TAB_KEY]: owned });
     return { tabId: id, url: `https://jungol.co.kr${path}` };
   } catch {
+    lastOpenFailure = stage;
     if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
     return null;
   }
@@ -316,8 +353,9 @@ function localHistoryCommand(type: LocalHistoryCommand, platform: Platform = "JU
 }
 
 async function runLocalHistoryCommand(type: LocalHistoryCommand, platform: Platform, submissionIds?: string[], historyPageTabId?: number): Promise<unknown> {
+  lastOpenFailure = null;
   const target = await resolveLocalHistoryTab(platform, mayRediscoverHistorySource(type), historyPageTabId);
-  if ("error" in target) return { status: target.error };
+  if ("error" in target) return { status: target.error, ...(lastOpenFailure ? { sourceOpenFailure: lastOpenFailure } : {}) };
   const owned = await readOwnedJungolTab();
   const ownedTarget = owned?.tabId === target.tabId;
   let ownedRecord = owned;
@@ -715,7 +753,13 @@ function isSupportedCaptureSender(sender: chrome.runtime.MessageSender, platform
 
 /** Manual sync runs only from the signed-in user's own submission list on each platform. */
 function siteSyncPlatform(sender: chrome.runtime.MessageSender): Platform | null {
-  const url = senderUrl(sender);
+  const frameUrl = senderUrl(sender);
+  // A content script keeps the address it was injected at, but Jungol moves between
+  // its pages without reloading (history.pushState), so the sender URL still names
+  // the page the user came from. The tab's current address says which page is open.
+  let tabUrl: URL | null = null;
+  try { tabUrl = typeof sender.tab?.url === "string" ? new URL(sender.tab.url) : null; } catch { tabUrl = null; }
+  const url = frameUrl && tabUrl && tabUrl.origin === frameUrl.origin ? tabUrl : frameUrl;
   if (!url || !Number.isSafeInteger(sender.tab?.id) || sender.frameId !== 0) return null;
   if (url.origin === "https://jungol.co.kr") return isJungolHistorySenderUrl(url) ? "JUNGOL" : null;
   if (url.origin === SWEA_ORIGIN) return url.pathname === SWEA_USER_SUBMISSIONS_PATH ? "SWEA" : null;

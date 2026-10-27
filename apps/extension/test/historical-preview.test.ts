@@ -1000,3 +1000,66 @@ test("Jungol scanner reports a real waiting stage without inflating rows or prog
     assert.equal(waiting!.lastProgressAt, initial!.lastProgressAt);
   } finally { globalThis.MutationObserver = previousObserver; }
 });
+
+test('Jungol account page without a breadcrumb takes the account name from the title or the owner chip', () => {
+  const location = locationFor('https://jungol.co.kr/account/152511/submission');
+  // Title only: "@name - JUNGOL" names the account the way the breadcrumb used to.
+  const byTitle = currentJungolAccountPage();
+  byTitle.querySelector('a.crumb')!.remove();
+  byTitle.title = '@mine - JUNGOL';
+  const fromTitle = previewJungolHistory(byTitle, location);
+  assert.equal(fromTitle.status, 'READY');
+  if (fromTitle.status === 'READY') assert.equal(fromTitle.candidates.length, 1);
+
+  // No breadcrumb and no usable title: the submitter chip of a row names the account.
+  const byChip = currentJungolAccountPage();
+  byChip.querySelector('a.crumb')!.remove();
+  assert.equal(previewJungolHistory(byChip, location).status, 'READY');
+
+  // A title for another account is not used for this profile, and a different chip does not name it.
+  const foreign = currentJungolAccountPage();
+  foreign.querySelector('a.crumb')!.remove();
+  foreign.querySelector('td[data-col="제출자"] a')!.setAttribute('href', '/account/999');
+  const refused = previewJungolHistory(foreign, location);
+  assert.equal(refused.status, 'OWNERSHIP_UNVERIFIED');
+  if (refused.status === 'OWNERSHIP_UNVERIFIED') assert.equal(refused.identityReason, 'NO_ACCOUNT_NAME');
+});
+
+test('Jungol refusal names which ownership marker of the profile page is missing', () => {
+  const location = locationFor('https://jungol.co.kr/account/152511/submission');
+  const reasonOf = (mutate: (document: Document) => void) => {
+    const document = currentJungolAccountPage();
+    mutate(document);
+    const result = previewJungolHistory(document, location);
+    return result.status === 'OWNERSHIP_UNVERIFIED' ? (result.identityReason ?? 'none') : result.status;
+  };
+  assert.equal(reasonOf(document => document.querySelector('a[href="/account/152511/edit"]')!.remove()), 'NO_EDIT_TAB');
+  assert.equal(reasonOf(document => document.querySelector('a.active')!.classList.remove('active')), 'NO_ACTIVE_TAB');
+  assert.equal(reasonOf(document => {
+    document.querySelector('a.crumb')!.remove();
+    document.querySelector('td[data-col="제출자"] a')!.remove();
+  }), 'NO_ACCOUNT_NAME');
+  assert.equal(reasonOf(() => undefined), 'READY');
+  // A list that is not a profile page has no profile marker to blame.
+  const filtered = previewJungolHistory(jungolPage({ own: true, account: 'other' }), locationFor('https://jungol.co.kr/submission?account=mine'));
+  assert.equal(filtered.status, 'OWNERSHIP_UNVERIFIED');
+  if (filtered.status === 'OWNERSHIP_UNVERIFIED') assert.equal(filtered.identityReason, undefined);
+});
+
+test('Jungol detail verification reads the account name the same way when the breadcrumb is gone', () => {
+  const location = locationFor('https://jungol.co.kr/account/152511/submission?sid=13771703');
+  const page = currentJungolAccountPage();
+  page.querySelector('a.crumb')!.remove();
+  page.title = '@mine - JUNGOL';
+  const dialog = page.createElement('div');
+  dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-label', '제출 상세');
+  dialog.innerHTML = '<a href="/account/152511">mine</a><a href="/problem/1544">회장뽑기 #1544</a><span class="sd-id">#13771703</span>' +
+    '<span class="sd-heading-score">100점</span><span class="sd-heading-status">정답</span><code class="hljs">12345</code>' +
+    '<div class="sd-meta-item"><span class="time"></span><div class="paper"><div class="content">2026. 10. 20. 오후 3:12:05</div></div></div>';
+  page.body.append(dialog);
+  const candidate = { submissionId: '13771703', problemNumber: '1544', title: '회장뽑기', language: 'Java 15',
+    detailUrl: 'https://jungol.co.kr/account/152511/submission?sid=13771703', codeByteLength: 5 };
+  const verified = verifyJungolHistoryDetail(page, location, candidate);
+  assert.ok(verified, 'the owner named by the title matches the dialog owner');
+  assert.equal(verified?.sourceCode, '12345');
+});

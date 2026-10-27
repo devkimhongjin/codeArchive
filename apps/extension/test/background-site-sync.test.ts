@@ -36,5 +36,16 @@ test('manual site sync accepts only the own submission list pages of each platfo
     assert.deepEqual(await send(match, `chrome-extension://${id}/history.html`), { ok: false, error: 'LOGIN_REQUIRED' });
     // An accepted page with valid input reaches the account check (no extension login here).
     assert.deepEqual(await send(status, 'https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do'), { ok: false, error: 'LOGIN_REQUIRED' });
+    // Jungol moves between pages without reloading, so the sender URL is the page the
+    // content script was injected on. The tab's current address says which page is open.
+    const list = 'https://jungol.co.kr/account/9/submission';
+    const onTab = (frameUrl: string, tabUrl: string | undefined) => send(status, frameUrl, { tab: { id: 3, ...(tabUrl ? { url: tabUrl } : {}) } });
+    assert.deepEqual(await onTab('https://jungol.co.kr/account/9', list), { ok: false, error: 'LOGIN_REQUIRED' }, 'entered the list from its summary page: reaches the account check');
+    assert.deepEqual(await onTab('https://jungol.co.kr/', list), { ok: false, error: 'LOGIN_REQUIRED' });
+    assert.deepEqual(await onTab(list, 'https://jungol.co.kr/account/9'), { ok: false, error: 'BAD_REQUEST' }, 'the user has since left the list');
+    assert.deepEqual(await onTab(list, 'https://jungol.co.kr/problem/1000'), { ok: false, error: 'BAD_REQUEST' });
+    assert.deepEqual(await onTab(list, undefined), { ok: false, error: 'LOGIN_REQUIRED' }, 'without a tab address the injected one is used');
+    assert.deepEqual(await onTab('https://jungol.co.kr/account/9', 'https://example.com/account/9/submission'), { ok: false, error: 'BAD_REQUEST' }, 'origins must agree');
+    assert.deepEqual(await onTab('https://example.com/x', list), { ok: false, error: 'BAD_REQUEST' });
   } finally { Object.assign(globalThis, previous); }
 });

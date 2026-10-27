@@ -21,6 +21,34 @@ export function isJungolHistorySenderUrl(url: URL): boolean {
   return !url.searchParams.has("account");
 }
 
+const ACCOUNT_NAME = /^[\w.-]{1,80}$/;
+
+/**
+ * The profile's account name. Jungol's breadcrumb carries it ("@name") on some
+ * layouts and not on others, so the page title ("@name - JUNGOL") and the owner
+ * chip of a list row are read when the breadcrumb is absent.
+ */
+function profileAccountName(document: Document, profileId: string): string {
+  const crumb = document.querySelector<HTMLAnchorElement>(`a.crumb[href="/account/${profileId}"]`)?.textContent?.trim().replace(/^@/, "") ?? "";
+  if (ACCOUNT_NAME.test(crumb)) return crumb;
+  const title = document.title?.match(/^@([\w.-]{1,80})(?:\s|$)/)?.[1] ?? "";
+  if (ACCOUNT_NAME.test(title)) return title;
+  for (const chip of document.querySelectorAll<HTMLAnchorElement>(`td[data-col="제출자"] a[href="/account/${profileId}"]`)) {
+    const name = chip.textContent?.replace(/\s+/g, "").replace(/^@/, "") ?? "";
+    if (ACCOUNT_NAME.test(name)) return name;
+  }
+  return "";
+}
+
+/** Which of the profile page's ownership markers is missing, for the message shown when the list is refused. */
+function profileIdentityFailure(document: Document, location: Location): string | null {
+  const profileId = new URL(location.href).pathname.match(ACCOUNT_HISTORY_PATH)?.[1];
+  if (!profileId) return null;
+  if (!document.querySelector(`a[href="/account/${profileId}/edit"]`)) return "NO_EDIT_TAB";
+  if (!document.querySelector(`a[href="/account/${profileId}/submission"].active`)) return "NO_ACTIVE_TAB";
+  return profileAccountName(document, profileId) ? null : "NO_ACCOUNT_NAME";
+}
+
 function listIdentity(document: Document, location: Location): { account: string; accountId: string | null } | null {
   const url = new URL(location.href);
   const profileId = url.pathname.match(ACCOUNT_HISTORY_PATH)?.[1];
@@ -28,9 +56,8 @@ function listIdentity(document: Document, location: Location): { account: string
     // The edit tab is only rendered on the signed-in user's own profile.
     if (!document.querySelector(`a[href="/account/${profileId}/edit"]`) ||
         !document.querySelector(`a[href="/account/${profileId}/submission"].active`)) return null;
-    const account = document.querySelector<HTMLAnchorElement>(`a.crumb[href="/account/${profileId}"]`)
-      ?.textContent?.trim().replace(/^@/, "") ?? "";
-    return /^[\w.-]{1,80}$/.test(account) ? { account, accountId: profileId } : null;
+    const account = profileAccountName(document, profileId);
+    return account ? { account, accountId: profileId } : null;
   }
   if (url.pathname !== "/submission") return null;
   const account = url.searchParams.get("account");
@@ -151,7 +178,7 @@ export function jungolHistoryRow(document: Document, location: Location, submiss
 }
 
 export type JungolHistoryPreview =
-  | { status: "LOGIN_REQUIRED" | "ACCESS_DENIED" | "OWNERSHIP_UNVERIFIED"; candidates: []; skipped: 0 }
+  | { status: "LOGIN_REQUIRED" | "ACCESS_DENIED" | "OWNERSHIP_UNVERIFIED"; candidates: []; skipped: 0; identityReason?: string }
   | { status: "READY"; candidates: JungolHistoryCandidate[]; skipped: number; truncated: boolean;
       scanProtocol?: number; paginationClicks?: number; remainingGroups?: number };
 
@@ -183,7 +210,10 @@ export function previewJungolHistory(document: Document, location: Location): Ju
     return empty("LOGIN_REQUIRED");
   }
   const identity = listIdentity(document, location);
-  if (!identity) return empty("OWNERSHIP_UNVERIFIED");
+  if (!identity) {
+    const identityReason = profileIdentityFailure(document, location);
+    return { ...empty("OWNERSHIP_UNVERIFIED"), ...(identityReason ? { identityReason } : {}) };
+  }
 
   const rows = [...document.querySelectorAll<HTMLTableRowElement>("table tr")]
     .filter(row => !!row.querySelector('td[data-col="번호"], td[data-col="언어"]'));
@@ -473,8 +503,7 @@ export function verifyJungolHistoryDetail(document: Document, location: Location
         url.searchParams.get("account") !== detailUrl.searchParams.get("account"))) return null;
   const identity = listIdentity(document, location);
   if (!identity || (!profileId && identity.account !== detailUrl.searchParams.get("account"))) return null;
-  const account = profileId ? document.querySelector<HTMLAnchorElement>(`a.crumb[href="/account/${profileId}"]`)
-    ?.textContent?.trim().replace(/^@/, "") : url.searchParams.get("account");
+  const account = profileId ? identity.account : url.searchParams.get("account");
   const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-label="제출 상세"]');
   const owner = dialog?.querySelector<HTMLAnchorElement>('a[href^="/account/"]')?.textContent?.trim();
   const problem = dialog?.querySelector<HTMLAnchorElement>(`a[href="/problem/${candidate.problemNumber}"]`);

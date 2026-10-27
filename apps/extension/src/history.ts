@@ -18,7 +18,7 @@ type State = { status: string; candidates?: Candidate[]; truncated?: boolean; pr
   serverAccount?: string; serverRunId?: string;
   skipped?: number; failedSubmissionIds?: string[]; verificationFailures?: Record<string, number>;
   problemCount?: number; submissionCount?: number; unsupportedProblemNumbers?: string[]; unreadProblemNumbers?: string[];
-  sourceForegrounded?: boolean; sourceStalled?: boolean };
+  sourceForegrounded?: boolean; sourceStalled?: boolean; sourceOpenFailure?: string; identityReason?: string };
 export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
   schedule?: (work: () => void, delay: number) => unknown; now?: () => number;
   readTiming?: () => Promise<unknown>;
@@ -115,12 +115,23 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     if (state.status === "FAILED" && state.failureReason && failureLabels[state.failureReason])
       return `${failureLabels[state.failureReason]}${(state.completed ?? 0) > 0 ? ` 현재까지 ${resultSummary()}` : ""}`;
     if (state.status === "FAILED" && (state.completed ?? 0) > 0) return `수집을 완료하지 못했습니다. 현재까지 ${resultSummary()}`;
-    if (state.status === "TAB_NOT_FOUND") { const name = platform() === "JUNGOL" ? "정올" : platform() === "SWEA" ? "SWEA" : "프로그래머스"; return `${name} 로그인 상태를 확인하지 못했습니다. ${name}에 로그인한 뒤 후보 찾기를 다시 눌러 주세요.`; }
+    if (state.status === "TAB_NOT_FOUND") {
+      const name = platform() === "JUNGOL" ? "정올" : platform() === "SWEA" ? "SWEA" : "프로그래머스";
+      const causes: Record<string, string> = { WINDOW: "정올 창을 열지 못했습니다", HOME_LOAD: "정올 첫 화면을 불러오지 못했습니다",
+        NO_ACCOUNT_LINK: "정올 첫 화면에서 내 계정 링크를 찾지 못했습니다", NOT_OWNER: "정올 첫 화면의 계정 중 로그인한 본인 계정을 확인하지 못했습니다",
+        LIST_LOAD: "정올 제출현황을 불러오지 못했습니다" };
+      const cause = state.sourceOpenFailure && causes[state.sourceOpenFailure] ? ` (원인: ${causes[state.sourceOpenFailure]} · ${state.sourceOpenFailure})` : "";
+      return `${name} 로그인 상태를 확인하지 못했습니다.${cause} ${name}에 로그인한 뒤 후보 찾기를 다시 눌러 주세요.`;
+    }
     if (state.status === "CONNECTION_REQUIRED") return platform() === "JUNGOL" ? "정올 제출현황을 열고 후보 찾기를 다시 눌러 주세요. 수집 연결을 복구합니다." : `${platformInfo[platform()].guide} 후보 찾기를 다시 눌러 주세요.`;
     if (state.status === "CONNECTION_FAILED") return platform() === "JUNGOL" ? "정올 탭과 연결하지 못했습니다. 제출현황을 새로고침한 뒤 후보 찾기를 다시 눌러 주세요." : `${platformInfo[platform()].guide} 새로고침한 뒤 다시 눌러 주세요.`;
     if (state.status === "MULTIPLE_TABS") return platform() === "JUNGOL" ? "정올 제출 탭이 여러 개입니다. 하나만 남긴 뒤 다시 시도해 주세요." : `${platformInfo[platform()].guide} 탭을 하나만 남긴 뒤 다시 눌러 주세요.`;
     if (state.status === "INTERRUPTED") return "원본 탭이 닫혔거나 이동했습니다. 저장된 항목은 유지됩니다.";
-    if (state.status === "OWNERSHIP_UNVERIFIED" || state.status === "LOGIN_REQUIRED") return "로그인한 본인의 제출 이력을 확인하지 못했습니다. 원본 사이트의 로그인 상태를 확인해 주세요.";
+    if (state.status === "OWNERSHIP_UNVERIFIED" || state.status === "LOGIN_REQUIRED") {
+      const missing: Record<string, string> = { NO_EDIT_TAB: "내 프로필의 정보 수정 탭", NO_ACTIVE_TAB: "제출현황 탭", NO_ACCOUNT_NAME: "계정 이름" };
+      const detail = state.identityReason && missing[state.identityReason] ? ` (찾지 못한 항목: ${missing[state.identityReason]} · ${state.identityReason})` : "";
+      return `로그인한 본인의 제출 이력을 확인하지 못했습니다.${detail} 원본 사이트의 로그인 상태를 확인해 주세요.`;
+    }
     if (state.status === "SCAN_INCOMPLETE" && state.failurePage) {
       const where = state.failedProblemNumber ? `문제 #${state.failedProblemNumber}의 제출 이력 ${state.failurePage}페이지` : `문제 목록 ${state.failurePage}페이지`;
       return `${where}를 확인하지 못해 후보 찾기를 중단했습니다. 원본 사이트에서 해당 목록을 확인한 뒤 다시 시도해 주세요.`;
