@@ -35,7 +35,7 @@ export function mountSiteSync(document: Document, page: SiteSyncPage, send: Send
   let knownIds = '', scanTimer: ReturnType<typeof setTimeout> | undefined;
   const messages = new Map<string, { text: string; tone: 'ok' | 'error' }>();
 
-  function view(target: SiteSyncTarget): { canSync: boolean; commitIds: string[]; text: string; tone?: 'ok' | 'error' } {
+  function view(target: SiteSyncTarget): { canSync: boolean; commitIds: string[]; text: string; tone?: 'ok' | 'error'; hint?: string } {
     const message = messages.get(target.id);
     if (!loaded) return { canSync: false, commitIds: [], text: '확인 중' };
     if (statusError) return { canSync: false, commitIds: [], text: siteSyncErrorLabel(statusError), tone: 'error' };
@@ -46,10 +46,18 @@ export function mountSiteSync(document: Document, page: SiteSyncPage, send: Send
       return { canSync: false, commitIds: githubReady && committable(state.commit) ? [state.captureId] : [], text: message?.text ?? COMMIT_LABELS[state.commit],
         tone: message?.tone ?? (state.commit === 'SUCCEEDED' ? 'ok' : state.commit === 'FAILED' || state.commit === 'UNKNOWN' ? 'error' : undefined) };
     }
+    // A problem card does not say how many accepted submissions the site holds, so the
+    // server's count cannot show that everything is registered. Sync stays available and
+    // the wording says what the number means and what pressing sync does.
     const problem = problems.get(target.problemNumber);
     const uncommitted = problem?.uncommitted ?? [];
+    const registered = problem?.registered ?? 0;
     return { canSync: true, commitIds: githubReady ? uncommitted.slice(0, 50) : [],
-      text: message?.text ?? (problem?.registered ? `${problem.registered}건 등록${uncommitted.length ? ` · ${uncommitted.length}건 커밋 전` : ''}` : '미등록'), tone: message?.tone };
+      text: message?.text ?? (registered ? `서버 ${registered}건 등록${uncommitted.length ? ` · ${uncommitted.length}건 커밋 전` : ''} · 추가분은 동기화로 확인` : '서버에 없음 · 동기화로 등록'),
+      tone: message?.tone,
+      hint: registered
+        ? `서버에 이 문제의 정답 제출 ${registered}건이 등록돼 있습니다. 사이트에 서버에 없는 정답 제출이 더 있는지는 동기화를 눌러야 확인할 수 있습니다.`
+        : '서버에 이 문제의 정답 제출이 없습니다. 동기화를 누르면 사이트의 정답 제출을 읽어 등록합니다.' };
   }
 
   function render(target: SiteSyncTarget) {
@@ -78,10 +86,11 @@ export function mountSiteSync(document: Document, page: SiteSyncPage, send: Send
     const current = view(target);
     const [sync, commit] = [...box.querySelectorAll<HTMLButtonElement>('button')];
     sync!.disabled = busy || !current.canSync; commit!.disabled = busy || current.commitIds.length === 0;
-    sync!.title = sync!.disabled ? '' : 'CodeArchive 서버에 이 풀이를 등록합니다';
+    sync!.title = sync!.disabled ? '' : target.row ? 'CodeArchive 서버에 이 풀이를 등록합니다' : '이 문제의 사이트 정답 제출을 읽어, 서버에 없는 것만 등록합니다';
     commit!.title = commit!.disabled ? '' : '연결된 GitHub 저장소에 커밋합니다';
     const state = box.querySelector<HTMLElement>('.codearchive-sync-state')!;
     state.textContent = current.text;
+    state.title = current.hint && !messages.has(target.id) ? current.hint : '';
     if (current.tone) state.dataset.tone = current.tone; else delete state.dataset.tone;
   }
 
