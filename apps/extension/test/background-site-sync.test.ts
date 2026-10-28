@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
+import { createCapture } from '../src/capture';
 
 test('manual site sync accepts only the own submission list pages of each platform', async () => {
   const id = 'test-extension';
@@ -47,5 +48,21 @@ test('manual site sync accepts only the own submission list pages of each platfo
     assert.deepEqual(await onTab(list, undefined), { ok: false, error: 'LOGIN_REQUIRED' }, 'without a tab address the injected one is used');
     assert.deepEqual(await onTab('https://jungol.co.kr/account/9', 'https://example.com/account/9/submission'), { ok: false, error: 'BAD_REQUEST' }, 'origins must agree');
     assert.deepEqual(await onTab('https://example.com/x', list), { ok: false, error: 'BAD_REQUEST' });
+
+    // A live Jungol capture follows the same rule: the user reaches the problem page through
+    // the site's own navigation, so the script was injected on another page (#456 1.0.6).
+    const problemPage = 'https://jungol.co.kr/problem/1000';
+    const capture = createCapture({ platform: 'JUNGOL', problemNumber: '1000', title: 'A+B', problemUrl: problemPage, language: 'C++20', sourceCode: 'int main(){}', result: 'ACCEPTED' })!;
+    const storeFrom = (frameUrl: string, tabUrl: string | undefined) => send({ type: 'STORE_CAPTURE', capture }, frameUrl, { tab: { id: 3, ...(tabUrl ? { url: tabUrl } : {}) } });
+    assert.deepEqual(await storeFrom('https://jungol.co.kr/problem', problemPage), { ok: false, error: 'DISABLED' }, 'injected on the problem list, now on the problem: reaches the account check');
+    assert.deepEqual(await storeFrom('https://jungol.co.kr/', problemPage), { ok: false, error: 'DISABLED' });
+    assert.deepEqual(await storeFrom(problemPage, problemPage), { ok: false, error: 'DISABLED' }, 'a direct visit is unchanged');
+    assert.deepEqual(await storeFrom(problemPage, 'https://jungol.co.kr/problem'), { ok: false, error: 'INVALID_CAPTURE' }, 'the user has since left the problem page');
+    assert.deepEqual(await storeFrom('https://jungol.co.kr/problem', 'https://example.com/problem/1000'), { ok: false, error: 'INVALID_CAPTURE' }, 'origins must agree');
+    assert.deepEqual(await storeFrom('https://jungol.co.kr/problem', undefined), { ok: false, error: 'INVALID_CAPTURE' }, 'without a tab address the injected one is used');
+    // The "capturing / saving" progress shown in the popup uses the same rule.
+    const progress = { type: 'SET_SUBMISSION_PROGRESS', attemptId: '00000000-0000-4000-8000-000000000009', platform: 'JUNGOL', phase: 'CAPTURING', problemNumber: '1000', title: 'A+B' };
+    assert.deepEqual(await send(progress, 'https://jungol.co.kr/problem', { tab: { id: 3, url: problemPage } }), { ok: true });
+    assert.deepEqual(await send(progress, problemPage, { tab: { id: 3, url: 'https://jungol.co.kr/' } }), { ok: false, error: 'BAD_REQUEST' });
   } finally { Object.assign(globalThis, previous); }
 });
