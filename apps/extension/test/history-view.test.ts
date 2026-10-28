@@ -181,6 +181,21 @@ test("SWEA and Programmers use their own guidance, candidate metadata, and histo
   assert.match(view.document.querySelector("#candidate-help")!.textContent!, /후보 문제 1건 · 제출 1건.*제외했습니다/);
 });
 
+test("Programmers SQL candidates say they are the saved editor code", async () => {
+  const sql = { submissionId: "pg:947840:299310:2026-08-20T09:52:12.000+09:00:sql", problemNumber: "299310", title: "SQL 문제", language: "MySQL",
+    createdAt: "2026-08-20T09:52:12.000+09:00", savedCode: true };
+  const algorithm = { submissionId: "pg:947840:389481:2026-09-21T16:43:28.310+09:00:java", problemNumber: "389481", title: "가장 큰 수", language: "java",
+    createdAt: "2026-09-21T16:43:28.310+09:00" };
+  const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { status: "READY", candidates: [sql, algorithm], truncated: false });
+  await tick(); await tick();
+  choose(view.document.querySelector<HTMLSelectElement>("#platform")!, "PROGRAMMERS"); await tick(); await tick();
+  const metas = [...view.document.querySelectorAll("#candidate-list .meta")].map(meta => meta.textContent!);
+  assert.equal(metas[0], "2026-08-20T09:52:12.000+09:00 · MySQL · 편집기 저장 코드(정답 제출과 다를 수 있음)");
+  assert.equal(metas[1], "2026-09-21T16:43:28.310+09:00 · java");
+  assert.match(view.document.querySelector("#status")!.textContent!, /SQL 문제 1건은 제출 이력이 없어 편집기에 저장된 마지막 코드를 후보로 보여 줍니다/);
+  assert.match(view.document.querySelector("#platform-description")!.textContent!, /SQL 문제는 제출 이력이 없어 편집기에 저장된 마지막 코드/);
+});
+
 test("non-Jungol failure guidance does not direct users to Jungol", async () => {
   const view = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { status: "FAILED", failureReason: "DETAIL_NOT_FOUND", completed: 0, total: 1 });
   await tick(); await tick();
@@ -218,7 +233,7 @@ test("scan errors retain their problem/page context and unsupported SQL is not p
   assert.match(failed.document.querySelector("#progress")!.textContent!, /0\/95/);
   const readySql = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { status: "READY", candidates: [], unsupportedProblemNumbers: ["299310"] });
   await tick(); await tick();
-  assert.match(readySql.document.querySelector("#status")!.textContent!, /제출 이력을 제공하지 않는 SQL 문제 1건은 수집 대상에서 제외/);
+  assert.match(readySql.document.querySelector("#status")!.textContent!, /편집기에 가져올 코드가 없는 SQL 문제 1건\(빈 코드·초기 코드·지원하지 않는 언어\)은 수집 대상에서 제외/);
   // Lessons left out after a retry are named, not reported as a list that did not open.
   const readyUnread = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } :
     { status: "READY", candidates: [], unreadProblemNumbers: ["1", "2", "3", "4", "5", "6", "7"] });
