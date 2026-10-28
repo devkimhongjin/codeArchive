@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseHTML } from 'linkedom';
-import { mountSiteSync } from '../src/siteSyncView';
+import { mountSiteSync, type SiteSyncPage } from '../src/siteSyncView';
 import { jungolSyncPage } from '../src/siteSyncPages';
 
 const captureId = '00000000-0000-4000-8000-000000000001';
@@ -117,5 +117,53 @@ test('returning to the list reads the server state again for submissions made in
   await tick();
   assert.equal(statusReads, 2);
   assert.equal(controls(document, '2001').state, '커밋 완료');
+  handle.dispose();
+});
+
+test('SWEA problem cards say what the server holds, keep sync available, and explain what sync does', async () => {
+  const { document } = parseHTML('<html><body><div id="c1"></div><div id="c2"></div><div id="c3"></div></body></html>');
+  const syncs: string[] = [];
+  const card = (id: string, problemNumber: string) => ({ id, anchor: document.getElementById(id)!, problemNumber,
+    async sync() { syncs.push(id); return { ok: true, message: '모두 등록됨' }; } });
+  const page: SiteSyncPage = { platform: 'SWEA', targets: () => [card('c1', '1'), card('c2', '2'), card('c3', '3')] };
+  const send = async () => ({ ok: true, githubReady: true, rows: [], problems: [
+    { problemNumber: '1', registered: 3, uncommitted: [captureId] }, { problemNumber: '2', registered: 2, uncommitted: [] }] });
+  const handle = mountSiteSync(document, page, send);
+  await tick();
+  const [first, second, third] = ['c1', 'c2', 'c3'].map(id => controls(document, id));
+  const stateTitle = (item: ReturnType<typeof controls>) => item.box.querySelector<HTMLElement>('.codearchive-sync-state')!.title;
+
+  // The count is the server's; it cannot show that the site holds nothing more.
+  assert.equal(first!.state, '서버 3건 등록 · 1건 커밋 전 · 추가분은 동기화로 확인');
+  assert.equal(second!.state, '서버 2건 등록 · 추가분은 동기화로 확인');
+  assert.equal(third!.state, '서버에 없음 · 동기화로 등록');
+  for (const item of [first!, second!, third!]) assert.equal(item.sync.disabled, false, 'a problem card always allows checking the site again');
+  assert.equal(first!.commit.disabled, false); assert.equal(second!.commit.disabled, true);
+
+  // Hover text states the limit of the number and what the button does.
+  assert.match(stateTitle(second!), /3건|2건/);
+  assert.match(stateTitle(second!), /더 있는지는 동기화를 눌러야 확인할 수 있습니다/);
+  assert.match(stateTitle(third!), /정답 제출이 없습니다.*읽어 등록합니다/);
+  assert.equal(second!.sync.title, '이 문제의 사이트 정답 제출을 읽어, 서버에 없는 것만 등록합니다');
+
+  // The result of pressing sync replaces the explanation.
+  second!.sync.click();
+  await tick();
+  const after = controls(document, 'c2');
+  assert.deepEqual(syncs, ['c2']);
+  assert.equal(after.state, '모두 등록됨');
+  assert.equal(stateTitle(after), '');
+  handle.dispose();
+});
+
+test('rows keep their own sync wording; only problem cards use the card wording', async () => {
+  const { document, location } = fixture(row('2001') + row('2002'));
+  const send = async (message: unknown) => ({ ok: true, githubReady: true, problems: [], rows: (message as { rows: Array<{ submissionId: string }> }).rows.map(item => ({ submissionId: item.submissionId, state: 'UNREGISTERED' })) });
+  const handle = mountSiteSync(document, jungolSyncPage(document, location, send), send);
+  await tick();
+  const item = controls(document, '2001');
+  assert.equal(item.state, '미등록');
+  assert.equal(item.sync.title, 'CodeArchive 서버에 이 풀이를 등록합니다');
+  assert.equal(item.box.querySelector<HTMLElement>('.codearchive-sync-state')!.title, '');
   handle.dispose();
 });

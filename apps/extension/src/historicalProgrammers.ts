@@ -25,6 +25,8 @@ export interface ProgrammersListingLesson {
   lessonUrl: string;
   page: number;
   order: number;
+  /** When the lesson was first solved; a SQL lesson has no other time. */
+  solvedAt?: string;
 }
 
 export type ProgrammersListingPage =
@@ -116,16 +118,47 @@ export function authenticatedProgrammersUserId(document: Document, location: Loc
   return account;
 }
 
-/** SQL lessons currently expose no submission history component or tab. */
-export function unsupportedProgrammersSqlHistory(document: Document, location: Location): { accountId: string; lessonId: string; title: string } | null {
+/**
+ * The solved list's hover time, to the second, in Korean time. It falls
+ * seconds after the first accepted submission's history time.
+ */
+export function programmersSolvedAt(value: string | null | undefined): string | null {
+  const match = value?.trim().match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})$/);
+  if (!match) return null;
+  const solvedAt = `${match[1]}T${match[2]}.000+09:00`;
+  return Number.isNaN(new Date(solvedAt).getTime()) ? null : solvedAt;
+}
+
+export type ProgrammersSqlLesson =
+  | { status: "SAVED_CODE"; accountId: string; lessonId: string; title: string; language: string; sourceCode: string }
+  | { status: "UNSUPPORTED"; accountId: string; lessonId: string; title: string };
+
+/**
+ * SQL lessons expose no submission history component or tab. The editor holds
+ * the code the site last saved for the lesson, which is the only source left;
+ * it can differ from the accepted submission when the user edited it later.
+ */
+export function readProgrammersSqlLesson(document: Document, location: Location): ProgrammersSqlLesson | null {
   if (!canonicalProgrammersLessonUrl(location)) return null;
   const challenges = document.querySelectorAll<HTMLElement>('.challenge-content.lesson-algorithm-main-section[data-user-id][data-challengeable-id][data-challengeable-type="database"]');
   const title = programmersLessonTitle(document);
   const accountId = challenges.length === 1 ? challenges[0]!.dataset.userId ?? "" : "";
   const lessonId = location.pathname.match(LESSON_PATH)?.[1] ?? "";
-  return title && /^\d{1,40}$/.test(accountId) && /^\d{1,40}$/.test(challenges[0]?.dataset.challengeableId ?? "") &&
-    !document.querySelector('[data-challengeable-submission-history-component],.submission-history-title')
-    ? { accountId, lessonId, title } : null;
+  if (!title || !/^\d{1,40}$/.test(accountId) || !/^\d{1,40}$/.test(challenges[0]?.dataset.challengeableId ?? "") ||
+      document.querySelector('[data-challengeable-submission-history-component],.submission-history-title')) return null;
+  const unsupported = { status: "UNSUPPORTED" as const, accountId, lessonId, title };
+  const languages = [...document.querySelectorAll<HTMLElement>(".challenge-nav .dropdown-toggle")].map(element => normalizedText(element.textContent));
+  const editors = document.querySelectorAll<HTMLTextAreaElement>("textarea#code[name='code']");
+  const language = languages.length === 1 ? languages[0]! : "";
+  const sourceCode = editors.length === 1 && typeof editors[0]!.value === "string" ? editors[0]!.value : "";
+  const languageKey = canonicalLanguageKey(language);
+  const pageLanguage = challenges[0]!.dataset.language;
+  // The page also carries the lesson's starting template; a reset editor holds only that.
+  const templates = [...document.querySelectorAll<HTMLInputElement>('input[type="hidden"][id^="initial_code_"]')].map(input => input.value.trim());
+  const written = sourceCode.split("\n").some(line => line.trim() && !line.trim().startsWith("--"));
+  if (!language || language.length > 100 || languageKey.startsWith("unknown:") || (pageLanguage && canonicalLanguageKey(pageLanguage) !== languageKey) ||
+      !written || sourceCode.length > 1_000_000 || templates.includes(sourceCode.trim())) return unsupported;
+  return { status: "SAVED_CODE", accountId, lessonId, title, language, sourceCode };
 }
 
 function submissionRowValue(row: HTMLElement): SubmissionRowValue | null {
@@ -288,7 +321,9 @@ export function readProgrammersSolvedListingPage(document: Document, location: L
     if (!status?.classList.contains("solved") || !match || !title || title.length > 500 || seen.has(match[1]!)) return { status: "INCOMPLETE" };
     seen.add(match[1]!);
     const difficulty = programmersListingDifficulty(row, match[1]!, `${PROGRAMMERS_ORIGIN}${path}`);
-    lessons.push({ ...(difficulty ? { difficulty } : {}), problemNumber: match[1]!, title, lessonUrl: `${PROGRAMMERS_ORIGIN}${path}`, page, order: (page - 1) * 20 + index });
+    const solvedAt = programmersSolvedAt(status.querySelector("[data-tip]")?.getAttribute("data-tip"));
+    lessons.push({ ...(difficulty ? { difficulty } : {}), problemNumber: match[1]!, title, lessonUrl: `${PROGRAMMERS_ORIGIN}${path}`, page, order: (page - 1) * 20 + index,
+      ...(solvedAt ? { solvedAt } : {}) });
   }
   const next = document.querySelectorAll<HTMLButtonElement>("button[aria-label='다음 페이지']");
   const first = document.querySelectorAll<HTMLButtonElement>("button[aria-label='처음 페이지']");

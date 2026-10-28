@@ -6,7 +6,8 @@ import { isHistoricalCollectionScope, isTrustedHistoricalCollectionRequest, type
 import type { HistoryServerPlatform, HistoryServerResult } from '../../../shared/historyServerProtocol';
 
 type Platform = "JUNGOL" | "SWEA" | "PROGRAMMERS";
-type Candidate = ReconciliationSubmission & { submissionId: string; problemNumber: string; title: string; language?: string; createdAt?: string; executionTime?: number; memoryValue?: number };
+type Candidate = ReconciliationSubmission & { submissionId: string; problemNumber: string; title: string; language?: string; createdAt?: string; executionTime?: number; memoryValue?: number;
+  savedCode?: boolean };
 type State = { status: string; candidates?: Candidate[]; truncated?: boolean; progress?: {
   phase: string; stage?: string; rows: number; pagesLoaded: number; groupsExpanded: number; groupsTotal: number; groupsTotalKnown?: boolean;
   historiesRead?: number; historiesTotal?: number; currentProblemNumber?: string;
@@ -29,7 +30,7 @@ export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
 const platformInfo: Record<Platform, { description: string; guide: string }> = {
   JUNGOL: { description: "후보 찾기를 누르면 확장이 정올 제출현황을 새 창에서 열어 앞으로 가져오고, 끝나면 닫습니다. 이 화면의 탭은 그대로 유지됩니다. 정올은 창이 다른 창에 가려지거나 최소화되어 백그라운드가 되면 응답하지 않아 수집이 진행되지 않을 수 있으니, 수집이 끝날 때까지 정올 창을 이 화면과 나란히 두고 가리거나 최소화하지 말아 주세요.", guide: "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요." },
   SWEA: { description: "후보 찾기를 누르면 확장이 SWEA 제출 목록을 백그라운드 탭에서 열고, 끝나면 닫습니다. SWEA가 백그라운드에서 응답하지 않으면 그 탭을 앞으로 가져옵니다.", guide: "My Page Code에서 제출한 Problem을 열어 주세요." },
-  PROGRAMMERS: { description: "후보 찾기를 누르면 확장이 해결한 문제 목록을 백그라운드 탭에서 열고, 문제 상세도 뒤쪽 탭에서 읽은 뒤 닫습니다. 프로그래머스가 백그라운드에서 응답하지 않으면 목록 탭을 앞으로 가져옵니다. 제출 이력에는 실행시간·메모리가 없어 해당 정보는 저장할 수 없으며, 가장 빠른 제출·최소 메모리 선택도 지원하지 않습니다.", guide: "해결한 문제 목록을 열어 주세요. 문제 상세는 같은 사이트 창의 뒤쪽 탭에서 열리고 처리 후 닫힙니다." }
+  PROGRAMMERS: { description: "후보 찾기를 누르면 확장이 해결한 문제 목록을 백그라운드 탭에서 열고, 문제 상세도 뒤쪽 탭에서 읽은 뒤 닫습니다. 프로그래머스가 백그라운드에서 응답하지 않으면 목록 탭을 앞으로 가져옵니다. 제출 이력에는 실행시간·메모리가 없어 해당 정보는 저장할 수 없으며, 가장 빠른 제출·최소 메모리 선택도 지원하지 않습니다. SQL 문제는 제출 이력이 없어 편집기에 저장된 마지막 코드를 문제 목록의 해결 시각으로 가져옵니다.", guide: "해결한 문제 목록을 열어 주세요. 문제 상세는 같은 사이트 창의 뒤쪽 탭에서 열리고 처리 후 닫힙니다." }
 };
 
 export function mountHistory(doc: Document, services: HistoryServices) {
@@ -88,7 +89,10 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   const validState = (value: unknown): State | null => value && typeof value === "object" && typeof (value as State).status === "string" ? value as State : null;
   function label(state: State) {
     const unsupportedNotice = state.unsupportedProblemNumbers?.length
-      ? ` 제출 이력을 제공하지 않는 SQL 문제 ${state.unsupportedProblemNumbers.length}건은 수집 대상에서 제외했습니다.` : "";
+      ? ` 편집기에 가져올 코드가 없는 SQL 문제 ${state.unsupportedProblemNumbers.length}건(빈 코드·초기 코드·지원하지 않는 언어)은 수집 대상에서 제외했습니다.` : "";
+    const savedCodeProblems = new Set((state.candidates ?? []).filter(item => item.savedCode === true).map(item => item.problemNumber)).size;
+    const savedCodeNotice = savedCodeProblems
+      ? ` SQL 문제 ${savedCodeProblems}건은 제출 이력이 없어 편집기에 저장된 마지막 코드를 후보로 보여 줍니다. 정답을 낸 뒤 코드를 고쳤다면 정답과 다를 수 있습니다.` : "";
     const unread = state.unreadProblemNumbers ?? [];
     const unreadNotice = unread.length ? ` 제출 이력을 읽지 못한 문제 ${unread.length}건(${unread.slice(0, 5).map(number => `#${number}`).join(", ")}${unread.length > 5 ? ` 외 ${unread.length - 5}건` : ""})은 이번 후보에서 빠졌습니다. 후보 찾기를 다시 누르면 다시 읽습니다.` : "";
     if (state.status === "SCANNING") return "목록을 확인하고 있어요.";
@@ -140,7 +144,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       return `문제 #${state.failedProblemNumber}까지 제출 이력을 연달아 읽지 못해 후보 찾기를 중단했습니다. 사이트 로그인 상태와 해당 문제 페이지를 확인한 뒤 다시 시도해 주세요.`;
     if (state.status === "SCAN_INCOMPLETE") return "목록이 끝까지 열리지 않았습니다. 원본 탭을 유지한 뒤 다시 시도해 주세요.";
     if (state.status === "FAILED") return "수집을 완료하지 못했습니다. 원본 탭 상태를 확인해 주세요.";
-    return state.status === "READY" ? `후보 목록을 확인했습니다.${unsupportedNotice}${unreadNotice}` : platformInfo[platform()].guide;
+    return state.status === "READY" ? `후보 목록을 확인했습니다.${savedCodeNotice}${unsupportedNotice}${unreadNotice}` : platformInfo[platform()].guide;
   }
   function clearCandidates() { reconciliationEpoch++; reconciliationBusy = false; reconciliation = null; if (reconciliationStatus) reconciliationStatus.textContent = ""; if (clearReconciliation) clearReconciliation.hidden = true; if (verifyExisting) verifyExisting.hidden = true; if (reconciliationHelp) reconciliationHelp.hidden = true; candidates = []; selected.clear(); readyForImport = false; candidatesPanel.hidden = true; list.replaceChildren(); }
   function formatElapsed(milliseconds: number) {
@@ -178,7 +182,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       const title = doc.createElement("span"); title.textContent = `#${candidate.problemNumber} · ${candidate.title}`;
       const meta = doc.createElement("small"); meta.className = "meta";
       meta.textContent = platform() === "PROGRAMMERS"
-        ? `${candidate.createdAt ?? "제출 시각 확인됨"}${candidate.language ? ` · ${candidate.language}` : ""}`
+        ? `${candidate.createdAt ?? "제출 시각 확인됨"}${candidate.language ? ` · ${candidate.language}` : ""}${candidate.savedCode === true ? " · 편집기 저장 코드(정답 제출과 다를 수 있음)" : ""}`
         : `제출 #${candidate.submissionId}${candidate.executionTime !== undefined ? ` · ${candidate.executionTime}ms` : ""}${candidate.memoryValue !== undefined ? ` · ${candidate.memoryValue}${platform() === "SWEA" ? "KB" : "MB"}` : ""}`;
       if (reconciliation) {
         const state = reconciliation.find(item => item.submissionId === candidate.submissionId)?.state ?? "unsupported";

@@ -11,9 +11,10 @@ import { mayStoreLocalHistoryCapture, sameHistorySource } from "./historyRouting
 import { HistoricalTaskController, HistoricalImportFailure, type HistoricalImportFailureReason } from "./historicalTaskController";
 import { persistHistoricalTimingSample, timingSampleFromCompletedTask, type HistoricalTimingSample } from "./historyTiming";
 import { authenticatedProgrammersUserId, canonicalProgrammersLessonUrl, previewProgrammersHistory, readProgrammersLessonHistory,
-  readProgrammersSolvedListingPage, selectedProgrammersHistoryEditorUri, unsupportedProgrammersSqlHistory,
+  readProgrammersSolvedListingPage, readProgrammersSqlLesson, selectedProgrammersHistoryEditorUri,
   type ProgrammersLessonHistoryRow, type ProgrammersLessonSubmission } from "./historicalProgrammers";
-import { isHistoricalSubmissionId, programmersHistoricalSubmissionAccount } from "./historicalIdentity";
+import { isHistoricalSubmissionId, programmersHistoricalSubmissionAccount, programmersHistoricalSubmissionId,
+  programmersHistoricalSubmissionParts } from "./historicalIdentity";
 import { mountSiteSync, type Send, type SiteSyncPage } from "./siteSyncView";
 import { jungolSyncPage, programmersSyncPage, sweaSyncPage } from "./siteSyncPages";
 import {
@@ -36,6 +37,8 @@ export type ProgrammersAuxiliaryResponse =
   | { status: "DONE"; accountId: string; capture: Capture }
   | { status: "EMPTY"; accountId: string; lessonId: string; title: string; candidates: [] }
   | { status: "UNSUPPORTED_HISTORY"; accountId: string; lessonId: string; title: string; candidates: [] }
+  // A SQL lesson's saved editor code. The listing, which knows when the lesson was solved, makes its key.
+  | { status: "SAVED_SQL"; accountId: string; lessonId: string; title: string; language: string; candidates: [] }
   | { status: "BAD_REQUEST" | "TAB_NOT_FOUND" | "OWNERSHIP_UNVERIFIED" | "HISTORY_INCOMPLETE" | "AMBIGUOUS_HISTORY" | "STALE_SUBMISSION" | "SOURCE_UNAVAILABLE" };
 
 export interface ProgrammersAuxiliaryServices {
@@ -233,10 +236,19 @@ export async function readProgrammersAuxiliaryLesson(document: Document, locatio
   if (message.mode === "import" && typeof message.submissionId !== "string") return { status: "BAD_REQUEST" };
   const selectedAccount = message.mode === "import" ? programmersHistoricalSubmissionAccount(message.submissionId) : null;
 
-  const unsupported = unsupportedProgrammersSqlHistory(document, location);
-  if (unsupported) {
-    if (message.mode === "import" && unsupported.accountId !== selectedAccount) return { status: "OWNERSHIP_UNVERIFIED" };
-    return { status: "UNSUPPORTED_HISTORY", ...unsupported, candidates: [] };
+  const sql = readProgrammersSqlLesson(document, location);
+  if (sql) {
+    if (message.mode === "import" && sql.accountId !== selectedAccount) return { status: "OWNERSHIP_UNVERIFIED" };
+    const lesson = { accountId: sql.accountId, lessonId: sql.lessonId, title: sql.title };
+    if (sql.status === "UNSUPPORTED") return { status: "UNSUPPORTED_HISTORY", ...lesson, candidates: [] };
+    if (message.mode === "preview") return { status: "SAVED_SQL", ...lesson, language: sql.language, candidates: [] };
+    // The key carries the solved time the listing gave it; the code must still be in the language it named.
+    const key = programmersHistoricalSubmissionParts(message.submissionId);
+    if (!key || key.problemNumber !== sql.lessonId || key.languageKey !== canonicalLanguageKey(sql.language)) return { status: "STALE_SUBMISSION" };
+    const capture = createCapture({ platform: "PROGRAMMERS", problemNumber: sql.lessonId, title: sql.title, problemUrl: lessonUrl, language: sql.language,
+      sourceCode: sql.sourceCode, result: CAPTURE_RESULT, solvedAt: key.createdAt, observedAt: new Date(services.now?.() ?? Date.now()),
+      historicalImport: true, historicalSubmissionId: message.submissionId as string });
+    return capture ? { status: "DONE", accountId: sql.accountId, capture } : { status: "SOURCE_UNAVAILABLE" };
   }
 
   const history = await collectProgrammersLessonHistory(document, location, services);
@@ -731,7 +743,9 @@ function startSweaImport(document: Document, location: Location, ids: unknown): 
   return sweaStatus();
 }
 
-type ProgrammersLocalCandidate = { difficulty?: ProblemDifficulty; submissionId: string; problemNumber: string; title: string; language: string; createdAt: string; lessonUrl: string; order: number };
+type ProgrammersLocalCandidate = { difficulty?: ProblemDifficulty; submissionId: string; problemNumber: string; title: string; language: string; createdAt: string; lessonUrl: string; order: number;
+  /** A SQL lesson's saved editor code, timed by the solved list rather than by a submission. */
+  savedCode?: true };
 type ProgrammersLocalState = { status: string; candidates?: ProgrammersLocalCandidate[]; truncated?: false; skipped?: number;
   unsupportedProblemNumbers?: string[]; unreadProblemNumbers?: string[]; failedProblemNumber?: string;
   progress?: ExternalHistoryScanProgress; completed?: number; total?: number; saved?: number; duplicate?: number; problemCount?: number;
@@ -768,14 +782,23 @@ async function waitForProgrammersListingPage(document: Document, location: Locat
   }
   return { status: "PENDING" };
 }
-function validProgrammersAuxiliaryPreview(value: unknown, lesson: { problemNumber: string; title: string; lessonUrl: string }, accountId: string | null):
-  { accountId: string; candidates: Array<{ submissionId: string; problemNumber: string; language: string; createdAt: string; score: number }> } | null {
+function validProgrammersAuxiliaryPreview(value: unknown, lesson: { problemNumber: string; title: string; lessonUrl: string; solvedAt?: string }, accountId: string | null):
+  { accountId: string; unsupported?: true; candidates: Array<{ submissionId: string; problemNumber: string; language: string; createdAt: string; score: number; savedCode?: true }> } | null {
   if (!value || typeof value !== "object" || (value as { ok?: unknown }).ok !== true) return null;
-  const response = (value as { result?: unknown }).result as { status?: unknown; accountId?: unknown; lessonId?: unknown; title?: unknown; candidates?: unknown } | null;
+  const response = (value as { result?: unknown }).result as { status?: unknown; accountId?: unknown; lessonId?: unknown; title?: unknown; candidates?: unknown; language?: unknown } | null;
   if (!response) return null;
-  if (response.status === "EMPTY" || response.status === "UNSUPPORTED_HISTORY") return typeof response.accountId === "string" && /^\d{1,40}$/.test(response.accountId) && (accountId === null || response.accountId === accountId) &&
-    response.lessonId === lesson.problemNumber && typeof response.title === "string" && normalizedProgrammersTitle(response.title) === lesson.title
-    ? { accountId: response.accountId, candidates: [] } : null;
+  const sameLesson = typeof response.accountId === "string" && /^\d{1,40}$/.test(response.accountId) && (accountId === null || response.accountId === accountId) &&
+    response.lessonId === lesson.problemNumber && typeof response.title === "string" && normalizedProgrammersTitle(response.title) === lesson.title;
+  if (response.status === "EMPTY" || response.status === "UNSUPPORTED_HISTORY") return sameLesson
+    ? { accountId: response.accountId as string, candidates: [], ...(response.status === "UNSUPPORTED_HISTORY" ? { unsupported: true as const } : {}) } : null;
+  if (response.status === "SAVED_SQL") {
+    if (!sameLesson || typeof response.language !== "string" || !response.language.trim() || response.language.length > 100) return null;
+    // The solved list's time is the only time a SQL lesson has; without it the lesson cannot be keyed.
+    const submissionId = lesson.solvedAt ? programmersHistoricalSubmissionId(response.accountId as string, lesson.problemNumber, lesson.solvedAt, response.language) : null;
+    return submissionId
+      ? { accountId: response.accountId as string, candidates: [{ submissionId, problemNumber: lesson.problemNumber, language: response.language, createdAt: lesson.solvedAt!, score: 100, savedCode: true }] }
+      : { accountId: response.accountId as string, candidates: [], unsupported: true };
+  }
   if (response.status !== "READY" || typeof response.accountId !== "string" || !/^\d{1,40}$/.test(response.accountId) ||
       response.lessonId !== lesson.problemNumber || typeof response.title !== "string" || normalizedProgrammersTitle(response.title) !== lesson.title ||
       !Array.isArray(response.candidates) || (accountId !== null && response.accountId !== accountId)) return null;
@@ -801,7 +824,7 @@ function startProgrammersScan(document: Document, location: Location): Programme
   programmersLocalController = null; programmersLocalSourceUrl = location.href; programmersLocalAccountId = null;
   programmersLocalState = { status: "SCANNING", startedAt: Date.now(), progress: programmersProgress(0, 0, 0) };
   void (async () => {
-    const lessons: Array<{ difficulty?: ProblemDifficulty; problemNumber: string; title: string; lessonUrl: string; order: number }> = [];
+    const lessons: Array<{ difficulty?: ProblemDifficulty; problemNumber: string; title: string; lessonUrl: string; order: number; solvedAt?: string }> = [];
     const seenLessons = new Set<string>();
     let current: ReturnType<typeof readProgrammersSolvedListingPage> = initial;
     if (current.page !== 1) {
@@ -856,7 +879,7 @@ function startProgrammersScan(document: Document, location: Location): Programme
       unreadInRow = 0;
       accountId ??= parsed.accountId;
       if (parsed.accountId !== accountId) throw new ProgrammersScanStopped("OWNERSHIP_UNVERIFIED");
-      if ((response as { result?: { status?: string } }).result?.status === "UNSUPPORTED_HISTORY") unsupportedProblemNumbers.push(lesson.problemNumber);
+      if (parsed.unsupported) unsupportedProblemNumbers.push(lesson.problemNumber);
       for (const candidate of parsed.candidates) candidates.push({ ...candidate, difficulty: lesson.difficulty, title: lesson.title, lessonUrl: lesson.lessonUrl, order: lesson.order });
       programmersLocalState = { ...programmersLocalState, progress: programmersProgress(Math.ceil(initial.total / 20), lesson.order + 1, lessons.length) };
     }

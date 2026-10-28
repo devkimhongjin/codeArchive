@@ -26,3 +26,10 @@ export function programmersHistoricalSubmissionAccount(value: unknown): string |
   if (!isHistoricalSubmissionId("PROGRAMMERS", value)) return null;
   return value.match(/^pg:([A-Za-z0-9_-]{1,100}):/)?.[1] ?? null;
 }
+
+/** Split a validated PROGRAMMERS key back into the values it was made from. */
+export function programmersHistoricalSubmissionParts(value: unknown): { account: string; problemNumber: string; createdAt: string; languageKey: string } | null {
+  if (!isHistoricalSubmissionId("PROGRAMMERS", value)) return null;
+  const match = value.match(/^pg:([A-Za-z0-9_-]{1,100}):(\d{1,40}):(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}):([a-z0-9+.#-]{1,100})$/);
+  return match ? { account: match[1]!, problemNumber: match[2]!, createdAt: match[3]!, languageKey: match[4]! } : null;
+}
