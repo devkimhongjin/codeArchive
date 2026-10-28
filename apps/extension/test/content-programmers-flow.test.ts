@@ -115,3 +115,53 @@ test("Programmers listing owns auxiliary envelopes and the only local store", as
     assert.equal((await message({ type: "LOCAL_HISTORY_STATUS", platform: "PROGRAMMERS" }) as { status: string }).status, "OWNERSHIP_UNVERIFIED");
   } finally { Object.assign(globalThis, globals); }
 });
+
+test("Programmers listing keys a SQL lesson's saved code by its solved time and stores it once", async () => {
+  // The first SQL lesson shows its solved time; the second has none and cannot be keyed.
+  const { document } = parseHTML(`<html><body><button>로그아웃</button><a href="https://programmers.co.kr/users/profile"></a>
+    <div class="total"><span class="text">2 문제</span></div><table><tbody>
+    <tr><td class="status solved"><span data-tip="2026-08-20 09:52:12"></span></td><td class="title"><a href="/learn/courses/30/lessons/299310">SQL 문제</a></td></tr>
+    <tr><td class="status solved"></td><td class="title"><a href="/learn/courses/30/lessons/299311">SQL 문제 2</a></td></tr></tbody></table>
+    <button data-testid="page-active">1</button><button aria-label="처음 페이지" disabled></button><button aria-label="다음 페이지" disabled></button></body></html>`);
+  const location = new URL("https://school.programmers.co.kr/learn/challenges?order=recent&statuses=solved%2Csolved_with_unlock&page=1");
+  const window = document.defaultView!; Object.defineProperty(window, "location", { value: location, configurable: true });
+  let listener: ((message: unknown, sender: unknown, reply: (value: unknown) => void) => boolean) | undefined;
+  const id = "pg:947840:299310:2026-08-20T09:52:12.000+09:00:sql";
+  const capture = createCapture({ platform: "PROGRAMMERS", problemNumber: "299310", title: "SQL 문제", problemUrl: "https://school.programmers.co.kr/learn/courses/30/lessons/299310",
+    language: "MySQL", sourceCode: "SELECT 1;", result: "ACCEPTED", solvedAt: "2026-08-20T09:52:12.000+09:00", observedAt: "2026-10-28T00:00:00.000Z", historicalImport: true, historicalSubmissionId: id },
+  { uuid: () => "00000000-0000-4000-8000-000000000003" })!;
+  const calls: unknown[] = [];
+  const chrome = { runtime: { onMessage: { addListener(callback: typeof listener) { listener = callback; } }, sendMessage: async (message: unknown) => {
+    calls.push(message); const { type, mode, lessonUrl } = message as { type?: string; mode?: string; lessonUrl?: string };
+    if (type === "PROGRAMMERS_AUX_READ" && mode === "preview") {
+      const lessonId = lessonUrl!.split("/").pop();
+      return { ok: true, result: { status: "SAVED_SQL", accountId: "947840", lessonId, title: lessonId === "299310" ? "SQL 문제" : "SQL 문제 2", language: "MySQL", candidates: [] } };
+    }
+    if (type === "PROGRAMMERS_AUX_READ") return { ok: true, result: { status: "DONE", accountId: "947840", capture } };
+    if (type === "STORE_HISTORICAL_CAPTURE") return { ok: true, created: true };
+    return { ok: true };
+  } }, storage: { local: { set: async () => undefined } } };
+  const globals = { document: globalThis.document, window: globalThis.window, chrome: globalThis.chrome, MutationObserver: globalThis.MutationObserver, Element: globalThis.Element, setTimeout: globalThis.setTimeout };
+  Object.assign(globalThis, { document, window, chrome, MutationObserver: window.MutationObserver, Element: window.Element,
+    setTimeout: ((callback: (...args: unknown[]) => void, _delay?: number) => globals.setTimeout(callback, 1)) as typeof setTimeout });
+  const message = (payload: unknown) => new Promise<unknown>(resolve => { assert.equal(listener!(payload, null, resolve), false); });
+  try {
+    const contentModule = "../src/content?programmers-sql-flow";
+    await import(contentModule); assert.ok(listener);
+    assert.equal((await message({ type: "LOCAL_HISTORY_SCAN_START", platform: "PROGRAMMERS" }) as { status: string }).status, "SCANNING");
+    await new Promise(resolve => globals.setTimeout(resolve, 30));
+    const ready = await message({ type: "LOCAL_HISTORY_STATUS", platform: "PROGRAMMERS" }) as { status: string; unsupportedProblemNumbers?: string[];
+      candidates?: Array<{ submissionId: string; language: string; createdAt: string; savedCode?: boolean }> };
+    assert.equal(ready.status, "READY");
+    assert.deepEqual(ready.candidates?.map(item => [item.submissionId, item.language, item.createdAt, item.savedCode]), [[id, "MySQL", "2026-08-20T09:52:12.000+09:00", true]]);
+    assert.deepEqual(ready.unsupportedProblemNumbers, ["299311"]);
+    assert.equal((await message({ type: "LOCAL_HISTORY_IMPORT_START", platform: "PROGRAMMERS", submissionIds: [id] }) as { status: string }).status, "IMPORTING");
+    await new Promise(resolve => globals.setTimeout(resolve, 30));
+    const done = await message({ type: "LOCAL_HISTORY_STATUS", platform: "PROGRAMMERS" }) as { status: string; saved?: number };
+    assert.equal(done.status, "DONE"); assert.equal(done.saved, 1);
+    const importRead = calls.find(call => (call as { mode?: string }).mode === "import") as { lessonUrl: string; submissionId: string };
+    assert.deepEqual([importRead.lessonUrl, importRead.submissionId], ["https://school.programmers.co.kr/learn/courses/30/lessons/299310", id]);
+    const stores = calls.filter(call => (call as { type?: string }).type === "STORE_HISTORICAL_CAPTURE") as Array<{ capture: { sourceCode: string; historicalSubmissionId: string } }>;
+    assert.deepEqual(stores.map(store => [store.capture.historicalSubmissionId, store.capture.sourceCode]), [[id, "SELECT 1;"]]);
+  } finally { Object.assign(globalThis, globals); }
+});

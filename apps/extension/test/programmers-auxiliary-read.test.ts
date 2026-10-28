@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseHTML } from "linkedom";
 import { readProgrammersAuxiliaryLesson } from "../src/content";
-import { readProgrammersLessonHistory, readProgrammersSolvedListingPage } from "../src/historicalProgrammers";
+import { programmersSolvedAt, readProgrammersLessonHistory, readProgrammersSolvedListingPage } from "../src/historicalProgrammers";
 import { programmersHistoricalSubmissionId } from "../src/historicalIdentity";
 
 const lessonId = "389481";
@@ -71,17 +71,57 @@ test("Programmers auxiliary preview parses the observed nested history metadata 
   assert.equal(result.candidates[0]?.score, 100);
 });
 
-test("Programmers SQL without a history component reports unsupported immediately without an editor fallback", async () => {
-  const sqlLocation = locationFor("https://school.programmers.co.kr/learn/courses/30/lessons/299310");
-  const document = parseHTML(`<html><body><div class="challenge-content lesson-algorithm-main-section" data-user-id="947840" data-challengeable-id="829" data-challengeable-type="database"></div><h1 class="challenge-title">SQL 문제</h1><textarea id="code">SELECT current editor</textarea></body></html>`).document;
+const sqlLocation = locationFor("https://school.programmers.co.kr/learn/courses/30/lessons/299310");
+const sqlSolvedAt = "2026-08-20T09:52:12.000+09:00";
+const sqlCode = "SELECT YEAR(DIFFERENTIATION_DATE) AS YEAR\nFROM ECOLI_DATA;";
+// The observed SQL lesson: no history component, a language menu, the saved code and the lesson's starting template.
+function sqlDocument(options: { code?: string; language?: string; pageLanguage?: string; template?: string } = {}): Document {
+  return parseHTML(`<html><body><div class="challenge-content lesson-algorithm-main-section" data-user-id="${accountId}" data-challengeable-id="829" data-challengeable-type="database" data-language="${options.pageLanguage ?? "mysql"}"></div>
+    <h1 class="challenge-title">SQL 문제</h1><div class="challenge-nav"><button class="dropdown-toggle">${options.language ?? "MySQL"}</button></div>
+    <input type="hidden" name="initial_code_74391" id="initial_code_74391" value="${options.template ?? "-- 코드를 작성해주세요"}"><textarea id="code" name="code">${options.code ?? sqlCode}</textarea></body></html>`).document;
+}
+
+test("Programmers SQL offers the saved editor code at once and imports it under the listing's solved time", async () => {
+  const document = sqlDocument();
   let waits = 0;
   const result = await readProgrammersAuxiliaryLesson(document, sqlLocation, { lessonUrl: sqlLocation.href, mode: "preview" }, { sleep: async () => { waits++; } });
-  assert.deepEqual(result, { status: "UNSUPPORTED_HISTORY", accountId: "947840", lessonId: "299310", title: "SQL 문제", candidates: [] });
+  assert.deepEqual(result, { status: "SAVED_SQL", accountId, lessonId: "299310", title: "SQL 문제", language: "MySQL", candidates: [] });
   assert.equal(waits, 0);
-  const foreignId = programmersHistoricalSubmissionId("111", "299310", timestamp, "sql")!;
+  const id = programmersHistoricalSubmissionId(accountId, "299310", sqlSolvedAt, "MySQL")!;
+  const imported = await readProgrammersAuxiliaryLesson(document, sqlLocation, { lessonUrl: sqlLocation.href, mode: "import", submissionId: id }, { now: () => Date.parse("2026-10-28T00:00:00.000Z") });
+  assert.equal(imported.status, "DONE");
+  if (imported.status !== "DONE") return;
+  assert.equal(imported.accountId, accountId);
+  assert.equal(imported.capture.sourceCode, sqlCode); assert.equal(imported.capture.language, "MySQL"); assert.equal(imported.capture.languageKey, "sql");
+  assert.equal(imported.capture.solvedAt, new Date(sqlSolvedAt).toISOString());
+  assert.equal(imported.capture.historicalImport, true); assert.equal(imported.capture.historicalSubmissionId, id);
+  assert.equal(imported.capture.problemUrl, sqlLocation.href);
+  // Another account's key, another lesson's key, and a key in another language are refused.
+  const foreignId = programmersHistoricalSubmissionId("111", "299310", sqlSolvedAt, "sql")!;
   assert.deepEqual(await readProgrammersAuxiliaryLesson(document, sqlLocation, { lessonUrl: sqlLocation.href, mode: "import", submissionId: foreignId }), { status: "OWNERSHIP_UNVERIFIED" });
+  const otherLesson = programmersHistoricalSubmissionId(accountId, "299311", sqlSolvedAt, "sql")!;
+  assert.deepEqual(await readProgrammersAuxiliaryLesson(document, sqlLocation, { lessonUrl: sqlLocation.href, mode: "import", submissionId: otherLesson }), { status: "STALE_SUBMISSION" });
+  const otherLanguage = programmersHistoricalSubmissionId(accountId, "299310", sqlSolvedAt, "java")!;
+  assert.deepEqual(await readProgrammersAuxiliaryLesson(document, sqlLocation, { lessonUrl: sqlLocation.href, mode: "import", submissionId: otherLanguage }), { status: "STALE_SUBMISSION" });
+  // A lesson that renders a submission history is an algorithm lesson, not SQL.
   document.querySelector(".challenge-content")!.setAttribute("data-challengeable-type", "algorithm");
   assert.equal((await readProgrammersAuxiliaryLesson(document, sqlLocation, { lessonUrl: sqlLocation.href, mode: "preview" }, { attempts: 1 })).status, "OWNERSHIP_UNVERIFIED");
+});
+
+test("Programmers SQL without usable saved code stays unsupported", async () => {
+  const unsupported = { status: "UNSUPPORTED_HISTORY", accountId, lessonId: "299310", title: "SQL 문제", candidates: [] };
+  const preview = (document: Document) => readProgrammersAuxiliaryLesson(document, sqlLocation, { lessonUrl: sqlLocation.href, mode: "preview" });
+  for (const document of [
+    sqlDocument({ code: "-- 코드를 작성해주세요" }),
+    sqlDocument({ code: "" }),
+    sqlDocument({ code: "-- 풀이 메모\n\n-- 다음에 다시" }),
+    sqlDocument({ template: "SELECT *\nFROM ECOLI_DATA;", code: "SELECT *\nFROM ECOLI_DATA;\n" }),
+    // The extension keys no Oracle language yet, and the menu must name the page's own language.
+    sqlDocument({ language: "Oracle", pageLanguage: "oracle" }),
+    sqlDocument({ language: "MySQL", pageLanguage: "oracle" })
+  ]) assert.deepEqual(await preview(document), unsupported);
+  const id = programmersHistoricalSubmissionId(accountId, "299310", sqlSolvedAt, "sql")!;
+  assert.deepEqual(await readProgrammersAuxiliaryLesson(sqlDocument({ code: "" }), sqlLocation, { lessonUrl: sqlLocation.href, mode: "import", submissionId: id }), unsupported);
 });
 
 test("Programmers auxiliary rejects mismatched accounts, lesson routes, malformed rows, and duplicate tuple identities", async () => {
@@ -123,6 +163,20 @@ test("Programmers solved-list page waits for both page control and replacement r
   const second = readProgrammersSolvedListingPage(document, location);
   assert.equal(second.status, "READY");
   if (second.status === "READY") assert.notEqual(second.signature, first.signature);
+});
+
+test("Programmers solved list keeps each lesson's solved time in Korean time", () => {
+  const listingUrl = "https://school.programmers.co.kr/learn/challenges?order=recent&statuses=solved%2Csolved_with_unlock&page=1";
+  const { document } = parseHTML(`<html><body><button>로그아웃</button><a href="https://programmers.co.kr/users/profile"></a><div class="total"><span class="text">2 문제</span></div>
+    <table><tbody><tr><td class="status solved"><span data-tip="2026-08-20 09:52:12"></span></td><td class="title"><a href="/learn/courses/30/lessons/299310">SQL 문제</a></td></tr>
+    <tr><td class="status solved"></td><td class="title"><a href="/learn/courses/30/lessons/389481">가장 큰 수</a></td></tr></tbody></table>
+    <button data-testid="page-active">1</button><button aria-label="처음 페이지" disabled></button><button aria-label="다음 페이지" disabled></button></body></html>`);
+  const page = readProgrammersSolvedListingPage(document, locationFor(listingUrl));
+  assert.equal(page.status, "READY");
+  if (page.status !== "READY") return;
+  assert.equal(page.lessons[0]?.solvedAt, "2026-08-20T09:52:12.000+09:00");
+  assert.equal("solvedAt" in page.lessons[1]!, false);
+  for (const value of ["2026-08-20", "2026-08-20 9:52:12", "2026-13-40 09:52:12", null]) assert.equal(programmersSolvedAt(value), null);
 });
 
 test("Programmers auxiliary waits for late history UI and returns an explicit empty history", async () => {
