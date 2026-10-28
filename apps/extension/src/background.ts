@@ -743,8 +743,22 @@ function isSweaSolvingPageSender(sender: chrome.runtime.MessageSender): boolean 
   return !!url && url.origin === SWEA_ORIGIN && url.pathname === SWEA_SOLVING_PATH;
 }
 
+/**
+ * The page a top-frame content script is on now. A content script keeps the address
+ * it was injected at, but Jungol moves between its pages without reloading
+ * (history.pushState), so the sender URL still names the page the user came from.
+ * The tab's current address says which page is open; it is used only when it is
+ * on the same site as the script.
+ */
+function currentPageUrl(sender: chrome.runtime.MessageSender): URL | null {
+  const frameUrl = senderUrl(sender);
+  let tabUrl: URL | null = null;
+  try { tabUrl = typeof sender.tab?.url === "string" ? new URL(sender.tab.url) : null; } catch { tabUrl = null; }
+  return frameUrl && tabUrl && tabUrl.origin === frameUrl.origin ? tabUrl : frameUrl;
+}
+
 function isSupportedCaptureSender(sender: chrome.runtime.MessageSender, platform: Platform): boolean {
-  const url = senderUrl(sender);
+  const url = currentPageUrl(sender);
   if (!url || !Number.isSafeInteger(sender.tab?.id) || sender.frameId !== 0) return false;
   if (platform === "SWEA") return url.origin === SWEA_ORIGIN && url.pathname === SWEA_SOLVING_PATH;
   if (platform === "PROGRAMMERS") return url.origin === "https://school.programmers.co.kr" && /^\/learn\/courses\/30\/lessons\/\d+$/.test(url.pathname);
@@ -753,13 +767,7 @@ function isSupportedCaptureSender(sender: chrome.runtime.MessageSender, platform
 
 /** Manual sync runs only from the signed-in user's own submission list on each platform. */
 function siteSyncPlatform(sender: chrome.runtime.MessageSender): Platform | null {
-  const frameUrl = senderUrl(sender);
-  // A content script keeps the address it was injected at, but Jungol moves between
-  // its pages without reloading (history.pushState), so the sender URL still names
-  // the page the user came from. The tab's current address says which page is open.
-  let tabUrl: URL | null = null;
-  try { tabUrl = typeof sender.tab?.url === "string" ? new URL(sender.tab.url) : null; } catch { tabUrl = null; }
-  const url = frameUrl && tabUrl && tabUrl.origin === frameUrl.origin ? tabUrl : frameUrl;
+  const url = currentPageUrl(sender);
   if (!url || !Number.isSafeInteger(sender.tab?.id) || sender.frameId !== 0) return null;
   if (url.origin === "https://jungol.co.kr") return isJungolHistorySenderUrl(url) ? "JUNGOL" : null;
   if (url.origin === SWEA_ORIGIN) return url.pathname === SWEA_USER_SUBMISSIONS_PATH ? "SWEA" : null;
