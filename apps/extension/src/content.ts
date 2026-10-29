@@ -685,13 +685,17 @@ type ExternalHistoryScanProgress = Omit<JungolHistoryScanProgress, "phase" | "st
   historiesTotal?: number;
   currentProblemNumber?: string;
 };
-let sweaState: { status: string; verificationFailures?: Record<string, number>; failureReason?: string; failurePage?: number; failedProblemNumber?: string; candidates?: SweaHistoryCandidate[]; completed?: number; total?: number; saved?: number; duplicate?: number; skipped?: number; startedAt?: number; endedAt?: number; lastProgressAt?: number; progress?: ExternalHistoryScanProgress; problemCount?: number; submissionCount?: number; timingSample?: HistoricalTimingSample } = { status: "SCAN_IDLE" };
+let sweaState: { status: string; verificationFailures?: Record<string, number>; unreadProblemNumbers?: string[]; unreadCards?: string[]; failureReason?: string; failurePage?: number; failedProblemNumber?: string; candidates?: SweaHistoryCandidate[]; completed?: number; total?: number; saved?: number; duplicate?: number; skipped?: number; startedAt?: number; endedAt?: number; lastProgressAt?: number; progress?: ExternalHistoryScanProgress; problemCount?: number; submissionCount?: number; timingSample?: HistoricalTimingSample } = { status: "SCAN_IDLE" };
 let sweaController: HistoricalTaskController<SweaHistoryCandidate> | null = null;
 let sweaGeneration = 0;
 let sweaScanIdentity: ReturnType<typeof authenticatedSweaHistoryIdentity> = null;
 let sweaSourceUrl = "";
 
-function sweaStatus(): typeof sweaState { return sweaController?.state ? { ...sweaController.state, verificationFailures: sweaState.verificationFailures, ...(sweaState.problemCount === undefined ? {} : { problemCount: sweaState.problemCount, submissionCount: sweaState.submissionCount, timingSample: sweaState.timingSample }) } : sweaState; }
+/** What the scan left out stays on screen through the import that follows it. */
+function sweaUnread(): Pick<typeof sweaState, "unreadProblemNumbers" | "unreadCards"> {
+  return { ...(sweaState.unreadProblemNumbers ? { unreadProblemNumbers: sweaState.unreadProblemNumbers } : {}), ...(sweaState.unreadCards ? { unreadCards: sweaState.unreadCards } : {}) };
+}
+function sweaStatus(): typeof sweaState { return sweaController?.state ? { ...sweaController.state, verificationFailures: sweaState.verificationFailures, ...sweaUnread(), ...(sweaState.problemCount === undefined ? {} : { problemCount: sweaState.problemCount, submissionCount: sweaState.submissionCount, timingSample: sweaState.timingSample }) } : sweaState; }
 function startSweaScan(document: Document, location: Location): typeof sweaState {
   if (sweaController?.isActive || sweaState.status === "SCANNING") return sweaStatus();
   const generation = ++sweaGeneration, sourceUrl = location.href, identity = authenticatedSweaHistoryIdentity(document, location);
@@ -702,7 +706,8 @@ function startSweaScan(document: Document, location: Location): typeof sweaState
     if (generation === sweaGeneration && sweaState.status === "SCANNING") sweaState = { ...sweaState, progress: { phase: value.historiesTotal === undefined ? "pages" : "histories", stage: value.historiesTotal === undefined ? "reading-pages" : "reading-histories", rows: value.problems, pagesLoaded: value.pages, groupsExpanded: 0, groupsTotal: 0, groupsTotalKnown: false, historiesRead: value.historiesRead, historiesTotal: value.historiesTotal, lastProgressAt: Date.now(), sourceVisibility: document.visibilityState === "hidden" ? "hidden" : "visible" } };
   }, () => generation === sweaGeneration && sweaState.status === "SCANNING" && location.href === sourceUrl && (() => { const current = authenticatedSweaHistoryIdentity(document, location); return !!current && current.userId === identity.userId && current.nickname === identity.nickname; })()).then(result => {
     if (generation !== sweaGeneration) return;
-    if (result.status === "READY") sweaState = { status: "READY", candidates: result.candidates, skipped: result.skipped, startedAt: sweaState.startedAt, endedAt: Date.now() };
+    if (result.status === "READY") sweaState = { status: "READY", candidates: result.candidates, skipped: result.skipped,
+      ...(result.unreadProblemNumbers ? { unreadProblemNumbers: result.unreadProblemNumbers } : {}), ...(result.unreadCards ? { unreadCards: result.unreadCards } : {}), startedAt: sweaState.startedAt, endedAt: Date.now() };
     else { sweaScanIdentity = null; sweaSourceUrl = ""; sweaState = { ...sweaState, status: result.status, failureReason: result.failureReason, failurePage: result.failurePage, failedProblemNumber: result.failedProblemNumber, endedAt: Date.now() }; }
   }).catch(() => { if (generation === sweaGeneration) { sweaScanIdentity = null; sweaSourceUrl = ""; sweaState = { status: "FAILED", startedAt: sweaState.startedAt, endedAt: Date.now() }; } });
   return sweaState;
@@ -717,6 +722,7 @@ function startSweaImport(document: Document, location: Location, ids: unknown): 
   const completedProblems = new Set<string>();
   const verificationFailures: Record<string, number> = {};
   sweaState.verificationFailures = verificationFailures;
+  const unread = sweaUnread();
   controller.start(candidates as SweaHistoryCandidate[], async (candidate, mayStore) => {
     const currentIdentity = authenticatedSweaHistoryIdentity(document, location);
     if (!mayStore() || !currentIdentity || currentIdentity.userId !== identity.userId || currentIdentity.nickname !== identity.nickname) { controller.cancel(); return { saved: 0, duplicate: 0, skipped: 0 }; }
@@ -736,7 +742,7 @@ function startSweaImport(document: Document, location: Location, ids: unknown): 
   void controller.settled().then(() => {
     if (generation !== sweaGeneration || sweaController !== controller || !controller.state) return;
     const timingSample = timingSampleFromCompletedTask(controller.state, "SWEA");
-    sweaState = { ...controller.state, verificationFailures, problemCount: completedProblems.size, submissionCount: controller.state.saved + controller.state.duplicate,
+    sweaState = { ...controller.state, verificationFailures, ...unread, problemCount: completedProblems.size, submissionCount: controller.state.saved + controller.state.duplicate,
       ...(timingSample ? { timingSample } : {}) };
     if (timingSample && chrome.storage?.local) void persistHistoricalTimingSample(chrome.storage.local, timingSample).catch(() => undefined);
   });

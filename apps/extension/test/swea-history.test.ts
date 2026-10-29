@@ -325,3 +325,111 @@ test("SWEA never reports ready after a missing page, redirect, or other owner", 
     assert.equal(foreign.status, "OWNERSHIP_UNVERIFIED");
   } finally { restore(); }
 });
+
+/** The standard fetcher: list pages by pageIndex and own histories by contestProbId. */
+function scanFetcher(list: (page: number) => string, historyFor: (problem: number, page: number) => Response | Promise<Response> | null = () => null) {
+  return async (url: string, init?: RequestInit) => {
+    if (url.includes("userSubmitProblem")) return response(list(Number(new URL(url).searchParams.get("pageIndex"))), url);
+    const form = new URLSearchParams(String(init?.body ?? ""));
+    const problem = Number((form.get("contestProbId") ?? "").replace(/\D/g, "")); const page = Number(form.get("pageIndex") ?? 1);
+    return await historyFor(problem, page) ?? response(history(problem, page), url);
+  };
+}
+const card = (number: number) => new RegExp(`<div class="widget-list solvingclub"><div class="widget-box-sub"><div class="widget-header-sub"><span class="header-caption"><span class="week_num">${number}\.</span>.*?</div></div></div>`);
+
+test("SWEA leaves out a list card in an unknown form and names it instead of stopping at its page", async () => {
+  const restore = installedDomParser();
+  try {
+    // Page 3 of 50: a club box title with an apostrophe and a card without its number.
+    const list = (page: number) => listPage(page, 50)
+      .replace("fn_move_prob('KeyAAAAAA45','N','CODE','','KeyAAAAAA45','')", `fn_move_prob('KeyAAAAAA45','N','BOX','${clubContext.solveclubId}','${clubContext.probBoxId}','SSAFY 'A' 반')`)
+      .replace('<span class="week_num">47.</span>', '<span class="week_num"></span>');
+    const result = await loadSweaHistoryPreview(parseHTML(list(1)).document, location, scanFetcher(list));
+    assert.equal(result.status, "READY");
+    if (result.status === "READY") {
+      assert.equal(result.candidates.length, 48);
+      assert.ok(!result.candidates.some(item => item.problemNumber === "45" || item.problemNumber === "47"));
+      assert.deepEqual(result.unreadCards, ["#45", "Problem 47"]);
+      assert.equal(result.unreadProblemNumbers, undefined);
+    }
+    assert.deepEqual(previewSweaProblems(parseHTML(list(3)).document, location)?.unreadCards, ["#45", "Problem 47"]);
+  } finally { restore(); }
+});
+
+test("SWEA still stops at a list page that shows fewer cards than its count, or no readable card at all", async () => {
+  const restore = installedDomParser();
+  try {
+    const short = (page: number) => page === 3 ? listPage(3, 50).replace(card(50), "") : listPage(page, 50);
+    const missing = await loadSweaHistoryPreview(parseHTML(short(1)).document, location, scanFetcher(short));
+    assert.equal(missing.status, "SCAN_INCOMPLETE");
+    assert.equal(missing.failureReason, "LIST_PAGE_INCOMPLETE"); assert.equal(missing.failurePage, 3);
+    const unknown = (page: number) => listPage(page, 2).replace(/'CODE'/g, "'COURSE'");
+    const none = await loadSweaHistoryPreview(parseHTML(unknown(1)).document, location, scanFetcher(unknown));
+    assert.equal(none.status, "SCAN_INCOMPLETE");
+    assert.equal(none.failureReason, "LIST_PAGE_INCOMPLETE"); assert.equal(none.failurePage, 1);
+  } finally { restore(); }
+});
+
+test("SWEA leaves out one unreadable history and stops at the first of three in a row", async () => {
+  const restore = installedDomParser();
+  try {
+    const requests = new Map<number, number>();
+    const failing = (numbers: number[]) => scanFetcher(page => listPage(page, 20), (problem, page) => {
+      requests.set(problem, (requests.get(problem) ?? 0) + 1);
+      if (!numbers.includes(problem)) return null;
+      // Problem 7 answers with a page of another problem; the others do not answer.
+      return problem === 7 ? response(history(8, page), `${origin}/main/code/problem/problemSubmitHistory.do`) : response("", `${origin}/main/code/problem/problemSubmitHistory.do`, false);
+    });
+    const partial = await loadSweaHistoryPreview(parseHTML(listPage(1, 20)).document, location, failing([3, 7]));
+    assert.equal(partial.status, "READY");
+    if (partial.status === "READY") {
+      assert.equal(partial.candidates.length, 18);
+      assert.deepEqual(partial.unreadProblemNumbers, ["3", "7"]);
+    }
+    assert.equal(requests.get(3), 2, "an unanswered history request is asked for once more");
+    assert.equal(requests.get(7), 1, "a wrong page is not asked for again");
+    const stopped = await loadSweaHistoryPreview(parseHTML(listPage(1, 20)).document, location, failing([4, 5, 6]));
+    assert.equal(stopped.status, "SCAN_INCOMPLETE");
+    assert.equal(stopped.failedProblemNumber, "4"); assert.equal(stopped.failureReason, "HISTORY_RESPONSE_UNAVAILABLE"); assert.equal(stopped.failurePage, 1);
+  } finally { restore(); }
+});
+
+test("SWEA reads a club copy in full after the public history of the same problem failed part way", async () => {
+  const restore = installedDomParser();
+  try {
+    const source = listPage(1, 2).replace(/KeyAAAAAAA2/g, "KeyAAAAAAA1").replace(/2\.\<\/span\>/g, "1.</span>").replace(/Problem 2/g, "Problem 1")
+      .replace("fn_move_prob('KeyAAAAAAA1','N','CODE','','KeyAAAAAAA1','')", `fn_move_prob('KeyAAAAAAA1','N','BOX','${clubContext.solveclubId}','${clubContext.probBoxId}','${clubContext.problemBoxTitle}')`);
+    const result = await loadSweaHistoryPreview(parseHTML(source).document, location, async (url, init) => {
+      const form = new URLSearchParams(String(init?.body)); const page = Number(form.get("pageIndex"));
+      if (form.has("solveclubId")) return response(clubMarkup(history(1, page)), url);
+      return page === 1 ? response(history(1, 1), url) : response("", url, false);
+    });
+    assert.equal(result.status, "READY");
+    if (result.status === "READY") {
+      assert.equal(result.candidates.length, 1, "rows read before the public failure are read again from the club copy");
+      assert.ok(result.candidates[0]?.solvingClub);
+      assert.deepEqual(result.unreadProblemNumbers, ["1"]);
+    }
+  } finally { restore(); }
+});
+
+test("SWEA gives up on an unanswered request after its deadline and asks once more", async () => {
+  const restore = installedDomParser();
+  try {
+    const signals: AbortSignal[] = []; let listRequests = 0;
+    const hangOnce = async (url: string, init?: RequestInit) => {
+      if (url.includes("userSubmitProblem") && ++listRequests === 1) { signals.push(init!.signal!); return new Promise<Response>(() => undefined); }
+      return scanFetcher(page => listPage(page))(url, init);
+    };
+    const recovered = await loadSweaHistoryPreview(parseHTML(listPage(1)).document, location, hangOnce, undefined, undefined, { requestTimeoutMs: 20 });
+    assert.equal(recovered.status, "READY"); assert.equal(listRequests, 2);
+    assert.equal(signals[0]?.aborted, true, "the unanswered request is aborted");
+    let silentRequests = 0;
+    const silent = await loadSweaHistoryPreview(parseHTML(listPage(1)).document, location, async (url, init) => {
+      if (url.includes("userSubmitProblem")) { silentRequests++; return new Promise<Response>(() => undefined); }
+      return scanFetcher(page => listPage(page))(url, init);
+    }, undefined, undefined, { requestTimeoutMs: 20 });
+    assert.equal(silent.status, "SCAN_INCOMPLETE"); assert.equal(silentRequests, 2);
+    assert.equal(silent.failureReason, "LIST_PAGE_INCOMPLETE"); assert.equal(silent.failurePage, 2);
+  } finally { restore(); }
+});
