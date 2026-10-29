@@ -8,12 +8,22 @@ const LIST_PATH = "/main/userpage/code/userSubmitProblem.do";
 const HISTORY_PATH = "/main/code/problem/problemSubmitHistory.do";
 const DETAIL_PATH = "/main/code/problem/problemSubmitDetail.do";
 const ID = /^[A-Za-z0-9_-]{1,100}$/;
+/** One unanswered SWEA request must not hold a scan forever; a dropped one is asked for once more. */
+const REQUEST_TIMEOUT_MS = 20_000;
+const REQUEST_ATTEMPTS = 2;
+/** Histories failing back to back mean the site, not one problem, is failing. */
+const UNREAD_PROBLEM_LIMIT = 3;
 type FetchHtml = (url: string, init?: RequestInit) => Promise<Response>;
 
 type SweaSolvingClub = { solveclubId: string; probBoxId: string; problemBoxTitle: string };
 export interface SweaHistoryCandidate { submissionId: string; problemNumber: string; title: string; contestProbId: string; userProblem?: boolean; solvingClub?: SweaSolvingClub; language: string; solvedAt: string; codeByteLength: number; executionTime?: number; memoryValue?: number; }
 export type SweaScanFailureReason = "LIST_PAGE_INCOMPLETE" | "HISTORY_RESPONSE_UNAVAILABLE" | "HISTORY_PAGE_INCOMPLETE" | "SUBMISSION_ID_UNAVAILABLE" | "HISTORY_PAGE_REPEATED";
-export type SweaHistoryPreview = { status: "LOGIN_REQUIRED" | "OWNERSHIP_UNVERIFIED" | "SCAN_INCOMPLETE"; candidates: []; skipped: number; failureReason?: SweaScanFailureReason; failurePage?: number; failedProblemNumber?: string } | { status: "READY"; candidates: SweaHistoryCandidate[]; skipped: number; truncated: boolean };
+export type SweaHistoryPreview = { status: "LOGIN_REQUIRED" | "OWNERSHIP_UNVERIFIED" | "SCAN_INCOMPLETE"; candidates: []; skipped: number; failureReason?: SweaScanFailureReason; failurePage?: number; failedProblemNumber?: string } |
+  { status: "READY"; candidates: SweaHistoryCandidate[]; skipped: number; truncated: boolean;
+    /** Problems left out because their submission history could not be read. */
+    unreadProblemNumbers?: string[];
+    /** List cards in a form the extension does not read, named by number or else title. */
+    unreadCards?: string[] };
 type Identity = { userId: string; nickname: string };
 export type SweaProblem = { contestProbId: string; problemNumber: string; title: string; userProblem?: boolean; solvingClub?: SweaSolvingClub };
 function historyPath(problem: SweaProblem): string { return problem.solvingClub ? "/main/talk/solvingClub/problemSubmitHistory.do" : problem.userProblem ? "/main/code/userProblem/userProblemSubmitHistory.do" : HISTORY_PATH; }
@@ -76,18 +86,24 @@ function problemFromCard(card: HTMLElement): SweaProblem | null {
   return route && number && title ? { contestProbId: route[1]!, problemNumber: number, title, ...(route[2] === "Y" ? { userProblem: true } : {}),
     ...(club ? { solvingClub: { solveclubId: club[3]!, probBoxId: club[4]!, problemBoxTitle: club[5]! } } : {}) } : null;
 }
+/** How the screen names a card that problemFromCard could not read: its number, else its title. */
+function cardLabel(card: HTMLElement): string {
+  const number = text(card.querySelector(".widget-header-sub")).match(/(?:^|\s)(\d{1,40})(?:\.|\s)/)?.[1];
+  const title = text(card.querySelector("a")) || text(card.querySelector(".week_text"));
+  return number ? `#${number}` : title ? title.slice(0, 40) : "번호 없는 문제";
+}
 
 /** Only own My Page cards are problem traversal inputs, never submission records. */
-export function previewSweaProblems(document: Document, location: Location): { identity: Identity; problems: SweaProblem[]; pages: number[]; total: number | null; pageIndex: number; rowNum: number } | null {
+export function previewSweaProblems(document: Document, location: Location): { identity: Identity; problems: SweaProblem[]; unreadCards: string[]; pages: number[]; total: number | null; pageIndex: number; rowNum: number } | null {
   const identity = ownIdentity(document, location); if (!identity) return null;
-  const problems: SweaProblem[] = [];
+  const problems: SweaProblem[] = []; const unreadCards: string[] = [];
   for (const card of document.querySelectorAll<HTMLElement>(".widget-list.solvingclub .widget-box-sub")) {
-    const item = problemFromCard(card); if (item) problems.push(item);
+    const item = problemFromCard(card); if (item) problems.push(item); else unreadCards.push(cardLabel(card));
   }
   const pages = [...document.querySelectorAll<HTMLAnchorElement>('nav[aria-label="Page navigation"] a[href]')]
     .map(a => a.getAttribute("href")?.match(/pageIndex\.value=(\d{1,4})/)?.[1]).filter((v): v is string => !!v).map(Number)
     .filter(n => Number.isSafeInteger(n) && n > 0 && n <= 999);
-  return { identity, problems, pages: [...new Set(pages)], total: exactCount(text(document.querySelector(".club_box_tit")), /제출한 Problem\((\d+)\)/),
+  return { identity, problems, unreadCards, pages: [...new Set(pages)], total: exactCount(text(document.querySelector(".club_box_tit")), /제출한 Problem\((\d+)\)/),
     // The displayed active page is authoritative. A form field may retain the
     // next-search default until its pagination link is clicked.
     pageIndex: Number(text(document.querySelector('nav[aria-label="Page navigation"] .active')).match(/^\d+/)?.[0]) || Number(document.querySelector<HTMLInputElement>('#searchForm input[name="pageIndex"]')?.value) || 1,
@@ -197,9 +213,29 @@ function verifiedSourceCode(responseSource: string, bytes: number): string | nul
   return matches.size === 1 ? [...matches][0]! : null;
 }
 
+/** Ends a request SWEA leaves unanswered. The body is read under the same deadline. */
+function timedFetch(fetchHtml: FetchHtml, timeoutMs: number): FetchHtml {
+  return async (url, init) => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error("SWEA request timed out")); }, timeoutMs); });
+    try {
+      return await Promise.race([(async () => {
+        const response = await fetchHtml(url, { ...init, signal: controller.signal });
+        const body = await response.text();
+        return { ok: response.ok, url: response.url, text: async () => body } as Response;
+      })(), deadline]);
+    } finally { clearTimeout(timer); }
+  };
+}
+
 async function fetchDocument(fetchHtml: FetchHtml, url: string, init?: RequestInit): Promise<Document | null> {
-  const result = await fetchSweaDocument(fetchHtml, url, init);
-  return result.status === "DONE" ? result.document : null;
+  // A dropped or timed-out response is asked for once more; a redirect is final.
+  for (let attempt = 1; ; attempt++) {
+    const result = await fetchSweaDocument(fetchHtml, url, init);
+    if (result.status === "DONE") return result.document;
+    if (result.status === "TAB_NOT_FOUND" || attempt >= REQUEST_ATTEMPTS) return null;
+  }
 }
 
 type SweaDocumentResult = { status: "DONE"; document: Document } | { status: "TAB_NOT_FOUND" | "SOURCE_UNAVAILABLE" };
@@ -214,42 +250,61 @@ async function fetchSweaDocument(fetchHtml: FetchHtml, url: string, init?: Reque
 
 /** Follows only observed My Page pagination and fails closed if identity changes. */
 export async function loadSweaHistoryPreview(document: Document, location: Location, fetchHtml: FetchHtml = fetch,
-  onProgress: (value: { problems: number; pages: number; historiesRead?: number; historiesTotal?: number }) => void = () => undefined, isCurrent: () => boolean = () => true): Promise<SweaHistoryPreview> {
+  onProgress: (value: { problems: number; pages: number; historiesRead?: number; historiesTotal?: number }) => void = () => undefined, isCurrent: () => boolean = () => true,
+  { requestTimeoutMs = REQUEST_TIMEOUT_MS }: { requestTimeoutMs?: number } = {}): Promise<SweaHistoryPreview> {
   const first = previewSweaProblems(document, location); if (!first) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
+  const timed = timedFetch(fetchHtml, requestTimeoutMs);
   const total = first.total;
   const incomplete = (failureReason: SweaScanFailureReason, failurePage: number, failedProblemNumber?: string): SweaHistoryPreview =>
     ({ status: "SCAN_INCOMPLETE", candidates: [], skipped: 0, failureReason, failurePage, ...(failedProblemNumber ? { failedProblemNumber } : {}) });
   if (total === null || total < first.problems.length) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
-  const pagesTotal = Math.ceil(total / 20); const allProblems: SweaProblem[] = [];
+  const pagesTotal = Math.ceil(total / 20); const allProblems: SweaProblem[] = []; const unreadCards: string[] = [];
   for (let page = 1; page <= pagesTotal; page++) {
     if (!isCurrent()) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
     const current = page === first.pageIndex && first.rowNum === 20 ? document : await (async () => {
     const url = new URL(`${ORIGIN}${LIST_PATH}`); url.searchParams.set("userId", first.identity.userId); url.searchParams.set("problemTitle", ""); url.searchParams.set("rowNum", "20"); url.searchParams.set("pageIndex", String(page));
-      return fetchDocument(fetchHtml, url.href, { credentials: "include" });
+      return fetchDocument(timed, url.href, { credentials: "include" });
     })();
     const preview = current && previewSweaProblems(current, location);
-    if (!preview || preview.pageIndex !== page || preview.rowNum !== 20 || preview.total !== total || preview.identity.userId !== first.identity.userId || preview.identity.nickname !== first.identity.nickname || preview.problems.length !== Math.min(20, total - (page - 1) * 20)) return incomplete("LIST_PAGE_INCOMPLETE", page);
-    allProblems.push(...preview.problems);
+    // Every card still has to be on the page; only a card in an unknown form is
+    // left out (and named on screen) instead of stopping the whole scan.
+    if (!preview || preview.pageIndex !== page || preview.rowNum !== 20 || preview.total !== total || preview.identity.userId !== first.identity.userId || preview.identity.nickname !== first.identity.nickname || preview.problems.length + preview.unreadCards.length !== Math.min(20, total - (page - 1) * 20)) return incomplete("LIST_PAGE_INCOMPLETE", page);
+    allProblems.push(...preview.problems); unreadCards.push(...preview.unreadCards);
     onProgress({ problems: new Set(allProblems.map(problem => problem.problemNumber)).size, pages: page });
   }
   // The same public problem may appear once as CODE and again in a club. Both
   // histories must be read; only a repeated identical history scope is invalid.
   const scopes = allProblems.map(problem => JSON.stringify([problem.contestProbId, !!problem.userProblem, problem.solvingClub?.solveclubId, problem.solvingClub?.probBoxId]));
-  if (allProblems.length !== total || new Set(scopes).size !== total) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
+  if (allProblems.length + unreadCards.length !== total || new Set(scopes).size !== allProblems.length) return { status: "SCAN_INCOMPLETE", candidates: [], skipped: 0 };
+  if (total > 0 && !allProblems.length) return incomplete("LIST_PAGE_INCOMPLETE", 1);
   const problemCount = new Set(allProblems.map(problem => problem.problemNumber)).size;
-  const output: SweaHistoryCandidate[] = []; let skipped = 0; let pagesRead = pagesTotal; const seen = new Map<string, string>();
+  const output: SweaHistoryCandidate[] = []; let skipped = 0; let pagesRead = pagesTotal; let seen = new Map<string, string>();
+  const unreadProblemNumbers: string[] = []; let firstFailure: ProblemHistoryResult | null = null; let runFailure: ProblemHistoryResult | null = null; let failedInRow = 0;
   for (const [problemIndex, problem] of allProblems.entries()) {
     if (!isCurrent()) return { status: "OWNERSHIP_UNVERIFIED", candidates: [], skipped: 0 };
     onProgress({ problems: problemCount, pages: pagesRead, historiesRead: problemIndex, historiesTotal: allProblems.length });
-    const result = await readSweaProblemHistory(fetchHtml, first.identity, problem, seen, () => {
+    // A history that fails part way leaves nothing in `seen`, so a club copy of
+    // the same problem is still read in full.
+    const scoped = new Map(seen);
+    const result = await readSweaProblemHistory(timed, first.identity, problem, scoped, () => {
       pagesRead += 1;
       onProgress({ problems: problemCount, pages: pagesRead, historiesRead: problemIndex, historiesTotal: allProblems.length });
     });
-    if (result.status !== "READY") return result;
-    output.push(...result.candidates); skipped += result.skipped;
+    if (result.status === "OWNERSHIP_UNVERIFIED") return result;
+    if (result.status !== "READY") {
+      // One unreadable history leaves out only that problem. A run of them
+      // stops the scan at the first problem of the run.
+      unreadProblemNumbers.push(problem.problemNumber); firstFailure ??= result; runFailure ??= result;
+      if (++failedInRow >= UNREAD_PROBLEM_LIMIT) return runFailure;
+    } else {
+      failedInRow = 0; runFailure = null; seen = scoped;
+      output.push(...result.candidates); skipped += result.skipped;
+    }
     onProgress({ problems: problemCount, pages: pagesRead, historiesRead: problemIndex + 1, historiesTotal: allProblems.length });
   }
-  return { status: "READY", candidates: output, skipped, truncated: false };
+  if (firstFailure && unreadProblemNumbers.length === allProblems.length) return firstFailure;
+  return { status: "READY", candidates: output, skipped, truncated: false,
+    ...(unreadProblemNumbers.length ? { unreadProblemNumbers: [...new Set(unreadProblemNumbers)] } : {}), ...(unreadCards.length ? { unreadCards } : {}) };
 }
 
 type ProblemHistoryResult = { status: "READY"; candidates: SweaHistoryCandidate[]; skipped: number } |
@@ -304,14 +359,14 @@ export function sweaProblemCards(document: Document, location: Location): { prob
 
 /** Accepted, own submissions of one problem, read from the same history transport as the full scan. */
 export function loadSweaProblemCandidates(problem: SweaProblem, identity: Identity, fetchHtml: FetchHtml = fetch) {
-  return readSweaProblemHistory(fetchHtml, identity, problem);
+  return readSweaProblemHistory(timedFetch(fetchHtml, REQUEST_TIMEOUT_MS), identity, problem);
 }
 
 /** Fetches raw, unhighlighted detail HTML and verifies the selected row before local storage. */
 export type SweaHydrationResult = { status: "DONE"; capture: ReturnType<typeof createCapture> } |
   { status: "OWNERSHIP_UNVERIFIED" | "TAB_NOT_FOUND" | "SOURCE_UNAVAILABLE"; verificationFailure?: "context" | "source" | "title" | "length" | "metadata" };
 export async function hydrateSweaCandidateResult(candidate: SweaHistoryCandidate, identity: { userId: string; nickname: string }, fetchHtml: FetchHtml = fetch): Promise<SweaHydrationResult> {
-  const fetched = await fetchSweaDocument(fetchHtml, `${ORIGIN}${detailPath(candidate)}`, { method: "POST", credentials: "include", headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: historyForm(identity, candidate, candidate.submissionId).toString() });
+  const fetched = await fetchSweaDocument(timedFetch(fetchHtml, REQUEST_TIMEOUT_MS), `${ORIGIN}${detailPath(candidate)}`, { method: "POST", credentials: "include", headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: historyForm(identity, candidate, candidate.submissionId).toString() });
   if (fetched.status !== "DONE") return fetched;
   const detail = fetched.document;
   if (!sameSignedInIdentity(detail, identity)) return { status: "OWNERSHIP_UNVERIFIED" };
