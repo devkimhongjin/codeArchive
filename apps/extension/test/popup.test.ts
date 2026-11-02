@@ -289,3 +289,42 @@ test('a connected popup with temporary saves offers a manual sync and shows its 
   assert.equal(document.querySelector('#sync-pending-result')!.textContent, '2개 전송 완료');
   assert.equal(button.hidden, true, 'nothing left to send');
 });
+test('a slow server read is explained as a server waking up, and the notice clears once it answers', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { document } = parseHTML(html);
+  const notice = document.querySelector<HTMLElement>('#recent-waking')!, status = document.querySelector('#automation-status')!;
+  let answer!: (value: unknown) => void;
+  mountPopup(document, { load: () => new Promise(resolve => { answer = resolve; }), copy: async () => {} });
+  await settle();
+  t.mock.timers.tick(2_999);
+  assert.equal(notice.hidden, true);
+  t.mock.timers.tick(1);
+  assert.equal(notice.hidden, false); assert.equal(status.textContent, '서버 깨우는 중');
+  assert.equal(document.querySelector('#recent-count')!.textContent, '서버 깨우는 중');
+  assert.equal(document.querySelector<HTMLElement>('#recent-error')!.hidden, true);
+  answer({ settings: { accountId: '1', autoSyncEnabled: true, relay: { status: 'CONFIRMED' } }, recentCaptures: [record('one')] });
+  await settle();
+  assert.equal(notice.hidden, true); assert.equal(status.textContent, '자동 동기화 중');
+  assert.equal(document.querySelector('#recent-count')!.textContent, '1문제');
+});
+test('a server that never wakes ends in the existing failure and retry, not a lasting wake notice', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { document } = parseHTML(html);
+  let answer!: (value: unknown) => void;
+  mountPopup(document, { load: () => new Promise(resolve => { answer = resolve; }), copy: async () => {}, retryRelay: async () => ({ ok: false }) });
+  await settle(); t.mock.timers.tick(3_000);
+  answer({ settings: { accountId: '1', autoSyncEnabled: true, relay: { status: 'CONFIRMED' } }, recentCaptures: [], recentError: 'SERVER_UNAVAILABLE' });
+  await settle();
+  assert.equal(document.querySelector<HTMLElement>('#recent-waking')!.hidden, true);
+  assert.equal(document.querySelector<HTMLElement>('#recent-error')!.hidden, false);
+  assert.equal(document.querySelector('#automation-status')!.textContent, '서버 연결 확인 필요');
+  assert.equal(document.querySelector<HTMLElement>('#retry-relay')!.hidden, false);
+});
+test('a fast server read never shows the wake notice', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { document } = parseHTML(html);
+  mountPopup(document, { load: async () => ({ settings: { accountId: '1', autoSyncEnabled: true, relay: { status: 'CONFIRMED' } }, recentCaptures: [] }), copy: async () => {} });
+  await settle(); t.mock.timers.tick(3_000);
+  assert.equal(document.querySelector<HTMLElement>('#recent-waking')!.hidden, true);
+  assert.equal(document.querySelector('#automation-status')!.textContent, '자동 동기화 중');
+});

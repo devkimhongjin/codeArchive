@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.codearchive.api.config.SessionCookieRefreshFilter;
 import com.codearchive.api.auth.AppUser;
 import com.codearchive.api.auth.GithubAccountService;
 import com.codearchive.api.auth.GithubIdentity;
@@ -135,6 +136,46 @@ class CodeArchiveApiIntegrationTest {
 
         org.assertj.core.api.Assertions.assertThat(response.getHeader("Set-Cookie"))
                 .contains("JSESSIONID=", "Max-Age=2592000", "HttpOnly", "SameSite=Lax");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void signedInUseExtendsTheLoginCookieAtMostOncePerDay() throws Exception {
+        githubAccountService.upsert(principal("1061", "cookie-user", "Cookie", null));
+        Cookie session = persistedGithubSession("1061", "cookie-user", "Cookie", null);
+        org.assertj.core.api.Assertions.assertThat(loginCookies(mockMvc.perform(get("/api/auth/me").cookie(session))
+                        .andExpect(status().isOk()).andReturn()))
+                .singleElement().asString()
+                .contains("JSESSIONID=" + session.getValue(), "Max-Age=2592000", "HttpOnly", "SameSite=Lax");
+        org.assertj.core.api.Assertions.assertThat(loginCookies(mockMvc.perform(get("/api/auth/me").cookie(session))
+                        .andExpect(status().isOk()).andReturn()))
+                .isEmpty();
+
+        String sessionId = new String(Base64.getUrlDecoder().decode(session.getValue()), StandardCharsets.UTF_8);
+        Session stored = sessionRepository.findById(sessionId);
+        stored.setAttribute(SessionCookieRefreshFilter.REFRESHED_AT, System.currentTimeMillis() - Duration.ofDays(1).toMillis());
+        sessionRepository.save(stored);
+        org.assertj.core.api.Assertions.assertThat(loginCookies(mockMvc.perform(get("/api/auth/me").cookie(session))
+                        .andExpect(status().isOk()).andReturn()))
+                .hasSize(1);
+    }
+
+    @Test
+    void anonymousRequestsGetNoCookieAndAnEndedSessionIsNeverReissued() throws Exception {
+        org.assertj.core.api.Assertions.assertThat(loginCookies(mockMvc.perform(get("/api/health")).andReturn())).isEmpty();
+        githubAccountService.upsert(principal("1062", "ended-user", "Ended", null));
+        Cookie session = persistedGithubSession("1062", "ended-user", "Ended", null);
+        org.assertj.core.api.Assertions.assertThat(loginCookies(mockMvc.perform(post("/api/auth/logout").cookie(session).with(csrf().asHeader()))
+                        .andExpect(status().isNoContent()).andReturn()))
+                .isNotEmpty().allMatch(value -> value.contains("Max-Age=0"));
+        // A rejected request may start a new anonymous session for its saved request; that is not this login.
+        org.assertj.core.api.Assertions.assertThat(loginCookies(mockMvc.perform(get("/api/auth/me").cookie(session))
+                        .andExpect(status().isUnauthorized()).andReturn()))
+                .noneMatch(value -> value.startsWith("JSESSIONID=" + session.getValue() + ";"));
+    }
+
+    private static java.util.List<String> loginCookies(MvcResult result) {
+        return result.getResponse().getHeaders("Set-Cookie").stream().filter(value -> value.startsWith("JSESSIONID=")).toList();
     }
 
     @Test

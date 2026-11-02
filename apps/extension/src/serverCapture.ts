@@ -32,11 +32,31 @@ export async function storeCaptureOnServer(store: SettingsStore, capture: Captur
   return result === 'ACK' ? { ok: true, created: true } : { ok: false, error: result, ...(result === 'REJECTED' && detail ? { detail } : {}) };
 }
 
-export async function loadPopupServerState(store: Pick<CaptureStore, 'getSettings'>, fetcher: typeof fetch = fetch) {
+/** A sleeping server takes about 20 seconds to answer, and Chrome stops a worker whose fetch waits over 30. */
+export const POPUP_WAKE_BUDGET_MS = 28_000;
+const POPUP_WAKE_RETRY_MS = 2_000;
+
+/** A waking server may drop the connection or answer 5xx. The caller's deadline aborts the wait. */
+function retryWhileWaking(fetcher: typeof fetch, retryMs: number): typeof fetch {
+  return async (input, init) => {
+    for (;;) {
+      try {
+        const response = await fetcher(input, init);
+        if (response.status < 500 || init?.signal?.aborted) return response;
+      } catch (error) {
+        if (init?.signal?.aborted || globalThis.navigator?.onLine === false) throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, retryMs));
+    }
+  };
+}
+
+export async function loadPopupServerState(store: Pick<CaptureStore, 'getSettings'>, fetcher: typeof fetch = fetch,
+  { wakeBudgetMs = POPUP_WAKE_BUDGET_MS, wakeRetryMs = POPUP_WAKE_RETRY_MS }: { wakeBudgetMs?: number; wakeRetryMs?: number } = {}) {
   const settings = await store.getSettings();
   let recentCaptures: Omit<Capture, 'sourceCode'>[] = [];
   let recentUnavailable = false;
-  try { recentCaptures = await fetchRecentServerCaptures(settings, fetcher); }
+  try { recentCaptures = await fetchRecentServerCaptures(settings, retryWhileWaking(fetcher, wakeRetryMs), wakeBudgetMs); }
   catch { recentUnavailable = true; }
   const current = await store.getSettings();
   const currentAccount = sameAccount(settings, current);

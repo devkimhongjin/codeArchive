@@ -22,6 +22,7 @@ import org.springframework.security.oauth2.client.web.DefaultOAuth2Authorization
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
@@ -145,7 +146,8 @@ public class SecurityConfig {
             RelayGrantService relayGrants,
             OAuth2AuthorizationRequestResolver githubAuthorizationRequestResolver,
             AuthenticationEntryPoint authenticationEntryPoint,
-            AccessDeniedHandler accessDeniedHandler) throws Exception {
+            AccessDeniedHandler accessDeniedHandler,
+            CookieSerializer cookieSerializer) throws Exception {
         CookieCsrfTokenRepository csrfTokenRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
         CsrfTokenRequestAttributeHandler csrfRequestHandler = new CsrfTokenRequestAttributeHandler();
 
@@ -220,7 +222,9 @@ public class SecurityConfig {
                             response.setStatus(HttpServletResponse.SC_NO_CONTENT);
                         }))
                 .addFilterBefore(new GithubOAuth2AvailabilityFilter(githubProperties),
-                        OAuth2AuthorizationRequestRedirectFilter.class);
+                        OAuth2AuthorizationRequestRedirectFilter.class)
+                // After the login and logout filters, which finish their own requests.
+                .addFilterAfter(new SessionCookieRefreshFilter(cookieSerializer), AnonymousAuthenticationFilter.class);
 
         return http.build();
     }

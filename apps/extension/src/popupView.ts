@@ -23,6 +23,8 @@ interface PopupServices {
   retryRelay?: () => Promise<unknown>;
   syncPending?: () => Promise<unknown>;
 }
+const POPUP_WAKING_NOTICE_MS = 3_000;
+
 /** Explains a manual sync in the user's terms, including why nothing was sent. */
 export function pendingSyncMessage(response: unknown): string {
   const summary = (response as { ok?: boolean; summary?: { status?: string; sent?: number; rejected?: number; remaining?: number; error?: string; rejection?: string } } | null)?.summary;
@@ -106,6 +108,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
   const recentList = document.querySelector<HTMLElement>('#recent-list')!;
   const recentEmpty = document.querySelector<HTMLElement>('#recent-empty')!;
   const recentError = document.querySelector<HTMLElement>('#recent-error')!;
+  const recentWaking = document.querySelector<HTMLElement>('#recent-waking');
   const githubAuto = document.querySelector<HTMLInputElement>('#github-auto')!;
   const automationStatus = document.querySelector<HTMLElement>('#automation-status')!;
   const pendingUploads = document.querySelector<HTMLElement>('#pending-uploads');
@@ -237,6 +240,12 @@ export function mountPopup(document: Document, services: PopupServices): void {
     const epoch = localEpoch;
     let settled = false;
     error.hidden = true; recentError.hidden = true; recentCard.setAttribute('aria-busy', 'true');
+    // Past a normal answer the wait is a sleeping server, not a lost connection.
+    const wakingNotice = setTimeout(() => {
+      if (settled || epoch !== localEpoch || githubBusy) return;
+      automationStatus.textContent = '서버 깨우는 중'; recentCount.textContent = '서버 깨우는 중';
+      recentEmpty.hidden = true; if (recentWaking) recentWaking.hidden = false;
+    }, POPUP_WAKING_NOTICE_MS);
     if (!localReady && services.loadLocal) {
       // The server recent list can wait on a cold API; the switch only needs local settings.
       void services.loadLocal().then(value => {
@@ -285,7 +294,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
       error.textContent = '동기화 상태를 불러오지 못했어요. 팝업을 다시 열어 주세요.';
       recentList.replaceChildren(); recentCount.textContent = '확인 실패'; recentEmpty.hidden = true;
     } finally {
-      settled = true;
+      settled = true; clearTimeout(wakingNotice); if (recentWaking) recentWaking.hidden = true;
       loading = false; recentCard.setAttribute('aria-busy', 'false');
       if (reloadPending) { reloadPending = false; queueMicrotask(() => void load()); }
     }
