@@ -131,8 +131,8 @@ cd apps/api; ./mvnw.cmd test   # API 테스트(H2, 외부 응답은 모의)
 
 1. 구현 PR은 `develop`을 대상으로 합니다. 릴리스는 버전과 릴리스 노트(`docs/releases/extension-vX.Y.Z.md`)를 올린 뒤 `develop`을 `master`로 승격합니다.
 2. `master`에서 `Extension package` 워크플로로 `extension-vX.Y.Z` 태그와 GitHub 릴리스를 만듭니다.
-3. `Chrome Web Store release` 워크플로로 심사를 제출합니다. `STAGED_PUBLISH`로 제출하므로 심사를 통과해도 자동 공개되지 않고, Developer Dashboard에서 직접 게시해야 합니다(심사 완료 후 30일 안). 다른 버전이 심사 중이면 제출하지 않습니다.
-4. 백엔드 변경은 공개 중인 스토어 버전과의 호환성을 먼저 확인합니다. 호환되지 않으면 새 확장을 게시한 직후 `Deploy GCP Staging`으로 배포합니다. 자세한 순서는 [웹스토어 배포 안내](docs/extension-webstore.md)에 있습니다.
+3. `Chrome Web Store release` 워크플로로 심사를 제출합니다. `DEFAULT_PUBLISH`로 제출하므로 심사를 통과하면 바로 공개됩니다. 다른 버전이 심사 중이면 제출하지 않습니다.
+4. 공개 시점이 심사 결과로 정해지므로, 백엔드 변경은 이전 버전과 새 버전 모두와 호환되게 만들어 심사 제출 전에 `Deploy GCP Staging`으로 배포합니다. 자세한 순서는 [웹스토어 배포 안내](docs/extension-webstore.md)에 있습니다.
 
 ## 보안 경계
 
