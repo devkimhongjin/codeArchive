@@ -36,7 +36,8 @@ export async function restoreCaptureSession(store: Store, deviceId: string, fetc
     const relay = original.relay;
     if (relay?.accountId === accountId && relay.generation === saved.version && ['CONFIRMED', 'OFFLINE', 'RELAY_ERROR'].includes(relay.status)) {
       let endpoint: URL;
-      try { endpoint = new URL(relay.endpoint); } catch { return reply('RECONNECT_REQUIRED'); }
+      // The server issues this address as a relative path and the dashboard hands it over unchanged.
+      try { endpoint = new URL(relay.endpoint, PUBLIC_API_ORIGIN); } catch { return reply('RECONNECT_REQUIRED'); }
       if (endpoint.origin !== PUBLIC_API_ORIGIN || endpoint.pathname !== '/api/relay/captures' || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) return reply('RECONNECT_REQUIRED');
       try {
         await request('/api/relay/recent', { headers: { Authorization: `Bearer ${relay.secret}` } });

@@ -40,6 +40,21 @@ test('initial session confirmation has a startup budget without lengthening gran
   assert.deepEqual(budgets,[30_000,8000,8000]);
   assert.equal(f.settings(),original);assert.equal(f.calls.includes('/api/relay/grants'),false);
 });
+test('a grant the dashboard handed over with the relative address the server issued is confirmed without rotation', async () => {
+  const handedOver = { ...initial(), relay: { ...initial().relay!, endpoint: '/api/relay/captures' } };
+  const f = fixture(handedOver);
+  assert.equal(await restoreCaptureConnection(f.store, device, f.fetcher), 'READY');
+  assert.equal(f.settings(), handedOver);
+  assert.deepEqual(f.calls, ['/api/auth/me', '/api/settings', '/api/relay/recent']);
+});
+test('a stored relay address outside the API capture route is refused before its bearer is used', async () => {
+  for (const endpoint of ['https://evil.example/api/relay/captures', '//evil.example/api/relay/captures', 'http://[', '/api/relay/other',
+    '/api/relay/captures?next=1', '/api/relay/captures#fragment', `${PUBLIC_API_ORIGIN.replace('https://', 'https://user:secret@')}/api/relay/captures`]) {
+    const f = fixture({ ...initial(), relay: { ...initial().relay!, endpoint } }); const original = f.settings();
+    assert.equal(await restoreCaptureConnection(f.store, device, f.fetcher), 'RECONNECT_REQUIRED', endpoint);
+    assert.equal(f.settings(), original); assert.deepEqual(f.calls, ['/api/auth/me', '/api/settings'], endpoint);
+  }
+});
 test('a stale grant is renewed only using a live same-account cookie and matching server settings', async () => {
   const f = fixture(); f.replies['/api/relay/recent'] = 401;
   assert.equal(await restoreCaptureConnection(f.store, device, f.fetcher), 'READY');
