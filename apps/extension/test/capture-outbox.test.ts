@@ -3,6 +3,8 @@ import test from 'node:test';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import { IndexedDbCaptureStore, MemoryCaptureStore } from '../src/storage';
 import { captureOwner, drainCaptureOutbox, retainCaptureForRetry } from '../src/captureOutbox';
+import { DashboardBridge, DASHBOARD_ORIGIN } from '../src/bridge';
+import { restoreCaptureSession } from '../src/captureConnection';
 import type { Capture, CaptureSettings } from '../src/types';
 import { PUBLIC_API_ORIGIN } from '../../../shared/publicApiOrigin';
 
@@ -39,6 +41,35 @@ for (const mode of ['memory', 'indexeddb'] as const) {
     assert.equal(await store.countQueuedCaptures('1'), 0);
   });
 }
+
+test('a submission queued after a dashboard handoff reaches the server through the relative address it issued', async () => {
+  const store = new MemoryCaptureStore();
+  const sender = { url: `${DASHBOARD_ORIGIN}/app`, documentId: 'doc-1', frameId: 0, tab: { id: 7, url: `${DASHBOARD_ORIGIN}/app` } };
+  const bridge = new DashboardBridge(store, { capabilityFactory: () => 'capability-relay' });
+  const connected = await bridge.handleMessage({ type: 'CONNECT' }, sender); assert.ok('capability' in connected);
+  // Exactly what RelayController answers and the dashboard forwards.
+  assert.deepEqual(await bridge.handleMessage({ type: 'CONFIGURE_RELAY', capability: connected.capability,
+    relay: { endpoint: '/api/relay/captures', secret: 'synthetic-only', accountId: '1', generation: 7 },
+    accountId: '1', settingsVersion: 7, autoSyncEnabled: true, githubAutoCommitEnabled: false, githubTargetConfigured: false }, sender), { ok: true });
+  assert.equal((await store.getSettings()).relay?.endpoint, '/api/relay/captures');
+  assert.equal((await retainCaptureForRetry(store, capture, '1', () => undefined)).queued, true);
+  const posted: string[] = [];
+  const fetcher = (async (input, init) => {
+    const url = new URL(String(input));
+    assert.equal(url.origin, PUBLIC_API_ORIGIN);
+    if (url.pathname === '/api/auth/me') return new Response(JSON.stringify({ id: 1, githubId: '123' }));
+    if (url.pathname === '/api/settings') return new Response(JSON.stringify({ version: 7, autoSyncEnabled: true, githubAutoCommitEnabled: false, githubTargetConfigured: false }));
+    if (url.pathname === '/api/relay/recent') return new Response(JSON.stringify({ captures: [] }));
+    assert.equal(url.pathname, '/api/relay/captures');
+    assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer synthetic-only');
+    posted.push(url.href);
+    return receipt();
+  }) as typeof fetch;
+  const summary = await drainCaptureOutbox(store, () => restoreCaptureSession(store, 'synthetic-device-123456789', fetcher), fetcher, { manual: true });
+  assert.deepEqual(summary, { status: 'DONE', sent: 1, rejected: 0, remaining: 0 });
+  assert.deepEqual(posted, [`${PUBLIC_API_ORIGIN}/api/relay/captures`]);
+  assert.equal(await store.countQueuedCaptures('1'), 0);
+});
 
 test('local acknowledgement does not wait for the server and a failed scheduling callback loses no source', async () => {
   const store = await memory();

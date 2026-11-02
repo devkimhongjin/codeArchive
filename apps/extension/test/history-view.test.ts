@@ -239,6 +239,11 @@ test("scan errors retain their problem/page context and unsupported SQL is not p
     { status: "READY", candidates: [], unreadProblemNumbers: ["1", "2", "3", "4", "5", "6", "7"] });
   await tick(); await tick();
   assert.match(readyUnread.document.querySelector("#status")!.textContent!, /제출 이력을 읽지 못한 문제 7건\(#1, #2, #3, #4, #5 외 2건\)은 이번 후보에서 빠졌습니다/);
+  // SWEA list cards in an unknown form are named by number, or by title when the card has none.
+  const readyUnlisted = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } :
+    { status: "READY", candidates: [], unreadCards: ["#45", "Problem 47"] });
+  await tick(); await tick();
+  assert.match(readyUnlisted.document.querySelector("#status")!.textContent!, /목록에서 형식을 읽지 못한 문제 2건\(#45, Problem 47\)은 이번 후보에서 빠졌습니다\.$/);
   const stopped = page(async message => message.type === "LOCAL_HISTORY_IDS" ? { submissionIds: [] } : { status: "SCAN_INCOMPLETE", failedProblemNumber: "42576" });
   await tick(); await tick();
   assert.match(stopped.document.querySelector("#status")!.textContent!, /문제 #42576까지 제출 이력을 연달아 읽지 못해 후보 찾기를 중단했습니다/);

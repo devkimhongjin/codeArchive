@@ -96,3 +96,33 @@ test("SWEA source owner skips an isolated detail failure, preserves an in-flight
     assert.equal(stores, 2);
   } finally { Object.assign(globalThis, globals); }
 });
+
+test("SWEA keeps naming a list card it could not read through the import that follows the scan", async () => {
+  const list = listDocument().replace("fn_move_prob('KeyAAAAAAA2','N','CODE','','KeyAAAAAAA2','')", "fn_move_prob('KeyAAAAAAA2','N','COURSE','','KeyAAAAAAA2','')");
+  const { document } = parseHTML(`<html><body>${list}</body></html>`);
+  const location = new URL(listUrl) as unknown as Location;
+  const window = document.defaultView!; Object.defineProperty(window, "location", { value: location, configurable: true });
+  let listener: ((message: unknown, sender: unknown, reply: (value: unknown) => void) => boolean) | undefined;
+  const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input); const problem = Number((new URLSearchParams(String(init?.body ?? "")).get("contestProbId") ?? "").slice(-1));
+    return response(url === historyUrl ? historyDocument(problem) : detailDocument(problem), url);
+  };
+  const chrome = { runtime: { onMessage: { addListener(callback: typeof listener) { listener = callback; } }, sendMessage: async () => ({ ok: true, created: true }) }, storage: { local: { set: async () => undefined } } };
+  const globals = { document: globalThis.document, window: globalThis.window, chrome: globalThis.chrome, fetch: globalThis.fetch, DOMParser: globalThis.DOMParser, MutationObserver: globalThis.MutationObserver, Element: globalThis.Element };
+  Object.assign(globalThis, { document, window, chrome, fetch: fetcher, DOMParser: document.defaultView!.DOMParser, MutationObserver: window.MutationObserver, Element: window.Element });
+  const message = (payload: unknown) => new Promise<unknown>(resolve => { assert.equal(listener!(payload, null, resolve), false); });
+  try {
+    const contentModule = "../src/content?swea-unread-card";
+    await import(contentModule); assert.ok(listener);
+    await message({ type: "LOCAL_HISTORY_SCAN_START", platform: "SWEA" });
+    await wait();
+    const ready = await message({ type: "LOCAL_HISTORY_STATUS", platform: "SWEA" }) as { status: string; candidates?: Array<{ submissionId: string; problemNumber: string }>; unreadCards?: string[] };
+    assert.equal(ready.status, "READY"); assert.deepEqual(ready.candidates?.map(item => item.problemNumber), ["1"]);
+    assert.deepEqual(ready.unreadCards, ["#2"]);
+    await message({ type: "LOCAL_HISTORY_IMPORT_START", platform: "SWEA", submissionIds: ready.candidates!.map(item => item.submissionId) });
+    await wait();
+    const done = await message({ type: "LOCAL_HISTORY_STATUS", platform: "SWEA" }) as { status: string; saved?: number; unreadCards?: string[] };
+    assert.equal(done.status, "DONE"); assert.equal(done.saved, 1);
+    assert.deepEqual(done.unreadCards, ["#2"]);
+  } finally { Object.assign(globalThis, globals); }
+});

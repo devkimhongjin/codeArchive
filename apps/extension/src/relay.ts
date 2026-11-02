@@ -134,10 +134,10 @@ export async function fetchGithubCommitState(
 }
 
 /** Reads only source-free previews for the bearer-bound server account. */
-export async function fetchRecentServerCaptures(settings: CaptureSettings, fetcher: typeof fetch = fetch): Promise<Omit<Capture, 'sourceCode'>[]> {
+export async function fetchRecentServerCaptures(settings: CaptureSettings, fetcher: typeof fetch = fetch, timeoutMs = RELAY_REQUEST_TIMEOUT_MS): Promise<Omit<Capture, 'sourceCode'>[]> {
   const relay = settings.relay, origin = relay && trustedRelayEndpoint(relay.endpoint);
   if (!relay || !origin || settings.accountId !== relay.accountId || !['CONFIRMED', 'OFFLINE', 'RELAY_ERROR'].includes(relay.status)) return [];
-  const response = await fetchWithTimeout(fetcher, new URL('/api/relay/recent', origin.origin), { headers: { Authorization: `Bearer ${relay.secret}` } }, RELAY_REQUEST_TIMEOUT_MS);
+  const response = await fetchWithTimeout(fetcher, new URL('/api/relay/recent', origin.origin), { headers: { Authorization: `Bearer ${relay.secret}` } }, timeoutMs);
   if (response.status === 401) return [];
   if (!response.ok) throw new Error('서버의 최근 풀이를 확인하지 못했습니다.');
   const payload = await response.json() as { captures?: unknown };
