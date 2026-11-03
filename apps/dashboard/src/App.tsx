@@ -28,11 +28,11 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { ApiError, addGithubFile, bulkUpload, enableAccountAutomaticSync, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories, getGithubTree, getGithubEmptyDefaultBranch, getGithubReadmePreview, initializeGithubReadme, previewGithubTreeOperation, commitGithubTreeOperation } from './api'
+import { ApiError, addGithubFile, bulkUpload, enableAccountAutomaticSync, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories, getGithubTree, getGithubEmptyDefaultBranch, getGithubReadmePreview, initializeGithubReadme, ensureGithubReadmeSection, previewGithubTreeOperation, commitGithubTreeOperation } from './api'
 import { BridgeError, parseAckResponse, parseBridgeStatusResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { acceptedIdsForAck } from './syncLogic'
-import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type BulkResponse, type GithubAddFileRequest, type GithubSavedTarget, type GithubTreeOperationPreview, type Solution, type Toast, type User, type ViewName } from './types'
+import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type BulkResponse, type GithubAddFileRequest, type GithubReadmeSectionResult, type GithubSavedTarget, type GithubTreeOperationPreview, type Solution, type Toast, type User, type ViewName } from './types'
 import { CodeBlock, CodeThemeSelect } from './CodeBlock'
 import { GithubRepositoryBrowser } from './GithubRepositoryBrowser'
 import { EXTENSION_ID, LEGACY_EXTENSION_ID, EXTENSION_CANDIDATES } from './extensionConfig'
@@ -200,6 +200,17 @@ function savedGithubTarget(settings: AccountSettings): GithubSavedTarget | null 
     ? { installationId: settings.githubInstallationId, owner: settings.githubOwner, repository: settings.githubRepository, branch: settings.githubBranch, rootPath: settings.githubRootPath }
     : null
 }
+function sameRepositoryBranch(left: GithubSavedTarget | null, right: GithubSavedTarget) {
+  return left !== null && left.installationId === right.installationId && left.owner === right.owner && left.repository === right.repository && left.branch === right.branch
+}
+function readmeSectionToast(result: GithubReadmeSectionResult | undefined): [Toast['kind'], string] | null {
+  if (result?.outcome === 'CREATED') return ['success', 'README.md를 만들고 CodeArchive 배지를 넣었습니다.']
+  if (result?.outcome === 'ADDED') return ['success', 'README에 CodeArchive 배지를 넣었습니다.']
+  if (result?.outcome === 'UPDATED') return ['success', 'README의 CodeArchive 안내를 최신 내용으로 바꿨습니다.']
+  if (result?.reason === 'PROTECTED_BRANCH') return ['info', '보호된 브랜치라 README에 CodeArchive 배지를 넣지 않았습니다.']
+  if (result?.reason === 'UNSUPPORTED_README') return ['info', 'README를 안전하게 고칠 수 없어 CodeArchive 배지를 넣지 않았습니다.']
+  return null
+}
 const RELAY_DEVICE_KEY = 'codearchive-relay-device-id'
 
 type GithubInstallReturn = {
@@ -286,6 +297,7 @@ export default function App() {
   const [exportSettings, setExportSettings] = useState(readExportSettings)
   const [accountSettings, setAccountSettings] = useState<AccountSettings>(defaultAccountSettings)
   const [savedTarget, setSavedTarget] = useState<GithubSavedTarget | null>(null)
+  const [readmeOnConnect, setReadmeOnConnect] = useState(true)
   const [settingsBusy, setSettingsBusy] = useState(false)
   const [settingsError, setSettingsError] = useState<string | null>(null)
   const [bridgeStatus, setBridgeStatus] = useState<'disconnected' | 'connecting' | 'connected'>('connecting')
@@ -328,6 +340,7 @@ export default function App() {
   // React state updates are asynchronous. The serialized writer must read the
   // acknowledgement that arrived immediately before its next queued request.
   const savedTargetRef = useRef<GithubSavedTarget | null>(null)
+  const readmeOnConnectRef = useRef(true)
   // Repository, branch, and folder browsing creates a recoverable draft. It
   // cannot enter an unrelated settings write before the folder confirmation.
   const unconfirmedTargetRef = useRef(false)
@@ -1080,9 +1093,24 @@ export default function App() {
     return hasGitSubmissionIdentityToken(persisted.gitPathTemplate) && (!targetStarted || targetValues.every(value => value !== null && value !== ''))
   }
 
-  const applyAcknowledgedTarget = (saved: AccountSettings) => {
+  const addReadmeSection = async (account: User, generation: number) => {
+    const stillCurrent = () => generation === accountGeneration.current && userRef.current?.id === account.id
+    try {
+      const toast = readmeSectionToast(await ensureGithubReadmeSection(account.githubId))
+      if (stillCurrent() && toast) showToast(...toast)
+    } catch (error) {
+      if (!stillCurrent() || await handleExpectedAccountChange(error, account.githubId)) return
+      showToast('info', '저장소는 연결됐지만 README에 CodeArchive 배지를 넣지 못했습니다.')
+    }
+  }
+
+  const applyAcknowledgedTarget = (saved: AccountSettings, account: User, generation: number) => {
+    const previous = savedTargetRef.current
     savedTargetRef.current = savedGithubTarget(saved)
     setSavedTarget(savedTargetRef.current)
+    // Only a newly connected repository or branch gets the README section;
+    // folder changes and later saves of the same target do not write again.
+    if (savedTargetRef.current && readmeOnConnectRef.current && !sameRepositoryBranch(previous, savedTargetRef.current)) void addReadmeSection(account, generation)
   }
 
   const acknowledgedRelaySettings = (saved: AccountSettings): AccountSettings => {
@@ -1129,7 +1157,7 @@ export default function App() {
         if (accountSettingsRef.current !== savingDraft) {
           accountSettingsRef.current = { ...accountSettingsRef.current, version: saved.version }
           settingsLoadedRef.current = { accountId: savingFor.id, generation, version: saved.version }
-          applyAcknowledgedTarget(saved)
+          applyAcknowledgedTarget(saved, savingFor, generation)
           setAccountSettings(accountSettingsRef.current)
           await renewRelayForAcknowledgedSettings(saved, savingFor, generation)
           settingsSaveQueued.current = true
@@ -1141,7 +1169,7 @@ export default function App() {
           // conditional-write base without repeatedly saving it.
           accountSettingsRef.current = { ...savingDraft, version: saved.version }
           settingsLoadedRef.current = { accountId: savingFor.id, generation, version: saved.version }
-          applyAcknowledgedTarget(saved)
+          applyAcknowledgedTarget(saved, savingFor, generation)
           setAccountSettings(accountSettingsRef.current)
           await renewRelayForAcknowledgedSettings(saved, savingFor, generation)
           return
@@ -1151,7 +1179,7 @@ export default function App() {
         settingsLoadedRef.current = { accountId: savingFor.id, generation, version: saved.version }
         relayHandoffRef.current = null
         setAccountSettings(saved)
-        applyAcknowledgedTarget(saved)
+        applyAcknowledgedTarget(saved, savingFor, generation)
         updateExportSettings({ copyHeader: saved.copyHeader, downloadHeader: saved.downloadHeader, copyHeaderFields: normalizedHeaderFields(saved.copyHeaderFields), downloadHeaderFields: normalizedHeaderFields(saved.downloadHeaderFields), filenameTemplate: saved.downloadFilenameTemplate, gitPathTemplate: saved.gitPathTemplate })
         await configureRelay(saved, savingFor, generation)
         if (stillCurrent() && modeRef.current === 'live') {
@@ -1598,6 +1626,8 @@ export default function App() {
             onExpectedAccountChange={(expectedGithubId) => void handleExpectedAccountChange(new ApiError('GitHub account changed; reconnect required', 409), expectedGithubId)}
             githubInstallReturn={githubInstallReturn}
             accountSettingsReady={Boolean(user && settingsLoadedRef.current?.accountId === user.id)}
+            readmeOnConnect={readmeOnConnect}
+            onReadmeOnConnectChange={value => { readmeOnConnectRef.current = value; setReadmeOnConnect(value) }}
           />
         )}
       </main>
@@ -1839,6 +1869,8 @@ function SettingsView({
   onExpectedAccountChange,
   githubInstallReturn,
   accountSettingsReady,
+  readmeOnConnect,
+  onReadmeOnConnectChange,
 }: {
   section: 'settings' | 'github'
   commitMetrics: GithubSelectionMetric[]
@@ -1861,6 +1893,8 @@ function SettingsView({
   onExpectedAccountChange: (expectedGithubId: string) => void
   githubInstallReturn: GithubInstallReturn | null
   accountSettingsReady: boolean
+  readmeOnConnect: boolean
+  onReadmeOnConnectChange: (value: boolean) => void
 }) {
   const [installations, setInstallations] = useState<import('./types').GithubInstallation[]>([])
   const [showTargetSetup, setShowTargetSetup] = useState(false)
@@ -2244,7 +2278,7 @@ function SettingsView({
                     <label><span><b>3</b> 브랜치</span><select aria-label="브랜치" disabled={targetBusy} value={accountSettings.githubBranch ?? ''} onChange={event => void chooseBranch(event.target.value)}><option value="">선택하세요</option>{branches.map(value => <option key={value.name} value={value.name}>{value.name}{value.protectedBranch ? ' (보호됨)' : ''}</option>)}{emptyDefaultBranch && !includeReadme && <option value={emptyDefaultBranch}>{emptyDefaultBranch} (첫 풀이 커밋 시 생성)</option>}</select>{branchesLoaded && branches.length === 0 && <small role="status">브랜치가 없습니다. {emptyDefaultBranch ? '비어 있는 저장소입니다.' : '저장소 상태를 확인하지 못했습니다. 다시 시도해 주세요.'}</small>}</label>
                     {branchesLoaded && branches.length === 0 && emptyDefaultBranch && <div className="github-empty-repository"><strong>비어 있는 저장소 시작하기</strong><label><input type="checkbox" checked={includeReadme} onChange={event => setIncludeReadme(event.target.checked)} /> CodeArchive README 추가</label>{includeReadme ? <><pre aria-label="README 미리보기">{readmePreview}</pre><button type="button" className="primary-button" disabled={targetBusy || !readmePreview} onClick={() => void initializeEmptyRepository()}>README로 초기화</button></> : <p>첫 풀이가 성공적으로 커밋될 때 기본 브랜치가 생성됩니다. 위 브랜치를 선택하고 저장하세요.</p>}</div>}
                   </>}
-                  {directory && <div className="github-directory"><span><b>4</b> 폴더</span><p>둘러보는 폴더 <strong>{directory.currentPath || '/'}</strong></p><p>선택한 저장 위치 <strong>{accountSettings.githubRootPath || '/'}</strong></p><div>{directory.currentPath && <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.parentPath, false)} disabled={targetBusy}>상위 폴더</button>}{!tree && directory.directories.map(name => <button type="button" key={name} onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath ? `${directory.currentPath}/${name}` : name, false)} disabled={targetBusy}>{name}/</button>)}</div><button type="button" className="github-select-directory" disabled={targetBusy || !!treeError || !tree || !browsedRootSavable || savedTarget !== null && accountSettings.githubRootPath === (directory.currentPath || null)} onClick={() => updateAccountSettings({ ...accountSettings, githubRootPath: directory.currentPath || null, githubAutoCommitEnabled: false }, true, true)}>이 폴더를 저장 위치로 선택</button>{!browsedRootSavable && <small role="status">이 폴더는 살펴볼 수 있지만 자동 커밋 위치로 저장할 수 없습니다.</small>}<small>유효한 선택은 자동으로 연결을 확인합니다.</small></div>}
+                  {directory && <div className="github-directory"><span><b>4</b> 폴더</span><p>둘러보는 폴더 <strong>{directory.currentPath || '/'}</strong></p><p>선택한 저장 위치 <strong>{accountSettings.githubRootPath || '/'}</strong></p><div>{directory.currentPath && <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.parentPath, false)} disabled={targetBusy}>상위 폴더</button>}{!tree && directory.directories.map(name => <button type="button" key={name} onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath ? `${directory.currentPath}/${name}` : name, false)} disabled={targetBusy}>{name}/</button>)}</div><label className="github-readme-option"><input type="checkbox" checked={readmeOnConnect} onChange={event => onReadmeOnConnectChange(event.target.checked)} /> 연결하면 README에 CodeArchive 배지 추가</label><button type="button" className="github-select-directory" disabled={targetBusy || !!treeError || !tree || !browsedRootSavable || savedTarget !== null && accountSettings.githubRootPath === (directory.currentPath || null)} onClick={() => updateAccountSettings({ ...accountSettings, githubRootPath: directory.currentPath || null, githubAutoCommitEnabled: false }, true, true)}>이 폴더를 저장 위치로 선택</button>{!browsedRootSavable && <small role="status">이 폴더는 살펴볼 수 있지만 자동 커밋 위치로 저장할 수 없습니다.</small>}<small>유효한 선택은 자동으로 연결을 확인합니다.</small></div>}
                   {directory && <div className="github-tree"><strong>파일·폴더 구조</strong>{treeError && <p role="alert">{treeError} <button type="button" onClick={() => void chooseBranch(accountSettings.githubBranch!, directory.currentPath, false)} disabled={targetBusy}>다시 확인</button></p>}{tree && <><ul>{tree.items.map(entry => <li key={`${entry.path}:${entry.type}`} className={entry.type === 'tree' && accountSettings.githubRootPath === entry.path ? 'is-selected' : ''}>{entry.type === 'tree' ? <button type="button" aria-current={accountSettings.githubRootPath === entry.path ? 'location' : undefined} disabled={targetBusy || !/^[A-Za-z0-9_.-]+$/.test(entry.name)} onClick={() => void chooseBranch(accountSettings.githubBranch!, entry.path, false)}>{entry.name}/</button> : <span>{entry.name}{entry.type === 'commit' ? ' (서브모듈)' : ''}</span>}</li>)}</ul>{tree.items.length === 0 && <p>이 폴더에 파일이 없습니다.</p>}{tree.hasMore && <button type="button" className="ghost-button" disabled={targetBusy} onClick={() => void loadMoreTree()}>파일 더 보기</button>}{tree.truncated && <p role="status">GitHub가 일부 항목만 반환했습니다. 더 작은 하위 폴더에서 확인해 주세요.</p>}</>}</div>}
                   {directory && tree?.headSha && <div className="github-add-file">
                     <strong>이 폴더에 새 항목 추가</strong>

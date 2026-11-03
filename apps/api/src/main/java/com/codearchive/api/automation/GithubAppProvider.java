@@ -12,7 +12,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
  private static final Duration OPERATION_PREVIEW_TTL=Duration.ofMinutes(5);
  private static final int MAX_OPERATION_FILES=100,MAX_OPERATION_DEPTH=32,MAX_OPERATION_TREE_REQUESTS=256,MAX_PREVIEW_TOKEN_LENGTH=4096;
  private static final int MAX_FILE_PREVIEW_BYTES=65536;
- public static final String INITIAL_README="# CodeArchive\n\n이 저장소는 CodeArchive로 관리하는 알고리즘 풀이를 보관합니다. 지원 사이트에서 PASS한 풀이가 설정에 따라 자동 수집·동기화·커밋됩니다.\n\n저장된 풀이에는 플랫폼, 문제 번호와 제목, 제출 언어, 소스 코드, 수집 가능한 실행 시간과 메모리 정보가 포함될 수 있습니다. 폴더 구조와 파일명, 커밋 메시지, 문제 정보 주석은 CodeArchive 설정에 따라 달라집니다.\n";
+ /** The markers let a later connection refresh the section wherever the owner moved it. */
+ public static final String README_SECTION_START="<!-- codearchive:start -->",README_SECTION_END="<!-- codearchive:end -->";
+ private static final String STORE_URL="https://chromewebstore.google.com/detail/codearchive/mlhibjadcbklfdllkonhjjajhmhnoalj";
+ public static final String README_SECTION=README_SECTION_START+"\n[![Automated by CodeArchive](https://img.shields.io/badge/Automated%20by-CodeArchive-685ca9)]("+STORE_URL+")\n\n이 저장소의 알고리즘 풀이는 [CodeArchive]("+STORE_URL+")로 관리합니다. 지원 사이트에서 PASS한 풀이가 설정에 따라 자동 수집·동기화·커밋됩니다.\n"+README_SECTION_END;
+ public static final String INITIAL_README="# CodeArchive\n\n"+README_SECTION+"\n\n저장된 풀이에는 플랫폼, 문제 번호와 제목, 제출 언어, 소스 코드, 수집 가능한 실행 시간과 메모리 정보가 포함될 수 있습니다. 폴더 구조와 파일명, 커밋 메시지, 문제 정보 주석은 CodeArchive 설정에 따라 달라집니다.\n";
  /**
   * Commits are written by the App installation but attributed to the
   * repository owner: their GitHub display name (or login) and the GitHub
@@ -394,6 +398,58 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
  private void validateSafeEntry(JsonNode entry){String name=entry.path("path").asText(),type=entry.path("type").asText(),mode=entry.path("mode").asText(),object=entry.path("sha").asText();if(!safeBrowsePart(name)||!sha(object)||!("blob".equals(type)&&("100644".equals(mode)||"100755".equals(mode))||"tree".equals(type)&&"040000".equals(mode)))throw new TargetConflictException("unsafe repository entry");}
  private static Map<String,Object> treeEntry(String path,String mode,String type,String object){Map<String,Object> value=new LinkedHashMap<>();value.put("path",path);value.put("mode",mode);value.put("type",type);value.put("sha",object);return value;}
  public void validateTarget(String githubId,long installation,long repository,String branch,String root)throws Exception{directories(githubId,installation,repository,branch,root==null?"":root);}
+ /** Resolves a saved owner/name target through the installation, never through a browser-supplied repository ID. */
+ public long repositoryId(String githubId,long installation,String owner,String name)throws Exception{for(int page=1;page<=100;page++){PageResult<RepositoryChoice> result=repositoriesPage(githubId,installation,page);for(RepositoryChoice choice:result.items())if(choice.owner().equals(owner)&&choice.name().equals(name))return choice.id();if(!result.hasMore())break;}throw new SecurityException("repository unavailable");}
+ public record ReadmeSectionResult(String outcome,String reason,String path,String commitSha){static ReadmeSectionResult skipped(String reason){return new ReadmeSectionResult("SKIPPED",reason,null,null);}}
+ /**
+  * Puts the CodeArchive section in the root Markdown README of a connected
+  * branch: refreshes an existing section in place, adds one under the title,
+  * or creates README.md when the root has no README. A protected or not yet
+  * created branch, and a README that is not exactly one editable Markdown
+  * file, are reported as skipped instead of written.
+  */
+ public ReadmeSectionResult ensureReadmeSection(String githubId,long installation,long repository,String branch,CommitIdentity author)throws Exception{
+  BranchChoice selected=selectedBranch(githubId,installation,repository,branch);
+  // An empty repository has no branch until README initialization or the first solution commit.
+  if(selected==null)return ReadmeSectionResult.skipped("BRANCH_UNAVAILABLE");
+  if(selected.protectedBranch())return ReadmeSectionResult.skipped("PROTECTED_BRANCH");
+  String head=null;List<TreeEntry> readmes=new ArrayList<>();
+  for(int page=1;page<=50;page++){
+   TreePage root=treePage(githubId,installation,repository,branch,"",page);
+   if(head==null)head=root.headSha();
+   if(head==null)return ReadmeSectionResult.skipped("BRANCH_UNAVAILABLE");
+   for(TreeEntry entry:root.items())if("blob".equals(entry.type())&&entry.name().matches("(?i)readme(\\.[a-z0-9]+)?"))readmes.add(entry);
+   if(!root.hasMore())break;
+  }
+  if(readmes.isEmpty())return new ReadmeSectionResult("CREATED",null,"README.md",addFile(githubId,installation,repository,branch,"README.md",INITIAL_README,"Add CodeArchive README",head,false,author));
+  if(readmes.size()>1||!readmes.get(0).name().matches("(?i)readme\\.(md|markdown)"))return ReadmeSectionResult.skipped("UNSUPPORTED_README");
+  String path=readmes.get(0).path();
+  FileView file=fileView(githubId,installation,repository,branch,path);
+  String next=file.content()==null?null:withReadmeSection(file.content());
+  if(next==null||next.getBytes(StandardCharsets.UTF_8).length>MAX_FILE_PREVIEW_BYTES)return ReadmeSectionResult.skipped("UNSUPPORTED_README");
+  if(next.equals(file.content()))return new ReadmeSectionResult("UNCHANGED",null,path,null);
+  boolean refresh=file.content().contains(README_SECTION_START);
+  return new ReadmeSectionResult(refresh?"UPDATED":"ADDED",null,path,replaceFile(githubId,installation,repository,branch,path,next,refresh?"Update CodeArchive section in README":"Add CodeArchive section to README",file.headSha(),file.blobSha(),author));
+ }
+ /**
+  * Returns the README with exactly one current CodeArchive section, or null
+  * when its markers are damaged. A new section goes right under a leading
+  * `#` title, or at the very top, so the badge stays visible.
+  */
+ static String withReadmeSection(String readme){
+  String newline=readme.contains("\r\n")?"\r\n":"\n",section=README_SECTION.replace("\n",newline);
+  int start=readme.indexOf(README_SECTION_START),end=readme.indexOf(README_SECTION_END);
+  if(start>=0||end>=0){
+   if(start<0||end<start||readme.indexOf(README_SECTION_START,start+1)>=0||readme.indexOf(README_SECTION_END,end+1)>=0)return null;
+   return readme.substring(0,start)+section+readme.substring(end+README_SECTION_END.length());
+  }
+  String bom=!readme.isEmpty()&&readme.charAt(0)==0xFEFF?readme.substring(0,1):"",text=readme.substring(bom.length());
+  int lineEnd=text.indexOf('\n');
+  String first=(lineEnd<0?text:text.substring(0,lineEnd)).replaceFirst("\r$","");
+  String title=first.matches("#(?:[ \\t].*)?")?first:null;
+  String rest=(title==null?text:lineEnd<0?"":text.substring(lineEnd+1)).replaceFirst("^(?:[ \\t]*\\r?\\n)+","");
+  return bom+(title==null?"":title+newline+newline)+section+newline+(rest.isBlank()?"":newline+rest);
+ }
  public String initializeReadme(String githubId,long installation,long repository)throws Exception{return initializeReadme(githubId,installation,repository,null);}
  public String initializeReadme(String githubId,long installation,long repository,CommitIdentity author)throws Exception{
   String token=installationToken(installation);
