@@ -3,6 +3,14 @@ spring:
     password: ${DB_PASSWORD}
     hikari:
       maximum-pool-size: ${DB_POOL_MAX_SIZE:5}
+      # Neon bills compute until 5 minutes pass without a query. A warm Cloud
+      # Run instance would otherwise keep pooled connections open, refill them
+      # after Neon suspends, and validate them every 2 minutes (HikariCP's
+      # keepalive), so the database never slept. Hold no idle connection,
+      # close one after a minute unused, and never ping.
+      minimum-idle: 0
+      idle-timeout: 60000
+      keepalive-time: 0
   jpa:
     hibernate:
       ddl-auto: validate
