@@ -26,7 +26,9 @@ spring:
     jdbc:
       # Production is Flyway-owned; local and test profiles override this for H2.
       initialize-schema: never
-      cleanup-cron: "0 0 * * * *"
+      # Once a day (19:00 UTC, 04:00 KST): every run wakes the database, and an
+      # expired session is already refused when it is read.
+      cleanup-cron: "0 0 19 * * *"
   jackson:
     time-zone: UTC
 codearchive:

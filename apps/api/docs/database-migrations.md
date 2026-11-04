@@ -28,8 +28,11 @@ and `github_commit_jobs` has the `(user_id, capture_id)` idempotency constraint 
 state/creation and state/update indexes.
 
 V6 creates the standard Spring Session JDBC tables additively. In production the
-application accesses them in `codearchive_v2`; the session cleanup job is hourly,
-which avoids repeatedly waking a scale-to-zero database.
+application accesses them in `codearchive_v2`; the session cleanup job runs once a
+day (19:00 UTC), which avoids repeatedly waking a scale-to-zero database. For the
+same reason the production pool keeps no idle connection (`minimum-idle: 0`),
+closes one after a minute unused, and disables HikariCP's keepalive ping, so a
+warm Cloud Run instance does not keep Neon's compute running between requests.
 
 ## Current history expectations
 
