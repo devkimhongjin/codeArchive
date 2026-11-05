@@ -51,14 +51,15 @@ test('popup has only a dashboard shortcut and no local options, history shortcut
   assert.equal(document.querySelector('.dashboard-link')?.getAttribute('href'), 'dashboard.html');
   assert.equal(document.querySelector('.dashboard-link')?.getAttribute('target'), '_blank');
 });
-test('recent list includes only synced distinct problems and retains performance and KST time', async () => {
+test('recent card shows only the latest synced problem and retains performance and KST time', async () => {
   const { document } = parseHTML(html);
   mountPopup(document, { load: async () => ({ settings: {}, recentCaptures: [record('pending', 'PENDING'), record('one', 'SYNCED', '1'), record('duplicate', 'SYNCED', '1'), record('two'), record('three'), record('four')] }), copy: async () => {} }); await settle();
-  assert.equal(document.querySelectorAll('.recent-item').length, 3);
-  assert.doesNotMatch(document.querySelector('#recent-list')!.textContent!, /pending|duplicate|four/);
+  assert.equal(document.querySelectorAll('.recent-item').length, 1);
+  assert.match(document.querySelector('#recent-list')!.textContent!, /Problem one/);
+  assert.doesNotMatch(document.querySelector('#recent-list')!.textContent!, /pending|duplicate|two|three|four/);
   assert.match(document.querySelector('#recent-list')!.textContent!, /0 ms · 메모리 0 KB/);
   assert.equal(document.querySelector('.recent-title')?.getAttribute('href'), 'dashboard.html');
-  assert.equal(document.querySelector('#recent-count')?.textContent, '3문제');
+  assert.equal(document.querySelector('#recent-count')?.textContent, '1문제');
 });
 test('GitHub switch opens management when no repository target is connected', async () => {
   const { document } = parseHTML(html); const opened: string[] = []; const patches: unknown[] = [];
@@ -194,14 +195,15 @@ test('remote status polling retains confirmed labels and DOM while delayed or un
 
 test('the synced label opens the solution in the dashboard and a finished commit opens its GitHub file', async () => {
   const id = '11111111-1111-4111-8111-111111111111', other = '22222222-2222-4222-8222-222222222222';
-  const { document } = parseHTML(html);
-  mountPopup(document, {
-    load: async () => ({ settings: { accountId: '1' }, recentCaptures: [record(id, 'SYNCED', '1'), record(other, 'SYNCED', '2')] }), copy: async () => {},
-    loadGithubStatuses: async () => ({ statuses: { [id]: 'SUCCEEDED', [other]: 'SUCCEEDED' },
-      links: { [id]: 'https://github.com/me/archive/blob/main/SWEA/1.java', [other]: 'javascript:alert(1)' } }),
-  });
-  await settle(); await settle();
-  const [first, second] = [...document.querySelectorAll<HTMLElement>('.recent-item')];
+  const statuses = async () => ({ statuses: { [id]: 'SUCCEEDED' as const, [other]: 'SUCCEEDED' as const },
+    links: { [id]: 'https://github.com/me/archive/blob/main/SWEA/1.java', [other]: 'javascript:alert(1)' } });
+  const mount = async (latest: string, older: string) => {
+    const { document } = parseHTML(html);
+    mountPopup(document, { load: async () => ({ settings: { accountId: '1' }, recentCaptures: [record(latest, 'SYNCED', '1'), record(older, 'SYNCED', '2')] }), copy: async () => {}, loadGithubStatuses: statuses });
+    await settle(); await settle();
+    return document.querySelector<HTMLElement>('.recent-item')!;
+  };
+  const first = await mount(id, other);
   const sync = first!.querySelector<HTMLAnchorElement>('a.sync-label')!;
   assert.equal(sync.getAttribute('href'), `dashboard.html?capture=${id}`); assert.equal(sync.target, '_blank'); assert.equal(sync.textContent, '동기화됨');
   assert.equal(first!.querySelector<HTMLAnchorElement>('a.recent-title')!.getAttribute('href'), `dashboard.html?capture=${id}`);
@@ -209,6 +211,7 @@ test('the synced label opens the solution in the dashboard and a finished commit
   assert.equal(github.getAttribute('href'), 'https://github.com/me/archive/blob/main/SWEA/1.java'); assert.equal(github.textContent, 'GitHub 완료');
   assert.equal(github.rel, 'noopener noreferrer');
   // A link that is not a github.com page stays a plain label.
+  const second = await mount(other, id);
   assert.equal(second!.querySelector('a.github-label'), null);
   assert.equal(second!.querySelector('span.github-label')?.textContent, 'GitHub 완료');
 });
