@@ -110,7 +110,7 @@ export function HistoricalGithubCommitView({ user, mode, revision = 0, selection
             owner: fixed.settings.githubOwner!, repository: fixed.settings.githubRepository!, branch: fixed.settings.githubBranch! } })
         if (!active()) return
         if (task.task.account !== `${initial.id}:${initial.githubId}` || JSON.stringify(task.task.captureIds) !== JSON.stringify(fixed.records.map(record => record.captureId))) throw new Error('백그라운드 작업 접수를 확인하지 못했습니다.')
-        setMessage('일괄 커밋을 시작했습니다. CodeArchive 확장 팝업에서 진행 상황을 확인하세요.')
+        setMessage('일괄 커밋을 시작했습니다. 화면 위쪽에서 진행 상황을 확인하세요.')
         window.dispatchEvent(new Event('codearchive-github-batch-started'))
         return
       }

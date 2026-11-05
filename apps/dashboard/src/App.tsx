@@ -31,6 +31,7 @@ import {
 import { ApiError, addGithubFile, bulkUpload, enableAccountAutomaticSync, getAccountSettings, getMe, getSolutions, issueRelayGrant, logout, revokeRelayGrant, updateAccountSettings, getGithubInstallations, startGithubInstallation, getGithubRepositories, getGithubBranches, getGithubDirectories, getGithubTree, getGithubEmptyDefaultBranch, getGithubReadmePreview, initializeGithubReadme, previewGithubTreeOperation, commitGithubTreeOperation } from './api'
 import { BridgeError, parseAckResponse, parseBridgeStatusResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
 import { requestIsCurrent, type RequestFence } from './requestFence'
+import { GithubBatchProgress } from './GithubBatchProgress'
 import { acceptedIdsForAck } from './syncLogic'
 import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type BulkResponse, type GithubAddFileRequest, type GithubSavedTarget, type GithubTreeOperationPreview, type Solution, type Toast, type User, type ViewName } from './types'
 import { CodeBlock, CodeThemeSelect } from './CodeBlock'
@@ -1461,6 +1462,7 @@ export default function App() {
       </header>
 
       <main className="page-content">
+        <GithubBatchProgress user={user} showCompleted={view === 'github'} />
         <DesktopVersion /><DesktopUpdateNotice />
         <section className={`connection-banner is-${displayedBridgeStatus} ${extensionUpdateRequired ? 'needs-update' : ''}`} role="status">
           <div className="connection-icon"><Icon name={displayedBridgeStatus === 'connected' ? 'check' : displayedBridgeStatus === 'connecting' ? 'sync' : 'link'} size={17} /></div>
