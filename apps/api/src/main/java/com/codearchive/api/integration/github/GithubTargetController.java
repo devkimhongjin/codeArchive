@@ -64,6 +64,19 @@ import com.codearchive.api.auth.*;import com.codearchive.api.automation.GithubAp
   catch(Exception e){return ResponseEntity.status(503).body(new ApiError("Tree operation outcome could not be confirmed; check GitHub before retrying"));}
  }
  @GetMapping("/readme-preview") public ResponseEntity<?> readmePreview(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected){return call(a,expected,id->Map.of("content",GithubAppProvider.INITIAL_README));}
+ /** Writes only to the server-saved target, so a browser cannot point the README edit at another repository or branch. */
+ @PostMapping("/readme-section") public ResponseEntity<?> readmeSection(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected){
+  var checked=GithubAccountAssertion.require(a,expected,users);
+  if(!checked.accepted())return checked.failure();
+  if(!github.browseReady())return ResponseEntity.status(503).body(new ApiError("GitHub App provider is unavailable"));
+  UserSettings saved=settings.findByUserId(checked.account().user().getId()).orElse(null);
+  if(saved==null||!saved.githubTargetConfigured())return ResponseEntity.status(409).body(new ApiError("GitHub target is not saved"));
+  try{String githubId=checked.account().githubId();long installation=saved.getGithubInstallationId();return ResponseEntity.ok(github.ensureReadmeSection(githubId,installation,github.repositoryId(githubId,installation,saved.getGithubOwner(),saved.getGithubRepository()),saved.getGithubBranch(),GithubAppProvider.CommitIdentity.of(checked.account().user())));}
+  catch(GithubAppProvider.TargetConflictException|GithubAppProvider.FileMissingException e){return ResponseEntity.status(409).body(new ApiError("Repository changed while updating README; reconnect to retry"));}
+  catch(IllegalArgumentException e){return ResponseEntity.badRequest().body(new ApiError("Invalid README target"));}
+  catch(SecurityException e){return ResponseEntity.status(403).body(new ApiError("Repository is not available to this account"));}
+  catch(Exception e){return ResponseEntity.status(503).body(new ApiError("README update outcome could not be confirmed; check GitHub before retrying"));}
+ }
  @GetMapping("/installations/{id}/repositories/{repo}/empty-default-branch") public ResponseEntity<?> emptyDefaultBranch(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected,@PathVariable long id,@PathVariable long repo){return call(a,expected,githubId->Map.of("defaultBranch",github.emptyDefaultBranch(githubId,id,repo)));}
  @PostMapping("/installations/{id}/repositories/{repo}/initialize-readme") public ResponseEntity<?> initializeReadme(Authentication a,@RequestHeader(value=GithubAccountAssertion.HEADER,required=false) String expected,@PathVariable long id,@PathVariable long repo){
   var checked=GithubAccountAssertion.require(a,expected,users);

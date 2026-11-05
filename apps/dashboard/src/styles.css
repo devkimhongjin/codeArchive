@@ -297,7 +297,7 @@ h1, h2, p { margin-top: 0; }
 .github-create-guide-body > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .github-create-guide-body a { color: #6850bf; font-size: var(--text-xs); font-weight: 700; }
 .github-empty-repository > strong { color: #514866; font-size: var(--text-xs); }
-.github-empty-repository > label { display: flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: #514866; font-size: var(--text-xs); }
+.github-empty-repository > label, .github-directory > .github-readme-option { display: flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: #514866; font-size: var(--text-xs); }
 .github-empty-repository pre { max-height: 180px; overflow: auto; margin: 0; padding: 10px; color: var(--text-body); background: #fff; border: 1px solid var(--line); border-radius: var(--radius-sm); white-space: pre-wrap; font-size: var(--text-xs); line-height: 1.5; }
 .github-empty-repository > button { justify-self: start; }
 
