@@ -143,3 +143,6 @@ export type GithubTreeOperationPreview = GithubTreeOperationPreviewRequest & { p
 export type GithubPage<T> = { items: T[]; hasMore: boolean }
 export { LIGHT_THEMES, DARK_THEMES } from '../../../shared/codeThemes'
 export type { LightTheme, DarkTheme } from '../../../shared/codeThemes'
+/** AI code review (#251). `enabled` is false unless the server operator turned the feature on. */
+export type AiStatus = { enabled: boolean; provider: string | null; model: string | null; dailyLimit: number; usedToday: number; consentGranted: boolean; noticeVersion: string; maxSourceBytes: number }
+export type AiReview = { captureId: string; provider: string; model: string; promptVersion: string; summary: string; suggestions: string[]; createdAt: string; cached: boolean }

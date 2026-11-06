@@ -34,6 +34,15 @@ spring:
 codearchive:
   desktop-login:
     enabled: ${DESKTOP_LOGIN_ENABLED:false}
+  ai:
+    # AI code review (#251) stays off until an operator turns it on; this flag is
+    # also the kill switch. No real model is connected yet: "fake" is the only
+    # provider and is meant for tests and local previews.
+    enabled: ${AI_ENABLED:false}
+    provider: ${AI_PROVIDER:none}
+    daily-limit: ${AI_DAILY_LIMIT:5}
+    max-source-bytes: ${AI_MAX_SOURCE_BYTES:20000}
+    timeout-ms: ${AI_TIMEOUT_MS:20000}
   github:
     client-id: ${GITHUB_CLIENT_ID:}
     client-secret: ${GITHUB_CLIENT_SECRET:}
