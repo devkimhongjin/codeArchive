@@ -628,9 +628,15 @@ it('fails closed and returns to local mode when a GitHub-account assertion is re
 
 it('fails closed when an inline theme save receives an account-mismatch 409', async () => {
   const solution = { captureId: 'theme-account-mismatch', platform: 'SWEA' as const, problemNumber: '45', title: '계정 테마', problemUrl: 'https://example.test/45', language: 'Java', sourceCode: 'class Main {}', result: 'ACCEPTED' }
-  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([solution]); mocks.settings.mockResolvedValue({ ...settings, autoSyncEnabled: false, githubAutoCommitEnabled: false }); mocks.save.mockRejectedValue(new ApiError('GitHub account changed; reconnect required', 409))
+  // Account settings arrive after the solution list, so the theme change only
+  // saves once they are acknowledged; the test waits for that instead of racing it.
+  const accountSettings = deferred<AccountSettings>()
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([solution]); mocks.settings.mockReturnValue(accountSettings.promise); mocks.save.mockRejectedValue(new ApiError('GitHub account changed; reconnect required', 409))
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT' ? Promise.resolve({ capability: 'theme-assertion-capability' }) : Promise.resolve({ ok: true }))
   render(<App />); await screen.findAllByText('계정 테마')
+  expect(mocks.save).not.toHaveBeenCalled()
+  accountSettings.resolve({ ...settings, autoSyncEnabled: false, githubAutoCommitEnabled: false })
+  await waitFor(() => expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe('one-light'))
   const configurationsBeforeRejection = bridgeMessages('CONFIGURE_RELAY').length
   fireEvent.change(screen.getByLabelText('코드 보기 테마'), { target: { value: 'solarized-light' } })
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ lightTheme: 'solarized-light' }), 'account-17'))
