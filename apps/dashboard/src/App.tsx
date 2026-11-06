@@ -32,6 +32,7 @@ import { ApiError, addGithubFile, bulkUpload, enableAccountAutomaticSync, getAcc
 import { BridgeError, parseAckResponse, parseBridgeStatusResponse, parseConnectResponse, parsePendingResponse, parseRelayReuseResponse, relayHandoffKey, requestBridge } from './bridge'
 import { requestIsCurrent, type RequestFence } from './requestFence'
 import { GithubBatchProgress } from './GithubBatchProgress'
+import { AiReviewPanel } from './AiReviewPanel'
 import { acceptedIdsForAck } from './syncLogic'
 import { DARK_THEMES, GITHUB_LOGIN_URL, LIGHT_THEMES, type AccountSettings, type BulkResponse, type GithubAddFileRequest, type GithubReadmeSectionResult, type GithubSavedTarget, type GithubTreeOperationPreview, type Solution, type Toast, type User, type ViewName } from './types'
 import { CodeBlock, CodeThemeSelect } from './CodeBlock'
@@ -1541,6 +1542,7 @@ export default function App() {
             lightTheme={accountSettings.lightTheme}
             darkTheme={accountSettings.darkTheme}
             onOtherSolutions={(platform, problemNumber) => changeCommunityRoute({ platform, problemNumber, languageKey: '', page: 0, detailId: null })}
+            user={user}
             codeThemeMode={codeThemeMode}
             onCodeThemeChange={(theme) => chooseCodeTheme(theme, true)}
           />
@@ -1676,6 +1678,7 @@ function SolutionsView({
   lightTheme,
   darkTheme,
   onOtherSolutions,
+  user,
   codeThemeMode,
   onCodeThemeChange,
 }: {
@@ -1706,6 +1709,7 @@ function SolutionsView({
   lightTheme: AccountSettings['lightTheme']
   darkTheme: AccountSettings['darkTheme']
   onOtherSolutions: (platform: Solution['platform'], problemNumber: string) => void
+  user: User | null
   codeThemeMode: CodeThemeMode
   onCodeThemeChange: (theme: CodeTheme) => void
 }) {
@@ -1767,7 +1771,7 @@ function SolutionsView({
           </div>
           <div className="list-footer"><span><span className="status-dot" /> {mode === 'local' ? '로컬 기록 · 업로드 전' : '서버와 연결됨'}</span><span>제출 {filteredSolutions.length} / {solutions.length}건</span></div>
         </section>
-        <SolutionDetail solution={selectedSolution} group={selectedGroup} onSelectSubmission={setSelectedId} mode={mode} onCopy={onCopy} onDownload={onDownload} lightTheme={lightTheme} darkTheme={darkTheme} codeThemeMode={codeThemeMode} onOtherSolutions={onOtherSolutions} />
+        <SolutionDetail solution={selectedSolution} group={selectedGroup} onSelectSubmission={setSelectedId} mode={mode} onCopy={onCopy} onDownload={onDownload} lightTheme={lightTheme} darkTheme={darkTheme} codeThemeMode={codeThemeMode} onOtherSolutions={onOtherSolutions} user={user} />
       </div>
     </section>
   )
@@ -1789,7 +1793,7 @@ function SolutionGroupRow({ group, selected, onSelect, onOtherSolutions }: { gro
   )
 }
 
-function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onDownload, lightTheme, darkTheme, codeThemeMode, onOtherSolutions }: { solution: Solution | null; group: SolutionGroup | null; onSelectSubmission: (captureId: string) => void; mode: 'local' | 'live'; onCopy: () => void; onDownload: () => void; lightTheme: AccountSettings['lightTheme']; darkTheme: AccountSettings['darkTheme']; codeThemeMode: CodeThemeMode; onOtherSolutions: (platform: Solution['platform'], problemNumber: string) => void }) {
+function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onDownload, lightTheme, darkTheme, codeThemeMode, onOtherSolutions, user }: { solution: Solution | null; group: SolutionGroup | null; onSelectSubmission: (captureId: string) => void; mode: 'local' | 'live'; onCopy: () => void; onDownload: () => void; lightTheme: AccountSettings['lightTheme']; darkTheme: AccountSettings['darkTheme']; codeThemeMode: CodeThemeMode; onOtherSolutions: (platform: Solution['platform'], problemNumber: string) => void; user: User | null }) {
   return (
     <section className="solution-detail" aria-label="선택한 풀이 상세">
       {!solution ? (
@@ -1813,6 +1817,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
           <div className="code-toolbar"><div className="code-toolbar-title"><Icon name="code" size={16} /> 소스 코드 <span>{sourceFileExtension(solution.language)}</span></div><div className="code-actions"><button onClick={onCopy}><Icon name="copy" size={14} /> 복사</button><button onClick={onDownload}><Icon name="download" size={14} /> 다운로드</button></div></div>
           <CodeBlock code={solution.sourceCode} language={solution.language} lightTheme={lightTheme} darkTheme={darkTheme} activeMode={codeThemeMode} />
           <div className="detail-note"><Icon name="spark" size={14} /><span>{solution.historicalImport ? mode === 'live' ? '과거 풀이의 원본을 확인해 서버에 등록한 기록입니다. GitHub 커밋은 별도로 요청할 수 있습니다.' : '이 브라우저에 보관한 과거 풀이입니다. 과거 풀이 관리 탭에서 서버 동기화와 GitHub 커밋을 요청할 수 있습니다.' : mode === 'local' ? '이 브라우저의 로컬 기록입니다. 로그인 후 명시적으로 동기화할 수 있습니다.' : '이 기록은 연결된 확장 프로그램에서 관측한 제출 결과를 바탕으로 합니다.'}</span></div>
+          {mode === 'live' && user && <AiReviewPanel user={user} captureId={solution.captureId} />}
         </>
       )}
     </section>
