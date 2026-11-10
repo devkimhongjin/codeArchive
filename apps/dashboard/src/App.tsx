@@ -978,6 +978,7 @@ export default function App() {
     autoSyncEnabled: relay !== null,
     githubAutoCommitEnabled: relay !== null && saved.githubAutoCommitEnabled,
     githubTargetConfigured: saved.githubTargetConfigured,
+    githubDuplicateCommits: saved.githubDuplicateCommits,
     copyHeader: saved.copyHeader,
     downloadHeader: saved.downloadHeader,
     copyHeaderFields: normalizedHeaderFields(saved.copyHeaderFields),

@@ -1,5 +1,5 @@
 import { createUuid } from "./capture";
-import type { Capture, CaptureSettings } from "./types";
+import { githubDuplicateCommits, type Capture, type CaptureSettings } from "./types";
 import type { CaptureStore, CaptureSummary } from "./storage";
 import type { Platform } from "./types";
 import { BUILD_METADATA } from "../../../shared/buildMetadata";
@@ -36,7 +36,7 @@ export type DashboardMessage =
   /** Reuse a durable relay after an MV3 service-worker restart without exposing its bearer secret. */
   | { type: "REUSE_RELAY"; capability: string; accountId: string; settingsVersion: number }
   | { type: "ACK"; capability: string; captureIds: string[]; captureRevisions?: Array<{ captureId: string; revision: number }> }
-  | { type: "CONFIGURE_RELAY"; capability: string; relay: { endpoint: string; secret: string; accountId: string; generation: number } | null; accountId?: string; settingsVersion?: number; autoSyncEnabled?: boolean; githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; copyHeader?: boolean; downloadHeader?: boolean; copyHeaderFields?: HeaderField[]; downloadHeaderFields?: HeaderField[]; downloadFilenameTemplate?: string; gitPathTemplate?: string; name?: string | null; nickname?: string | null; lightTheme?: string; darkTheme?: string }
+  | { type: "CONFIGURE_RELAY"; capability: string; relay: { endpoint: string; secret: string; accountId: string; generation: number } | null; accountId?: string; settingsVersion?: number; autoSyncEnabled?: boolean; githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; githubDuplicateCommits?: string; copyHeader?: boolean; downloadHeader?: boolean; copyHeaderFields?: HeaderField[]; downloadHeaderFields?: HeaderField[]; downloadFilenameTemplate?: string; gitPathTemplate?: string; name?: string | null; nickname?: string | null; lightTheme?: string; darkTheme?: string }
   | { type: "DISCONNECT"; capability: string };
 
 export interface DashboardSender {
@@ -243,6 +243,7 @@ export class DashboardBridge {
       const shared = {
         ...(accountId ? { accountId } : {}),
         ...(settingsVersion !== undefined ? { accountSettingsVersion: settingsVersion } : {}),
+        ...(githubDuplicateCommits(automatic.githubDuplicateCommits) ? { githubDuplicateCommits: githubDuplicateCommits(automatic.githubDuplicateCommits) } : {}),
         ...(typeof automatic.copyHeader === "boolean" ? { copyHeader: automatic.copyHeader } : {}),
         ...(typeof automatic.downloadHeader === "boolean" ? { downloadHeader: automatic.downloadHeader } : {}),
         ...(Array.isArray(automatic.copyHeaderFields) ? { copyHeaderFields: normalizedHeaderFields(automatic.copyHeaderFields) } : {}),

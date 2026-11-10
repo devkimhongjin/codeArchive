@@ -15,7 +15,7 @@ import {
 } from "./sweaProblemContext";
 import { SWEA_ORIGIN, SWEA_SOLVING_PATH, SWEA_USER_SUBMISSIONS_PATH } from "./adapters/sweaSelectors";
 import { activeSubmissionProgress, SUBMISSION_PROGRESS_KEY, updateSubmissionProgress } from "./submissionProgress";
-import type { CaptureSettings, Platform } from "./types";
+import { githubDuplicateCommits, type CaptureSettings, type Platform } from "./types";
 import { isJungolHistoryPath, isJungolHistorySenderUrl } from "./historicalJungol";
 import { SiteSyncService, validSiteSyncRow } from "./siteSync";
 import { checkSiteLogins } from "./siteLogin";
@@ -502,7 +502,7 @@ type InternalMessage =
   | { type: "SET_SUBMISSION_PROGRESS"; attemptId: unknown; platform?: unknown; problemNumber?: unknown; title?: unknown; phase: unknown }
   | { type: "GET_POPUP_STATE" }
   | { type: 'GET_POPUP_LOCAL_STATE' }
-  | { type: "SET_GITHUB_AUTOMATION"; enabled: boolean; accountId: string; settingsVersion: number }
+  | { type: "SET_GITHUB_AUTOMATION"; enabled: boolean; accountId: string; settingsVersion: number; duplicateCommits?: unknown }
   | { type: "RETRY_RELAY" }
   | { type: "SYNC_PENDING_NOW" }
   | { type: "GET_GITHUB_COMMIT_STATUSES"; captureIds: unknown }
@@ -708,7 +708,7 @@ function isArchivePageSender(sender: chrome.runtime.MessageSender): boolean {
 function popupLocalSettings(settings: CaptureSettings) {
   return { accountId: settings.accountId, accountSettingsVersion: settings.accountSettingsVersion, autoSyncEnabled: settings.autoSyncEnabled,
     githubAutoCommitEnabled: settings.githubAutoCommitEnabled, githubTargetConfigured: settings.githubTargetConfigured,
-    relay: settings.relay ? { status: settings.relay.status } : undefined };
+    githubDuplicateCommits: settings.githubDuplicateCommits ?? 'ALL', relay: settings.relay ? { status: settings.relay.status } : undefined };
 }
 
 function isPopupSender(sender: chrome.runtime.MessageSender): boolean {
@@ -966,13 +966,15 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       sendResponse({ ok: false, error: 'UNAUTHORIZED' }); return false;
     }
     if (typeof object.enabled !== 'boolean' || typeof object.accountId !== 'string' || !/^\d{1,40}$/.test(object.accountId) ||
-      !Number.isSafeInteger(object.settingsVersion) || (object.settingsVersion as number) < 0) {
+      !Number.isSafeInteger(object.settingsVersion) || (object.settingsVersion as number) < 0 ||
+      (object.duplicateCommits !== undefined && !githubDuplicateCommits(object.duplicateCommits))) {
       sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false;
     }
     if (popupGithubBusy) { sendResponse({ ok: false, error: 'BUSY' }); return false; }
     popupGithubBusy = true;
     void popupRelayDeviceId().then(deviceId => setPopupGithubAutomation(store, {
       enabled: object.enabled as boolean, accountId: object.accountId as string, settingsVersion: object.settingsVersion as number,
+      ...(githubDuplicateCommits(object.duplicateCommits) ? { duplicateCommits: githubDuplicateCommits(object.duplicateCommits) } : {}),
     }, deviceId)).then(result => {
       if (result.ok && result.relayReady) void requestRelayDrain();
       sendResponse(result);

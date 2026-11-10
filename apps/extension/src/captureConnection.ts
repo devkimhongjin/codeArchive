@@ -1,5 +1,5 @@
 import type { CaptureStore } from './storage';
-import type { CaptureSettings } from './types';
+import { githubDuplicateCommits, type CaptureSettings } from './types';
 import { PUBLIC_API_ORIGIN } from '../../../shared/publicApiOrigin';
 
 export type CaptureConnectionStatus = 'READY' | 'LOGIN_REQUIRED' | 'OFFLINE' | 'ACCOUNT_CHANGED' | 'RECONNECT_REQUIRED';
@@ -29,7 +29,7 @@ export async function restoreCaptureSession(store: Store, deviceId: string, fetc
     validatedAccountId = accountId;
     if (original.accountId && original.accountId !== accountId) return reply('ACCOUNT_CHANGED');
     const accountHeaders = { 'X-CodeArchive-Github-Id': user.githubId };
-    const saved = await (await request('/api/settings', { headers: accountHeaders })).json() as { version: number; autoSyncEnabled: boolean; githubAutoCommitEnabled: boolean; githubTargetConfigured: boolean };
+    const saved = await (await request('/api/settings', { headers: accountHeaders })).json() as { version: number; autoSyncEnabled: boolean; githubAutoCommitEnabled: boolean; githubTargetConfigured: boolean; githubDuplicateCommits?: unknown };
     if (!Number.isSafeInteger(saved.version) || saved.version < 0 || saved.autoSyncEnabled !== true ||
       (original.accountSettingsVersion !== undefined && saved.version < original.accountSettingsVersion)) return reply('RECONNECT_REQUIRED');
     if (!same(original, await store.getSettings())) return reply('ACCOUNT_CHANGED');
@@ -61,6 +61,7 @@ export async function restoreCaptureSession(store: Store, deviceId: string, fetc
       // settings version; grant renewal does not refresh all export/theme fields.
       return { ...current, accountId, autoSyncEnabled: true,
         githubAutoCommitEnabled: saved.githubAutoCommitEnabled === true, githubTargetConfigured: saved.githubTargetConfigured === true,
+        ...(githubDuplicateCommits(saved.githubDuplicateCommits) ? { githubDuplicateCommits: githubDuplicateCommits(saved.githubDuplicateCommits) } : {}),
         relay: { accountId, generation: saved.version, secret: grant.secret, endpoint: endpoint.href, status: 'CONFIRMED' } };
     });
     return reply(applied ? 'READY' : 'ACCOUNT_CHANGED');

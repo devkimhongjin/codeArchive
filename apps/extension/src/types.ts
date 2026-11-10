@@ -112,12 +112,19 @@ export interface PlatformAdapter {
   hasPendingSubmissionAttempt?(): boolean;
 }
 
+export type GithubDuplicateCommits = 'ALL' | 'FIRST_ACCEPTED';
+export function githubDuplicateCommits(value: unknown): GithubDuplicateCommits | undefined {
+  return value === 'ALL' || value === 'FIRST_ACCEPTED' ? value : undefined;
+}
+
 export interface CaptureSettings {
   autoSyncEnabled: boolean;
   /** Device-local preference; it is never overwritten by dashboard relay settings. */
   autoDownloadEnabled: boolean;
   githubAutoCommitEnabled: boolean;
   githubTargetConfigured: boolean;
+  /** Server preference for automatic commits of a problem accepted again in the same language. */
+  githubDuplicateCommits?: GithubDuplicateCommits;
   /** Opaque server relay data only: never GitHub/OAuth credentials. */
   relay?: { endpoint: string; secret: string; accountId: string; generation: number; status: "CONFIRMED" | "PENDING" | "OFFLINE" | "AUTH_EXPIRED" | "RELAY_ERROR" | "REVOCATION_PENDING" };
   copyHeader?: boolean;

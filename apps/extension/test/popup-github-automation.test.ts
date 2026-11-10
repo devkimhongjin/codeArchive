@@ -57,6 +57,25 @@ for (const enabled of [false, true]) test(`popup ${enabled ? 'OFF' : 'ON'} persi
   assert.equal(f.calls.filter(call => call.path === 'PUT /api/settings').length, 1);
 });
 
+test('popup duplicate choice changes only that setting and renews the relay', async () => {
+  const f = await fixture(true);
+  f.hooks.set('PUT /api/settings', () => json({ ...settings(true), version: 8, githubDuplicateCommits: 'FIRST_ACCEPTED' }));
+  const result = await setPopupGithubAutomation(f.store, { enabled: true, accountId: '9', settingsVersion: 7, duplicateCommits: 'FIRST_ACCEPTED' }, 'popup-device-fixture', f.fetcher);
+  assert.deepEqual(result, { ok: true, relayReady: true });
+  const put = JSON.parse(String(f.calls.find(call => call.path === 'PUT /api/settings')!.init.body));
+  assert.equal(put.githubDuplicateCommits, 'FIRST_ACCEPTED'); assert.equal(put.githubAutoCommitEnabled, true); assert.equal(put.nickname, 'keep-nickname');
+  const local = await f.store.getSettings();
+  assert.equal(local.githubDuplicateCommits, 'FIRST_ACCEPTED'); assert.equal(local.relay?.secret, 'fresh-relay');
+});
+
+test('a server that ignores the duplicate choice is reported as unconfirmed', async () => {
+  const f = await fixture(true);
+  f.hooks.set('PUT /api/settings', () => json({ ...settings(true), version: 8 }));
+  const result = await setPopupGithubAutomation(f.store, { enabled: true, accountId: '9', settingsVersion: 7, duplicateCommits: 'FIRST_ACCEPTED' }, 'popup-device-fixture', f.fetcher);
+  assert.deepEqual(result, { ok: false, error: 'SAVE_UNCONFIRMED' });
+  assert.equal(f.calls.some(call => call.path === 'POST /api/relay/grants'), false);
+});
+
 test('missing target opens connection flow without settings writes or grants', async () => {
   const f = await fixture(); f.setServer({ ...settings(), githubTargetConfigured: false });
   assert.deepEqual(await f.run(), { ok: false, needsTarget: true });
