@@ -166,7 +166,7 @@ export function inspectServiceDatasource(service, serviceName, expectedSpringPro
   ]));
 }
 
-function validatePolicyShape(policy, nowIso) {
+function validatePolicyShape(policy, nowIso, allowExpired = false) {
   if (!policy || typeof policy !== 'object' || policy.schemaVersion !== 1) deny('POLICY_SCHEMA_UNSUPPORTED');
   if (policy.inventoryStatus !== 'verified') deny('POLICY_INVENTORY_UNVERIFIED');
   const reviewedAt = requiredString(policy.reviewedAt, 'POLICY_REVIEW_MISSING');
@@ -177,7 +177,7 @@ function validatePolicyShape(policy, nowIso) {
   if (![reviewedMs, validUntilMs, nowMs].every(Number.isFinite) || reviewedMs > nowMs || validUntilMs <= reviewedMs) {
     deny('POLICY_TIME_INVALID');
   }
-  if (nowMs >= validUntilMs) deny('POLICY_INVENTORY_EXPIRED');
+  if (!allowExpired && nowMs >= validUntilMs) deny('POLICY_INVENTORY_EXPIRED');
   if (!Array.isArray(policy.services) || policy.services.length === 0
       || !Array.isArray(policy.datasourceAliases) || policy.datasourceAliases.length === 0
       || !Array.isArray(policy.approvedNonproductionDatabases) || policy.approvedNonproductionDatabases.length === 0
@@ -253,9 +253,9 @@ async function verifyObservedBinding({ project, serviceName, observed, alias, re
   return execution;
 }
 
-export async function createPreflightPlan({ policy, request, loadService, resolveSecretVersion, now = () => new Date().toISOString() }) {
+export async function createPreflightPlan({ policy, request, loadService, resolveSecretVersion, now = () => new Date().toISOString(), allowExpiredInventory = false }) {
   const generatedAt = now();
-  validatePolicyShape(policy, generatedAt);
+  validatePolicyShape(policy, generatedAt, allowExpiredInventory);
   const project = requiredString(request?.project, 'TARGET_PROJECT_MISSING');
   const region = requiredString(request?.region, 'TARGET_REGION_MISSING');
   const targets = request?.targets;
@@ -309,6 +309,31 @@ export async function createPreflightPlan({ policy, request, loadService, resolv
     ...core,
     generatedAt,
     fingerprint: fingerprintCore(core),
+  };
+}
+
+/**
+ * Read-only inventory review. It runs every check of createPreflightPlan
+ * against the live services and Secret Manager metadata except the policy
+ * expiry, so a lapsed policy can be renewed from fresh evidence instead of by
+ * date alone. Its report carries secret names and numeric versions only, and it
+ * is never used to derive deploy bindings.
+ */
+export async function inspectInventory({ policy, request, loadService, resolveSecretVersion, now = () => new Date().toISOString() }) {
+  const plan = await createPreflightPlan({ policy, request, loadService, resolveSecretVersion, now, allowExpiredInventory: true });
+  return {
+    schemaVersion: 1,
+    inspectedAt: plan.generatedAt,
+    policy: {
+      reviewedAt: policy.reviewedAt,
+      validUntil: policy.validUntil,
+      expired: Date.parse(plan.generatedAt) >= Date.parse(policy.validUntil),
+    },
+    project: plan.project,
+    region: plan.region,
+    targets: plan.targets.map(({ targetRole, service, datasourceAlias, canonicalDatabaseId, datasourceSecrets }) =>
+      ({ targetRole, service, datasourceAlias, canonicalDatabaseId, datasourceSecrets })),
+    fingerprint: plan.fingerprint,
   };
 }
 
@@ -427,33 +452,35 @@ async function readJson(path, code) {
   }
 }
 
-async function prepare(values) {
-  const policyPath = arg(values, 'policy');
-  const outPath = arg(values, 'out');
-  const project = arg(values, 'project');
-  const region = arg(values, 'region');
-  const apiService = arg(values, 'api-service');
-  const workerService = arg(values, 'worker-service');
-  const gcloudBin = arg(values, 'gcloud-bin', false) ?? 'gcloud';
-
-  const policy = await readJson(policyPath, 'POLICY_READ_FAILED');
-  const reader = makeGcloudReader({ gcloudBin });
-  const plan = await createPreflightPlan({
+async function liveInputs(values) {
+  const policy = await readJson(arg(values, 'policy'), 'POLICY_READ_FAILED');
+  const reader = makeGcloudReader({ gcloudBin: arg(values, 'gcloud-bin', false) ?? 'gcloud' });
+  return {
     policy,
     request: {
-      project,
-      region,
+      project: arg(values, 'project'),
+      region: arg(values, 'region'),
       targets: [
-        { targetRole: 'api', service: apiService },
-        { targetRole: 'worker', service: workerService },
+        { targetRole: 'api', service: arg(values, 'api-service') },
+        { targetRole: 'worker', service: arg(values, 'worker-service') },
       ],
     },
     loadService: reader.loadService,
     resolveSecretVersion: reader.resolveSecretVersion,
-  });
+  };
+}
+
+async function prepare(values) {
+  const outPath = arg(values, 'out');
+  const plan = await createPreflightPlan(await liveInputs(values));
 
   await writeFile(outPath, `${JSON.stringify(plan, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   process.stdout.write(`PREFLIGHT_OK ${plan.fingerprint}\n`);
+}
+
+async function inspect(values) {
+  const report = await inspectInventory(await liveInputs(values));
+  process.stdout.write(`INVENTORY_OK ${report.fingerprint}\n${JSON.stringify(report, null, 2)}\n`);
 }
 
 async function bindings(values) {
@@ -473,6 +500,7 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     const { command, values } = parseArgs(argv);
     if (command === 'prepare') await prepare(values);
+    else if (command === 'inspect') await inspect(values);
     else if (command === 'bindings') await bindings(values);
     else if (command === 'fingerprint') await fingerprint(values);
     else deny('CLI_COMMAND_INVALID', command);
