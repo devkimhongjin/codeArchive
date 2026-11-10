@@ -7,6 +7,7 @@ import static org.mockito.Mockito.*;
 
 import com.codearchive.api.auth.AppUser;
 import com.codearchive.api.settings.SettingsRequest;
+import com.codearchive.api.settings.GithubDuplicateCommits;
 import com.codearchive.api.settings.UserSettings;
 import com.codearchive.api.settings.UserSettingsRepository;
 import com.codearchive.api.solution.Platform;
@@ -207,6 +208,31 @@ class GithubAutomationServiceTest {
     doAnswer(invocation -> { assertThat(((GithubProvider.FinalWriteGuard) invocation.getArgument(2)).stillAuthorized()).isTrue(); return GithubProvider.Result.succeeded(); }).when(provider).createOnly(eq(current), eq(normal), any());
     new GithubAutomationService(jobs, settingsRepo, solutions, provider).process(99L);
     assertThat(manual.getState()).isEqualTo(CommitJobState.SUCCEEDED);
+  }
+
+  @Test void firstAcceptedPolicySkipsALaterAcceptanceOfAnAlreadyCommittedProblemOnly() throws Exception {
+    var jobs = mock(GithubCommitJobRepository.class); var settingsRepo = mock(UserSettingsRepository.class);
+    AppUser user = AppUser.fromGithub("1", "owner", "Owner", null); set(user, "id", 1L);
+    UserSettings current = settings(user, 7, Instant.EPOCH);
+    when(settingsRepo.findByUserId(1L)).thenReturn(Optional.of(current));
+    when(jobs.findByUserIdAndCaptureId(any(), any())).thenReturn(Optional.empty());
+    when(jobs.save(any(GithubCommitJob.class))).thenAnswer(invocation -> invocation.getArgument(0));
+    var service = new GithubAutomationService(jobs, settingsRepo, mock(SolutionRepository.class), mock(GithubProvider.class));
+    Solution again = solution(user, "again", Instant.parse("2026-11-10T00:00:00Z"));
+
+    // The default keeps committing every accepted submission without looking for earlier ones.
+    service.consider(user, again);
+    verify(jobs, times(1)).save(any(GithubCommitJob.class));
+    verify(jobs, never()).existsCommitForProblem(any(), any(), any(), any(), any(), any());
+
+    set(current, "githubDuplicateCommits", GithubDuplicateCommits.FIRST_ACCEPTED);
+    when(jobs.existsCommitForProblem(1L, Platform.SWEA, "1", "java", "again", CommitJobState.FAILED)).thenReturn(true);
+    service.consider(user, again);
+    verify(jobs, times(1)).save(any(GithubCommitJob.class));
+
+    when(jobs.existsCommitForProblem(1L, Platform.SWEA, "1", "java", "again", CommitJobState.FAILED)).thenReturn(false);
+    service.consider(user, again);
+    verify(jobs, times(2)).save(any(GithubCommitJob.class));
   }
 
   private static UserSettings settings(AppUser user,long version,Instant boundary) throws Exception { UserSettings s=new UserSettings(user); s.apply(new SettingsRequest(0,"n","n",false,false,false,"{number}","{number}","Add {platform} {number} solution","github-light","github-dark",true,true,1L,"owner","repo","main",null)); set(s,"version",version); set(s,"automationEnabledAt",boundary); return s; }

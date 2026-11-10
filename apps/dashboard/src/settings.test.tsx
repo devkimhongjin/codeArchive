@@ -747,6 +747,17 @@ it('fences an ordinary A settings-save error while connect-live replaces A with 
   expect(bridgeMessages('CONFIGURE_RELAY').some(([, message]) => (message as { accountId?: string }).accountId === '17')).toBe(false)
 })
 
+it('saves the duplicate commit policy for automatic commits', async () => {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue(settings); mocks.save.mockImplementation((draft: AccountSettings) => Promise.resolve({ ...draft, version: draft.version + 1 }))
+  mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT' ? Promise.resolve({ capability: 'capability-1' }) : Promise.resolve({ ok: true }))
+  await openSettings()
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 관리' }))
+  const policy = await screen.findByLabelText('같은 문제를 다시 맞혔을 때') as HTMLSelectElement
+  expect(policy.value).toBe('ALL')
+  fireEvent.change(policy, { target: { value: 'FIRST_ACCEPTED' } })
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ githubDuplicateCommits: 'FIRST_ACCEPTED' }), 'account-17'))
+})
+
 it('saves a versioned complete settings draft and configures the opaque relay after grant issuance', async () => {
   mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue(settings); mocks.save.mockResolvedValue({ ...settings, version: 5 })
   mocks.grant.mockResolvedValue({ endpoint: '/api/relay/captures', secret: 'opaque-relay-secret', generation: 0, expiresAt: '2030-01-01T00:00:00Z' })

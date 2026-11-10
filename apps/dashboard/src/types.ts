@@ -104,6 +104,8 @@ export type AccountSettings = {
   autoSyncEnabled: boolean
   communityPublicByDefault?: boolean
   communityDuplicateVisibility?: CommunityDuplicateVisibility
+  /** Automatic commits of a problem accepted again in the same language. Absent on older servers. */
+  githubDuplicateCommits?: 'ALL' | 'FIRST_ACCEPTED'
   githubAutoCommitEnabled: boolean
   githubTargetConfigured: boolean
   githubStatus: 'AVAILABLE' | 'TARGET_MISSING' | string

@@ -33,6 +33,8 @@ public class UserSettings {
     @Column(name = "dark_theme") private String darkTheme = "github-dark";
     @Column(name = "auto_sync_enabled") private boolean autoSyncEnabled;
     @Column(name = "community_duplicate_visibility", nullable = false, length = 20) private String communityDuplicateVisibility = "all";
+    /** Automatic commits only: {@code ALL} or {@code FIRST_ACCEPTED} (see {@link GithubDuplicateCommits}). */
+    @Column(name = "github_duplicate_commits", nullable = false, length = 20) private String githubDuplicateCommits = GithubDuplicateCommits.ALL;
     @Column(name = "community_public_by_default", nullable = false) private boolean communityPublicByDefault = true;
     @Column(name = "github_auto_commit_enabled") private boolean githubAutoCommitEnabled;
     @Column(name = "github_installation_id") private Long githubInstallationId;
@@ -55,6 +57,7 @@ public class UserSettings {
     public String getLightTheme() { return lightTheme; } public String getDarkTheme() { return darkTheme; }
     public boolean isAutoSyncEnabled() { return autoSyncEnabled; } public boolean isGithubAutoCommitEnabled() { return githubAutoCommitEnabled; }
     public String getCommunityDuplicateVisibility() { return communityDuplicateVisibility; }
+    public String getGithubDuplicateCommits() { return githubDuplicateCommits; }
     public boolean isCommunityPublicByDefault() { return communityPublicByDefault; }
     public Long getGithubInstallationId() { return githubInstallationId; } public String getGithubOwner() { return githubOwner; } public String getGithubRepository() { return githubRepository; }
     public String getGithubBranch() { return githubBranch; } public String getGithubRootPath() { return githubRootPath; } public Instant getAutomationEnabledAt() { return automationEnabledAt; } public AppUser getUser() { return user; }
@@ -80,6 +83,7 @@ public class UserSettings {
         displayName = r.name(); nickname = r.nickname(); copyHeader = r.copyHeader(); downloadHeader = r.downloadHeader(); githubHeader = r.githubHeader();
         // Old dashboards omit this field; never reset an explicit private preference.
         if (r.communityDuplicateVisibility() != null) communityDuplicateVisibility = r.communityDuplicateVisibility();
+        if (r.githubDuplicateCommits() != null) githubDuplicateCommits = r.githubDuplicateCommits();
         if (r.communityPublicByDefault() != null) communityPublicByDefault = r.communityPublicByDefault();
         if (r.copyHeaderFields() != null) copyHeaderFields = HeaderFields.encode(r.copyHeaderFields());
         if (r.downloadHeaderFields() != null) downloadHeaderFields = HeaderFields.encode(r.downloadHeaderFields());

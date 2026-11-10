@@ -79,6 +79,7 @@ public class SettingsController {
   private static String validate(SettingsRequest r) {
     if (r == null || overOptional(r.name(),255) || overOptional(r.nickname(),80) || requiredOver(r.downloadFilenameTemplate(),160) || requiredOver(r.gitPathTemplate(),240) || (r.githubCommitMessageTemplate()!=null && requiredOver(r.githubCommitMessageTemplate(),200))) return "Invalid settings";
     if (r.communityDuplicateVisibility() != null && !com.codearchive.api.community.CommunityPublicationPolicy.valid(r.communityDuplicateVisibility())) return "Invalid duplicate publication policy";
+    if (r.githubDuplicateCommits() != null && !GithubDuplicateCommits.valid(r.githubDuplicateCommits())) return "Invalid duplicate commit policy";
     if (r.lightTheme() == null || r.darkTheme() == null || !LIGHT.contains(r.lightTheme()) || !DARK.contains(r.darkTheme())) return "Unsupported Shiki theme";
     if (!HeaderFields.valid(r.copyHeaderFields()) || !HeaderFields.valid(r.downloadHeaderFields()) || !HeaderFields.valid(r.githubHeaderFields())) return "Invalid header fields";
     if (r.downloadFilenameTemplate().contains("/") || r.downloadFilenameTemplate().contains("\\") || control(r.downloadFilenameTemplate()) || reserved(r.downloadFilenameTemplate())) return "Download filename is unsafe";

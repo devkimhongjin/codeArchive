@@ -3,7 +3,16 @@ public record SettingsRequest(long version, String name, String nickname, boolea
     String downloadFilenameTemplate, String gitPathTemplate, String githubCommitMessageTemplate, String lightTheme, String darkTheme, boolean autoSyncEnabled,
     boolean githubAutoCommitEnabled, Long githubInstallationId, String githubOwner, String githubRepository, String githubBranch, String githubRootPath,
     java.util.List<String> copyHeaderFields, java.util.List<String> downloadHeaderFields, java.util.List<String> githubHeaderFields,
-    Boolean communityPublicByDefault, String communityDuplicateVisibility) {
+    Boolean communityPublicByDefault, String communityDuplicateVisibility, String githubDuplicateCommits) {
+  public SettingsRequest(long version, String name, String nickname, boolean copyHeader, boolean downloadHeader, boolean githubHeader,
+      String downloadFilenameTemplate, String gitPathTemplate, String githubCommitMessageTemplate, String lightTheme, String darkTheme, boolean autoSyncEnabled,
+      boolean githubAutoCommitEnabled, Long githubInstallationId, String githubOwner, String githubRepository, String githubBranch, String githubRootPath,
+      java.util.List<String> copyHeaderFields, java.util.List<String> downloadHeaderFields, java.util.List<String> githubHeaderFields,
+      Boolean communityPublicByDefault, String communityDuplicateVisibility) {
+    this(version, name, nickname, copyHeader, downloadHeader, githubHeader, downloadFilenameTemplate, gitPathTemplate, githubCommitMessageTemplate,
+        lightTheme, darkTheme, autoSyncEnabled, githubAutoCommitEnabled, githubInstallationId, githubOwner, githubRepository, githubBranch, githubRootPath,
+        copyHeaderFields, downloadHeaderFields, githubHeaderFields, communityPublicByDefault, communityDuplicateVisibility, null);
+  }
   public SettingsRequest(long version, String name, String nickname, boolean copyHeader, boolean downloadHeader, boolean githubHeader,
       String downloadFilenameTemplate, String gitPathTemplate, String githubCommitMessageTemplate, String lightTheme, String darkTheme, boolean autoSyncEnabled,
       boolean githubAutoCommitEnabled, Long githubInstallationId, String githubOwner, String githubRepository, String githubBranch, String githubRootPath,
