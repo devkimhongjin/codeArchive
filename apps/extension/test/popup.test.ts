@@ -85,6 +85,26 @@ test('connected GitHub switch saves directly and coalesces clicks until acknowle
   assert.equal(toggle.checked, true); assert.equal(toggle.disabled, false); assert.equal(toggle.getAttribute('aria-checked'), 'true');
 });
 
+test('first-accepted checkbox shows only while automatic commits are on and saves through the switch path', async () => {
+  const { document } = parseHTML(html); const commands: unknown[] = [];
+  let enabled = false, duplicate = 'ALL';
+  mountPopup(document, { load: async () => ({ settings: { githubAutoCommitEnabled: enabled, githubTargetConfigured: true, githubDuplicateCommits: duplicate,
+    accountId: '9', accountSettingsVersion: 7, relay: { status: 'CONFIRMED' } } }), copy: async () => {},
+    updateGithubAutomation: async command => { commands.push(command); enabled = command.enabled; duplicate = command.duplicateCommits ?? duplicate; return { ok: true, relayReady: true }; } });
+  await settle();
+  const row = document.querySelector<HTMLElement>('#github-first-only-row')!, box = document.querySelector<HTMLInputElement>('#github-first-only')!;
+  const click = (target: Element) => target.dispatchEvent(new document.defaultView!.Event('click', { cancelable: true }));
+  assert.equal(row.hidden, true);
+  click(document.querySelector('#github-auto')!); await settle(); await settle();
+  assert.equal(row.hidden, false); assert.equal(box.checked, false);
+  click(box); await settle(); await settle();
+  assert.deepEqual(commands, [{ enabled: true, accountId: '9', settingsVersion: 7 }, { enabled: true, duplicateCommits: 'FIRST_ACCEPTED', accountId: '9', settingsVersion: 7 }]);
+  assert.equal(box.checked, true);
+  click(box); await settle(); await settle();
+  assert.deepEqual(commands[2], { enabled: true, duplicateCommits: 'ALL', accountId: '9', settingsVersion: 7 });
+  assert.equal(box.checked, false);
+});
+
 test('server-disconnected target redirects while failed saves retain the confirmed switch value', async () => {
   const { document } = parseHTML(html); const opened: string[] = []; let needsTarget = true;
   mountPopup(document, { load: async () => ({ settings: { githubAutoCommitEnabled: true, githubTargetConfigured: true,

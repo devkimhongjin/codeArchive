@@ -302,6 +302,27 @@ arbitrary JVM startup, or other scripts that do not call this preflight. Real
 DB separation/provider changes and any production deployment remain separate
 owner-approved operational gates.
 
+#### Renewing the policy from a live inspection
+
+`validUntil` keeps a reviewed inventory from being trusted indefinitely, so the
+policy lapses about weekly and `Deploy GCP Staging` then stops at
+`POLICY_INVENTORY_EXPIRED`. Renew it from fresh evidence rather than by date
+alone:
+
+1. Run the `Staging DB inventory` workflow on `develop`. It authenticates with
+   the same keyless identity as the deploy and runs
+   `staging-db-preflight.mjs inspect`, which performs every preflight check
+   against the live API, worker and Secret Manager metadata except the expiry.
+   It is read-only and never produces deploy bindings.
+2. A successful run prints `INVENTORY_OK <fingerprint>` and a report (inspection
+   time, the policy dates, each service's datasource alias, canonical database
+   and secret name/numeric version) in its job summary. Any difference from the
+   policy fails the run with the same denial code a deploy would get.
+3. Update `reviewedAt` to the inspection time, set `validUntil` seven days later,
+   and cite the run in the evidence fields and a
+   `docs/staging-inventory-review-<date>.md` record. Change nothing else unless
+   the inspection showed a reviewed binding change.
+
 Local checks for this guard are:
 
 ```text

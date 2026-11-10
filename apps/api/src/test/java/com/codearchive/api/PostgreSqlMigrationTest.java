@@ -37,7 +37,7 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
-    private static final int LATEST_MIGRATION = 32;
+    private static final int LATEST_MIGRATION = 33;
 
     @Test
     void supportReviewUpgradePreservesOldInquiriesAndMessages() throws Exception {
@@ -583,6 +583,7 @@ class PostgreSqlMigrationTest {
             assertEquals("NO", nullable("user_settings", "github_header"));
             assertEquals("NO", nullable("user_settings", "community_public_by_default"));
             assertEquals("NO", nullable("user_settings", "community_duplicate_visibility"));
+            assertEquals("NO", nullable("user_settings", "github_duplicate_commits"));
             assertEquals("'all'::character varying", scalar("SELECT column_default FROM information_schema.columns WHERE table_schema = ? AND table_name = 'user_settings' AND column_name = 'community_duplicate_visibility'", schema));
             for (String table : new String[] {"community_likes", "community_comments"}) {
                 assertEquals(table, scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_name = ?", schema, table));
