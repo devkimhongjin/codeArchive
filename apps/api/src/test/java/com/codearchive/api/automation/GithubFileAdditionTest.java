@@ -27,12 +27,17 @@ class GithubFileAdditionTest {
   private static final String NEW_COMMIT = "e".repeat(40);
   private static final String FILE = "1".repeat(40);
   private static final String RESULT_CHILD = "2".repeat(40);
+  private static final String README_BLOB = "3".repeat(40);
   private final ObjectMapper json = new ObjectMapper();
   private final AtomicInteger mutations = new AtomicInteger();
   private final AtomicInteger refReads = new AtomicInteger();
   private final AtomicInteger refUpdates = new AtomicInteger();
   private HttpServer server;
   private boolean protectedBranch;
+  /** When set, the root README has this readable content; otherwise it is an opaque blob. */
+  private String readme;
+  private String readmeName = "README.md";
+  private boolean noReadme;
   private boolean truncatedChild, oversizedChild, unsafeChild, staleOperationTree;
   private boolean staleEditedTree;
   private boolean includeUnicodeFile;
@@ -281,6 +286,55 @@ class GithubFileAdditionTest {
     assertThat(refUpdates).hasValue(0);
   }
 
+  @Test void addsTheCodeArchiveSectionUnderTheReadmeTitleInOneNonForceCommit() throws Exception {
+    readme = "# Algorithms\n\nNotes\n";
+
+    assertThat(provider().ensureReadmeSection("123", 44, 7, "main", null))
+        .isEqualTo(new GithubAppProvider.ReadmeSectionResult("ADDED", null, "README.md", NEW_COMMIT));
+    assertThat(treeRequest.path("tree").get(0).path("path").asText()).isEqualTo("README.md");
+    assertThat(treeRequest.path("tree").get(0).path("content").asText()).isEqualTo("# Algorithms\n\n" + GithubAppProvider.README_SECTION + "\n\nNotes\n");
+    assertThat(refUpdates).hasValue(1);
+    assertThat(refUpdateRequest.path("force").asBoolean(true)).isFalse();
+  }
+
+  @Test void refreshesAnOutdatedSectionAndLeavesACurrentOneAlone() throws Exception {
+    readme = "# Algorithms\n\n" + GithubAppProvider.README_SECTION_START + "\nold badge\n" + GithubAppProvider.README_SECTION_END + "\n";
+    assertThat(provider().ensureReadmeSection("123", 44, 7, "main", null).outcome()).isEqualTo("UPDATED");
+    assertThat(treeRequest.path("tree").get(0).path("content").asText()).isEqualTo("# Algorithms\n\n" + GithubAppProvider.README_SECTION + "\n");
+
+    mutations.set(0); refUpdates.set(0);
+    readme = GithubAppProvider.withReadmeSection("# Algorithms\n");
+    assertThat(provider().ensureReadmeSection("123", 44, 7, "main", null))
+        .isEqualTo(new GithubAppProvider.ReadmeSectionResult("UNCHANGED", null, "README.md", null));
+    assertThat(mutations).hasValue(0);
+    assertThat(refUpdates).hasValue(0);
+  }
+
+  @Test void createsTheCodeArchiveReadmeWhenTheRootHasNone() throws Exception {
+    noReadme = true;
+
+    assertThat(provider().ensureReadmeSection("123", 44, 7, "main", null))
+        .isEqualTo(new GithubAppProvider.ReadmeSectionResult("CREATED", null, "README.md", NEW_COMMIT));
+    assertThat(treeRequest.path("tree").get(0).path("path").asText()).isEqualTo("README.md");
+    assertThat(treeRequest.path("tree").get(0).path("content").asText()).isEqualTo(GithubAppProvider.INITIAL_README);
+    assertThat(refUpdates).hasValue(1);
+  }
+
+  @Test void skipsAProtectedBranchAndAReadmeItCannotSafelyEdit() throws Exception {
+    readme = "# Algorithms\n";
+    protectedBranch = true;
+    assertThat(provider().ensureReadmeSection("123", 44, 7, "main", null))
+        .isEqualTo(new GithubAppProvider.ReadmeSectionResult("SKIPPED", "PROTECTED_BRANCH", null, null));
+    protectedBranch = false; readmeName = "README.rst";
+    assertThat(provider().ensureReadmeSection("123", 44, 7, "main", null))
+        .isEqualTo(new GithubAppProvider.ReadmeSectionResult("SKIPPED", "UNSUPPORTED_README", null, null));
+    readmeName = "README.md"; readme = GithubAppProvider.README_SECTION_START + "\nno end marker\n";
+    assertThat(provider().ensureReadmeSection("123", 44, 7, "main", null))
+        .isEqualTo(new GithubAppProvider.ReadmeSectionResult("SKIPPED", "UNSUPPORTED_README", null, null));
+    assertThat(mutations).hasValue(0);
+    assertThat(refUpdates).hasValue(0);
+  }
+
   @Test void rejectsA201TreeThatStillContainsTheSourceBeforeCommitOrRefUpdate() throws Exception {
     GithubAppProvider provider = provider();
     var preview = provider.previewOperation("123", 44, 7,
@@ -318,6 +372,7 @@ class GithubFileAdditionTest {
       else reply(exchange, 200, "{\"truncated\":false,\"tree\":[{\"path\":\"File.java\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\",\"size\":3}]}");
     }
     else if (path.equals("/repos/owner/repo/git/blobs/" + FILE) && method.equals("GET")) reply(exchange, 200, "{\"sha\":\"" + FILE + "\",\"encoding\":\"base64\",\"size\":3,\"content\":\"b2xk\"}");
+    else if (readme != null && path.equals("/repos/owner/repo/git/blobs/" + README_BLOB) && method.equals("GET")) reply(exchange, 200, "{\"sha\":\"" + README_BLOB + "\",\"encoding\":\"base64\",\"size\":" + readme.getBytes(StandardCharsets.UTF_8).length + ",\"content\":\"" + Base64.getEncoder().encodeToString(readme.getBytes(StandardCharsets.UTF_8)) + "\"}");
     else if (reflectRefUpdates && treeRequest != null && path.equals("/repos/owner/repo/git/blobs/" + editedBlobSha()) && method.equals("GET")) reply(exchange, 200, "{\"sha\":\"" + editedBlobSha() + "\",\"encoding\":\"base64\",\"size\":3,\"content\":\"bmV3\"}");
     else if (path.equals("/repos/owner/repo/git/trees") && method.equals("POST")) { mutations.incrementAndGet(); treeRequest = json.readTree(exchange.getRequestBody()); reply(exchange, 201, "{\"sha\":\"" + NEW_TREE + "\"}"); }
     else if (path.equals("/repos/owner/repo/git/commits") && method.equals("POST")) { mutations.incrementAndGet(); reply(exchange, 201, "{\"sha\":\"" + NEW_COMMIT + "\"}"); }
@@ -325,9 +380,11 @@ class GithubFileAdditionTest {
     else reply(exchange, 404, "{}");
   }
 
-  private String rootTree() { return "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"mode\":\"040000\",\"type\":\"tree\",\"sha\":\"" + CHILD + "\"},{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}" + (includeUnicodeFile ? ",{\"path\":\"풀이.java\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\",\"size\":3}" : "") + "]}"; }
+  private String rootTree() { return rootTree(readme == null ? FILE : README_BLOB); }
+  private String rootTree(String readmeSha) { return "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"mode\":\"040000\",\"type\":\"tree\",\"sha\":\"" + CHILD + "\"}" + (noReadme ? "" : ",{\"path\":\"" + readmeName + "\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + readmeSha + "\"" + (readme == null ? "" : ",\"size\":" + readme.getBytes(StandardCharsets.UTF_8).length) + "}") + (includeUnicodeFile ? ",{\"path\":\"풀이.java\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\",\"size\":3}" : "") + "]}"; }
   private String operationResultTree() {
     if (staleOperationTree || treeRequest == null) return rootTree();
+    if (readme != null && readmeName.equals(treeRequest.path("tree").get(0).path("path").asText())) return rootTree(editedBlobSha());
     String first = treeRequest.path("tree").get(0).path("path").asText();
     if ("archive/File.java".equals(first)) return "{\"truncated\":false,\"tree\":[{\"path\":\"archive\",\"mode\":\"040000\",\"type\":\"tree\",\"sha\":\"" + CHILD + "\"},{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}";
     if ("src/Archived.java".equals(first)) return "{\"truncated\":false,\"tree\":[{\"path\":\"src\",\"mode\":\"040000\",\"type\":\"tree\",\"sha\":\"" + RESULT_CHILD + "\"},{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + FILE + "\"}]}";

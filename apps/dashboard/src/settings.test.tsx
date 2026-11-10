@@ -6,7 +6,7 @@ import { ApiError } from './api'
 import type { AccountSettings } from './types'
 
 const mocks = vi.hoisted(() => ({
-  extension: false, enableAutomaticSync: vi.fn(), markDraft: vi.fn(), me: vi.fn(), list: vi.fn(), settings: vi.fn(), save: vi.fn(), grant: vi.fn(), revoke: vi.fn(), logout: vi.fn(), bridge: vi.fn(), installations: vi.fn(), startInstallation: vi.fn(), repositories: vi.fn(), branches: vi.fn(), directories: vi.fn(), tree: vi.fn(), addFile: vi.fn(), previewTreeOperation: vi.fn(), commitTreeOperation: vi.fn(), emptyBranch: vi.fn(), readmePreview: vi.fn(), initializeReadme: vi.fn(), navigate: vi.fn(),
+  extension: false, enableAutomaticSync: vi.fn(), markDraft: vi.fn(), me: vi.fn(), list: vi.fn(), settings: vi.fn(), save: vi.fn(), grant: vi.fn(), revoke: vi.fn(), logout: vi.fn(), bridge: vi.fn(), installations: vi.fn(), startInstallation: vi.fn(), repositories: vi.fn(), branches: vi.fn(), directories: vi.fn(), tree: vi.fn(), addFile: vi.fn(), previewTreeOperation: vi.fn(), commitTreeOperation: vi.fn(), emptyBranch: vi.fn(), readmePreview: vi.fn(), initializeReadme: vi.fn(), readmeSection: vi.fn(), navigate: vi.fn(),
 }))
 
 vi.mock('./extensionEnvironment', async original => ({ ...await original<typeof import('./extensionEnvironment')>(), extensionRuntime: () => mocks.extension ? { id: 'oohlcmihldmfninmdcmanddfmhoonmdl' } : undefined }))
@@ -21,7 +21,7 @@ vi.mock('./api', async (original) => ({
   issueRelayGrant: mocks.grant,
   revokeRelayGrant: mocks.revoke,
   logout: mocks.logout,
-  getGithubInstallations: mocks.installations, startGithubInstallation: mocks.startInstallation, getGithubRepositories: mocks.repositories, getGithubBranches: mocks.branches, getGithubDirectories: mocks.directories, getGithubTree: mocks.tree, addGithubFile: mocks.addFile, previewGithubTreeOperation: mocks.previewTreeOperation, commitGithubTreeOperation: mocks.commitTreeOperation, getGithubEmptyDefaultBranch: mocks.emptyBranch, getGithubReadmePreview: mocks.readmePreview, initializeGithubReadme: mocks.initializeReadme,
+  getGithubInstallations: mocks.installations, startGithubInstallation: mocks.startInstallation, getGithubRepositories: mocks.repositories, getGithubBranches: mocks.branches, getGithubDirectories: mocks.directories, getGithubTree: mocks.tree, addGithubFile: mocks.addFile, previewGithubTreeOperation: mocks.previewTreeOperation, commitGithubTreeOperation: mocks.commitTreeOperation, getGithubEmptyDefaultBranch: mocks.emptyBranch, getGithubReadmePreview: mocks.readmePreview, initializeGithubReadme: mocks.initializeReadme, ensureGithubReadmeSection: mocks.readmeSection,
 }))
 vi.mock('./bridge', async (original) => ({ ...await original<typeof import('./bridge')>(), requestBridge: mocks.bridge }))
 vi.mock('./navigation', () => ({ navigateSameTab: mocks.navigate }))
@@ -59,7 +59,7 @@ async function openGithub() {
   await screen.findByRole('heading', { name: 'GitHub 관리' })
 }
 
-beforeEach(() => { mocks.emptyBranch.mockResolvedValue({ defaultBranch: 'main' }); mocks.readmePreview.mockResolvedValue({ content: '# CodeArchive\n\n풀이를 자동으로 보관합니다.' }); mocks.initializeReadme.mockResolvedValue({ defaultBranch: 'main' }); mocks.installations.mockResolvedValue([{ id: 77, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue({ items: [{ id: 7, owner: 'codearchive', name: 'solutions', fullName: 'codearchive/solutions', privateRepository: true, defaultBranch: 'main' }], hasMore: false }); mocks.branches.mockResolvedValue({ items: [{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }], hasMore: false }); mocks.tree.mockImplementation((_githubId: string, _installation: number, _repository: number, _branch: string, path = '') => Promise.resolve({ path, headSha: 'a'.repeat(40), items: path ? [] : [{ name: 'src', path: 'src', type: 'tree', size: 0 }], page: 1, hasMore: false, truncated: false })) })
+beforeEach(() => { mocks.readmeSection.mockResolvedValue({ outcome: 'UNCHANGED', reason: null, path: 'README.md', commitSha: null }); mocks.emptyBranch.mockResolvedValue({ defaultBranch: 'main' }); mocks.readmePreview.mockResolvedValue({ content: '# CodeArchive\n\n풀이를 자동으로 보관합니다.' }); mocks.initializeReadme.mockResolvedValue({ defaultBranch: 'main' }); mocks.installations.mockResolvedValue([{ id: 77, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue({ items: [{ id: 7, owner: 'codearchive', name: 'solutions', fullName: 'codearchive/solutions', privateRepository: true, defaultBranch: 'main' }], hasMore: false }); mocks.branches.mockResolvedValue({ items: [{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }], hasMore: false }); mocks.tree.mockImplementation((_githubId: string, _installation: number, _repository: number, _branch: string, path = '') => Promise.resolve({ path, headSha: 'a'.repeat(40), items: path ? [] : [{ name: 'src', path: 'src', type: 'tree', size: 0 }], page: 1, hasMore: false, truncated: false })) })
 afterEach(() => { mocks.extension = false; cleanup(); localStorage.clear(); window.history.replaceState({}, '', '/'); vi.clearAllMocks() })
 
 it('starts GitHub OAuth from the mandatory login popup on the first logged-out click', async () => {
@@ -329,6 +329,41 @@ it('uses only the server-verified GitHub target cascade and clears dependent con
   fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' })); await screen.findByRole('option', { name: 'archive-user' }); fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '9' } }); await screen.findByRole('option', { name: 'archive-user/repo' }); fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } }); await screen.findByRole('option', { name: 'main' }); fireEvent.change(screen.getByLabelText('브랜치'), { target: { value: 'main' } }); await screen.findByRole('button', { name: 'src/' }); fireEvent.click(screen.getByRole('button', { name: 'src/' })); await screen.findByRole('button', { name: '상위 폴더' }); fireEvent.click(screen.getByRole('button', { name: '상위 폴더' })); await screen.findByRole('button', { name: '이 폴더를 저장 위치로 선택' }); fireEvent.click(screen.getByRole('button', { name: '이 폴더를 저장 위치로 선택' })); await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ githubInstallationId: 9, githubOwner: 'archive-user', githubRepository: 'repo', githubBranch: 'main', githubRootPath: null, githubAutoCommitEnabled: false }), 'account-17')); expect(await screen.findByText('연결 완료')).toBeTruthy(); expect(screen.queryByRole('button', { name: '설정 저장' })).toBeNull(); expect(mocks.installations).toHaveBeenCalledWith('account-17'); expect(mocks.repositories).toHaveBeenCalledWith('account-17', 9, 1); expect(mocks.branches).toHaveBeenCalledWith('account-17', 9, 11, 1); expect(mocks.directories).toHaveBeenCalledWith('account-17', 9, 11, 'main', '')
 })
 
+async function connectArchiveRepository() {
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false }); mocks.save.mockImplementation((draft: AccountSettings) => Promise.resolve({ ...draft, version: draft.version + 1, githubTargetConfigured: true }))
+  mocks.installations.mockResolvedValue([{ id: 9, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue([{ id: 11, owner: 'archive-user', name: 'repo', fullName: 'archive-user/repo', privateRepository: true, defaultBranch: 'main' }]); mocks.branches.mockResolvedValue([{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }]); mocks.directories.mockResolvedValue({ currentPath: '', parentPath: '', directories: ['src'] })
+  mocks.bridge.mockResolvedValue({ capability: 'capability' }); await openGithub()
+  fireEvent.click(screen.getByRole('button', { name: 'GitHub 연결 및 저장 위치 선택' })); await screen.findByRole('option', { name: 'archive-user' }); fireEvent.change(screen.getByLabelText('GitHub 설치'), { target: { value: '9' } }); await screen.findByRole('option', { name: 'archive-user/repo' }); fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '11' } }); await screen.findByRole('option', { name: 'main' }); fireEvent.change(screen.getByLabelText('브랜치'), { target: { value: 'main' } })
+  const select = await screen.findByRole('button', { name: '이 폴더를 저장 위치로 선택' }) as HTMLButtonElement
+  await waitFor(() => expect(select.disabled).toBe(false))
+  return select
+}
+
+it('adds the CodeArchive README section once after a new repository connection is saved', async () => {
+  const readme = deferred<{ outcome: 'ADDED'; reason: null; path: string; commitSha: string }>()
+  mocks.readmeSection.mockReturnValueOnce(readme.promise)
+  const select = await connectArchiveRepository()
+  expect((screen.getByLabelText('연결하면 README에 CodeArchive 배지 추가') as HTMLInputElement).checked).toBe(true)
+  fireEvent.click(select)
+  await waitFor(() => expect(mocks.readmeSection).toHaveBeenCalledWith('account-17'))
+  await screen.findByText('계정 설정을 저장했습니다.')
+  await act(async () => { readme.resolve({ outcome: 'ADDED', reason: null, path: 'README.md', commitSha: 'e'.repeat(40) }) })
+  expect(await screen.findByText('README에 CodeArchive 배지를 넣었습니다.')).toBeTruthy()
+  // A later save of the same repository and branch does not write README again.
+  fireEvent.change(screen.getByLabelText('Git 저장 경로'), { target: { value: 'solutions/{time}' } })
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2))
+  expect(mocks.readmeSection).toHaveBeenCalledTimes(1)
+})
+
+it('leaves README untouched when the connection option is turned off', async () => {
+  const select = await connectArchiveRepository()
+  fireEvent.click(screen.getByLabelText('연결하면 README에 CodeArchive 배지 추가'))
+  fireEvent.click(select)
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ githubOwner: 'archive-user', githubRepository: 'repo', githubBranch: 'main' }), 'account-17'))
+  await screen.findByText('계정 설정을 저장했습니다.')
+  expect(mocks.readmeSection).not.toHaveBeenCalled()
+})
+
 it('browses folders without changing the draft target until explicitly selected', async () => {
   mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([]); mocks.settings.mockResolvedValue({ ...settings, githubInstallationId: null, githubOwner: null, githubRepository: null, githubBranch: null, githubRootPath: null, githubTargetConfigured: false, githubAutoCommitEnabled: false }); mocks.save.mockImplementation((draft: AccountSettings) => Promise.resolve({ ...draft, version: draft.version + 1, githubTargetConfigured: true }))
   mocks.installations.mockResolvedValue([{ id: 9, accountLogin: 'archive-user' }]); mocks.repositories.mockResolvedValue([{ id: 11, owner: 'archive-user', name: 'repo', fullName: 'archive-user/repo', privateRepository: true, defaultBranch: 'main' }]); mocks.branches.mockResolvedValue([{ name: 'main', protectedBranch: false, commitSha: 'a'.repeat(40) }]); mocks.directories.mockResolvedValueOnce({ currentPath: '', parentPath: '', directories: ['src'] }).mockResolvedValueOnce({ currentPath: 'src', parentPath: '', directories: [] })
@@ -593,9 +628,15 @@ it('fails closed and returns to local mode when a GitHub-account assertion is re
 
 it('fails closed when an inline theme save receives an account-mismatch 409', async () => {
   const solution = { captureId: 'theme-account-mismatch', platform: 'SWEA' as const, problemNumber: '45', title: '계정 테마', problemUrl: 'https://example.test/45', language: 'Java', sourceCode: 'class Main {}', result: 'ACCEPTED' }
-  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([solution]); mocks.settings.mockResolvedValue({ ...settings, autoSyncEnabled: false, githubAutoCommitEnabled: false }); mocks.save.mockRejectedValue(new ApiError('GitHub account changed; reconnect required', 409))
+  // Account settings arrive after the solution list, so the theme change only
+  // saves once they are acknowledged; the test waits for that instead of racing it.
+  const accountSettings = deferred<AccountSettings>()
+  mocks.me.mockResolvedValue(user); mocks.list.mockResolvedValue([solution]); mocks.settings.mockReturnValue(accountSettings.promise); mocks.save.mockRejectedValue(new ApiError('GitHub account changed; reconnect required', 409))
   mocks.bridge.mockImplementation((_id: string, message: { type: string }) => message.type === 'CONNECT' ? Promise.resolve({ capability: 'theme-assertion-capability' }) : Promise.resolve({ ok: true }))
   render(<App />); await screen.findAllByText('계정 테마')
+  expect(mocks.save).not.toHaveBeenCalled()
+  accountSettings.resolve({ ...settings, autoSyncEnabled: false, githubAutoCommitEnabled: false })
+  await waitFor(() => expect((screen.getByLabelText('코드 보기 테마') as HTMLSelectElement).value).toBe('one-light'))
   const configurationsBeforeRejection = bridgeMessages('CONFIGURE_RELAY').length
   fireEvent.change(screen.getByLabelText('코드 보기 테마'), { target: { value: 'solarized-light' } })
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ lightTheme: 'solarized-light' }), 'account-17'))

@@ -134,6 +134,7 @@ export type GithubTreeEntry = { name: string; path: string; type: 'tree' | 'blob
 export type GithubTreePage = { path: string; headSha: string | null; items: GithubTreeEntry[]; page: number; hasMore: boolean; truncated: boolean }
 export type GithubFileView = { path: string; headSha: string; blobSha: string; mode: string; size: number; content: string | null; unavailableReason: 'FILE_TOO_LARGE' | 'NON_TEXT' | 'UNSUPPORTED_TYPE' | null }
 export type GithubSavedTarget = { installationId: number; owner: string; repository: string; branch: string; rootPath: string | null }
+export type GithubReadmeSectionResult = { outcome: 'CREATED' | 'ADDED' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED'; reason: 'BRANCH_UNAVAILABLE' | 'PROTECTED_BRANCH' | 'UNSUPPORTED_README' | null; path: string | null; commitSha: string | null }
 export type GithubAddFileRequest = { branch: string; path: string; content: string; message: string; expectedHeadSha: string; placeholder: boolean }
 export type GithubEditFileRequest = { branch: string; path: string; content: string; message: string; expectedHeadSha: string; expectedBlobSha: string }
 export type GithubTreeOperationPreviewRequest = { operation: 'MOVE' | 'DELETE'; branch: string; sourcePath: string; destinationPath: string | null; message: string; expectedHeadSha: string }
@@ -142,3 +143,6 @@ export type GithubTreeOperationPreview = GithubTreeOperationPreviewRequest & { p
 export type GithubPage<T> = { items: T[]; hasMore: boolean }
 export { LIGHT_THEMES, DARK_THEMES } from '../../../shared/codeThemes'
 export type { LightTheme, DarkTheme } from '../../../shared/codeThemes'
+/** AI code review (#251). `enabled` is false unless the server operator turned the feature on. */
+export type AiStatus = { enabled: boolean; provider: string | null; model: string | null; dailyLimit: number; usedToday: number; consentGranted: boolean; noticeVersion: string; maxSourceBytes: number }
+export type AiReview = { captureId: string; provider: string; model: string; promptVersion: string; summary: string; suggestions: string[]; createdAt: string; cached: boolean }

@@ -26,12 +26,23 @@ spring:
     jdbc:
       # Production is Flyway-owned; local and test profiles override this for H2.
       initialize-schema: never
-      cleanup-cron: "0 0 * * * *"
+      # Once a day (19:00 UTC, 04:00 KST): every run wakes the database, and an
+      # expired session is already refused when it is read.
+      cleanup-cron: "0 0 19 * * *"
   jackson:
     time-zone: UTC
 codearchive:
   desktop-login:
     enabled: ${DESKTOP_LOGIN_ENABLED:false}
+  ai:
+    # AI code review (#251) stays off until an operator turns it on; this flag is
+    # also the kill switch. No real model is connected yet: "fake" is the only
+    # provider and is meant for tests and local previews.
+    enabled: ${AI_ENABLED:false}
+    provider: ${AI_PROVIDER:none}
+    daily-limit: ${AI_DAILY_LIMIT:5}
+    max-source-bytes: ${AI_MAX_SOURCE_BYTES:20000}
+    timeout-ms: ${AI_TIMEOUT_MS:20000}
   github:
     client-id: ${GITHUB_CLIENT_ID:}
     client-secret: ${GITHUB_CLIENT_SECRET:}

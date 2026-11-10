@@ -7,7 +7,7 @@ export type GithubBatchTask = BatchTarget & { taskId: string; account: string; s
 export type BatchTaskStorage = { get(): Promise<GithubBatchTask | null>; set(value: GithubBatchTask): Promise<void> };
 /**
  * Once every commit is requested the server settles them in the background, so the
- * runner looks again every few seconds and stores each look for the popup to read.
+ * runner looks again every few seconds and stores each look for the dashboard to read.
  * One pass stays well under a service worker's five-minute event limit; the
  * 30-second alarm resumes tracking after it.
  */

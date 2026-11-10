@@ -217,6 +217,27 @@ class GithubTargetControllerTest {
     verify(provider, never()).commitOperation(org.mockito.ArgumentMatchers.eq("123"), org.mockito.ArgumentMatchers.eq(44L), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq("signed-preview"), org.mockito.ArgumentMatchers.any(GithubAppProvider.CommitIdentity.class));
   }
 
+  @Test
+  void readmeSectionWritesOnlyToTheSavedTarget() throws Exception {
+    UserRepository users = mock(UserRepository.class);
+    GithubAppProvider provider = mock(GithubAppProvider.class);
+    AppUser user = AppUser.fromGithub("123", "account", "Name", null);
+    when(users.findByGithubId("123")).thenReturn(Optional.of(user));
+    when(provider.browseReady()).thenReturn(true);
+    when(provider.repositoryId("123", 44L, "account", "algorithm")).thenReturn(7L);
+    var added = new GithubAppProvider.ReadmeSectionResult("ADDED", null, "README.md", "e".repeat(40));
+    when(provider.ensureReadmeSection(org.mockito.ArgumentMatchers.eq("123"), org.mockito.ArgumentMatchers.eq(44L), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq("main"), org.mockito.ArgumentMatchers.any(GithubAppProvider.CommitIdentity.class))).thenReturn(added);
+
+    var response = new GithubTargetController(users, provider, savedTarget(user)).readmeSection(github("123", "account"), "123");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(response.getBody()).isEqualTo(added);
+    var unsaved = new GithubTargetController(users, provider, mock(UserSettingsRepository.class)).readmeSection(github("123", "account"), "123");
+    assertThat(unsaved.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    assertThat(new GithubTargetController(users, provider, savedTarget(user)).readmeSection(github("123", "account"), "456").getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    verify(provider).ensureReadmeSection(org.mockito.ArgumentMatchers.eq("123"), org.mockito.ArgumentMatchers.eq(44L), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq("main"), org.mockito.ArgumentMatchers.any(GithubAppProvider.CommitIdentity.class));
+  }
+
   private static UserSettingsRepository savedTarget(AppUser user) {
     UserSettingsRepository settings = mock(UserSettingsRepository.class);
     UserSettings saved = mock(UserSettings.class);
