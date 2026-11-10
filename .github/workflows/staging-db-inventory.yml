@@ -1,0 +1,62 @@
+name: Staging DB inventory
+
+# Read-only review of the live staging API and worker against
+# infra/gcp/staging-db-policy.json. It runs every deploy preflight check except
+# the policy expiry, so a lapsed policy can be renewed from fresh evidence.
+# It never builds, deploys, migrates or changes traffic.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: staging-db-inventory
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      API_SERVICE: codearchive-api-stg
+      WORKER_SERVICE: codearchive-github-worker-stg
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+
+      - name: Inspect live services and datasource secret versions (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="${RUNNER_TEMP}/staging-db-inventory.txt"
+          node infra/gcp/staging-db-preflight.mjs inspect \
+            --policy infra/gcp/staging-db-policy.json \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --api-service "${API_SERVICE}" \
+            --worker-service "${WORKER_SERVICE}" > "${report}"
+          cat "${report}"
+          {
+            echo "## Staging DB inventory"
+            echo
+            echo "Commit \`${GITHUB_SHA}\`, run ${GITHUB_RUN_ID}. Secret names and numeric versions only; no values."
+            echo
+            echo '```json'
+            tail -n +2 "${report}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"

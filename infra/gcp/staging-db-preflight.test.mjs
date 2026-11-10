@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   PreflightError,
   createPreflightPlan,
+  inspectInventory,
+  main,
   makeGcloudReader,
   renderBindings,
 } from './staging-db-preflight.mjs';
@@ -185,6 +187,38 @@ test('expired verified inventory is rejected', async () => {
     ...r,
     now: () => '2026-09-22T00:00:00Z',
   }));
+});
+
+test('inventory inspection reviews a lapsed policy against live services without relaxing any other check', async () => {
+  const policy = verifiedPolicy();
+  policy.validUntil = '2026-09-21T00:00:01Z';
+  const now = () => '2026-09-22T00:00:00Z';
+  const report = await inspectInventory({ policy, request: request(), ...readers(), now });
+
+  assert.equal(report.inspectedAt, '2026-09-22T00:00:00Z');
+  assert.deepEqual(report.policy, { reviewedAt: policy.reviewedAt, validUntil: '2026-09-21T00:00:01Z', expired: true });
+  assert.deepEqual(report.targets.map((target) => target.service), [API, WORKER]);
+  assert.equal(report.targets[0].datasourceSecrets.SPRING_DATASOURCE_URL.version, '7');
+  // The same live state gives the same fingerprint a deploy preflight would have produced.
+  const current = verifiedPolicy();
+  const plan = await createPreflightPlan({ policy: current, request: request(), ...readers(), now: () => '2026-09-21T00:00:00Z' });
+  assert.equal(report.fingerprint, plan.fingerprint);
+
+  await expectDenied('DATASOURCE_SECRET_VERSION_MISMATCH', () => inspectInventory({ policy, request: request(), ...readers({ version: '8' }), now }));
+  await expectDenied('PRODUCTION_SERVICE_BLOCKED', () => inspectInventory({ policy: Object.assign(verifiedPolicy({ apiRole: 'production' }), { validUntil: policy.validUntil }), request: request(), ...readers(), now }));
+  await expectDenied('POLICY_INVENTORY_EXPIRED', () => createPreflightPlan({ policy, request: request(), ...readers(), now }));
+});
+
+test('inspect command needs the same target arguments and reports a fixed denial code', async () => {
+  const errors = [];
+  const original = process.stderr.write;
+  process.stderr.write = (chunk) => { errors.push(String(chunk)); return true; };
+  try {
+    assert.equal(await main(['inspect', '--policy', 'missing-policy.json']), 2);
+  } finally {
+    process.stderr.write = original;
+  }
+  assert.deepEqual(errors, ['STAGING_DB_PREFLIGHT_DENY POLICY_READ_FAILED\n']);
 });
 
 test('duplicate Spring datasource env is rejected as ambiguous', async () => {
