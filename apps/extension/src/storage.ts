@@ -1,5 +1,5 @@
 import { normalizeDifficulty } from '../../../shared/difficulty';
-import { DEFAULT_CAPTURE_SETTINGS, type Capture, type CaptureSettings, type Platform, type SyncState } from "./types";
+import { DEFAULT_CAPTURE_SETTINGS, githubDuplicateCommits, type Capture, type CaptureSettings, type Platform, type SyncState } from "./types";
 import type { SweaProblemContext } from "./sweaProblemContext";
 import { canonicalLanguageKey } from "../../../shared/language";
 import { LIGHT_THEMES, DARK_THEMES } from "../../../shared/codeThemes";
@@ -126,6 +126,7 @@ function settingsWithDefaults(value: Partial<CaptureSettings> | undefined): Capt
     autoDownloadEnabled: value?.autoDownloadEnabled === true,
     githubAutoCommitEnabled: value?.githubAutoCommitEnabled === true,
     githubTargetConfigured: value?.githubTargetConfigured === true,
+    ...(githubDuplicateCommits(value?.githubDuplicateCommits) ? { githubDuplicateCommits: githubDuplicateCommits(value?.githubDuplicateCommits) } : {}),
     ...(typeof value?.copyHeader === "boolean" ? { copyHeader: value.copyHeader } : {}),
     ...(typeof value?.downloadHeader === "boolean" ? { downloadHeader: value.downloadHeader } : {}),
     copyHeaderFields: normalizedHeaderFields(value?.copyHeaderFields),

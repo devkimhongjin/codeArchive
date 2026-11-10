@@ -1,11 +1,12 @@
-import type { CaptureSettings } from './types';
+import { githubDuplicateCommits, type CaptureSettings, type GithubDuplicateCommits } from './types';
 import type { CaptureStore } from './storage';
 import type { AccountSettings, RelayGrant, User } from '../../dashboard/src/types';
 import { PUBLIC_API_ORIGIN } from '../../../shared/publicApiOrigin';
 
 const API_ORIGIN = PUBLIC_API_ORIGIN;
 type Store = Pick<CaptureStore, 'getSettings' | 'mutateSettings'>;
-export type GithubToggleRequest = { enabled: boolean; accountId: string; settingsVersion: number };
+/** `duplicateCommits` is sent only when the popup checkbox changes it; the switch keeps the saved value. */
+export type GithubToggleRequest = { enabled: boolean; accountId: string; settingsVersion: number; duplicateCommits?: GithubDuplicateCommits };
 export type GithubToggleResult = { ok: boolean; error?: string; needsTarget?: boolean; relayReady?: boolean };
 class RequestError extends Error { constructor(readonly status: number) { super('Request failed'); } }
 function sameSettings(current: CaptureSettings, expected: CaptureSettings): boolean {
@@ -51,10 +52,12 @@ export async function setPopupGithubAutomation(store: Store, command: GithubTogg
     // Read the authoritative full snapshot immediately before the conditional PUT.
     // The server validates its version/target and preserves unrelated fields.
     const next = await request<AccountSettings>('/api/settings', { method: 'PUT', headers,
-      body: JSON.stringify({ ...saved, autoSyncEnabled: true, githubAutoCommitEnabled: command.enabled }) });
+      body: JSON.stringify({ ...saved, autoSyncEnabled: true, githubAutoCommitEnabled: command.enabled,
+        ...(command.duplicateCommits ? { githubDuplicateCommits: command.duplicateCommits } : {}) }) });
     writeConfirmed = true;
     if (!Number.isSafeInteger(next.version) || next.version < saved.version || next.autoSyncEnabled !== true ||
-      next.githubAutoCommitEnabled !== command.enabled || next.githubTargetConfigured !== true) throw new RequestError(0);
+      next.githubAutoCommitEnabled !== command.enabled || next.githubTargetConfigured !== true ||
+      (command.duplicateCommits !== undefined && next.githubDuplicateCommits !== command.duplicateCommits)) throw new RequestError(0);
     let applied = false;
     await store.mutateSettings(current => {
       if (!sameSettings(current, original)) return current;
@@ -62,7 +65,8 @@ export async function setPopupGithubAutomation(store: Store, command: GithubTogg
       // PUT revokes old grants. Remove the old bearer before issuing the new one,
       // so an in-flight relay result cannot restore it after this handoff.
       pending = { ...current, accountSettingsVersion: next.version, autoSyncEnabled: true,
-        githubAutoCommitEnabled: next.githubAutoCommitEnabled, githubTargetConfigured: true, relay: undefined };
+        githubAutoCommitEnabled: next.githubAutoCommitEnabled, githubTargetConfigured: true, relay: undefined,
+        ...(githubDuplicateCommits(next.githubDuplicateCommits) ? { githubDuplicateCommits: githubDuplicateCommits(next.githubDuplicateCommits) } : {}) };
       return pending;
     });
     if (!applied || !pending) return { ok: false, error: 'ACCOUNT_CHANGED' };

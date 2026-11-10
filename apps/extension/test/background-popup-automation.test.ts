@@ -26,7 +26,7 @@ test('only the own popup can submit a boolean, account/version-bound GitHub cons
       assert.deepEqual(await send(from), { ok: false, error: 'UNAUTHORIZED' });
     }
     assert.equal(batchReads,initialBatchReads);
-    for (const invalid of [{ ...message, enabled: 'true' }, { ...message, settingsVersion: -1 }, { ...message, settingsVersion: 0.5 }, { ...message, accountId: 'not-an-account' }]) {
+    for (const invalid of [{ ...message, duplicateCommits: 'SOMETIMES' }, { ...message, enabled: 'true' }, { ...message, settingsVersion: -1 }, { ...message, settingsVersion: 0.5 }, { ...message, accountId: 'not-an-account' }]) {
       assert.deepEqual(await send(sender, invalid), { ok: false, error: 'BAD_REQUEST' });
     }
     assert.equal(storageCalls, 0);

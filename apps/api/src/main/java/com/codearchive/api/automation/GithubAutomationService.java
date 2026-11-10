@@ -1,6 +1,7 @@
 package com.codearchive.api.automation;
 
 import com.codearchive.api.auth.AppUser;
+import com.codearchive.api.settings.GithubDuplicateCommits;
 import com.codearchive.api.settings.UserSettings;
 import com.codearchive.api.settings.UserSettingsRepository;
 import com.codearchive.api.solution.Solution;
@@ -66,7 +67,7 @@ public class GithubAutomationService {
     @Transactional
     public void consider(AppUser user, Solution solution) {
         UserSettings current = settings.findByUserId(user.getId()).orElse(null);
-        if (!eligible(current, solution)) {
+        if (!eligible(current, solution) || alreadyCommitted(current, solution)) {
             return;
         }
         GithubCommitJob job = jobs.findByUserIdAndCaptureId(user.getId(), solution.getCaptureId())
@@ -300,6 +301,17 @@ public class GithubAutomationService {
                 && current.isAutoSyncEnabled() && current.isGithubAutoCommitEnabled()
                 && current.githubTargetConfigured() && current.getAutomationEnabledAt() != null
                 && !solution.getObservedAt().isBefore(current.getAutomationEnabledAt());
+    }
+
+    /**
+     * With {@code FIRST_ACCEPTED}, a later accepted submission of a problem already committed in
+     * the same language stays on the server only. A failed earlier commit does not count, and an
+     * UNKNOWN one does, since it may have reached GitHub.
+     */
+    private boolean alreadyCommitted(UserSettings current, Solution solution) {
+        return GithubDuplicateCommits.FIRST_ACCEPTED.equals(current.getGithubDuplicateCommits()) && solution.getLanguageKey() != null
+                && jobs.existsCommitForProblem(current.getUser().getId(), solution.getPlatform(), solution.getProblemNumber(),
+                        solution.getLanguageKey(), solution.getCaptureId(), CommitJobState.FAILED);
     }
 
     private boolean eligibleForJob(UserSettings current, Solution solution, GithubCommitJob job) {

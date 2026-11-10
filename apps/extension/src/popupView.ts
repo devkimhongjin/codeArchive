@@ -107,6 +107,8 @@ export function mountPopup(document: Document, services: PopupServices): void {
   const recentError = document.querySelector<HTMLElement>('#recent-error')!;
   const recentWaking = document.querySelector<HTMLElement>('#recent-waking');
   const githubAuto = document.querySelector<HTMLInputElement>('#github-auto')!;
+  const firstOnly = document.querySelector<HTMLInputElement>('#github-first-only');
+  const firstOnlyRow = document.querySelector<HTMLElement>('#github-first-only-row');
   const automationStatus = document.querySelector<HTMLElement>('#automation-status')!;
   const pendingUploads = document.querySelector<HTMLElement>('#pending-uploads');
   const retryRelay = document.querySelector<HTMLButtonElement>('#retry-relay')!;
@@ -123,7 +125,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
   let loading = false, retrying = false, reloadPending = false, githubBusy = false;
   let localEpoch = 0;
   let localReady = false;
-  let githubState: { githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; accountId?: string; accountSettingsVersion?: number } | undefined;
+  let githubState: { githubAutoCommitEnabled?: boolean; githubTargetConfigured?: boolean; githubDuplicateCommits?: string; accountId?: string; accountSettingsVersion?: number } | undefined;
   let toggleNotice = '';
   let statusAccount: string | undefined;
   let knownStatuses = new Map<string, GithubCommitStatus>();
@@ -165,6 +167,12 @@ export function mountPopup(document: Document, services: PopupServices): void {
     githubState = settings;
     localReady = true;
     githubAuto.disabled = false; setChecking(false);
+    // The duplicate choice only matters while automatic commits are on.
+    if (firstOnly && firstOnlyRow) {
+      firstOnly.checked = settings.githubDuplicateCommits === 'FIRST_ACCEPTED';
+      firstOnlyRow.hidden = settings.githubAutoCommitEnabled !== true || settings.githubTargetConfigured !== true;
+      firstOnly.disabled = false;
+    }
     const relayStatus = settings.relay?.status;
     if (pendingUploads) {
       const count = Number.isSafeInteger(pendingCount) && (pendingCount as number) > 0 ? pendingCount as number : 0;
@@ -226,6 +234,7 @@ export function mountPopup(document: Document, services: PopupServices): void {
     } catch {
       if (epoch !== localEpoch || githubBusy) { reloadPending = true; return; }
       githubState = undefined; githubAuto.disabled = true; setChecking(false);
+      if (firstOnlyRow) firstOnlyRow.hidden = true;
       localReady = false;
       knownStatuses.clear(); statusAccount = undefined; recentRenderKey = undefined;
       visibleCaptures = []; statusEpoch++; statusContext = '';
@@ -239,16 +248,15 @@ export function mountPopup(document: Document, services: PopupServices): void {
       if (reloadPending) { reloadPending = false; queueMicrotask(() => void load()); }
     }
   }
-  githubAuto.addEventListener('click', event => {
-    event.preventDefault();
+  function saveGithub(change: (state: NonNullable<typeof githubState>) => Pick<GithubToggleRequest, 'enabled' | 'duplicateCommits'>) {
     if (githubBusy || !localReady || !githubState) return;
     if (!githubState.githubTargetConfigured || !githubState.accountId || !Number.isSafeInteger(githubState.accountSettingsVersion)) {
       services.openDashboard?.('github'); return;
     }
     if (!services.updateGithubAutomation) return;
-    const command: GithubToggleRequest = { enabled: !githubState.githubAutoCommitEnabled,
+    const command: GithubToggleRequest = { ...change(githubState),
       accountId: githubState.accountId, settingsVersion: githubState.accountSettingsVersion! };
-    githubBusy = true; localEpoch++; statusEpoch++; githubAuto.disabled = true; toggleNotice = ''; error.hidden = true;
+    githubBusy = true; localEpoch++; statusEpoch++; githubAuto.disabled = true; if (firstOnly) firstOnly.disabled = true; toggleNotice = ''; error.hidden = true;
     automationStatus.textContent = 'GitHub 설정 저장 중…';
     void services.updateGithubAutomation(command).then(result => {
       if (result.needsTarget) { services.openDashboard?.('github'); return; }
@@ -259,6 +267,15 @@ export function mountPopup(document: Document, services: PopupServices): void {
       else if (!result.relayReady) toggleNotice = 'GitHub 설정은 저장됐어요. 대시보드를 열어 자동 동기화 연결을 갱신해 주세요.';
     }).catch(() => { toggleNotice = '저장 결과를 확인하지 못했어요. 다시 누르기 전에 대시보드에서 확인해 주세요.'; })
       .finally(() => { githubBusy = false; void load(); });
+  }
+  githubAuto.addEventListener('click', event => {
+    event.preventDefault();
+    saveGithub(state => ({ enabled: !state.githubAutoCommitEnabled }));
+  });
+  firstOnly?.addEventListener('click', event => {
+    event.preventDefault();
+    saveGithub(state => ({ enabled: state.githubAutoCommitEnabled === true,
+      duplicateCommits: state.githubDuplicateCommits === 'FIRST_ACCEPTED' ? 'ALL' : 'FIRST_ACCEPTED' }));
   });
   services.subscribeProgress?.(() => { void load(); });
   syncPending?.addEventListener('click', () => {
