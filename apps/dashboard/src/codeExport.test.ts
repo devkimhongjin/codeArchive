@@ -27,6 +27,12 @@ describe('code export', () => {
     const unicodeEscape = String.raw`title\u000aclass Injected {}`
     expect(exportCode({ ...solution, title: unicodeEscape }, true)).not.toContain(String.raw`\u000a`)
   })
+  it('writes the difficulty only when selected and known', () => {
+    const tiered = { ...solution, difficulty: { label: 'Platinum III', problemNumber: '1000', sourceUrl: 'https://solved.ac/api/v3/problem/show?problemId=1000' } }
+    expect(exportCode(tiered, true)).not.toContain('Difficulty')
+    expect(exportCode(tiered, true, ['difficulty', 'language'])).toBe('// Difficulty: Platinum III\n// Language: Java\n\n' + solution.sourceCode)
+    expect(exportCode({ ...solution, difficulty: undefined }, true, ['difficulty'])).toBe(solution.sourceCode)
+  })
   it('expands names without paths, reserved Windows names or duplicate extensions', () => {
     expect(downloadFilename(solution, '{number}-{title}')).not.toMatch(/[\\/:*?"<>|]/)
     expect(downloadFilename(solution, 'CON')).toBe('_CON.java')

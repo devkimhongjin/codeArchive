@@ -50,6 +50,23 @@ it('shows the archive and export controls without the removed analysis feature',
   expect(screen.queryByRole('button', { name: '분석 캐시 지우기' })).toBeNull()
 })
 
+it('shows the difficulty in the list and detail only when it is known', async () => {
+  const problemUrl = 'https://acmicpc.net/problem/1000', sourceUrl = 'https://solved.ac/api/v3/problem/show?problemId=1000'
+  const known: Solution = { ...records[0]!, captureId: 'known', platform: 'BAEKJOON', problemNumber: '1000', title: 'A+B', problemUrl, solvedAt: '2026-01-01T00:00:00Z',
+    difficulty: { label: 'Platinum III', problemNumber: '1000', sourceUrl } }
+  // A newer submission of the same problem without its own value still shows the problem's difficulty.
+  const newer: Solution = { ...known, captureId: 'newer', difficulty: undefined, solvedAt: '2026-01-02T00:00:00Z' }
+  mocks.list.mockResolvedValue([known, newer, records[1]!])
+  render(<App />)
+  await waitFor(() => expect(rows()).toHaveLength(2))
+  expect(within(list()).getAllByTitle('난이도').map(badge => badge.textContent)).toEqual(['Platinum III'])
+  fireEvent.click(within(list()).getByText('A+B'))
+  const detail = screen.getByRole('region', { name: '선택한 풀이 상세' })
+  expect(within(detail).getByTitle('난이도').textContent).toBe('Platinum III')
+  fireEvent.click(within(list()).getByText(records[1]!.title))
+  expect(within(detail).queryByTitle('난이도')).toBeNull()
+})
+
 it('pages 20 problem groups, keeps duplicate submissions together and selects the visible detail', async () => {
   await openArchive()
   expect(rows()).toHaveLength(20)
