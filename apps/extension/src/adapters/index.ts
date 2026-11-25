@@ -2,6 +2,8 @@ import type { PlatformAdapter } from "../types";
 import { ProgrammersAdapter } from "./programmers";
 import { SweaAdapter } from "./swea";
 import { JungolAdapter } from "./jungol";
+import { BaekjoonAdapter } from "./baekjoon";
+import { BAEKJOON_STATUS_PATH, BAEKJOON_SUBMIT_PATH, isBaekjoonOrigin } from "./baekjoonSelectors";
 
 export function createAdapter(
   document: Document,
@@ -24,9 +26,15 @@ export function createAdapter(
   if (location.origin === "https://jungol.co.kr") {
     return new JungolAdapter(document, location);
   }
+  // Baekjoon submits on /submit/{n} and judges on /status, two separate page
+  // loads; the adapter carries the attempt from one to the other.
+  if (isBaekjoonOrigin(location.origin) && (BAEKJOON_SUBMIT_PATH.test(location.pathname) || location.pathname === BAEKJOON_STATUS_PATH)) {
+    return new BaekjoonAdapter(document, location);
+  }
   return null;
 }
 
 export { ProgrammersAdapter } from "./programmers";
 export { SweaAdapter } from "./swea";
 export { JungolAdapter } from "./jungol";
+export { BaekjoonAdapter } from "./baekjoon";

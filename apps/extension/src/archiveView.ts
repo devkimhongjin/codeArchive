@@ -1,4 +1,4 @@
-import type { Capture, CaptureSettings } from "./types";
+import { isPlatform, type Capture, type CaptureSettings } from "./types";
 import { tokensForSource } from "./highlighter";
 import { sourceFileExtension } from "./export";
 import { canonicalLanguageDisplayName } from "../../../shared/language";
@@ -19,7 +19,7 @@ function asDisplayCapture(value: unknown): Capture | null {
   if (!value || typeof value !== "object") return null;
   const c = value as Partial<Capture>;
   if (typeof c.captureId !== "string" ||
-      (c.platform !== "SWEA" && c.platform !== "PROGRAMMERS" && c.platform !== "JUNGOL") ||
+      !isPlatform(c.platform) ||
       typeof c.problemNumber !== "string" || typeof c.title !== "string" ||
       typeof c.problemUrl !== "string" || typeof c.language !== "string" ||
       typeof c.sourceCode !== "string" || c.result !== "ACCEPTED" ||
@@ -73,7 +73,7 @@ function renderRow(document: Document, group: CaptureGroup, selected: boolean, o
   row.type = "button";
   row.dataset.captureId = latest.captureId;
   row.setAttribute("aria-pressed", String(selected));
-  const logo = element(document, "span", `platform-logo ${latest.platform.toLowerCase()}`, latest.platform === "PROGRAMMERS" ? "P" : latest.platform === "JUNGOL" ? "J" : "S");
+  const logo = element(document, "span", `platform-logo ${latest.platform.toLowerCase()}`, latest.platform === "PROGRAMMERS" ? "P" : latest.platform === "JUNGOL" ? "J" : latest.platform === "BAEKJOON" ? "B" : "S");
   const main = element(document, "span", "solution-row-main");
   const top = element(document, "span", "solution-row-top");
   top.append(element(document, "span", "solution-platform", latest.platform), element(document, "span", "solution-result", `풀이 ${group.captures.length}개`));

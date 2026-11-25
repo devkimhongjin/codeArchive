@@ -2,6 +2,9 @@ import { importVisibleJungolHistory, isJungolHistorySenderUrl, jungolHistoryRow,
 import { authenticatedSweaHistoryIdentity, hydrateSweaCandidateResult, loadSweaProblemCandidates, sweaProblemCards } from './historicalSwea';
 import { canonicalProgrammersLessonUrl, readProgrammersLessonHistory } from './historicalProgrammers';
 import { SWEA_ORIGIN, SWEA_USER_SUBMISSIONS_PATH } from './adapters/sweaSelectors';
+import { BAEKJOON_STATUS_PATH, baekjoonUsername, isBaekjoonOrigin, readBaekjoonStatusRows } from './adapters/baekjoonSelectors';
+import type { BaekjoonHistoryCandidate } from './historicalBaekjoon';
+import { baekjoonLiveClaim, sessionAttemptStore, type BaekjoonAttemptStore } from './adapters/baekjoon';
 import { isCaptureRecord } from './capture';
 import { siteSyncErrorLabel, type Send, type SiteSyncPage, type SyncOutcome } from './siteSyncView';
 import type { SiteSyncStatus } from './siteSync';
@@ -97,6 +100,38 @@ export function sweaSyncPage(document: Document, location: Location, send: Send)
           return { ok: failed === 0, message: missing.length || ambiguous ? parts.join(' · ') : '모두 등록됨' };
         }
       }));
+    }
+  };
+}
+
+/**
+ * Baekjoon: the signed-in user's own rows on 채점 현황 (user_id = me), one per
+ * accepted submission. Sync asks the extension to open that submission's own
+ * source page in a background tab, check it against this row and read the code.
+ */
+export function baekjoonSyncPage(document: Document, location: Location, send: Send,
+  attempts: BaekjoonAttemptStore = sessionAttemptStore(() => globalThis.sessionStorage), now: () => number = () => Date.now()): SiteSyncPage {
+  return {
+    platform: 'BAEKJOON',
+    targets() {
+      if (!isBaekjoonOrigin(location.origin) || location.pathname !== BAEKJOON_STATUS_PATH) return [];
+      const me = baekjoonUsername(document);
+      if (!me || new URL(location.href).searchParams.get('user_id') !== me) return [];
+      const claimedLive = baekjoonLiveClaim(attempts, now());
+      return readBaekjoonStatusRows(document).flatMap(row => {
+        const anchor = row.row.querySelector<HTMLElement>('td.result');
+        if (!anchor || row.username !== me || !row.accepted || !row.ownSource || !row.title || !row.submittedAt || row.codeLength === undefined || claimedLive(row)) return [];
+        const candidate: BaekjoonHistoryCandidate = { submissionId: row.submissionId, problemNumber: row.problemNumber, title: row.title, language: row.language,
+          solvedAt: row.submittedAt, codeLength: row.codeLength,
+          ...(row.timeMs === undefined ? {} : { executionTime: row.timeMs }), ...(row.memoryKb === undefined ? {} : { memoryValue: row.memoryKb }) };
+        return [{ id: row.submissionId, anchor, problemNumber: row.problemNumber,
+          row: { submissionId: row.submissionId, problemNumber: row.problemNumber, language: row.language, solvedAt: row.submittedAt },
+          async sync(): Promise<SyncOutcome> {
+            const read = await send({ type: 'BAEKJOON_SITE_SYNC_READ', username: me, candidate }) as { ok?: boolean; capture?: unknown; error?: string } | undefined;
+            if (!read?.ok || !isCaptureRecord(read.capture)) return { ok: false, message: read?.error === 'LOGIN_REQUIRED' ? '백준 로그인 상태를 확인하지 못했습니다' : '제출 코드를 확인하지 못했습니다' };
+            return registerOutcome(await send({ type: 'SITE_SYNC_REGISTER', capture: read.capture }) as Registered);
+          } }];
+      });
     }
   };
 }

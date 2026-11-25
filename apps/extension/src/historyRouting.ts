@@ -1,5 +1,6 @@
 import type { Platform } from "./types";
 import { isJungolHistoryPath, isJungolHistorySenderUrl } from "./historicalJungol";
+import { baekjoonListingUser } from "./historicalBaekjoon";
 
 export type LocalHistoryCommand = "LOCAL_HISTORY_SCAN_START" | "LOCAL_HISTORY_STATUS" | "LOCAL_HISTORY_IMPORT_START" | "LOCAL_HISTORY_CANCEL";
 
@@ -24,6 +25,7 @@ export function historyPlatformForUrl(value: string | URL): Platform | null {
     if (url.origin === "https://swexpertacademy.com" && url.pathname === "/main/userpage/code/userSubmitProblem.do") return "SWEA";
     if (url.origin === "https://school.programmers.co.kr" && url.pathname === "/learn/challenges" &&
         url.searchParams.get("statuses") === "solved,solved_with_unlock") return "PROGRAMMERS";
+    if (baekjoonListingUser(url)) return "BAEKJOON";
   } catch { /* invalid URLs do not own an import route */ }
   return null;
 }
@@ -36,6 +38,7 @@ export function sameHistorySource(listingUrl: string, currentUrl: string, platfo
     if (platform === "JUNGOL") return listing.pathname === current.pathname &&
       (listing.pathname !== "/submission" || listing.searchParams.get("account") === current.searchParams.get("account"));
     if (platform === "SWEA") return listing.pathname === current.pathname;
+    if (platform === "BAEKJOON") return baekjoonListingUser(listing) === baekjoonListingUser(current);
     return listing.pathname === current.pathname && listing.searchParams.get("statuses") === current.searchParams.get("statuses");
   } catch { return false; }
 }

@@ -29,7 +29,7 @@ function authUrl(value) {
 }
 function externalUrl(value) {
   const url = new URL(value);
-  if (url.protocol !== 'https:' || url.username || url.password || !['github.com', 'jungol.co.kr', 'swexpertacademy.com', 'school.programmers.co.kr', 'codearchive-dashboard-beta.netlify.app'].includes(url.hostname)) throw new Error('허용되지 않은 링크입니다.');
+  if (url.protocol !== 'https:' || url.username || url.password || !['github.com', 'jungol.co.kr', 'swexpertacademy.com', 'school.programmers.co.kr', 'acmicpc.net', 'codearchive-dashboard-beta.netlify.app'].includes(url.hostname)) throw new Error('허용되지 않은 링크입니다.');
   return url.href;
 }
 module.exports = { REMOTE_ORIGIN, EXTENSION_ID, BRIDGE_PORT, APP_URL, apiRequest, trustedRenderer, authUrl, externalUrl };

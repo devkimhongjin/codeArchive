@@ -131,7 +131,7 @@ function normalizeSolution(value: unknown, index = 0): Solution {
   const raw = (value ?? {}) as Record<string, unknown>
   const read = (...keys: string[]) => keys.map((key) => raw[key]).find((item) => item !== undefined && item !== null)
   const rawPlatform = String(read('platform') ?? 'SWEA').toUpperCase()
-  const platform = rawPlatform === 'PROGRAMMERS' || rawPlatform === 'JUNGOL' ? rawPlatform : 'SWEA'
+  const platform = rawPlatform === 'PROGRAMMERS' || rawPlatform === 'JUNGOL' || rawPlatform === 'BAEKJOON' ? rawPlatform : 'SWEA'
   const rawId = read('id')
   const id = typeof rawId === 'number' && Number.isSafeInteger(rawId) && rawId > 0 ? rawId : undefined
   const rawVisibility = read('visibility')
@@ -284,7 +284,7 @@ export default function App() {
   const [solutions, setSolutions] = useState<Solution[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [query, setQuery] = useState('')
-  const [platformFilter, setPlatformFilter] = useState<'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'>('ALL')
+  const [platformFilter, setPlatformFilter] = useState<'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL' | 'BAEKJOON'>('ALL')
   const [languageFilter, setLanguageFilter] = useState('ALL')
   const [solutionSort, setSolutionSort] = useState<SolutionSort>('saved')
   const [solutionPage, setSolutionPage] = useState(1)
@@ -1694,14 +1694,14 @@ function SolutionsView({
   selectedGroup: SolutionGroup | null
   selectedId: string
   query: string
-  platformFilter: 'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'
+  platformFilter: 'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL' | 'BAEKJOON'
   languageFilter: string
   languages: Array<{ key: string; label: string }>
   solutionSort: SolutionSort
   loading: boolean
   mode: 'local' | 'live'
   setQuery: (value: string) => void
-  setPlatformFilter: (value: 'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL') => void
+  setPlatformFilter: (value: 'ALL' | 'SWEA' | 'PROGRAMMERS' | 'JUNGOL' | 'BAEKJOON') => void
   setLanguageFilter: (value: string) => void
   setSolutionSort: (value: SolutionSort) => void
   setSelectedId: (value: string) => void
@@ -1736,9 +1736,9 @@ function SolutionsView({
         </label>
         <div className="filter-group" role="group" aria-label="플랫폼 필터">
           <span className="filter-label"><Icon name="filter" size={15} /> FILTER</span>
-          {(['ALL', 'SWEA', 'PROGRAMMERS', 'JUNGOL'] as const).map((filter) => (
+          {(['ALL', 'SWEA', 'PROGRAMMERS', 'JUNGOL', 'BAEKJOON'] as const).map((filter) => (
             <button key={filter} className={platformFilter === filter ? 'filter-pill active' : 'filter-pill'} onClick={() => setPlatformFilter(filter)}>
-              {filter === 'ALL' ? '전체' : filter === 'PROGRAMMERS' ? '프로그래머스' : filter === 'JUNGOL' ? '정올' : filter}
+              {filter === 'ALL' ? '전체' : filter === 'PROGRAMMERS' ? '프로그래머스' : filter === 'JUNGOL' ? '정올' : filter === 'BAEKJOON' ? '백준' : filter}
             </button>
           ))}
         </div>
@@ -1783,7 +1783,7 @@ function SolutionGroupRow({ group, selected, onSelect, onOtherSolutions }: { gro
   const languageLabels = Array.from(new Set(group.submissions.map(solution => canonicalLanguageDisplayName(solution.language)))).join(', ')
   return (
     <div className="solution-group-entry"><button className={`solution-row ${selected ? 'selected' : ''}`} onClick={onSelect}>
-      <span className={`platform-logo ${group.platform === 'SWEA' ? 'swea' : group.platform === 'JUNGOL' ? 'jungol' : 'programmers'}`}>{group.platform === 'SWEA' ? 'S' : group.platform === 'JUNGOL' ? 'J' : 'P'}</span>
+      <span className={`platform-logo ${group.platform === 'SWEA' ? 'swea' : group.platform === 'JUNGOL' ? 'jungol' : group.platform === 'BAEKJOON' ? 'baekjoon' : 'programmers'}`}>{group.platform === 'SWEA' ? 'S' : group.platform === 'JUNGOL' ? 'J' : group.platform === 'BAEKJOON' ? 'B' : 'P'}</span>
       <span className="solution-row-main">
         <span className="solution-row-top"><span className="solution-platform">{group.platform}</span><span className="solution-result">풀이 {group.submissions.length}개</span></span>
         <span className="solution-title">{group.title}</span>

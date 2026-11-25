@@ -17,7 +17,14 @@ class LanguageNormalizerTest {
             "Python3,python",
             "PyPy3,python",
             "C++17,cpp",
-            "'C# 10',csharp"
+            "'C# 10',csharp",
+            "'C++20 (Clang)',cpp",
+            "'C (Clang)',c",
+            "'C11 (Clang)',c",
+            "'Kotlin (JVM)',kotlin",
+            "'Go (gccgo)',go",
+            "node.js,javascript",
+            "'Rust 2021',rust"
     })
     void normalizesKnownPlatformAliases(String raw, String expected) {
         assertThat(LanguageNormalizer.canonicalKey(raw)).isEqualTo(expected);

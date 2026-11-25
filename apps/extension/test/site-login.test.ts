@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
-import { checkSiteLogins, jungolLoginState, programmersLoginState, sweaLoginState } from '../src/siteLogin';
+import { BAEKJOON_LOGIN_SEEN_TTL_MS, baekjoonLoginState, checkSiteLogins, jungolLoginState, programmersLoginState, sweaLoginState } from '../src/siteLogin';
 
 const SWEA_LIST = 'https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do';
 const SWEA_LOGIN = 'https://swexpertacademy.com/main/identity/anonymous/loginPage.do';
@@ -32,9 +32,10 @@ test('the check reads every site with the browser cookies and survives a failing
     if (url.startsWith('https://swexpertacademy.com/')) return Object.defineProperty(new Response('<form></form>'), 'url', { value: SWEA_LOGIN });
     throw new TypeError('network');
   }) as typeof fetch;
-  const sites = await checkSiteLogins(fetcher);
-  assert.deepEqual(sites.map(site => [site.platform, site.state]), [['JUNGOL', 'SIGNED_IN'], ['SWEA', 'SIGNED_OUT'], ['PROGRAMMERS', 'UNKNOWN']]);
+  const sites = await checkSiteLogins(fetcher, async () => ({ state: 'SIGNED_IN', name: 'boj_user', seenAt: Date.now() }));
+  assert.deepEqual(sites.map(site => [site.platform, site.state]), [['JUNGOL', 'SIGNED_IN'], ['SWEA', 'SIGNED_OUT'], ['PROGRAMMERS', 'UNKNOWN'], ['BAEKJOON', 'SIGNED_IN']]);
   assert.ok(requests.every(request => request.credentials === 'include'));
+  assert.equal(requests.some(request => request.url.includes('acmicpc.net')), false, 'Baekjoon is never probed');
   assert.ok(sites.every(site => site.loginUrl.startsWith('https://') && site.siteUrl.startsWith('https://')));
 });
 
@@ -55,6 +56,16 @@ test('only the dashboard page may ask for the login status', async () => {
     const send = (sender: unknown) => new Promise<{ sites?: unknown[]; error?: string }>(resolve => listener!({ type: 'SITE_LOGIN_STATUS' }, sender, resolve as (value: unknown) => void));
     for (const sender of [{ ...dashboard, url: 'https://jungol.co.kr/' }, { ...dashboard, frameId: 1 }, { ...dashboard, id: 'other' },
       { ...dashboard, url: `chrome-extension://${id}/history.html` }]) assert.deepEqual(await send(sender), { error: 'UNAUTHORIZED' });
-    assert.equal((await send(dashboard)).sites?.length, 3);
+    assert.equal((await send(dashboard)).sites?.length, 4);
   } finally { Object.assign(globalThis, previous); }
+});
+
+test('Baekjoon shows what its own page showed last, and goes stale after a week', () => {
+  const now = Date.UTC(2026, 10, 23);
+  assert.deepEqual(baekjoonLoginState({ state: 'SIGNED_IN', name: 'boj_user', seenAt: now - 1_000 }, now),
+    { platform: 'BAEKJOON', state: 'SIGNED_IN', name: 'boj_user', loginUrl: 'https://acmicpc.net/login', siteUrl: 'https://acmicpc.net/' });
+  assert.equal(baekjoonLoginState({ state: 'SIGNED_OUT', seenAt: now }, now).state, 'SIGNED_OUT');
+  assert.equal(baekjoonLoginState({ state: 'SIGNED_IN', name: 'boj_user', seenAt: now - BAEKJOON_LOGIN_SEEN_TTL_MS - 1 }, now).state, 'UNKNOWN');
+  assert.equal(baekjoonLoginState({ state: 'SIGNED_IN', name: '<script>', seenAt: now }, now).name, undefined);
+  assert.equal(baekjoonLoginState(null, now).state, 'UNKNOWN');
 });

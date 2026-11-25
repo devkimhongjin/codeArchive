@@ -1,7 +1,7 @@
 import { canonicalLanguageKey } from '../../../shared/language';
 import { cloudRequest, CloudRequestError } from './cloudClient';
 import { isHistoricalSubmissionId } from './historicalIdentity';
-import type { Capture, Platform } from './types';
+import { isPlatform, type Capture, type Platform } from './types';
 
 /**
  * Manual sync and commit from a platform's own submission list. The server is
@@ -27,7 +27,6 @@ export type ServerSolution = { captureId: string; platform: Platform; historical
 export const LIVE_MATCH_WINDOW_MS = 2 * 60_000;
 const COMMIT_STATES: CommitState[] = ['NONE', 'PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'UNKNOWN'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const PLATFORMS: Platform[] = ['SWEA', 'PROGRAMMERS', 'JUNGOL'];
 
 export function validSiteSyncRow(platform: Platform, value: unknown): value is SiteSyncRowKey {
   if (!value || typeof value !== 'object') return false;
@@ -40,7 +39,7 @@ export function validSiteSyncRow(platform: Platform, value: unknown): value is S
 function validServerSolution(value: unknown): value is ServerSolution {
   if (!value || typeof value !== 'object') return false;
   const row = value as ServerSolution;
-  return typeof row.captureId === 'string' && UUID.test(row.captureId) && PLATFORMS.includes(row.platform) &&
+  return typeof row.captureId === 'string' && UUID.test(row.captureId) && isPlatform(row.platform) &&
     (row.historicalSubmissionId === null || row.historicalSubmissionId === undefined || typeof row.historicalSubmissionId === 'string') &&
     typeof row.problemNumber === 'string' && typeof row.language === 'string' && typeof row.solvedAt === 'string' &&
     COMMIT_STATES.includes(row.state);

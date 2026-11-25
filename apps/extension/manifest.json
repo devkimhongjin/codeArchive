@@ -14,6 +14,9 @@
     "https://swexpertacademy.com/*",
     "https://school.programmers.co.kr/*",
     "https://jungol.co.kr/*",
+    "https://acmicpc.net/*",
+    "https://www.acmicpc.net/*",
+    "https://solved.ac/*",
     "https://api.github.com/*",
     "https://codearchive-api-stg-e3q54l32da-as.a.run.app/*",
     "http://localhost:5173/*"
@@ -35,7 +38,9 @@
       "matches": [
         "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do*",
         "https://school.programmers.co.kr/*",
-        "https://jungol.co.kr/*"
+        "https://jungol.co.kr/*",
+        "https://acmicpc.net/submit/*",
+        "https://www.acmicpc.net/submit/*"
       ],
       "world": "MAIN",
       "js": [
@@ -50,7 +55,9 @@
         "https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do*",
         "https://swexpertacademy.com/main/solvingProblem/solvingProblem.do*",
         "https://school.programmers.co.kr/*",
-        "https://jungol.co.kr/*"
+        "https://jungol.co.kr/*",
+        "https://acmicpc.net/*",
+        "https://www.acmicpc.net/*"
       ],
       "js": [
         "content.js"

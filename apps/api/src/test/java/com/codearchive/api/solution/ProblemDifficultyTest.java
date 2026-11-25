@@ -11,6 +11,19 @@ class ProblemDifficultyTest {
         assertThat(ProblemDifficulty.validated(Platform.PROGRAMMERS, "123", pg, new ProblemDifficulty("Lv. 3", "123", "https://evil.test/learn/challenges"))).isNull();
         assertThat(ProblemDifficulty.validated(Platform.JUNGOL, "123", "https://jungol.co.kr/problem/123", new ProblemDifficulty("Gold I", "123", "https://solved.ac/problem/123"))).isNull();
     }
+    @Test void bindsBaekjoonTierToThisProblemsSolvedAcEntry() {
+        String source = "https://solved.ac/api/v3/problem/show?problemId=1000", problem = "https://acmicpc.net/problem/1000";
+        var value = new ProblemDifficulty("Bronze V", "1000", source);
+        assertThat(ProblemDifficulty.validated(Platform.BAEKJOON, "1000", problem, value)).isEqualTo(value);
+        assertThat(ProblemDifficulty.validated(Platform.BAEKJOON, "1000", "https://www.acmicpc.net/problem/1000", value)).isEqualTo(value);
+        assertThat(ProblemDifficulty.validated(Platform.BAEKJOON, "1000", problem, new ProblemDifficulty("Ruby I", "1000", source))).isNotNull();
+        assertThat(ProblemDifficulty.validated(Platform.BAEKJOON, "1000", problem, new ProblemDifficulty("Gold 3", "1000", source))).isNull();
+        assertThat(ProblemDifficulty.validated(Platform.BAEKJOON, "1000", problem, new ProblemDifficulty("Bronze V", "1000", source.replace("1000", "1001")))).isNull();
+        assertThat(ProblemDifficulty.validated(Platform.BAEKJOON, "1000", problem, new ProblemDifficulty("Bronze V", "1000", source + "&x=1"))).isNull();
+        assertThat(ProblemDifficulty.validated(Platform.BAEKJOON, "1000", "https://acmicpc.net/problem/1001", value)).isNull();
+        assertThat(ProblemDifficulty.validated(Platform.BAEKJOON, "1000", problem, new ProblemDifficulty("Bronze V", "1000", "https://evil.test/api/v3/problem/show?problemId=1000"))).isNull();
+        assertThat(ProblemDifficulty.validated(Platform.JUNGOL, "1000", "https://jungol.co.kr/problem/1000", value)).isNull();
+    }
     @Test void bindsSweaContestIdentityWithoutInventedBackfill() {
         String url = "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=VerifiedKey";
         var value = new ProblemDifficulty("D3", "123", url);

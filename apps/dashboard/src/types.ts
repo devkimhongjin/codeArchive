@@ -2,7 +2,7 @@ import type { ProblemDifficulty } from '../../../shared/difficulty'
 import type { LightTheme, DarkTheme } from '../../../shared/codeThemes'
 import type { HeaderField } from '../../../shared/headerFields'
 
-export type Platform = 'SWEA' | 'PROGRAMMERS' | 'JUNGOL'
+export type Platform = 'SWEA' | 'PROGRAMMERS' | 'JUNGOL' | 'BAEKJOON'
 
 export type ViewName = 'solutions' | 'history' | 'community' | 'support' | 'settings' | 'github'
 
