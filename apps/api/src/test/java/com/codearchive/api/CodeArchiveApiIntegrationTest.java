@@ -714,10 +714,10 @@ class CodeArchiveApiIntegrationTest {
                 .andExpect(jsonPath("$.githubHeader", is(false)))
                 .andExpect(jsonPath("$.githubAutoCommitEnabled", is(false)));
         String valid = settingsJson(0, "홍길동", "별명", "{platform}-{number}", "archive/{language}/{number}/{time}", "one-light", "dracula", true, true, null, null, null, null, null)
-                .replace("\"githubHeader\":false", "\"githubHeader\":true,\"copyHeaderFields\":[\"title\",\"solvedAt\"],\"downloadHeaderFields\":[\"language\"],\"githubHeaderFields\":[\"identity\",\"url\"]");
+                .replace("\"githubHeader\":false", "\"githubHeader\":true,\"copyHeaderFields\":[\"title\",\"difficulty\",\"solvedAt\"],\"downloadHeaderFields\":[\"language\"],\"githubHeaderFields\":[\"identity\",\"url\"]");
         mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("601", "settings", "Settings", null)).header("X-CodeArchive-Github-Id", "601").contentType("application/json").content(valid))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.name", is("홍길동"))).andExpect(jsonPath("$.nickname", is("별명")))
-                .andExpect(jsonPath("$.copyHeaderFields[0]", is("title")))
+                .andExpect(jsonPath("$.copyHeaderFields[0]", is("title"))).andExpect(jsonPath("$.copyHeaderFields[1]", is("difficulty")))
                 .andExpect(jsonPath("$.downloadHeaderFields[0]", is("language")))
                 .andExpect(jsonPath("$.githubHeaderFields[1]", is("url")))
                 .andExpect(jsonPath("$.githubHeader", is(true)))

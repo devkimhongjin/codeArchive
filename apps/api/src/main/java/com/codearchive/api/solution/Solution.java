@@ -25,7 +25,7 @@ public class Solution {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "difficulty_label", length = 10) private String difficultyLabel;
+    @Column(name = "difficulty_label", length = 20) private String difficultyLabel;
     @Column(name = "difficulty_source_url", length = 2048) private String difficultySourceUrl;
     public ProblemDifficulty getDifficulty() { return difficultyLabel == null || difficultySourceUrl == null ? null : new ProblemDifficulty(difficultyLabel, problemNumber, difficultySourceUrl); }
     public void setDifficulty(ProblemDifficulty value) { if (value != null && difficultyLabel == null) { difficultyLabel = value.label(); difficultySourceUrl = value.sourceUrl(); } }

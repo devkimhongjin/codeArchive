@@ -33,6 +33,10 @@ test("filename tokens and selected header fields match the dashboard export cont
   const capture = base("Java");
   assert.equal(downloadFilename(capture, "{time}_{capture_ID}"), "260101090000_capture-1.java");
   assert.match(exportCode(capture, true, ["title", "solvedAt"]), /^\/\/ Problem: A\/B\n\/\/ Solved At: 2026-01-01 09:00:00 KST/);
+  assert.equal(exportCode({ ...capture, difficulty: { label: "Gold I", problemNumber: "123", sourceUrl: "https://example.test" } }, true, ["difficulty"]), `// Difficulty: Gold I
+
+${capture.sourceCode}`);
+  assert.equal(exportCode(capture, true, ["difficulty"]), capture.sourceCode);
   assert.equal(exportCode(capture, true, []), capture.sourceCode);
   assert.equal(exportCode(capture, true, ["performance"]), capture.sourceCode);
 });

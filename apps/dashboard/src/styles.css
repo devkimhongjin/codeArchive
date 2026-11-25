@@ -203,6 +203,7 @@ h1, h2, p { margin-top: 0; }
 .solution-result { display: inline-flex; align-items: center; gap: 2px; color: #269276; font: 500 var(--text-2xs) 'DM Mono', monospace; }
 .solution-title { overflow: hidden; color: #2d2a40; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 800; letter-spacing: -.04em; }
 .solution-row-bottom { color: var(--text-faint); font: 500 var(--text-xs) 'DM Mono', monospace; }
+.difficulty-badge { flex: none; padding: 1px 6px; color: var(--purple); background: var(--purple-soft); border-radius: 999px; font: 600 var(--text-2xs) 'DM Mono', monospace; white-space: nowrap; }
 .row-divider { width: 2px; height: 2px; display: inline-block; flex: none; background: #c8c3d1; border-radius: 50%; }
 .row-time { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; }
 .solution-row > svg { color: #c2bdcd; flex: none; }

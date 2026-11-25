@@ -1625,7 +1625,7 @@ export default function App() {
             onRetrySettingsSave={() => scheduleAccountSettingsSave(0)}
             onCommunityPublished={expectedGithubId => { if (userRef.current?.githubId === expectedGithubId && modeRef.current === 'live') void refreshSolutions(accountGeneration.current, expectedGithubId).catch(() => showToast('info', '공개는 완료됐습니다. 풀이 목록을 새로고침해 주세요.')) }}
             onAutoSyncDisabled={clearRelay}
-            previewSolution={selectedSolution ?? { captureId: 'preview', platform: 'SWEA', problemNumber: '0000', title: '미리보기', problemUrl: 'https://example.com/problem/0000', language: 'Java', sourceCode: '', result: 'ACCEPTED', solvedAt: '2026-01-01T00:00:00Z', executionTime: 123, memoryValue: 2048, memoryUnit: 'KB' }}
+            previewSolution={selectedSolution ?? { captureId: 'preview', platform: 'SWEA', problemNumber: '0000', title: '미리보기', problemUrl: 'https://example.com/problem/0000', language: 'Java', sourceCode: '', result: 'ACCEPTED', difficulty: { label: 'D3', problemNumber: '0000', sourceUrl: 'https://example.com/problem/0000' }, solvedAt: '2026-01-01T00:00:00Z', executionTime: 123, memoryValue: 2048, memoryUnit: 'KB' }}
             onLogin={() => navigateSameTab(GITHUB_LOGIN_URL)}
             onLogout={() => void handleLogout()}
             onExpectedAccountChange={(expectedGithubId) => void handleExpectedAccountChange(new ApiError('GitHub account changed; reconnect required', 409), expectedGithubId)}
@@ -1780,12 +1780,13 @@ function SolutionsView({
 
 function SolutionGroupRow({ group, selected, onSelect, onOtherSolutions }: { group: SolutionGroup; selected: boolean; onSelect: () => void; onOtherSolutions: () => void }) {
   const latest = group.submissions[0]!
+  const difficulty = group.submissions.find(submission => submission.difficulty)?.difficulty?.label
   const languageLabels = Array.from(new Set(group.submissions.map(solution => canonicalLanguageDisplayName(solution.language)))).join(', ')
   return (
     <div className="solution-group-entry"><button className={`solution-row ${selected ? 'selected' : ''}`} onClick={onSelect}>
       <span className={`platform-logo ${group.platform === 'SWEA' ? 'swea' : group.platform === 'JUNGOL' ? 'jungol' : group.platform === 'BAEKJOON' ? 'baekjoon' : 'programmers'}`}>{group.platform === 'SWEA' ? 'S' : group.platform === 'JUNGOL' ? 'J' : group.platform === 'BAEKJOON' ? 'B' : 'P'}</span>
       <span className="solution-row-main">
-        <span className="solution-row-top"><span className="solution-platform">{group.platform}</span><span className="solution-result">풀이 {group.submissions.length}개</span></span>
+        <span className="solution-row-top"><span className="solution-platform">{group.platform}</span>{difficulty && <span className="difficulty-badge" title="난이도">{difficulty}</span>}<span className="solution-result">풀이 {group.submissions.length}개</span></span>
         <span className="solution-title">{group.title}</span>
         <span className="solution-row-bottom"><span>#{group.problemNumber}</span><span className="row-divider" /><span>{languageLabels}</span><span className="row-time"><Icon name="clock" size={12} /> {formatDate(latest.solvedAt ?? latest.observedAt)}</span></span>
       </span>
@@ -1795,6 +1796,8 @@ function SolutionGroupRow({ group, selected, onSelect, onOtherSolutions }: { gro
 }
 
 function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onDownload, lightTheme, darkTheme, codeThemeMode, onOtherSolutions, user }: { solution: Solution | null; group: SolutionGroup | null; onSelectSubmission: (captureId: string) => void; mode: 'local' | 'live'; onCopy: () => void; onDownload: () => void; lightTheme: AccountSettings['lightTheme']; darkTheme: AccountSettings['darkTheme']; codeThemeMode: CodeThemeMode; onOtherSolutions: (platform: Solution['platform'], problemNumber: string) => void; user: User | null }) {
+  // The difficulty belongs to the problem, so an older submission may be the one that carries it.
+  const difficulty = (solution?.difficulty ?? group?.submissions.find(submission => submission.difficulty)?.difficulty)?.label
   return (
     <section className="solution-detail" aria-label="선택한 풀이 상세">
       {!solution ? (
@@ -1805,7 +1808,7 @@ function SolutionDetail({ solution, group, onSelectSubmission, mode, onCopy, onD
             <div className="detail-heading-main">
               <div className="detail-breadcrumb"><span>{solution.platform}</span><Icon name="chevron" size={12} /><span>#{solution.problemNumber}</span></div>
               <h2>{solution.title}</h2>
-              <div className="detail-subline"><span>{canonicalLanguageDisplayName(solution.language)}</span><span className="row-divider" /><span>풀이 시간 {formatObservedTime(solution.solvedAt ?? solution.observedAt)}</span></div>
+              <div className="detail-subline">{difficulty && <><span className="difficulty-badge" title="난이도">{difficulty}</span><span className="row-divider" /></>}<span>{canonicalLanguageDisplayName(solution.language)}</span><span className="row-divider" /><span>풀이 시간 {formatObservedTime(solution.solvedAt ?? solution.observedAt)}</span></div>
             </div>
             <div className="detail-heading-actions"><button type="button" className="problem-link" onClick={() => onOtherSolutions(solution.platform, solution.problemNumber)}>다른 풀이 보기</button><a className="problem-link" href={solution.problemUrl} target="_blank" rel="noreferrer">문제 보기 <Icon name="external" size={14} /></a></div>
           </div>
