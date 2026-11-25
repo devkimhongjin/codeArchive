@@ -98,6 +98,7 @@ test("a submit click records the attempt, and the status page captures only its 
   const statusLocation = location(`https://acmicpc.net/status?problem_id=&user_id=${USER}&language_id=-1&result_id=-1&from_mine=1`);
   const adapter = createAdapter(status, statusLocation);
   assert.ok(adapter instanceof BaekjoonAdapter);
+  store.used = ["105249231"]; // this tab already saw that one fail
   const watcher = new BaekjoonAdapter(status, statusLocation, store, () => now);
   assert.equal(watcher.hasPendingSubmissionAttempt(), true);
   assert.equal(watcher.detectSubmissionResult(), null, "still judging");
@@ -117,7 +118,7 @@ test("a submit click records the attempt, and the status page captures only its 
   assert.equal(confirmed?.historicalSubmissionId, undefined, "a live capture carries no site submission id");
   watcher.consumeSubmissionResult(collected.detection);
   assert.equal(store.value, null);
-  assert.deepEqual(store.used, ["105249300"]);
+  assert.deepEqual(store.used, ["105249300", "105249231"]);
   assert.equal(watcher.hasPendingSubmissionAttempt(), false);
 });
 
@@ -147,6 +148,18 @@ test("a status row that does not match the attempt is never captured, and a reje
   const adapter = new BaekjoonAdapter(statusPage(row({ id: "8", color: "wa", text: "틀렸습니다", seconds })), statusLocation, rejected, () => now);
   assert.equal(adapter.detectSubmissionResult(), null);
   assert.equal(rejected.value, null, "a wrong answer clears the attempt so nothing waits for it");
+  assert.deepEqual(rejected.used, ["8"]);
+  // A same-length fix resubmitted right away is still the only open row.
+  rejected.value = attempt;
+  assert.equal(new BaekjoonAdapter(statusPage(row({ id: "10", ...accepted }) + row({ id: "8", color: "wa", text: "틀렸습니다", seconds })), statusLocation, rejected, () => now)
+    .detectSubmissionResult()?.accepted, true);
+
+  for (const other of [row({ id: "11", ...accepted }), row({ id: "11", seconds }), row({ id: "11", color: "wa", text: "틀렸습니다", seconds })]) {
+    const ambiguous = memoryStore(); ambiguous.value = attempt;
+    assert.equal(new BaekjoonAdapter(statusPage(row({ id: "12", ...accepted }) + other), statusLocation, ambiguous, () => now).detectSubmissionResult(), null,
+      "two indistinguishable rows are never paired with one source");
+    assert.equal(ambiguous.value, null, "and the attempt ends, so status-page sync is available again");
+  }
 
   const expired = memoryStore(); expired.value = { ...attempt, startedAt: now - 16 * 60_000 };
   assert.equal(new BaekjoonAdapter(statusPage(row({ id: "9", ...accepted })), statusLocation, expired, () => now).hasPendingSubmissionAttempt(), false);

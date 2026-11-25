@@ -73,9 +73,6 @@ export function baekjoonLiveClaim(store: BaekjoonAttemptStore, now = Date.now())
     !!row.submittedAt && Date.parse(row.submittedAt) >= attempt.startedAt - BAEKJOON_CLOCK_SKEW_MS);
 }
 
-/** Submission ids grow over time; compare them as decimal strings. */
-function newer(left: string, right: string): number { return left.length - right.length || (left < right ? -1 : left > right ? 1 : 0); }
-
 export class BaekjoonAdapter implements PlatformAdapter {
   readonly platform = "BAEKJOON" as const;
   private matched: BaekjoonStatusRow | null = null;
@@ -156,24 +153,28 @@ export class BaekjoonAdapter implements PlatformAdapter {
     return problem && editor ? { problem, editor } : null;
   }
 
-  private matchingRow(attempt: BaekjoonAttempt): BaekjoonStatusRow | null {
+  /** Every row this attempt could be. More than one cannot be told apart (e.g. two tabs), so callers must refuse it. */
+  private matchingRows(attempt: BaekjoonAttempt): BaekjoonStatusRow[] {
     const consumed = new Set(this.store.consumed()), now = this.clock();
-    const rows = readBaekjoonStatusRows(this.document).filter(row => {
+    return readBaekjoonStatusRows(this.document).filter(row => {
       const time = row.submittedAt ? Date.parse(row.submittedAt) : NaN;
       return row.ownSource && row.username === attempt.username && row.problemNumber === attempt.problemNumber &&
         row.language === attempt.language && lengthMatches(row.codeLength, attempt.sourceCode) && !consumed.has(row.submissionId) &&
         Number.isFinite(time) && time >= attempt.startedAt - BAEKJOON_CLOCK_SKEW_MS && time <= now + BAEKJOON_CLOCK_SKEW_MS;
     });
-    return rows.sort((left, right) => newer(right.submissionId, left.submissionId))[0] ?? null;
   }
 
   detectSubmissionResult(): SubmissionResultDetection | null {
     const attempt = this.page() === "status" ? this.attempt() : null;
     if (!attempt) return null;
-    const row = this.matchingRow(attempt);
+    const rows = this.matchingRows(attempt);
+    // Never pair this source with another submission's result; status-page sync can still register it.
+    if (rows.length > 1) { this.store.clear(); this.matched = null; return null; }
+    const row = rows[0];
     if (!row) return null;
     // A wrong answer or compile error ends this attempt: nothing is captured.
-    if (row.rejected) { this.store.clear(); this.matched = null; return null; }
+    // Its row is settled, so a quick resubmission of same-length code is not ambiguous.
+    if (row.rejected) { this.store.consume(row.submissionId); this.store.clear(); this.matched = null; return null; }
     if (!row.accepted || (row.title && row.title !== attempt.title)) return null;
     this.matched = row;
     const token = this.tokens.get(row.submissionId) ?? {};
@@ -187,8 +188,8 @@ export class BaekjoonAdapter implements PlatformAdapter {
     const attempt = this.attempt(), matched = this.matched;
     if (!attempt || !matched || !matched.submittedAt || detection.attemptToken !== this.tokens.get(matched.submissionId)) return null;
     // Read the row again: it must still be this attempt's accepted row.
-    const current = this.matchingRow(attempt);
-    if (!current || current.submissionId !== matched.submissionId || !current.accepted || current.submittedAt !== matched.submittedAt ||
+    const rows = this.matchingRows(attempt), current = rows[0];
+    if (rows.length !== 1 || !current || current.submissionId !== matched.submissionId || !current.accepted || current.submittedAt !== matched.submittedAt ||
         capture.problemNumber !== attempt.problemNumber || capture.sourceCode !== attempt.sourceCode || capture.language !== attempt.language) return null;
     return { ...capture, problemUrl: baekjoonProblemUrl(attempt.problemNumber), solvedAt: matched.submittedAt };
   }
