@@ -64,6 +64,7 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 .platform-logo.swea { color: #e74c65; background: #fff0f2; }
 .platform-logo.programmers { color: #1479cf; background: #eaf5ff; }
 .platform-logo.jungol { color: #0f766e; background: #dff7ef; }
+.platform-logo.baekjoon { color: #1d4ed8; background: #e3ebff; }
 .solution-row-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .solution-row-top { display: flex; align-items: center; gap: 7px; color: #a19dac; font: 500 9px ui-monospace, monospace; }
 .solution-row-top span:last-child { color: #269276; }

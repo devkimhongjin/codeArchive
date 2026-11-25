@@ -1,6 +1,6 @@
 export type HistoricalCollectionScope = {
   batchId: string
-  platform: 'JUNGOL' | 'SWEA' | 'PROGRAMMERS'
+  platform: 'JUNGOL' | 'SWEA' | 'PROGRAMMERS' | 'BAEKJOON'
   submissionIds: string[]
 }
 export type HistoricalCollectionNotice = {
@@ -11,7 +11,7 @@ export function isHistoricalCollectionScope(value: unknown): value is Historical
   if (!value || typeof value !== 'object') return false
   const scope = value as HistoricalCollectionScope
   return typeof scope.batchId === 'string' && /^[A-Z]+:[0-9]{1,16}$/.test(scope.batchId) &&
-    ['JUNGOL', 'SWEA', 'PROGRAMMERS'].includes(scope.platform) && scope.batchId.startsWith(`${scope.platform}:`) &&
+    ['JUNGOL', 'SWEA', 'PROGRAMMERS', 'BAEKJOON'].includes(scope.platform) && scope.batchId.startsWith(`${scope.platform}:`) &&
     Array.isArray(scope.submissionIds) && scope.submissionIds.length > 0 && scope.submissionIds.length <= 5000 &&
     scope.submissionIds.every(id => typeof id === 'string' && id.length > 0 && id.length <= 320 && !/[\x00-\x1f\x7f]/.test(id)) &&
     new Set(scope.submissionIds).size === scope.submissionIds.length

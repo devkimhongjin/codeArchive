@@ -15,10 +15,14 @@ import {
 } from "./sweaProblemContext";
 import { SWEA_ORIGIN, SWEA_SOLVING_PATH, SWEA_USER_SUBMISSIONS_PATH } from "./adapters/sweaSelectors";
 import { activeSubmissionProgress, SUBMISSION_PROGRESS_KEY, updateSubmissionProgress } from "./submissionProgress";
-import { githubDuplicateCommits, type CaptureSettings, type Platform } from "./types";
+import { githubDuplicateCommits, isPlatform, type CaptureSettings, type Platform } from "./types";
 import { isJungolHistoryPath, isJungolHistorySenderUrl } from "./historicalJungol";
 import { SiteSyncService, validSiteSyncRow } from "./siteSync";
-import { checkSiteLogins } from "./siteLogin";
+import { BAEKJOON_LOGIN_SEEN_KEY, checkSiteLogins } from "./siteLogin";
+import { BAEKJOON_ORIGIN, BAEKJOON_STATUS_PATH, BAEKJOON_SUBMIT_PATH, baekjoonSourceUrl, isBaekjoonOrigin } from "./adapters/baekjoonSelectors";
+import { baekjoonListingUrl, isBaekjoonHistoryCandidate, type BaekjoonHistoryCandidate } from "./historicalBaekjoon";
+import { BaekjoonHistoryTask } from "./baekjoonHistoryTask";
+import { BaekjoonTab, SolvedAcDifficulty, baekjoonHistoricalCapture, chromeBaekjoonTabApi } from "./baekjoonBackground";
 import { isHistoricalSubmissionId } from "./historicalIdentity";
 import { historyPlatformForUrl, isLocalHistoryPageSender, mayRediscoverHistorySource, mayStoreHistoricalFromSender, sameHistorySource, type LocalHistoryCommand } from "./historyRouting";
 import { requestLocalHistoryMessage } from "./localHistoryConnection";
@@ -68,8 +72,7 @@ async function readLocalHistoryRoute(): Promise<LocalHistoryRoute | null> {
   if (!value || typeof value !== "object") return null;
   const route = value as Partial<LocalHistoryRoute>;
   if (typeof route.url !== "string") return null;
-  const platform = route.platform === "JUNGOL" || route.platform === "SWEA" || route.platform === "PROGRAMMERS"
-    ? route.platform : historyPlatformForUrl(route.url);
+  const platform = isPlatform(route.platform) ? route.platform : historyPlatformForUrl(route.url);
   return Number.isSafeInteger(route.tabId) && route.tabId! >= 0 && typeof route.url === "string" && route.url.length <= 2_000 && typeof route.status === "string" && platform
     ? { ...route, platform } as LocalHistoryRoute : null;
 }
@@ -435,6 +438,73 @@ async function requestHistoryTab(platform: "SWEA" | "JUNGOL" | "PROGRAMMERS", me
   return chrome.tabs.sendMessage(matches[0]!.id!, message, { frameId: 0 });
 }
 
+// Baekjoon answers script requests with an empty body, so its pages are read
+// from real loads in tabs the extension opens: one for a history collection,
+// one for a status-page sync click. Neither is ever a tab of the user's.
+const solvedAc = new SolvedAcDifficulty();
+const baekjoonHistoryTab = new BaekjoonTab(chromeBaekjoonTabApi());
+const baekjoonSiteSyncTab = new BaekjoonTab(chromeBaekjoonTabApi());
+const baekjoonHistory = new BaekjoonHistoryTask({
+  load: url => baekjoonHistoryTab.load(url),
+  ask: (tabId, message) => baekjoonHistoryTab.ask(tabId, message),
+  close: () => baekjoonHistoryTab.close(),
+  sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+  now: () => Date.now(),
+  random: () => Math.random(),
+  async store(candidate, sourceCode) {
+    const run = (await chrome.storage.session.get(SERVER_HISTORY_RUN_KEY))[SERVER_HISTORY_RUN_KEY] as ServerHistoryRun | undefined;
+    if (!run || run.platform !== "BAEKJOON" || !run.submissionIds.includes(candidate.submissionId)) return { ok: false };
+    const capture = baekjoonHistoricalCapture(candidate, sourceCode, await solvedAc.lookup(candidate.problemNumber));
+    if (!capture) return { ok: false };
+    try {
+      const registered = await registerHistoricalOnServer(capture, run.account);
+      return registered?.ok === true ? { ok: true, created: registered.created === true } : { ok: false };
+    } catch { return { ok: false }; }
+  }
+});
+chrome.tabs.onRemoved?.addListener(tabId => {
+  // Closing the collection tab stops the collection; it is never reopened behind the user's back.
+  if (baekjoonHistoryTab.owns(tabId)) { baekjoonHistoryTab.forget(tabId); baekjoonHistory.cancel(); }
+  baekjoonSiteSyncTab.forget(tabId);
+});
+
+async function baekjoonHistoryCommand(type: LocalHistoryCommand, submissionIds?: string[]): Promise<unknown> {
+  const route = await readLocalHistoryRoute();
+  // A status read for this view must not touch another platform's running task.
+  if (type === "LOCAL_HISTORY_STATUS" && route && route.platform !== "BAEKJOON" && !baekjoonHistory.active) return { status: "TAB_NOT_FOUND" };
+  const response = (type === "LOCAL_HISTORY_SCAN_START" ? baekjoonHistory.scan()
+    : type === "LOCAL_HISTORY_IMPORT_START" ? baekjoonHistory.import(submissionIds ?? [])
+      : type === "LOCAL_HISTORY_CANCEL" ? baekjoonHistory.cancel() : baekjoonHistory.status()) as { status?: unknown };
+  const status = typeof response.status === "string" ? response.status : "FAILED";
+  const tabId = baekjoonHistoryTab.id ?? (route?.platform === "BAEKJOON" ? route.tabId : null);
+  const username = baekjoonHistory.username;
+  if (status !== "SCAN_IDLE" && tabId !== null) {
+    await writeLocalHistoryRoute({ tabId, url: username ? baekjoonListingUrl(username) : `${BAEKJOON_ORIGIN}${BAEKJOON_STATUS_PATH}`, status, platform: "BAEKJOON" });
+  }
+  const run = (await chrome.storage.session.get(SERVER_HISTORY_RUN_KEY))[SERVER_HISTORY_RUN_KEY] as ServerHistoryRun | undefined;
+  return run && run.platform === "BAEKJOON" ? { ...response, serverAccount: run.account, serverRunId: run.runId } : response;
+}
+
+let baekjoonSiteSyncBusy = false;
+/** One status-page sync click: open that submission's own source page, check it against the row, read its code. */
+async function readBaekjoonForSiteSync(username: string, candidate: BaekjoonHistoryCandidate): Promise<unknown> {
+  if (baekjoonSiteSyncBusy) return { ok: false, error: "BUSY" };
+  baekjoonSiteSyncBusy = true;
+  try {
+    const loaded = await baekjoonSiteSyncTab.load(baekjoonSourceUrl(candidate.submissionId));
+    if (!loaded.ok) return { ok: false, error: "OPEN_FAILED" };
+    const read = await baekjoonSiteSyncTab.ask(loaded.value, { type: "BAEKJOON_SOURCE_READ", username, candidate });
+    const value = read.ok ? read.value as { status?: unknown; sourceCode?: unknown } | null : null;
+    if (value?.status === "LOGIN_REQUIRED") return { ok: false, error: "LOGIN_REQUIRED" };
+    if (value?.status !== "DONE" || typeof value.sourceCode !== "string") return { ok: false, error: "DETAIL_UNVERIFIED" };
+    const capture = baekjoonHistoricalCapture(candidate, value.sourceCode, await solvedAc.lookup(candidate.problemNumber));
+    return capture ? { ok: true, capture } : { ok: false, error: "DETAIL_UNVERIFIED" };
+  } finally {
+    await baekjoonSiteSyncTab.close();
+    baekjoonSiteSyncBusy = false;
+  }
+}
+
 async function finishSelfRevocation(settings: Awaited<ReturnType<typeof store.getSettings>>): Promise<void> {
   const relay = settings.relay;
   if (!relay || relay.status !== "REVOCATION_PENDING") return;
@@ -519,6 +589,8 @@ type InternalMessage =
   | { type: "LOCAL_HISTORY_SCAN_START" | "LOCAL_HISTORY_STATUS" | "LOCAL_HISTORY_CANCEL"; platform?: unknown }
   | { type: "LOCAL_HISTORY_IMPORT_START"; platform?: unknown; submissionIds: unknown; serverRunId?: unknown; serverAccount?: unknown }
   | { type: 'SITE_LOGIN_STATUS' }
+  | { type: "BAEKJOON_LOGIN_SEEN"; username: unknown }
+  | { type: "BAEKJOON_SITE_SYNC_READ"; username: unknown; candidate: unknown }
   | { type: 'START_GITHUB_BATCH' | 'GET_GITHUB_BATCH' | 'CANCEL_GITHUB_BATCH' | 'RESUME_GITHUB_BATCH'; account?: unknown; target?: unknown };
 
 type ProgrammersAuxiliaryMessage = { type: "PROGRAMMERS_AUX_READ"; lessonUrl: unknown; mode: unknown; submissionId?: unknown } | { type: "PROGRAMMERS_AUX_CANCEL" };
@@ -759,6 +831,8 @@ function isSupportedCaptureSender(sender: chrome.runtime.MessageSender, platform
   if (!url || !Number.isSafeInteger(sender.tab?.id) || sender.frameId !== 0) return false;
   if (platform === "SWEA") return url.origin === SWEA_ORIGIN && url.pathname === SWEA_SOLVING_PATH;
   if (platform === "PROGRAMMERS") return url.origin === "https://school.programmers.co.kr" && /^\/learn\/courses\/30\/lessons\/\d+$/.test(url.pathname);
+  // Baekjoon judges on the status page, where a submit-page attempt is resumed and stored.
+  if (platform === "BAEKJOON") return isBaekjoonOrigin(url.origin) && (url.pathname === BAEKJOON_STATUS_PATH || BAEKJOON_SUBMIT_PATH.test(url.pathname));
   return url.origin === "https://jungol.co.kr" && /^\/problem\/\d+\/?$/.test(url.pathname);
 }
 
@@ -769,6 +843,7 @@ function siteSyncPlatform(sender: chrome.runtime.MessageSender): Platform | null
   if (url.origin === "https://jungol.co.kr") return isJungolHistorySenderUrl(url) ? "JUNGOL" : null;
   if (url.origin === SWEA_ORIGIN) return url.pathname === SWEA_USER_SUBMISSIONS_PATH ? "SWEA" : null;
   if (url.origin === "https://school.programmers.co.kr") return /^\/learn\/courses\/30\/lessons\/\d+$/.test(url.pathname) ? "PROGRAMMERS" : null;
+  if (isBaekjoonOrigin(url.origin)) return url.pathname === BAEKJOON_STATUS_PATH ? "BAEKJOON" : null;
   return null;
 }
 
@@ -842,11 +917,12 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     // Bind to the signed-in account at store time and queue it whatever the
     // relay state; the outbox uploads once the connection is ready, so the
     // submission page never asks the user to confirm anything.
-    void store.getSettings().then(settings => {
+    void store.getSettings().then(async settings => {
       const accountId = settings.accountId;
       if (settings.autoSyncEnabled !== true) return { ok: false, error: 'DISABLED' };
       if (!accountId || !/^[1-9]\d{0,15}$/.test(accountId)) return { ok: false, error: 'LOGIN_REQUIRED' };
-      return retainCaptureForRetry(store, capture, accountId, () => { void requestRelayDrain(); });
+      // Baekjoon pages show no tier; solved.ac's is added when it answers in time.
+      return retainCaptureForRetry(store, await solvedAc.enrich(capture), accountId, () => { void requestRelayDrain(); });
     }).then(sendResponse).catch(() => sendResponse({ ok: false, error: "STORAGE_ERROR" }));
     return true;
   }
@@ -854,7 +930,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   // History candidates the server already holds, including live captures that carry no site submission id.
   if (object.type === "HISTORY_SERVER_MATCH") {
     const platform = object.platform;
-    if (!isLocalHistoryPageSender(sender, chrome.runtime.id) || (platform !== "JUNGOL" && platform !== "SWEA" && platform !== "PROGRAMMERS") ||
+    if (!isLocalHistoryPageSender(sender, chrome.runtime.id) || !isPlatform(platform) ||
         !Array.isArray(object.rows) || object.rows.length > 10_000) { sendResponse({ ok: false, error: 'BAD_REQUEST' }); return false; }
     const rows = object.rows.filter(row => validSiteSyncRow(platform, row));
     void siteSync.status(platform, rows)
@@ -926,7 +1002,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     const platform = object.platform;
     const phase = object.phase;
     if (!Number.isSafeInteger(tabId) || typeof object.attemptId !== "string" || !/^[0-9a-f-]{36}$/i.test(object.attemptId) ||
-        (platform !== "SWEA" && platform !== "PROGRAMMERS" && platform !== "JUNGOL") ||
+        !isPlatform(platform) ||
         !isSupportedCaptureSender(sender, platform) ||
         (phase !== "CAPTURING" && phase !== "SAVING" && phase !== "CLEAR") ||
         (phase === "CAPTURING" && (typeof object.problemNumber !== "string" || !/^\d{1,40}$/.test(object.problemNumber) ||
@@ -992,7 +1068,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   if (object.type === "LOCAL_HISTORY_IDS") {
     if (!isHistoryPageSender(sender)) { sendResponse({ error: "UNAUTHORIZED" }); return false; }
     const platform = object.platform === undefined ? "JUNGOL" : object.platform;
-    if (platform !== "JUNGOL" && platform !== "SWEA" && platform !== "PROGRAMMERS") { sendResponse({ error: "BAD_REQUEST" }); return false; }
+    if (!isPlatform(platform)) { sendResponse({ error: "BAD_REQUEST" }); return false; }
     void store.listHistoricalSubmissionIds(platform).then(submissionIds => sendResponse({ submissionIds })).catch(() => sendResponse({ error: "STORAGE_ERROR" }));
     return true;
   }
@@ -1000,7 +1076,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   if (object.type === "LOCAL_HISTORY_SCAN_START" || object.type === "LOCAL_HISTORY_STATUS" || object.type === "LOCAL_HISTORY_CANCEL" || object.type === "LOCAL_HISTORY_IMPORT_START") {
     if (!isHistoryPageSender(sender)) { sendResponse({ status: "UNAUTHORIZED" }); return false; }
     const platform = object.platform === undefined ? "JUNGOL" : object.platform;
-    if (platform !== "JUNGOL" && platform !== "SWEA" && platform !== "PROGRAMMERS") { sendResponse({ status: "BAD_REQUEST" }); return false; }
+    if (!isPlatform(platform)) { sendResponse({ status: "BAD_REQUEST" }); return false; }
     const ids = object.type === "LOCAL_HISTORY_IMPORT_START" ? object.submissionIds : undefined;
     if (ids !== undefined && (!Array.isArray(ids) || ids.length < 1 || ids.length > 5_000 || ids.some(id => !isHistoricalSubmissionId(platform, id)) || new Set(ids).size !== ids.length)) { sendResponse({ status: "BAD_REQUEST" }); return false; }
     void (async () => {
@@ -1013,6 +1089,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
         if (!route || route.platform !== platform || route.status !== 'READY') return { status: 'INTERRUPTED' };
         await chrome.storage.session.set({ [SERVER_HISTORY_RUN_KEY]: { runId: object.serverRunId, platform, submissionIds: ids, account: object.serverAccount } });
       }
+      if (platform === "BAEKJOON") return baekjoonHistoryCommand(object.type as LocalHistoryCommand, ids as string[] | undefined);
       return localHistoryCommand(object.type as LocalHistoryCommand, platform, ids as string[] | undefined, sender.tab?.id);
     })().then(sendResponse).catch(() => sendResponse({ status: "FAILED" }));
     return true;
@@ -1020,7 +1097,26 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 
   if (object.type === 'SITE_LOGIN_STATUS') {
     if (!dashboardSender(sender, chrome.runtime.id)) { sendResponse({ error: 'UNAUTHORIZED' }); return false; }
-    void checkSiteLogins().then(sites => sendResponse({ sites })).catch(() => sendResponse({ error: 'UNAVAILABLE' }));
+    void checkSiteLogins(fetch, async () => (await chrome.storage.local.get(BAEKJOON_LOGIN_SEEN_KEY))[BAEKJOON_LOGIN_SEEN_KEY])
+      .then(sites => sendResponse({ sites })).catch(() => sendResponse({ error: 'UNAVAILABLE' }));
+    return true;
+  }
+
+  if (object.type === "BAEKJOON_LOGIN_SEEN") {
+    const url = currentPageUrl(sender);
+    const username = object.username;
+    if (sender.id !== chrome.runtime.id || sender.frameId !== 0 || !url || !isBaekjoonOrigin(url.origin) ||
+        (username !== null && (typeof username !== "string" || !/^[A-Za-z0-9_]{1,40}$/.test(username)))) { sendResponse({ ok: false }); return false; }
+    const seen = username ? { state: "SIGNED_IN", name: username, seenAt: Date.now() } : { state: "SIGNED_OUT", seenAt: Date.now() };
+    void chrome.storage.local.set({ [BAEKJOON_LOGIN_SEEN_KEY]: seen }).then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
+  if (object.type === "BAEKJOON_SITE_SYNC_READ") {
+    const username = object.username, candidate = object.candidate;
+    if (sender.id !== chrome.runtime.id || siteSyncPlatform(sender) !== "BAEKJOON" || typeof username !== "string" ||
+        !/^[A-Za-z0-9_]{1,40}$/.test(username) || !isBaekjoonHistoryCandidate(candidate)) { sendResponse({ ok: false, error: "BAD_REQUEST" }); return false; }
+    void readBaekjoonForSiteSync(username, candidate).then(sendResponse).catch(() => sendResponse({ ok: false, error: "READ_FAILED" }));
     return true;
   }
 

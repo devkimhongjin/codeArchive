@@ -99,6 +99,21 @@ JavaScript, extension API, or page-wide command transport. If the editor
 cannot be synchronized or the source field is unavailable, the capture
 remains local-uncreated.
 
+Baekjoon (acmicpc.net) submits with a full page load, so its attempt spans
+two documents. On `/submit/{n}` the MAIN-world hook copies the CodeMirror
+editor into `textarea#source` at the `#submit_button` click, and the isolated
+script records the problem, title, selected language, source and signed-in
+id in the tab's `sessionStorage` (expires after 15 minutes). The `/status`
+page resumes that attempt and accepts only the one own row (`/source/{id}`
+link) with the same id, problem, language, UTF-8 code length and a server
+`data-timestamp` within two minutes of the click, once its result span turns
+`result-ac`/`data-color="ac"` with `맞았습니다!!` (or 100점). A wrong answer
+ends the attempt. `solvedAt` is the judge's own submission time. Baekjoon
+returns an empty body to script requests, so past submissions and
+status-page sync read real page loads in an inactive tab the extension opens
+(listing pages 3 s apart, source pages 3–5 s apart); see
+[docs/baekjoon-support.md](../../docs/baekjoon-support.md).
+
 Programmers performance is optional and accepted only from the single current
 `.console-content .console-test-group`: every `.result` row must be a passed
 `통과 (Nms, NMB)` row, execution times are summed, and memory is averaged. A

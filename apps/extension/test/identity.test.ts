@@ -18,6 +18,9 @@ test('development manifest key retains the local identity while the web fallback
     'https://swexpertacademy.com/*',
     'https://school.programmers.co.kr/*',
     'https://jungol.co.kr/*',
+    'https://acmicpc.net/*',
+    'https://www.acmicpc.net/*',
+    'https://solved.ac/*',
     'https://api.github.com/*',
     'https://codearchive-api-stg-e3q54l32da-as.a.run.app/*',
     'http://localhost:5173/*'
@@ -28,6 +31,10 @@ test('development manifest key retains the local identity while the web fallback
   assert.ok(isolated.matches.includes('https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do*'));
   assert.ok(isolated.matches.includes('https://jungol.co.kr/*'));
   assert.ok(isolated.matches.includes('https://school.programmers.co.kr/*'));
+  assert.ok(isolated.matches.includes('https://acmicpc.net/*'));
+  const main = manifest.content_scripts.find((script: { world?: string }) => script.world === 'MAIN');
+  assert.ok(main.matches.includes('https://acmicpc.net/submit/*'), 'the editor hook runs only on the Baekjoon submit form');
+  assert.equal(main.matches.includes('https://acmicpc.net/*'), false);
   const mainWorld = manifest.content_scripts.find((script: { world?: string }) => script.world === 'MAIN');
   assert.ok(mainWorld?.matches.includes('https://jungol.co.kr/*'), 'list-to-problem SPA navigation must retain the source listener');
   assert.ok(mainWorld?.matches.includes('https://school.programmers.co.kr/*'), 'list-to-lesson SPA navigation must retain the source listener');

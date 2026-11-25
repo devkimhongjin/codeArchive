@@ -16,7 +16,9 @@ import { authenticatedProgrammersUserId, canonicalProgrammersLessonUrl, previewP
 import { isHistoricalSubmissionId, programmersHistoricalSubmissionAccount, programmersHistoricalSubmissionId,
   programmersHistoricalSubmissionParts } from "./historicalIdentity";
 import { mountSiteSync, type Send, type SiteSyncPage } from "./siteSyncView";
-import { jungolSyncPage, programmersSyncPage, sweaSyncPage } from "./siteSyncPages";
+import { baekjoonSyncPage, jungolSyncPage, programmersSyncPage, sweaSyncPage } from "./siteSyncPages";
+import { BAEKJOON_STATUS_PATH, baekjoonSignedOut, baekjoonUsername, isBaekjoonOrigin } from "./adapters/baekjoonSelectors";
+import { isBaekjoonHistoryCandidate, readBaekjoonListingPage, readBaekjoonSourceForCandidate } from "./historicalBaekjoon";
 import {
   createSweaProblemContext,
   normalizeSweaDetailUrl,
@@ -437,7 +439,7 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
   let activeAttemptId: string | null = null;
   let blockedCaptureId: string | null = null;
   function markCaptureStage(stage: string, attemptId: string | null = activeAttemptId): void {
-    if ((adapter.platform !== "PROGRAMMERS" && adapter.platform !== "JUNGOL") || (attemptId && attemptId !== activeAttemptId)) return;
+    if ((adapter.platform !== "PROGRAMMERS" && adapter.platform !== "JUNGOL" && adapter.platform !== "BAEKJOON") || (attemptId && attemptId !== activeAttemptId)) return;
     // A non-sensitive, page-local diagnostic for the next real submission.
     // Never include source, identity, capture IDs, or runtime error messages.
     document.documentElement?.setAttribute("data-codearchive-capture-stage", stage);
@@ -584,11 +586,13 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
       let current: Element | null = target;
       while (current) {
         if (adapter.isSubmitControl(current)) {
-          if ((adapter.platform === "JUNGOL" || adapter.platform === "PROGRAMMERS") && !adapter.detectProblem()) break;
+          if ((adapter.platform === "JUNGOL" || adapter.platform === "PROGRAMMERS" || adapter.platform === "BAEKJOON") && !adapter.detectProblem()) break;
           // The MAIN-world document_start listener runs before this isolated
           // document_idle listener and synchronously updates the platform's
           // source textarea at this click boundary.
           adapter.beginSubmissionAttempt(new Date());
+          // Baekjoon posts the form and judges on the status page, which resumes this attempt.
+          if (adapter.platform === "BAEKJOON") break;
           activeAttemptId = crypto.randomUUID();
           blockedCaptureId = null;
           if (adapter.platform === "PROGRAMMERS" || adapter.platform === "JUNGOL") {
@@ -610,6 +614,16 @@ export function startCapture(adapter: PlatformAdapter, document: Document, send:
     reportProgress(activeAttemptId, "CLEAR");
     activeAttemptId = null;
   });
+
+  // An attempt begun on another page of this tab (Baekjoon's submit form)
+  // continues here: wait for its result exactly as after a click.
+  if (adapter.hasPendingSubmissionAttempt?.() && adapter.getSubmissionSnapshot?.()) {
+    activeAttemptId = crypto.randomUUID();
+    markCaptureStage("waiting-result");
+    reportProgress(activeAttemptId, "CAPTURING");
+    ensureResultPoll();
+    scheduleCaptureCheck();
+  }
 
   const root = document.body ?? document.documentElement;
   if (root) {
@@ -1163,6 +1177,10 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
         .finally(() => { programmersAuxiliaryReads -= 1; });
       return true;
     }
+    if (object?.type === "BAEKJOON_IDENTITY" || object?.type === "BAEKJOON_LISTING_READ" || object?.type === "BAEKJOON_SOURCE_READ") {
+      sendResponse(answerBaekjoonRead(document, window.location, object));
+      return false;
+    }
     if (object?.type === "HISTORY_SCAN_START" || object?.type === "HISTORY_SCAN_STATUS") {
       if (window.location.origin !== "https://jungol.co.kr" || !isJungolHistoryPath(window.location.pathname)) {
         sendResponse({ status: "TAB_NOT_FOUND" });
@@ -1251,7 +1269,33 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
     return false;
   });
   void bootstrapContent(document, window.location, document.referrer);
-  if (typeof chrome !== "undefined" && chrome.runtime?.id) startSiteSync(document, window.location);
+  if (typeof chrome !== "undefined" && chrome.runtime?.id) {
+    startSiteSync(document, window.location);
+    if (isBaekjoonOrigin(window.location.origin)) reportBaekjoonLogin(document);
+  }
+}
+
+/** Reads for the service worker's Baekjoon tasks, on the page that is loaded in this tab. */
+export function answerBaekjoonRead(document: Document, location: Location, message: Record<string, unknown>): unknown {
+  if (!isBaekjoonOrigin(location.origin)) return { status: "TAB_NOT_FOUND" };
+  if (message.type === "BAEKJOON_IDENTITY") return { username: baekjoonUsername(document) };
+  if (message.type === "BAEKJOON_LISTING_READ") {
+    let same = false;
+    try { same = typeof message.url === "string" && new URL(message.url).href === new URL(location.href).href; } catch { same = false; }
+    return same ? readBaekjoonListingPage(document, location) : { status: "UNREADABLE" };
+  }
+  if (typeof message.username !== "string" || !isBaekjoonHistoryCandidate(message.candidate)) return { status: "BAD_REQUEST" };
+  return readBaekjoonSourceForCandidate(document, location, { username: message.username, candidate: message.candidate });
+}
+
+/** Baekjoon is never probed (it answers script requests with an empty body); remember what its own page shows. */
+function reportBaekjoonLogin(document: Document): void {
+  const report = () => {
+    const username = baekjoonUsername(document);
+    if (!username && !baekjoonSignedOut(document)) return;
+    void chrome.runtime.sendMessage({ type: "BAEKJOON_LOGIN_SEEN", username }).catch(() => undefined);
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", report, { once: true }); else report();
 }
 
 let programmersAuxiliaryReads = 0;
@@ -1271,6 +1315,7 @@ function startSiteSync(document: Document, location: Location): void {
     if (location.origin === "https://jungol.co.kr")
       return isJungolHistorySenderUrl(new URL(location.href)) ? { key: location.pathname + location.search, page: jungolSyncPage(document, location, send) } : null;
     if (location.origin === SWEA_ORIGIN && location.pathname === SWEA_USER_SUBMISSIONS_PATH) return { key: location.href, page: sweaSyncPage(document, location, send) };
+    if (isBaekjoonOrigin(location.origin) && location.pathname === BAEKJOON_STATUS_PATH) return { key: location.href, page: baekjoonSyncPage(document, location, send) };
     const lessonUrl = canonicalProgrammersLessonUrl(location);
     if (lessonUrl) return { key: lessonUrl, page: programmersSyncPage(document, location, send,
       (url, submissionId) => readProgrammersAuxiliaryLesson(document, location, { lessonUrl: url, mode: "import", submissionId })) };

@@ -146,7 +146,7 @@ public class SolutionService {
         try {
             platform = Platform.valueOf(platformValue);
         } catch (IllegalArgumentException exception) {
-            throw new CaptureValidationException("platform must be SWEA, PROGRAMMERS, or JUNGOL");
+            throw new CaptureValidationException("platform must be SWEA, PROGRAMMERS, JUNGOL, or BAEKJOON");
         }
 
         String problemNumber = required(payload.getProblemNumber(), "problemNumber", 100);
@@ -197,7 +197,7 @@ public class SolutionService {
     private boolean validHistoricalIdentity(Platform platform, String id, String problemNumber, Instant solvedAt, String languageKey) {
         if (id.length() > 320) return false;
         return switch (platform) {
-            case JUNGOL -> id.matches("[0-9]{1,40}");
+            case JUNGOL, BAEKJOON -> id.matches("[0-9]{1,40}");
             case SWEA -> id.matches("[A-Za-z0-9_-]{8,160}");
             case PROGRAMMERS -> {
                 var match = java.util.regex.Pattern.compile("pg:[A-Za-z0-9_-]{1,100}:([0-9]{1,40}):([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}[+-][0-9]{2}:[0-9]{2}):([a-z0-9+.#-]{1,100})").matcher(id);
