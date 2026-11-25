@@ -4,7 +4,7 @@ import type { Platform } from "./types";
 /** Historical ids are site identities rather than capture ids. */
 export function isHistoricalSubmissionId(platform: Platform, value: unknown): value is string {
   if (typeof value !== "string") return false;
-  if (platform === "JUNGOL") return /^\d{1,40}$/.test(value);
+  if (platform === "JUNGOL" || platform === "BAEKJOON") return /^\d{1,40}$/.test(value);
   if (platform === "SWEA") return /^[A-Za-z0-9_-]{8,160}$/.test(value);
   // Programmers has no exposed native submission id. This form is generated
   // only after the selected account's row is proven unique.

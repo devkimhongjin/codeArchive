@@ -196,12 +196,14 @@ h1, h2, p { margin-top: 0; }
 .platform-logo.swea { color: #e74c65; background: var(--danger-soft); }
 .platform-logo.programmers { color: #1479cf; background: #eaf5ff; }
 .platform-logo.jungol { color: #0f766e; background: #dff7ef; }
+.platform-logo.baekjoon { color: #1d4ed8; background: #e3ebff; }
 .solution-row-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .solution-row-top, .solution-row-bottom { display: flex; align-items: center; min-width: 0; gap: 7px; }
 .solution-platform { color: #a19dac; font: 500 var(--text-2xs) 'DM Mono', monospace; letter-spacing: .04em; }
 .solution-result { display: inline-flex; align-items: center; gap: 2px; color: #269276; font: 500 var(--text-2xs) 'DM Mono', monospace; }
 .solution-title { overflow: hidden; color: #2d2a40; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 800; letter-spacing: -.04em; }
 .solution-row-bottom { color: var(--text-faint); font: 500 var(--text-xs) 'DM Mono', monospace; }
+.difficulty-badge { flex: none; padding: 1px 6px; color: var(--purple); background: var(--purple-soft); border-radius: 999px; font: 600 var(--text-2xs) 'DM Mono', monospace; white-space: nowrap; }
 .row-divider { width: 2px; height: 2px; display: inline-block; flex: none; background: #c8c3d1; border-radius: 50%; }
 .row-time { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; }
 .solution-row > svg { color: #c2bdcd; flex: none; }

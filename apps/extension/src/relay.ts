@@ -1,4 +1,4 @@
-import type { Capture, CaptureSettings } from "./types";
+import { isPlatform, type Capture, type CaptureSettings } from "./types";
 import type { CaptureStore } from "./storage";
 import { LEGACY_DASHBOARD_ORIGIN, LEGACY_RELAY_ORIGINS, PUBLIC_API_ORIGIN } from '../../../shared/publicApiOrigin';
 
@@ -144,7 +144,7 @@ export async function fetchRecentServerCaptures(settings: CaptureSettings, fetch
   if (!Array.isArray(payload.captures) || payload.captures.length > 3) throw new Error('서버 풀이 응답을 확인하지 못했습니다.');
   return payload.captures.map((record: unknown) => {
     const item = record as Partial<Capture> | null;
-    if (!item || typeof item.captureId !== 'string' || !['JUNGOL', 'SWEA', 'PROGRAMMERS'].includes(item.platform ?? '') ||
+    if (!item || typeof item.captureId !== 'string' || !isPlatform(item.platform) ||
         typeof item.problemNumber !== 'string' || typeof item.title !== 'string' || typeof item.language !== 'string' ||
         typeof item.observedAt !== 'string' || !Number.isFinite(Date.parse(item.observedAt))) throw new Error('서버 풀이 응답을 확인하지 못했습니다.');
     // Explicit projection: do not retain unexpected source fields from any server response.

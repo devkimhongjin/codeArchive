@@ -713,6 +713,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode; import java.io.InputStrea
   if(fields.contains("identity")&&fields.contains("title"))lines.add(solution.getPlatform().name()+" #"+solution.getProblemNumber()+" · "+solution.getTitle());
   else{if(fields.contains("identity"))lines.add(solution.getPlatform().name()+" #"+solution.getProblemNumber());if(fields.contains("title"))lines.add("Problem: "+solution.getTitle());}
   if(fields.contains("url")&&solution.getProblemUrl()!=null&&!solution.getProblemUrl().isBlank())lines.add(solution.getProblemUrl());
+  if(fields.contains("difficulty")&&solution.getDifficulty()!=null)lines.add("Difficulty: "+solution.getDifficulty().label());
   if(fields.contains("solvedAt")){Instant solved=solution.getSolvedAt()!=null?solution.getSolvedAt():solution.getObservedAt();if(solved!=null)lines.add("Solved At: "+HEADER_TIME.withZone(zone).format(solved)+(zone.equals(ZoneOffset.UTC)?" UTC":" KST"));}
   if(fields.contains("language")&&solution.getLanguage()!=null&&!solution.getLanguage().isBlank())lines.add("Language: "+solution.getLanguage());
   if(fields.contains("performance")){

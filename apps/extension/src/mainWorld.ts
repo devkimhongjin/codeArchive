@@ -1,6 +1,7 @@
 import { PROGRAMMERS_CODE_SELECTOR, PROGRAMMERS_LESSON_PATH, PROGRAMMERS_ORIGIN, PROGRAMMERS_SUBMIT_SELECTOR } from "./adapters/programmersSelectors";
 import { SWEA_EDITOR_SELECTORS, SWEA_ORIGIN, SWEA_SOLVING_PATH, SWEA_SUBMIT_SELECTORS } from "./adapters/sweaSelectors";
 import { JUNGOL_ORIGIN, JUNGOL_PROBLEM_PATH, JUNGOL_SOURCE_SELECTOR, jungolSelectedLanguage, jungolSubmitControl } from "./adapters/jungolSelectors";
+import { BAEKJOON_SOURCE_SELECTOR, BAEKJOON_SUBMIT_PATH, baekjoonSubmitControl, isBaekjoonOrigin } from "./adapters/baekjoonSelectors";
 import { BUILD_METADATA } from "../../../shared/buildMetadata";
 import { installProgrammersHistorySource } from "./programmersHistorySource";
 
@@ -30,6 +31,10 @@ function isProgrammers(location: Location): boolean {
 
 function isJungol(location: Location): boolean {
   return location.origin === JUNGOL_ORIGIN && JUNGOL_PROBLEM_PATH.test(location.pathname);
+}
+
+function isBaekjoonSubmit(location: Location): boolean {
+  return isBaekjoonOrigin(location.origin) && BAEKJOON_SUBMIT_PATH.test(location.pathname);
 }
 
 function setSyncStatus(document: Document, status: "synced" | "failed"): void {
@@ -152,6 +157,35 @@ function syncJungol(document: Document, location: Location, window: MainWorldWin
 }
 
 /**
+ * Baekjoon's submit form is a CodeMirror 5 editor over textarea#source. It
+ * copies the editor into the textarea only on the form's own submit event, so
+ * copy it at the click boundary, before the isolated listener reads it.
+ */
+function syncBaekjoon(document: Document): boolean {
+  try {
+    const source = document.querySelector<HTMLTextAreaElement>(BAEKJOON_SOURCE_SELECTOR);
+    if (!source) return false;
+    const wrappers = [...document.querySelectorAll<HTMLElement>("#submit_form .CodeMirror")] as (HTMLElement & {
+      CodeMirror?: { save?: () => unknown; getValue?: () => string };
+    })[];
+    if (wrappers.length > 1) return false;
+    const editor = wrappers[0]?.CodeMirror;
+    // A wrapper without an editor instance is not a safe source; a plain
+    // textarea is accepted only when the page has no CodeMirror at all.
+    if (wrappers.length === 1 && (!editor || typeof editor.getValue !== "function")) return false;
+    if (editor) {
+      const value = editor.getValue!();
+      if (typeof value !== "string") return false;
+      if (typeof editor.save === "function") editor.save();
+      if (source.value !== value) source.value = value;
+    }
+    return source.value.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Jungol labels the selected language "C++20" but sends altLanguage "CPP20".
  * Spell "++" as "PP" before dropping punctuation, so C++ is compared as CPP
  * rather than C ("Java 8"/"JAVA8", "Kotlin/JVM 11"/"KOTLIN_JVM11" still match).
@@ -218,6 +252,8 @@ export function syncEditorAtSubmitClick(document: Document, location: Location, 
       ? syncProgrammers(document)
       : isJungol(location)
         ? syncJungol(document, location, window)
+      : isBaekjoonSubmit(location)
+        ? syncBaekjoon(document)
       : false;
   setSyncStatus(document, synced ? "synced" : "failed");
   return synced;
@@ -233,6 +269,14 @@ function submitTarget(target: EventTarget | null, document: Document, location: 
     let current: Element | null = element;
     while (current) {
       if (jungolSubmitControl(current)) return current;
+      current = current.parentElement;
+    }
+    return null;
+  }
+  if (isBaekjoonSubmit(location)) {
+    let current: Element | null = element;
+    while (current) {
+      if (baekjoonSubmitControl(current)) return current;
       current = current.parentElement;
     }
     return null;

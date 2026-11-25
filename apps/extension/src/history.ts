@@ -5,7 +5,8 @@ import { HISTORY_TIMING_STORAGE_KEY, estimateHistoricalTotalDuration, readHistor
 import { isHistoricalCollectionScope, isTrustedHistoricalCollectionRequest, type HistoricalCollectionNotice } from '../../../shared/historicalCollectionScope';
 import type { HistoryServerPlatform, HistoryServerResult } from '../../../shared/historyServerProtocol';
 
-type Platform = "JUNGOL" | "SWEA" | "PROGRAMMERS";
+type Platform = "JUNGOL" | "SWEA" | "PROGRAMMERS" | "BAEKJOON";
+const siteName: Record<Platform, string> = { JUNGOL: "정올", SWEA: "SWEA", PROGRAMMERS: "프로그래머스", BAEKJOON: "백준" };
 type Candidate = ReconciliationSubmission & { submissionId: string; problemNumber: string; title: string; language?: string; createdAt?: string; executionTime?: number; memoryValue?: number;
   savedCode?: boolean };
 type State = { status: string; candidates?: Candidate[]; truncated?: boolean; progress?: {
@@ -30,6 +31,7 @@ export type HistoryServices = { send: (message: unknown) => Promise<unknown>;
 const platformInfo: Record<Platform, { description: string; guide: string }> = {
   JUNGOL: { description: "후보 찾기를 누르면 확장이 정올 제출현황을 새 창에서 열어 앞으로 가져오고, 끝나면 닫습니다. 이 화면의 탭은 그대로 유지됩니다. 정올은 창이 다른 창에 가려지거나 최소화되어 백그라운드가 되면 응답하지 않아 수집이 진행되지 않을 수 있으니, 수집이 끝날 때까지 정올 창을 이 화면과 나란히 두고 가리거나 최소화하지 말아 주세요.", guide: "우측 상단 프로필 → 내 정보 → 제출현황에서 내 제출 내역을 열어 주세요." },
   SWEA: { description: "후보 찾기를 누르면 확장이 SWEA 제출 목록을 백그라운드 탭에서 열고, 끝나면 닫습니다. SWEA가 백그라운드에서 응답하지 않으면 그 탭을 앞으로 가져옵니다.", guide: "My Page Code에서 제출한 Problem을 열어 주세요." },
+  BAEKJOON: { description: "후보 찾기를 누르면 확장이 백준 첫 화면에서 로그인한 아이디를 확인하고, 내 '맞았습니다!!' 제출 목록을 백그라운드 탭에서 한 페이지씩 읽은 뒤 닫습니다. 백준은 스크립트 요청에 내용을 주지 않아 목록과 소스 페이지를 실제로 열어 읽으며, 사이트에 부담을 주지 않도록 목록은 3초, 소스는 3~5초 간격으로 엽니다. 제출이 많으면 오래 걸립니다. 백준 화면이 한국어일 때만 읽을 수 있습니다.", guide: "백준에 로그인한 뒤 다시 시도해 주세요." },
   PROGRAMMERS: { description: "후보 찾기를 누르면 확장이 해결한 문제 목록을 백그라운드 탭에서 열고, 문제 상세도 뒤쪽 탭에서 읽은 뒤 닫습니다. 프로그래머스가 백그라운드에서 응답하지 않으면 목록 탭을 앞으로 가져옵니다. 제출 이력에는 실행시간·메모리가 없어 해당 정보는 저장할 수 없으며, 가장 빠른 제출·최소 메모리 선택도 지원하지 않습니다. SQL 문제는 제출 이력이 없어 편집기에 저장된 마지막 코드를 문제 목록의 해결 시각으로 가져옵니다.", guide: "해결한 문제 목록을 열어 주세요. 문제 상세는 같은 사이트 창의 뒤쪽 탭에서 열리고 처리 후 닫힙니다." }
 };
 
@@ -122,7 +124,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       return `${failureLabels[state.failureReason]}${(state.completed ?? 0) > 0 ? ` 현재까지 ${resultSummary()}` : ""}`;
     if (state.status === "FAILED" && (state.completed ?? 0) > 0) return `수집을 완료하지 못했습니다. 현재까지 ${resultSummary()}`;
     if (state.status === "TAB_NOT_FOUND") {
-      const name = platform() === "JUNGOL" ? "정올" : platform() === "SWEA" ? "SWEA" : "프로그래머스";
+      const name = siteName[platform()];
       const causes: Record<string, string> = { WINDOW: "정올 창을 열지 못했습니다", HOME_LOAD: "정올 첫 화면을 불러오지 못했습니다",
         NO_ACCOUNT_LINK: "정올 첫 화면에서 내 계정 링크를 찾지 못했습니다", NOT_OWNER: "정올 첫 화면의 계정 중 로그인한 본인 계정을 확인하지 못했습니다",
         LIST_LOAD: "정올 제출현황을 불러오지 못했습니다" };
@@ -185,7 +187,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       const meta = doc.createElement("small"); meta.className = "meta";
       meta.textContent = platform() === "PROGRAMMERS"
         ? `${candidate.createdAt ?? "제출 시각 확인됨"}${candidate.language ? ` · ${candidate.language}` : ""}${candidate.savedCode === true ? " · 편집기 저장 코드(정답 제출과 다를 수 있음)" : ""}`
-        : `제출 #${candidate.submissionId}${candidate.executionTime !== undefined ? ` · ${candidate.executionTime}ms` : ""}${candidate.memoryValue !== undefined ? ` · ${candidate.memoryValue}${platform() === "SWEA" ? "KB" : "MB"}` : ""}`;
+        : `제출 #${candidate.submissionId}${candidate.executionTime !== undefined ? ` · ${candidate.executionTime}ms` : ""}${candidate.memoryValue !== undefined ? ` · ${candidate.memoryValue}${platform() === "SWEA" || platform() === "BAEKJOON" ? "KB" : "MB"}` : ""}`;
       if (reconciliation) {
         const state = reconciliation.find(item => item.submissionId === candidate.submissionId)?.state ?? "unsupported";
         const labels = { matched: "로컬·서버 제출 키 일치", missing_local: "로컬 기록 없음 · 원본 확인 후 복구 가능", missing_remote: "서버 기록 없음 · 관리 탭에서 동기화", enrichment_available: "정보 보강 가능 · 원본 재확인 필요", ambiguous: "동일 제출 확인 불가 · 자동 병합 제외", unsupported: "대조 미확인" };
@@ -200,7 +202,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     help.textContent = selected.size > 5_000 ? `${summary} · 한 번에 최대 5,000개 제출을 저장할 수 있습니다. 선택 범위를 줄여 주세요.` :
       excluded ? `${summary} · 이미 ${serverMode ? '서버에 등록된' : '이 브라우저에 저장한'} 제출 ${excluded}건${excludedLive ? `(실시간 수집 ${excludedLive}건 포함)` : ''}은 후보에서 제외했습니다.` : summary;
     importButton.textContent = reconciliation ? `선택한 ${selected.size}건 원본 검증·복구/보강` : `선택한 ${selected.size}건 ${serverMode ? '서버 등록' : '로컬 저장'}`;
-    if (reconciliationButton) reconciliationButton.disabled = reconciliationBusy || taskActive || !readyForImport || platform() === "JUNGOL";
+    if (reconciliationButton) reconciliationButton.disabled = reconciliationBusy || taskActive || !readyForImport || platform() === "JUNGOL" || platform() === "BAEKJOON";
     importButton.disabled = serverBusy || taskActive || !readyForImport || selected.size === 0 || selected.size > 5_000;
   }
   function showPlatform() {
@@ -216,7 +218,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
       option.disabled = performanceUnavailable && (option.value === "fastest" || option.value === "lowest-memory");
     }
     if (policyOptions.find(option => option.selected)?.disabled) policy.value = "latest";
-    scan.textContent = `${current === "JUNGOL" ? "정올" : current === "SWEA" ? "SWEA" : "프로그래머스"} 제출 후보 찾기`;
+    scan.textContent = `${siteName[current]} 제출 후보 찾기`;
     scan.disabled = false;
     status.textContent = "원본 제출 이력 탭을 확인하세요.";
     render();
@@ -315,7 +317,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
     } else { progressBar.hidden = true; progress.textContent = ""; if (taskStage) taskStage.textContent = ""; }
     // The source site only answers while its tab is in front; say what the extension did about it.
     if (taskStage && active && (state.sourceStalled || state.sourceForegrounded)) {
-      const site = platform() === "JUNGOL" ? "정올" : platform() === "SWEA" ? "SWEA" : "프로그래머스";
+      const site = siteName[platform()];
       const note = state.sourceStalled
         ? `${site} 사이트가 백그라운드 탭에서는 응답하지 않습니다. ${site} 탭을 눌러 앞으로 가져와 주세요.`
         : platform() === "JUNGOL"
@@ -351,7 +353,7 @@ export function mountHistory(doc: Document, services: HistoryServices) {
   async function loadPlatform() { const expected = platform(), epoch = platformEpoch; try { if (!await refreshLocalIds(expected, epoch) || !ownsPlatform(expected, epoch)) return; await applyState(await send({ type: "LOCAL_HISTORY_STATUS", platform: expected }), expected, epoch); } catch (error) { if (ownsPlatform(expected, epoch)) status.textContent = serverMode && error instanceof Error ? error.message : "확장 프로그램에 연결할 수 없습니다."; } }
   reconciliationButton?.addEventListener("click", async () => {
     const expected = platform(), epoch = platformEpoch;
-    if (reconciliationBusy || !readyForImport || taskActive || expected === "JUNGOL") return;
+    if (reconciliationBusy || !readyForImport || taskActive || expected === "JUNGOL" || expected === "BAEKJOON") return;
     reconciliationBusy = true; const requestEpoch = ++reconciliationEpoch;
     reconciliationButton.disabled = true;
     if (reconciliationStatus) reconciliationStatus.textContent = "로컬·서버 제출 기록을 대조하고 있습니다.";

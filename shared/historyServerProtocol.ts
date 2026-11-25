@@ -1,4 +1,4 @@
-export type HistoryServerPlatform = 'JUNGOL' | 'SWEA' | 'PROGRAMMERS'
+export type HistoryServerPlatform = 'JUNGOL' | 'SWEA' | 'PROGRAMMERS' | 'BAEKJOON'
 export type HistoryServerRequest = {
   type: 'CODEARCHIVE_HISTORY_SERVER_REQUEST'; requestId: string; operation: 'IDS'
   platform: HistoryServerPlatform
@@ -8,6 +8,6 @@ export function isHistoryServerRequest(value: unknown): value is HistoryServerRe
   if (!value || typeof value !== 'object') return false
   const item = value as HistoryServerRequest
   return item.type === 'CODEARCHIVE_HISTORY_SERVER_REQUEST' && typeof item.requestId === 'string' &&
-    /^[a-zA-Z0-9-]{1,80}$/.test(item.requestId) && ['JUNGOL', 'SWEA', 'PROGRAMMERS'].includes(item.platform) &&
+    /^[a-zA-Z0-9-]{1,80}$/.test(item.requestId) && ['JUNGOL', 'SWEA', 'PROGRAMMERS', 'BAEKJOON'].includes(item.platform) &&
     item.operation === 'IDS'
 }

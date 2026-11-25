@@ -1,4 +1,4 @@
-import type { Platform } from "./types";
+import { isPlatform, type Platform } from "./types";
 
 export const SUBMISSION_PROGRESS_KEY = "codearchive-submission-progress";
 export const SUBMISSION_PROGRESS_TTL_MS = 180_000;
@@ -18,7 +18,7 @@ export function isSubmissionProgress(value: unknown): value is SubmissionProgres
   const item = value as Partial<SubmissionProgress>;
   return Number.isSafeInteger(item.tabId) && (item.tabId ?? -1) >= 0 &&
     typeof item.attemptId === "string" && /^[0-9a-f-]{36}$/i.test(item.attemptId) &&
-    (item.platform === "SWEA" || item.platform === "PROGRAMMERS" || item.platform === "JUNGOL") &&
+    isPlatform(item.platform) &&
     typeof item.problemNumber === "string" && item.problemNumber.length > 0 && item.problemNumber.length <= 40 &&
     typeof item.title === "string" && item.title.length > 0 && item.title.length <= 200 &&
     (item.phase === "CAPTURING" || item.phase === "SAVING") &&

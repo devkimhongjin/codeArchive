@@ -1,4 +1,4 @@
-import type { Capture } from './types';
+import { isPlatform, type Capture } from './types';
 import type { GithubCommitStatus } from './relay';
 import { canonicalLanguageDisplayName } from '../../../shared/language';
 import { formatCaptureMemory, formatExecutionTime, formatSolutionTime } from './capturePresentation';
@@ -39,7 +39,7 @@ export function pendingSyncMessage(response: unknown): string {
 function asSynced(value: unknown): value is Preview {
   if (!value || typeof value !== 'object') return false;
   const item = value as Partial<Capture>;
-  return typeof item.captureId === 'string' && ['JUNGOL', 'SWEA', 'PROGRAMMERS'].includes(item.platform ?? '') &&
+  return typeof item.captureId === 'string' && isPlatform(item.platform) &&
     typeof item.problemNumber === 'string' && typeof item.title === 'string' && typeof item.language === 'string' &&
     item.result === 'ACCEPTED' && item.syncState === 'SYNCED' && typeof item.observedAt === 'string' && !Number.isNaN(Date.parse(item.observedAt));
 }

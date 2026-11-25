@@ -3,6 +3,7 @@ import {
   CAPTURE_RESULT,
   type Capture,
   type CaptureDraft,
+  isPlatform,
   type Platform,
   type PlatformAdapter,
   type SubmissionResultDetection
@@ -46,7 +47,7 @@ function nonEmpty(value: unknown, maxLength: number): value is string {
 }
 
 function validPlatform(value: unknown): value is Platform {
-  return value === "SWEA" || value === "PROGRAMMERS" || value === "JUNGOL";
+  return isPlatform(value);
 }
 
 function validProblemUrl(value: unknown): value is string {

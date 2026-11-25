@@ -2,7 +2,11 @@ import type { ProblemDifficulty } from '../../../shared/difficulty';
 import type { LightTheme, DarkTheme } from "../../../shared/codeThemes";
 import type { HeaderField } from "../../../shared/headerFields";
 
-export type Platform = "SWEA" | "PROGRAMMERS" | "JUNGOL";
+export const PLATFORMS = ["SWEA", "PROGRAMMERS", "JUNGOL", "BAEKJOON"] as const;
+export type Platform = typeof PLATFORMS[number];
+export function isPlatform(value: unknown): value is Platform {
+  return typeof value === "string" && (PLATFORMS as readonly string[]).includes(value);
+}
 export const DEFAULT_DOWNLOAD_FILENAME_TEMPLATE = "Solution_{number}_{name}";
 
 export const CAPTURE_RESULT = "ACCEPTED" as const;

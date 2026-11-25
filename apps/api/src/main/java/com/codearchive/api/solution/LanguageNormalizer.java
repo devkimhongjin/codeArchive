@@ -13,12 +13,13 @@ public final class LanguageNormalizer {
         if (folded.matches("^(typescript|ts)(?:\\d.*)?$")) return "typescript";
         if (folded.matches("^(javascript|js|nodejs)(?:\\d.*)?$")) return "javascript";
         if (folded.matches("^(python|python3|pypy|pypy3)(?:\\d.*)?$")) return "python";
-        if (folded.matches("^kotlin(?:\\d.*)?$")) return "kotlin";
+        // Baekjoon names variants in parentheses: "Kotlin (JVM)", "Go (gccgo)", "C++17 (Clang)".
+        if (folded.matches("^kotlin(?:\\d.*|\\(.*)?$")) return "kotlin";
         if (folded.matches("^java(?:$|(?:\\(|\\d|openjdk|jdk).*)")) return "java";
-        if (folded.matches("^(c\\+\\+|cpp|g\\+\\+)(?:\\d.*)?$")) return "cpp";
+        if (folded.matches("^(c\\+\\+|cpp|g\\+\\+)(?:\\d.*|\\(.*)?$")) return "cpp";
         if (folded.matches("^(c#|csharp)(?:\\d.*)?$")) return "csharp";
-        if (folded.matches("^(c|c\\(gcc\\)|gcc)(?:\\d.*)?$")) return "c";
-        if (folded.matches("^go(?:\\d.*)?$")) return "go";
+        if (folded.matches("^(c|c\\(gcc\\)|c\\(clang\\)|gcc)(?:\\d.*)?$")) return "c";
+        if (folded.matches("^go(?:\\d.*|\\(.*)?$")) return "go";
         if (folded.matches("^rust(?:\\d.*)?$")) return "rust";
         if (folded.matches("^ruby(?:\\d.*)?$")) return "ruby";
         if (folded.matches("^swift(?:\\d.*)?$")) return "swift";

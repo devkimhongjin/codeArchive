@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { extensionMessage } from './extensionEnvironment'
 
-type Platform = 'JUNGOL' | 'SWEA' | 'PROGRAMMERS'
+type Platform = 'JUNGOL' | 'SWEA' | 'PROGRAMMERS' | 'BAEKJOON'
 type SiteState = { platform: Platform; state: 'SIGNED_IN' | 'SIGNED_OUT' | 'UNKNOWN'; name?: string }
 type Response = { sites?: unknown; error?: string }
 
@@ -11,6 +11,8 @@ const SITES: { platform: Platform; label: string; loginUrl: string; siteUrl: str
   { platform: 'JUNGOL', label: '정올', loginUrl: 'https://jungol.co.kr/auth/signin', siteUrl: 'https://jungol.co.kr/' },
   { platform: 'SWEA', label: 'SWEA', loginUrl: 'https://swexpertacademy.com/main/identity/anonymous/loginPage.do', siteUrl: 'https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do' },
   { platform: 'PROGRAMMERS', label: '프로그래머스', loginUrl: 'https://programmers.co.kr/account/sign_in?referer=https%3A%2F%2Fschool.programmers.co.kr%2Flearn%2Fchallenges', siteUrl: 'https://school.programmers.co.kr/learn/challenges' },
+  // Baekjoon is not probed; the extension shows what its pages showed when last opened.
+  { platform: 'BAEKJOON', label: '백준', loginUrl: 'https://acmicpc.net/login', siteUrl: 'https://acmicpc.net/' },
 ]
 
 function validSites(value: unknown): SiteState[] | null {
@@ -54,7 +56,7 @@ export function SiteLoginStatus({ load = loadSiteLogins }: { load?: () => Promis
       {SITES.map(site => {
         const current = sites?.find(item => item.platform === site.platform)
         const state = current?.state
-        const text = !current ? (checking ? '확인 중' : '확인 전') : state === 'SIGNED_IN' ? `로그인됨${current.name ? ` · ${current.name}` : ''}` : state === 'SIGNED_OUT' ? '로그인 필요' : '확인하지 못함'
+        const text = !current ? (checking ? '확인 중' : '확인 전') : state === 'SIGNED_IN' ? `로그인됨${current.name ? ` · ${current.name}` : ''}` : state === 'SIGNED_OUT' ? '로그인 필요' : site.platform === 'BAEKJOON' ? '백준 페이지를 열면 확인됩니다' : '확인하지 못함'
         return <li key={site.platform} data-state={state ?? 'PENDING'}>
           <strong>{site.label}</strong>
           <span className="site-login-state" role="status">{text}</span>

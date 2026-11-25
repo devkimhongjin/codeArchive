@@ -63,7 +63,7 @@ function summarizeCaptures(captures: Iterable<Capture>): Record<Platform, Captur
   const summary = {} as Record<Platform, CaptureSummary>;
   const problems = new Map<Platform, Set<string>>();
   const syncedProblems = new Map<Platform, Set<string>>();
-  for (const platform of ["JUNGOL", "SWEA", "PROGRAMMERS"] as const) {
+  for (const platform of ["JUNGOL", "SWEA", "PROGRAMMERS", "BAEKJOON"] as const) {
     summary[platform] = { saved: 0, problems: 0, previouslySaved: 0, historicalSaved: 0, synced: 0, syncedProblems: 0 };
     problems.set(platform, new Set());
     syncedProblems.set(platform, new Set());
@@ -80,7 +80,7 @@ function summarizeCaptures(captures: Iterable<Capture>): Record<Platform, Captur
       syncedProblems.get(capture.platform)!.add(capture.problemNumber);
     }
   }
-  for (const platform of ["JUNGOL", "SWEA", "PROGRAMMERS"] as const) {
+  for (const platform of ["JUNGOL", "SWEA", "PROGRAMMERS", "BAEKJOON"] as const) {
     summary[platform].problems = problems.get(platform)!.size;
     summary[platform].syncedProblems = syncedProblems.get(platform)!.size;
   }

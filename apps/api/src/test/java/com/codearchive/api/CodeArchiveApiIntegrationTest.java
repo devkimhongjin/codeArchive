@@ -560,8 +560,8 @@ class CodeArchiveApiIntegrationTest {
         AppUser owner = githubAccountService.upsert(principal("307", "batch-owner", "Batch", null));
         githubAccountService.upsert(principal("308", "other-owner", "Other", null));
         var settings = historicalTarget(owner, "batch-owner");
-        String[] platforms = {"SWEA", "PROGRAMMERS", "JUNGOL"};
-        String[] identities = {"AaCkP4oKpD3HBISr", "pg:batch:123:2026-01-01T00:00:00.000+09:00:java", "123"};
+        String[] platforms = {"SWEA", "PROGRAMMERS", "JUNGOL", "BAEKJOON"};
+        String[] identities = {"AaCkP4oKpD3HBISr", "pg:batch:123:2026-01-01T00:00:00.000+09:00:java", "123", "105249231"};
         var captureIds = objectMapper.createArrayNode();
         for (int i = 0; i < platforms.length; i++) {
             String captureId = UUID.randomUUID().toString(); captureIds.add(captureId);
@@ -579,9 +579,9 @@ class CodeArchiveApiIntegrationTest {
                     .andExpect(status().isOk()).andExpect(jsonPath("$[0]", is(identities[i])));
         }
         org.assertj.core.api.Assertions.assertThat(githubCommitJobRepository.count()).isZero();
-        org.assertj.core.api.Assertions.assertThat(solutionRepository.findByUserIdOrderBySolvedAtDesc(owner.getId())).hasSize(3);
+        org.assertj.core.api.Assertions.assertThat(solutionRepository.findByUserIdOrderBySolvedAtDesc(owner.getId())).hasSize(4);
         mockMvc.perform(get("/api/solutions/historical-github-candidates").with(githubLogin("307", "batch-owner", "Batch", null)))
-                .andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(3)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(4)))
                 .andExpect(jsonPath("$[0].state", is("NONE"))).andExpect(jsonPath("$[0].sourceCode").doesNotExist());
         var request = objectMapper.createObjectNode().put("settingsVersion", settings.getVersion()).put("installationId", 77)
                 .put("owner", "batch-owner").put("repository", "archive").put("branch", "main");
@@ -592,7 +592,7 @@ class CodeArchiveApiIntegrationTest {
                     .contentType("application/json").content(request.toString()))
                     .andExpect(status().isOk()).andExpect(jsonPath("$['" + captureIds.get(0).asText() + "']", is("PENDING")));
         }
-        org.assertj.core.api.Assertions.assertThat(githubCommitJobRepository.count()).isEqualTo(3);
+        org.assertj.core.api.Assertions.assertThat(githubCommitJobRepository.count()).isEqualTo(4);
         mockMvc.perform(post("/api/solutions/historical-github-batch").with(csrf().asHeader())
                 .with(githubLogin("308", "other-owner", "Other", null)).header("X-CodeArchive-Account", "307")
                 .contentType("application/json").content(request.toString())).andExpect(status().isConflict());
@@ -714,10 +714,10 @@ class CodeArchiveApiIntegrationTest {
                 .andExpect(jsonPath("$.githubHeader", is(false)))
                 .andExpect(jsonPath("$.githubAutoCommitEnabled", is(false)));
         String valid = settingsJson(0, "홍길동", "별명", "{platform}-{number}", "archive/{language}/{number}/{time}", "one-light", "dracula", true, true, null, null, null, null, null)
-                .replace("\"githubHeader\":false", "\"githubHeader\":true,\"copyHeaderFields\":[\"title\",\"solvedAt\"],\"downloadHeaderFields\":[\"language\"],\"githubHeaderFields\":[\"identity\",\"url\"]");
+                .replace("\"githubHeader\":false", "\"githubHeader\":true,\"copyHeaderFields\":[\"title\",\"difficulty\",\"solvedAt\"],\"downloadHeaderFields\":[\"language\"],\"githubHeaderFields\":[\"identity\",\"url\"]");
         mockMvc.perform(put("/api/settings").with(csrf().asHeader()).with(githubLogin("601", "settings", "Settings", null)).header("X-CodeArchive-Github-Id", "601").contentType("application/json").content(valid))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.name", is("홍길동"))).andExpect(jsonPath("$.nickname", is("별명")))
-                .andExpect(jsonPath("$.copyHeaderFields[0]", is("title")))
+                .andExpect(jsonPath("$.copyHeaderFields[0]", is("title"))).andExpect(jsonPath("$.copyHeaderFields[1]", is("difficulty")))
                 .andExpect(jsonPath("$.downloadHeaderFields[0]", is("language")))
                 .andExpect(jsonPath("$.githubHeaderFields[1]", is("url")))
                 .andExpect(jsonPath("$.githubHeader", is(true)))

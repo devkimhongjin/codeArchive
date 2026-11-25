@@ -1,5 +1,5 @@
 import { createUuid } from "./capture";
-import { githubDuplicateCommits, type Capture, type CaptureSettings } from "./types";
+import { githubDuplicateCommits, isPlatform, type Capture, type CaptureSettings } from "./types";
 import type { CaptureStore, CaptureSummary } from "./storage";
 import type { Platform } from "./types";
 import { BUILD_METADATA } from "../../../shared/buildMetadata";
@@ -315,7 +315,7 @@ export class DashboardBridge {
 
     if (type === "GET_HISTORICAL_METADATA") {
       const records = [];
-      for (const platform of ["JUNGOL", "SWEA", "PROGRAMMERS"] as const) {
+      for (const platform of ["JUNGOL", "SWEA", "PROGRAMMERS", "BAEKJOON"] as const) {
         const ids = await this.store.listHistoricalSubmissionIds(platform);
         const captures = await this.store.listHistoricalBySubmissionIds(platform, ids);
         records.push(...captures.map(({ captureId, platform, historicalSubmissionId, problemNumber, title, language, solvedAt, metadataPending }) =>
@@ -327,14 +327,14 @@ export class DashboardBridge {
 
     if (type === "GET_HISTORICAL_SUBMISSION_IDS") {
       const platform = object?.platform;
-      if (platform !== "JUNGOL" && platform !== "SWEA" && platform !== "PROGRAMMERS") return { error: "BAD_REQUEST" };
+      if (!isPlatform(platform)) return { error: "BAD_REQUEST" };
       return { submissionIds: await this.store.listHistoricalSubmissionIds(platform), localOnly: true };
     }
 
     if (type === "GET_HISTORICAL_BY_SUBMISSION_IDS") {
       const ids = object?.submissionIds;
       const platform = object?.platform;
-      if ((platform !== "JUNGOL" && platform !== "SWEA" && platform !== "PROGRAMMERS") || !Array.isArray(ids) || ids.length < 1 || ids.length > MAX_PENDING_PAGE_SIZE ||
+      if (!isPlatform(platform) || !Array.isArray(ids) || ids.length < 1 || ids.length > MAX_PENDING_PAGE_SIZE ||
           ids.some(id => !isHistoricalSubmissionId(platform, id)) || new Set(ids).size !== ids.length) return { error: "BAD_REQUEST" };
       const captures = await this.store.listHistoricalBySubmissionIds(platform, ids as string[]);
       for (const capture of captures) {

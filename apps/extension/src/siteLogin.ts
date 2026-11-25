@@ -13,7 +13,25 @@ export const SITE_LOGIN_PAGES: Record<Platform, { loginUrl: string; siteUrl: str
     probeUrl: 'https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do' },
   PROGRAMMERS: { loginUrl: 'https://programmers.co.kr/account/sign_in?referer=https%3A%2F%2Fschool.programmers.co.kr%2Flearn%2Fchallenges',
     siteUrl: 'https://school.programmers.co.kr/learn/challenges', probeUrl: 'https://school.programmers.co.kr/learn/courses/30/lessons/42576' },
+  // Baekjoon answers script requests with an empty body, so it is never probed:
+  // its state is what its own pages showed the last time the user opened one.
+  BAEKJOON: { loginUrl: 'https://acmicpc.net/login', siteUrl: 'https://acmicpc.net/', probeUrl: '' },
 };
+
+export const BAEKJOON_LOGIN_SEEN_KEY = 'codearchive-baekjoon-login-seen';
+/** How long a page's signed-in state is shown before it reads as unknown again. */
+export const BAEKJOON_LOGIN_SEEN_TTL_MS = 7 * 24 * 60 * 60_000;
+export type BaekjoonLoginSeen = { state: 'SIGNED_IN' | 'SIGNED_OUT'; name?: string; seenAt: number };
+
+export function baekjoonLoginState(seen: unknown, now = Date.now()): SiteLoginState {
+  const pages = SITE_LOGIN_PAGES.BAEKJOON;
+  const base = { platform: 'BAEKJOON' as const, loginUrl: pages.loginUrl, siteUrl: pages.siteUrl };
+  const value = seen && typeof seen === 'object' ? seen as Partial<BaekjoonLoginSeen> : null;
+  if (!value || (value.state !== 'SIGNED_IN' && value.state !== 'SIGNED_OUT') || typeof value.seenAt !== 'number' ||
+      !Number.isFinite(value.seenAt) || now - value.seenAt > BAEKJOON_LOGIN_SEEN_TTL_MS || value.seenAt - now > 60_000) return { ...base, state: 'UNKNOWN' };
+  const name = value.state === 'SIGNED_IN' && typeof value.name === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(value.name) ? value.name : undefined;
+  return name ? { ...base, state: value.state, name } : { ...base, state: value.state };
+}
 
 const decode = (value: string) => value.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
 
@@ -58,6 +76,7 @@ async function probe(platform: Platform, fetcher: typeof fetch): Promise<SiteLog
   } catch { return { ...base, state: 'UNKNOWN' }; }
 }
 
-export function checkSiteLogins(fetcher: typeof fetch = fetch): Promise<SiteLoginState[]> {
-  return Promise.all((['JUNGOL', 'SWEA', 'PROGRAMMERS'] as const).map(platform => probe(platform, fetcher)));
+export function checkSiteLogins(fetcher: typeof fetch = fetch, baekjoonSeen: () => Promise<unknown> = async () => null): Promise<SiteLoginState[]> {
+  return Promise.all([...(['JUNGOL', 'SWEA', 'PROGRAMMERS'] as const).map(platform => probe(platform, fetcher)),
+    baekjoonSeen().then(seen => baekjoonLoginState(seen), () => baekjoonLoginState(null))]);
 }

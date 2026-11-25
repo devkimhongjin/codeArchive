@@ -9,6 +9,7 @@ const release = JSON.parse(await readFile(resolve(root, 'release.json'), 'utf8')
 const hosts = [
   'https://swexpertacademy.com/*', 'https://school.programmers.co.kr/*',
   'https://jungol.co.kr/*',
+  'https://acmicpc.net/*', 'https://www.acmicpc.net/*', 'https://solved.ac/*',
   'https://codearchive-api-stg-e3q54l32da-as.a.run.app/*'
 ];
 const retiredReleaseHost = 'https://api.github.com/*';
@@ -54,7 +55,8 @@ export function prepareManifest(original) {
       'https://swexpertacademy.com/main/code/problem/problemDetail.do*',
       'https://swexpertacademy.com/main/code/userProblem/userProblemDetail.do*',
       'https://swexpertacademy.com/main/userpage/code/userSubmitProblem.do*',
-      'https://school.programmers.co.kr/*', 'https://jungol.co.kr/*'
+      'https://school.programmers.co.kr/*', 'https://jungol.co.kr/*',
+      'https://acmicpc.net/*', 'https://www.acmicpc.net/*', 'https://acmicpc.net/submit/*', 'https://www.acmicpc.net/submit/*'
     ].includes(match))) fail('unexpected content script scope');
     if (script.all_frames || script.match_about_blank || script.match_origin_as_fallback) fail('unexpected content script frame scope');
   }

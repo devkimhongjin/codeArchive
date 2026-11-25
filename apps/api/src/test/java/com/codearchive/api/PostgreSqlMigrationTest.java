@@ -37,7 +37,7 @@ import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
  * normal H2 test suite remains self-contained.
  */
 class PostgreSqlMigrationTest {
-    private static final int LATEST_MIGRATION = 33;
+    private static final int LATEST_MIGRATION = 34;
 
     @Test
     void supportReviewUpgradePreservesOldInquiriesAndMessages() throws Exception {
@@ -574,6 +574,9 @@ class PostgreSqlMigrationTest {
                             + "WHERE schemaname = ? AND indexname = 'idx_solutions_community_owner'", schema)).longValue());
             assertEquals("YES", nullable("solutions", "difficulty_label"));
             assertEquals("YES", nullable("solutions", "difficulty_source_url"));
+            // The longest solved.ac tier, "Platinum III", has 12 characters.
+            assertEquals(20, ((Number) scalar(
+                    "SELECT character_maximum_length FROM information_schema.columns WHERE table_schema = ? AND table_name = 'solutions' AND column_name = 'difficulty_label'", schema)).intValue());
             assertEquals("YES", nullable("github_commit_jobs", "recovery_context"));
             assertEquals("YES", nullable("github_commit_jobs", "diagnostic"));
             assertEquals("YES", nullable("solutions", "memory_value"));

@@ -8,6 +8,8 @@ import java.util.List;
 
 /** Optional site metadata. Invalid or unverified scales are omitted, never guessed. */
 public record ProblemDifficulty(String label, String problemNumber, String sourceUrl) {
+    private static final String SOLVED_AC_TIER = "(Bronze|Silver|Gold|Platinum|Diamond|Ruby) (V|IV|III|II|I)";
+    static String solvedAcSource(String number) { return "https://solved.ac/api/v3/problem/show?problemId=" + number; }
     public static ProblemDifficulty validated(Platform platform, String number, String problemUrl, ProblemDifficulty value) {
         if (value == null || !number.equals(value.problemNumber()) || value.label() == null || value.sourceUrl() == null || value.sourceUrl().length() > 2048) return null;
         try {
@@ -21,6 +23,11 @@ public record ProblemDifficulty(String label, String problemNumber, String sourc
                 String sourceId = contestId(source), problemId = contestId(problem);
                 if (sourceId != null && sourceId.matches("[A-Za-z0-9_-]{1,160}") && sourceId.equals(problemId)) return new ProblemDifficulty(value.label(), number, "https://swexpertacademy.com" + source.getPath() + "?contestProbId=" + sourceId);
             }
+            // Baekjoon: the solved.ac tier read from its public problem API for this exact problem.
+            if (platform == Platform.BAEKJOON && value.label().matches(SOLVED_AC_TIER) && number.matches("[0-9]{1,40}")
+                    && "solved.ac".equals(source.getHost()) && "/api/v3/problem/show".equals(source.getPath()) && ("problemId=" + number).equals(source.getRawQuery())
+                    && "https".equals(problem.getScheme()) && List.of("acmicpc.net", "www.acmicpc.net").contains(problem.getHost())
+                    && problem.getPort() == -1 && ("/problem/" + number).equals(problem.getPath())) return new ProblemDifficulty(value.label(), number, solvedAcSource(number));
         } catch (IllegalArgumentException ignored) { }
         return null;
     }

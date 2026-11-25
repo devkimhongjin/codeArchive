@@ -33,7 +33,8 @@ node scripts/extension-store-package.mjs prepare
 | `alarms` | 관리 화면이 닫혀 있을 때 동기화 재시도를 예약합니다. |
 | `scripting` | 사용자가 시작한 과거 풀이 수집에서 패키지 수집 스크립트를 적용합니다. |
 | `downloads` | 사용자가 선택한 풀이를 파일로 내보냅니다. |
-| SWEA·프로그래머스·정올 | 본인 제출 결과·코드·문제 정보를 확인합니다. |
+| SWEA·프로그래머스·정올·백준(`acmicpc.net`, `www.acmicpc.net`) | 본인 제출 결과·코드·문제 정보를 확인합니다. |
+| solved.ac | 백준 문제의 난이도(티어)를 공개 문제 API에서 읽습니다. 문제 번호만 보내며 쿠키를 보내지 않습니다. |
 | Cloud Run API | 인증된 계정 확인, 설정, 동기화, 문의와 GitHub 관리를 처리합니다. |
 | legacy dashboard origin | 이전 설치본의 제한된 bridge 호환에만 사용합니다. |
 

@@ -147,6 +147,19 @@ class GithubAppProviderTest {
     assertThat(requests.get(6).body()).contains("\"message\":\"Add 260918142103 11111111-1111-4111-8111-111111111111\"");
   }
 
+  @Test void githubHeaderWritesTheDifficultyOnlyWhenSelectedAndKnown() throws Exception {
+    UserSettings selected=new UserSettings(AppUser.fromGithub("1","owner","Owner",null));
+    selected.apply(new SettingsRequest(0,"n",null,false,false,true,"{number}","{platform}/{number}-{title}","Add {number}","github-light","github-dark",true,true,44L,"owner","repo","main",null,
+        List.of("identity"),List.of("language"),List.of("title","difficulty","language")));
+    Solution tiered=new Solution(AppUser.fromGithub("1","owner","Owner",null),"55555555-5555-4555-8555-555555555555",Platform.BAEKJOON,"1000","A+B","https://acmicpc.net/problem/1000","Java","class Main {}","ACCEPTED",Instant.parse("2026-09-18T05:21:03.456Z"),Instant.parse("2026-09-18T05:21:03.456Z"),null,null);
+    tiered.setDifficulty(new com.codearchive.api.solution.ProblemDifficulty("Platinum III","1000","https://solved.ac/api/v3/problem/show?problemId=1000"));
+    assertThat(provider().createOnly(selected,tiered).outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(blobSource()).isEqualTo("// Problem: A+B\n// Difficulty: Platinum III\n// Language: Java\n\nclass Main {}");
+    requests.clear();refRequests=0;
+    assertThat(provider().createOnly(selected,solution()).outcome()).isEqualTo(GithubProvider.Outcome.SUCCEEDED);
+    assertThat(blobSource()).doesNotContain("Difficulty");
+  }
+
   @Test void githubProblemHeaderPreservesPythonShebangAndIsUsedForIdempotency() throws Exception {
     Solution python=new Solution(AppUser.fromGithub("1","owner","Owner",null),"44444444-4444-4444-8444-444444444444",Platform.SWEA,"123","Title","https://example.test/123","Python3","#!/usr/bin/python\nprint(1)","ACCEPTED",Instant.parse("2026-09-18T05:21:03.456Z"),Instant.parse("2026-09-18T05:21:03.456Z"),null,null);
     UserSettings configured=settings("main","Add {platform} {number} solution",true);
