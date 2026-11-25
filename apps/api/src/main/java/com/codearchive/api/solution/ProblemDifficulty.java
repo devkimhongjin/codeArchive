@@ -23,6 +23,9 @@ public record ProblemDifficulty(String label, String problemNumber, String sourc
                 String sourceId = contestId(source), problemId = contestId(problem);
                 if (sourceId != null && sourceId.matches("[A-Za-z0-9_-]{1,160}") && sourceId.equals(problemId)) return new ProblemDifficulty(value.label(), number, "https://swexpertacademy.com" + source.getPath() + "?contestProbId=" + sourceId);
             }
+            // Jungol rates its own problems on the same 30 steps; only its own page of this problem is a source.
+            if (platform == Platform.JUNGOL && value.label().matches(SOLVED_AC_TIER) && number.matches("[0-9]{1,40}")
+                    && ("https://jungol.co.kr/problem/" + number).equals(value.sourceUrl()) && value.sourceUrl().equals(problemUrl)) return value;
             // Baekjoon: the solved.ac tier read from its public problem API for this exact problem.
             if (platform == Platform.BAEKJOON && value.label().matches(SOLVED_AC_TIER) && number.matches("[0-9]{1,40}")
                     && "solved.ac".equals(source.getHost()) && "/api/v3/problem/show".equals(source.getPath()) && ("problemId=" + number).equals(source.getRawQuery())

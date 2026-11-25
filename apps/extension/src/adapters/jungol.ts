@@ -1,5 +1,6 @@
 import type { Capture, EditorData, PerformanceData, PlatformAdapter, ProblemMetadata, SubmissionResultDetection, SubmissionSnapshot } from "../types";
 import { mainWorldSyncFailed, normalizeText } from "./dom";
+import { jungolDifficulty } from "../problemDifficulty";
 import { JUNGOL_ORIGIN, JUNGOL_PROBLEM_PATH, JUNGOL_SOURCE_SELECTOR, jungolSubmitControl } from "./jungolSelectors";
 import { jungolAcceptedResult, type JungolAcceptedResult } from "./jungolResult";
 
@@ -10,7 +11,9 @@ function problem(document: Document, location: Location): ProblemMetadata | null
   if (location.origin !== JUNGOL_ORIGIN || !number) return null;
   const title = normalizeText(document.querySelector("h1 .name")?.textContent ?? document.querySelector("h1 > span")?.textContent);
   if (!title) return null;
-  return { problemNumber: number, title, problemUrl: `${JUNGOL_ORIGIN}/problem/${number}` };
+  const problemUrl = `${JUNGOL_ORIGIN}/problem/${number}`;
+  const difficulty = jungolDifficulty(document, number, problemUrl);
+  return { problemNumber: number, title, problemUrl, ...(difficulty ? { difficulty } : {}) };
 }
 
 function editor(document: Document, problemNumber: string, startedAt: number, now: number, requireRequest: boolean): EditorData | null {

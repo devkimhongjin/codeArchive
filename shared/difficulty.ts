@@ -5,7 +5,7 @@ const SOLVED_AC_STEPS = ['V', 'IV', 'III', 'II', 'I'] as const
 const SOLVED_AC_TIER = /^(Bronze|Silver|Gold|Platinum|Diamond|Ruby) (V|IV|III|II|I)$/
 const BAEKJOON_ORIGINS = ['https://acmicpc.net', 'https://www.acmicpc.net']
 
-/** solved.ac levels 1–30 are Bronze V … Ruby I; 0 (unrated) and anything else has no tier. */
+/** solved.ac levels (and Jungol's own, on the same steps) 1–30 are Bronze V … Ruby I; 0 (unrated) and anything else has no tier. */
 export function solvedAcTierLabel(level: unknown): string | undefined {
   if (typeof level !== 'number' || !Number.isSafeInteger(level) || level < 1 || level > 30) return
   return `${SOLVED_AC_TIERS[Math.floor((level - 1) / 5)]} ${SOLVED_AC_STEPS[(level - 1) % 5]}`
@@ -15,7 +15,10 @@ export function solvedAcProblemSource(problemNumber: string): string {
   return `https://solved.ac/api/v3/problem/show?problemId=${problemNumber}`
 }
 
-/** Site-local scales only. Never map a Jungol number to a BOJ/solved.ac tier. */
+/**
+ * Site-local scales only. Jungol rates its own problems on solved.ac's 30 steps,
+ * so its tier comes from its own problem page; never look a Jungol number up as a BOJ problem.
+ */
 export function normalizeDifficulty(platform: string, problemNumber: string, problemUrl: string, value: unknown): ProblemDifficulty | undefined {
   if (!value || typeof value !== 'object') return
   const difficulty = value as ProblemDifficulty
@@ -30,6 +33,8 @@ export function normalizeDifficulty(platform: string, problemNumber: string, pro
     // Baekjoon: the solved.ac tier of this exact problem, read from its public problem API.
     if (platform === 'BAEKJOON' && SOLVED_AC_TIER.test(difficulty.label) && /^\d{1,40}$/.test(problemNumber) && source.href === solvedAcProblemSource(problemNumber) &&
       BAEKJOON_ORIGINS.includes(problem.origin) && problem.pathname === `/problem/${problemNumber}`) return { label: difficulty.label, problemNumber, sourceUrl: source.href }
+    if (platform === 'JUNGOL' && SOLVED_AC_TIER.test(difficulty.label) && /^\d{1,40}$/.test(problemNumber) &&
+      source.href === `https://jungol.co.kr/problem/${problemNumber}` && problem.href === source.href) return { label: difficulty.label, problemNumber, sourceUrl: source.href }
   } catch { /* Unknown source stays blank. */ }
 }
 export function difficultyKey(platform: string, value?: ProblemDifficulty): string { return value ? `${platform}:${value.label}` : 'UNKNOWN' }

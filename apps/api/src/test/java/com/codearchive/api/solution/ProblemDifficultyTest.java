@@ -24,6 +24,16 @@ class ProblemDifficultyTest {
         assertThat(ProblemDifficulty.validated(Platform.BAEKJOON, "1000", problem, new ProblemDifficulty("Bronze V", "1000", "https://evil.test/api/v3/problem/show?problemId=1000"))).isNull();
         assertThat(ProblemDifficulty.validated(Platform.JUNGOL, "1000", "https://jungol.co.kr/problem/1000", value)).isNull();
     }
+    @Test void bindsJungolOwnTierToItsProblemPage() {
+        String url = "https://jungol.co.kr/problem/1006";
+        var value = new ProblemDifficulty("Gold II", "1006", url);
+        assertThat(ProblemDifficulty.validated(Platform.JUNGOL, "1006", url, value)).isEqualTo(value);
+        assertThat(ProblemDifficulty.validated(Platform.JUNGOL, "1006", url, new ProblemDifficulty("Gold 2", "1006", url))).isNull();
+        assertThat(ProblemDifficulty.validated(Platform.JUNGOL, "1006", url, new ProblemDifficulty("Gold II", "1006", "https://jungol.co.kr/problem/1007"))).isNull();
+        assertThat(ProblemDifficulty.validated(Platform.JUNGOL, "1006", url, new ProblemDifficulty("Gold II", "1006", "https://solved.ac/api/v3/problem/show?problemId=1006"))).isNull();
+        assertThat(ProblemDifficulty.validated(Platform.JUNGOL, "1006", "https://jungol.co.kr/problem/1007", value)).isNull();
+        assertThat(ProblemDifficulty.validated(Platform.BAEKJOON, "1006", "https://acmicpc.net/problem/1006", value)).isNull();
+    }
     @Test void bindsSweaContestIdentityWithoutInventedBackfill() {
         String url = "https://swexpertacademy.com/main/code/problem/problemDetail.do?contestProbId=VerifiedKey";
         var value = new ProblemDifficulty("D3", "123", url);
