@@ -7,7 +7,7 @@ import java.util.Set;
 /** Stored as a small allowlisted CSV, never user-authored source text. */
 public final class HeaderFields {
     public static final List<String> DEFAULT = List.of("identity", "title", "url", "language", "performance");
-    private static final Set<String> ALLOWED = Set.of("identity", "title", "solvedAt", "language", "performance", "url");
+    private static final Set<String> ALLOWED = Set.of("identity", "title", "difficulty", "solvedAt", "language", "performance", "url");
     private HeaderFields() {}
 
     public static boolean valid(List<String> fields) {

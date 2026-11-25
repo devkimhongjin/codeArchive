@@ -1,12 +1,13 @@
 import { describeLanguage } from './language'
 import { formatKstTimestamp } from './timePresentation'
 
-export const HEADER_FIELDS = ['identity', 'title', 'solvedAt', 'language', 'performance', 'url'] as const
+export const HEADER_FIELDS = ['identity', 'title', 'difficulty', 'solvedAt', 'language', 'performance', 'url'] as const
 export type HeaderField = typeof HEADER_FIELDS[number]
 export const DEFAULT_HEADER_FIELDS: HeaderField[] = ['identity', 'title', 'url', 'language', 'performance']
 export const HEADER_FIELD_LABELS: Record<HeaderField, string> = {
   identity: '플랫폼·문제 번호',
   title: '문제 이름',
+  difficulty: '난이도',
   solvedAt: '풀이 일자',
   language: '언어',
   performance: '실행시간/메모리',
@@ -31,6 +32,7 @@ export type HeaderSource = {
   problemUrl: string
   language: string
   sourceCode: string
+  difficulty?: { label: string } | null
   solvedAt?: string | null
   observedAt?: string | null
   executionTime?: number | string | null
@@ -53,6 +55,7 @@ export function headerLines(source: HeaderSource, fields: readonly HeaderField[]
     if (selected.has('title')) lines.push(`Problem: ${source.title}`)
   }
   if (selected.has('url') && source.problemUrl) lines.push(source.problemUrl)
+  if (selected.has('difficulty') && source.difficulty?.label) lines.push(`Difficulty: ${source.difficulty.label}`)
   if (selected.has('solvedAt')) {
     const timestamp = formatKstTimestamp(source.solvedAt || source.observedAt)
     if (timestamp) lines.push(`Solved At: ${timestamp} KST`)

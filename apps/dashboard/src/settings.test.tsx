@@ -797,6 +797,8 @@ it('shows independent header choices only when enabled and previews the selected
   const copy = screen.getByRole('group', { name: '복사 주석 항목' })
   expect(copy).toBeTruthy()
   expect(screen.queryByRole('group', { name: '다운로드 주석 항목' })).toBeNull()
+  fireEvent.click(within(copy).getByLabelText('난이도'))
+  expect(within(copy).getByLabelText('복사 주석 미리보기').textContent).toContain('Difficulty: ')
   fireEvent.click(within(copy).getByLabelText('문제 링크'))
   expect(within(copy).getByLabelText('복사 주석 미리보기').textContent).not.toContain('https://')
   fireEvent.click(screen.getByLabelText('다운로드할 때 문제 정보 주석 포함'))
@@ -809,7 +811,7 @@ it('shows independent header choices only when enabled and previews the selected
   const github = screen.getByRole('group', { name: 'GitHub 커밋 주석 항목' })
   fireEvent.click(within(github).getByLabelText('언어'))
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
-    copyHeaderFields: ['identity', 'title', 'language', 'performance'],
+    copyHeaderFields: ['identity', 'title', 'difficulty', 'language', 'performance'],
     downloadHeaderFields: ['identity', 'title', 'solvedAt', 'language', 'performance', 'url'],
     githubHeaderFields: ['identity', 'title', 'url', 'performance'],
   }), 'account-17'))
